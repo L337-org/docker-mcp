@@ -77,8 +77,10 @@ def login(
     Authenticate with a Docker registry.
 
     Security: the password is sent as a tool argument, which many MCP clients log
-    verbatim. Prefer running `docker login` once on the host so the daemon reuses
-    its stored credentials, and avoid calling this tool from an agent loop.
+    verbatim. Prefer running `docker login` once on the host running this MCP
+    server so docker-py can reuse the credentials cached in that host's Docker
+    config (typically `~/.docker/config.json`), and avoid calling this tool from
+    an agent loop.
 
     args:
         username: str - Registry username
