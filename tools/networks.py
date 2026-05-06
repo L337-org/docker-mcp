@@ -1,6 +1,7 @@
 # library of mcp tools relating to network management
 
 from server import mcp
+from tools._utils import drop_none
 from tools.client import _get_client
 
 
@@ -35,20 +36,20 @@ def create_network(
         ingress: bool - Make this an ingress network for swarm routing-mesh
     returns: dict - The created network's attrs
     """
-    kwargs: dict = {"internal": internal, "enable_ipv6": enable_ipv6}
-    optional = {
-        "driver": driver,
-        "options": options,
-        "ipam": ipam,
-        "check_duplicate": check_duplicate,
-        "labels": labels,
-        "attachable": attachable,
-        "scope": scope,
-        "ingress": ingress,
+    kwargs: dict = {
+        "internal": internal,
+        "enable_ipv6": enable_ipv6,
+        **drop_none(
+            driver=driver,
+            options=options,
+            ipam=ipam,
+            check_duplicate=check_duplicate,
+            labels=labels,
+            attachable=attachable,
+            scope=scope,
+            ingress=ingress,
+        ),
     }
-    for key, value in optional.items():
-        if value is not None:
-            kwargs[key] = value
     return _get_client().networks.create(name, **kwargs).attrs
 
 
@@ -80,13 +81,7 @@ def list_networks(
         greedy: bool - Fetch extended details per network
     returns: list - A list of network attrs dicts
     """
-    kwargs: dict = {"greedy": greedy}
-    if names is not None:
-        kwargs["names"] = names
-    if ids is not None:
-        kwargs["ids"] = ids
-    if filters is not None:
-        kwargs["filters"] = filters
+    kwargs: dict = {"greedy": greedy, **drop_none(names=names, ids=ids, filters=filters)}
     return [n.attrs for n in _get_client().networks.list(**kwargs)]
 
 

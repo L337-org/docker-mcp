@@ -3,6 +3,7 @@
 from typing import Literal
 
 from server import mcp
+from tools._utils import drop_none
 from tools.client import _get_client
 
 
@@ -42,10 +43,7 @@ def list_services(filters: dict | None = None) -> list:
     args: filters: dict - Filter by attributes (id, name, label, mode)
     returns: list - A list of service attrs dicts
     """
-    kwargs: dict = {}
-    if filters is not None:
-        kwargs["filters"] = filters
-    return [s.attrs for s in _get_client().services.list(**kwargs)]
+    return [s.attrs for s in _get_client().services.list(**drop_none(filters=filters))]
 
 
 @mcp.tool()

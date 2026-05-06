@@ -1,6 +1,7 @@
 # library of mcp tools relating to docker swarm
 
 from server import mcp
+from tools._utils import drop_none
 from tools.client import _get_client
 
 
@@ -35,21 +36,21 @@ def init_swarm(
         log_driver: dict - Default log driver configuration
     returns: str - The node id of the newly created swarm manager
     """
-    kwargs: dict = {"listen_addr": listen_addr, "force_new_cluster": force_new_cluster}
-    optional = {
-        "advertise_addr": advertise_addr,
-        "default_addr_pool": default_addr_pool,
-        "subnet_size": subnet_size,
-        "data_path_addr": data_path_addr,
-        "data_path_port": data_path_port,
-        "name": name,
-        "labels": labels,
-        "autolock_managers": autolock_managers,
-        "log_driver": log_driver,
+    kwargs: dict = {
+        "listen_addr": listen_addr,
+        "force_new_cluster": force_new_cluster,
+        **drop_none(
+            advertise_addr=advertise_addr,
+            default_addr_pool=default_addr_pool,
+            subnet_size=subnet_size,
+            data_path_addr=data_path_addr,
+            data_path_port=data_path_port,
+            name=name,
+            labels=labels,
+            autolock_managers=autolock_managers,
+            log_driver=log_driver,
+        ),
     }
-    for key, value in optional.items():
-        if value is not None:
-            kwargs[key] = value
     return _get_client().swarm.init(**kwargs)
 
 
@@ -76,11 +77,8 @@ def join_swarm(
         "remote_addrs": remote_addrs,
         "join_token": join_token,
         "listen_addr": listen_addr,
+        **drop_none(advertise_addr=advertise_addr, data_path_addr=data_path_addr),
     }
-    if advertise_addr is not None:
-        kwargs["advertise_addr"] = advertise_addr
-    if data_path_addr is not None:
-        kwargs["data_path_addr"] = data_path_addr
     return _get_client().swarm.join(**kwargs)
 
 

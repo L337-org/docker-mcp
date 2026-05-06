@@ -1,6 +1,7 @@
 # library of mcp tools relating to image management
 
 from server import mcp
+from tools._utils import drop_none
 from tools.client import _get_client
 
 
@@ -61,25 +62,22 @@ def build_image(
         "forcerm": forcerm,
         "squash": squash,
         "use_config_proxy": use_config_proxy,
+        **drop_none(
+            path=path,
+            tag=tag,
+            dockerfile=dockerfile,
+            buildargs=buildargs,
+            container_limits=container_limits,
+            shmsize=shmsize,
+            labels=labels,
+            cache_from=cache_from,
+            target=target,
+            network_mode=network_mode,
+            extra_hosts=extra_hosts,
+            platform=platform,
+            isolation=isolation,
+        ),
     }
-    optional = {
-        "path": path,
-        "tag": tag,
-        "dockerfile": dockerfile,
-        "buildargs": buildargs,
-        "container_limits": container_limits,
-        "shmsize": shmsize,
-        "labels": labels,
-        "cache_from": cache_from,
-        "target": target,
-        "network_mode": network_mode,
-        "extra_hosts": extra_hosts,
-        "platform": platform,
-        "isolation": isolation,
-    }
-    for key, value in optional.items():
-        if value is not None:
-            kwargs[key] = value
     image, _logs = _get_client().images.build(**kwargs)
     return image.attrs
 

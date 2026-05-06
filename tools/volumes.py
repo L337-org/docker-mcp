@@ -1,6 +1,7 @@
 # library of mcp tools relating to volume management
 
 from server import mcp
+from tools._utils import drop_none
 from tools.client import _get_client
 
 
@@ -21,15 +22,7 @@ def create_volume(
         labels: dict - Labels to set on the volume
     returns: dict - The created volume's attrs
     """
-    kwargs: dict = {}
-    if name is not None:
-        kwargs["name"] = name
-    if driver is not None:
-        kwargs["driver"] = driver
-    if driver_opts is not None:
-        kwargs["driver_opts"] = driver_opts
-    if labels is not None:
-        kwargs["labels"] = labels
+    kwargs = drop_none(name=name, driver=driver, driver_opts=driver_opts, labels=labels)
     return _get_client().volumes.create(**kwargs).attrs
 
 
@@ -52,10 +45,7 @@ def list_volumes(filters: dict | None = None) -> list:
     args: filters: dict - Filter by attributes (e.g. dangling, name, label)
     returns: list - A list of volume attrs dicts
     """
-    kwargs: dict = {}
-    if filters is not None:
-        kwargs["filters"] = filters
-    return [v.attrs for v in _get_client().volumes.list(**kwargs)]
+    return [v.attrs for v in _get_client().volumes.list(**drop_none(filters=filters))]
 
 
 @mcp.tool()

@@ -1,6 +1,7 @@
 # library of mcp tools relating to swarm node management
 
 from server import mcp
+from tools._utils import drop_none
 from tools.client import _get_client
 
 
@@ -23,10 +24,7 @@ def list_nodes(filters: dict | None = None) -> list:
     args: filters: dict - Filter by attributes (id, name, membership, role)
     returns: list - A list of node attrs dicts
     """
-    kwargs: dict = {}
-    if filters is not None:
-        kwargs["filters"] = filters
-    return [n.attrs for n in _get_client().nodes.list(**kwargs)]
+    return [n.attrs for n in _get_client().nodes.list(**drop_none(filters=filters))]
 
 
 @mcp.tool()

@@ -1,6 +1,7 @@
 # library of mcp tools relating to swarm config management
 
 from server import mcp
+from tools._utils import drop_none
 from tools.client import _get_client
 
 
@@ -16,11 +17,7 @@ def create_config(name: str, data: bytes, labels: dict | None = None, templating
         templating: dict - Templating driver configuration
     returns: dict - The created config's attrs
     """
-    kwargs: dict = {"name": name, "data": data}
-    if labels is not None:
-        kwargs["labels"] = labels
-    if templating is not None:
-        kwargs["templating"] = templating
+    kwargs: dict = {"name": name, "data": data, **drop_none(labels=labels, templating=templating)}
     return _get_client().configs.create(**kwargs).attrs
 
 
@@ -43,10 +40,7 @@ def list_configs(filters: dict | None = None) -> list:
     args: filters: dict - Filter by attributes (e.g. id, name, label)
     returns: list - A list of config attrs dicts
     """
-    kwargs: dict = {}
-    if filters is not None:
-        kwargs["filters"] = filters
-    return [c.attrs for c in _get_client().configs.list(**kwargs)]
+    return [c.attrs for c in _get_client().configs.list(**drop_none(filters=filters))]
 
 
 @mcp.tool()

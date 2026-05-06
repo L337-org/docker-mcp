@@ -3,6 +3,7 @@
 from typing import Iterable, Literal, cast
 
 from server import mcp
+from tools._utils import drop_none
 from tools.client import _get_client
 
 
@@ -59,26 +60,25 @@ def run_container(
         extra_kwargs: dict - Additional keyword arguments forwarded to ContainerCollection.run
     returns: dict | str - Container attrs when detach=True, otherwise stdout/stderr as a string
     """
-    kwargs: dict = {"detach": detach}
-    optional = {
-        "command": command,
-        "name": name,
-        "environment": environment,
-        "ports": ports,
-        "volumes": volumes,
-        "network": network,
-        "hostname": hostname,
-        "user": user,
-        "working_dir": working_dir,
-        "entrypoint": entrypoint,
-        "restart_policy": restart_policy,
-        "labels": labels,
-        "mem_limit": mem_limit,
-        "cpu_count": cpu_count,
+    kwargs: dict = {
+        "detach": detach,
+        **drop_none(
+            command=command,
+            name=name,
+            environment=environment,
+            ports=ports,
+            volumes=volumes,
+            network=network,
+            hostname=hostname,
+            user=user,
+            working_dir=working_dir,
+            entrypoint=entrypoint,
+            restart_policy=restart_policy,
+            labels=labels,
+            mem_limit=mem_limit,
+            cpu_count=cpu_count,
+        ),
     }
-    for key, value in optional.items():
-        if value is not None:
-            kwargs[key] = value
     for key, value in {
         "remove": remove,
         "auto_remove": auto_remove,
@@ -148,15 +148,12 @@ def list_containers(
         ignore_removed: bool - Ignore containers removed during listing
     returns: list - A list of container attrs dicts
     """
-    kwargs: dict = {"all": all, "sparse": sparse, "ignore_removed": ignore_removed}
-    if since is not None:
-        kwargs["since"] = since
-    if before is not None:
-        kwargs["before"] = before
-    if limit is not None:
-        kwargs["limit"] = limit
-    if filters is not None:
-        kwargs["filters"] = filters
+    kwargs: dict = {
+        "all": all,
+        "sparse": sparse,
+        "ignore_removed": ignore_removed,
+        **drop_none(since=since, before=before, limit=limit, filters=filters),
+    }
     return [c.attrs for c in _get_client().containers.list(**kwargs)]
 
 
