@@ -6,15 +6,20 @@ autouse `skip_if_no_daemon` fixture that skips the suite when the Docker
 daemon is unreachable.
 """
 
+from pathlib import Path
+
 import pytest
 from docker.errors import DockerException
 
 from tools.client import ping
 
+_INTEGRATION_DIR = Path(__file__).parent
+
 
 def pytest_collection_modifyitems(items):
     for item in items:
-        item.add_marker(pytest.mark.integration)
+        if _INTEGRATION_DIR in Path(item.path).parents:
+            item.add_marker(pytest.mark.integration)
 
 
 @pytest.fixture(autouse=True, scope="module")
