@@ -1,5 +1,7 @@
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from tools.images import (
     build_image,
     get_image,
@@ -116,6 +118,15 @@ def test_save_image():
     with _patch() as mock_client:
         mock_client.return_value.images.get.return_value = image
         assert save_image("nginx") == b"chunk1chunk2"
+
+
+def test_save_image_raises_when_max_bytes_exceeded():
+    image = MagicMock()
+    image.save.return_value = iter([b"x" * 50, b"x" * 60])
+    with _patch() as mock_client:
+        mock_client.return_value.images.get.return_value = image
+        with pytest.raises(ValueError, match="exceeded max_bytes=100"):
+            save_image("nginx", max_bytes=100)
 
 
 def test_tag_image():
