@@ -1,7 +1,7 @@
 # library of mcp tools relating to image management
 
 from server import mcp
-from tools._utils import drop_none
+from tools._utils import MAX_PAYLOAD_BYTES, drop_none, join_bounded
 from tools.client import _get_client
 
 
@@ -220,17 +220,18 @@ def load_image(data: bytes) -> list:
 
 
 @mcp.tool()
-def save_image(name: str, named: bool = False) -> bytes:
+def save_image(name: str, named: bool = False, max_bytes: int = MAX_PAYLOAD_BYTES) -> bytes:
     """
     Save an image as a tar archive.
 
     args:
         name: str - Image name or id
         named: bool - Whether to keep the image name when saving
+        max_bytes: int - Abort with ValueError if the tarball exceeds this many bytes (defaults to 1 GiB)
     returns: bytes - The tarball contents
     """
     image = _get_client().images.get(name)
-    return b"".join(image.save(named=named))
+    return join_bounded(image.save(named=named), max_bytes, f"save of image {name}")
 
 
 @mcp.tool()

@@ -1,5 +1,7 @@
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from tools.containers import (
     commit_container,
     container_diff,
@@ -274,6 +276,15 @@ def test_export_container():
         assert export_container("web") == b"chunk1chunk2"
 
 
+def test_export_container_raises_when_max_bytes_exceeded():
+    container = MagicMock()
+    container.export.return_value = iter([b"x" * 50, b"x" * 60])
+    with _patch() as mock_client:
+        mock_client.return_value.containers.get.return_value = container
+        with pytest.raises(ValueError, match="exceeded max_bytes=100"):
+            export_container("web", max_bytes=100)
+
+
 def test_get_container_archive():
     container = MagicMock()
     container.get_archive.return_value = (iter([b"tar"]), {"name": "etc"})
@@ -281,6 +292,15 @@ def test_get_container_archive():
         mock_client.return_value.containers.get.return_value = container
         result = get_container_archive("web", "/etc")
     assert result == {"archive": b"tar", "stat": {"name": "etc"}}
+
+
+def test_get_container_archive_raises_when_max_bytes_exceeded():
+    container = MagicMock()
+    container.get_archive.return_value = (iter([b"x" * 50, b"x" * 60]), {"name": "etc"})
+    with _patch() as mock_client:
+        mock_client.return_value.containers.get.return_value = container
+        with pytest.raises(ValueError, match="exceeded max_bytes=100"):
+            get_container_archive("web", "/etc", max_bytes=100)
 
 
 def test_put_container_archive():

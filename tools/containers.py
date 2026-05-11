@@ -3,7 +3,7 @@
 from typing import Iterable, Literal, cast
 
 from server import mcp
-from tools._utils import drop_none
+from tools._utils import MAX_PAYLOAD_BYTES, drop_none, join_bounded
 from tools.client import _get_client
 
 
@@ -564,30 +564,33 @@ def wait_container(
 
 
 @mcp.tool()
-def export_container(id_or_name: str) -> bytes:
+def export_container(id_or_name: str, max_bytes: int = MAX_PAYLOAD_BYTES) -> bytes:
     """
     Export a container's filesystem as a tar archive.
 
-    args: id_or_name: str - The container id or name
+    args:
+        id_or_name: str - The container id or name
+        max_bytes: int - Abort with ValueError if the export exceeds this many bytes (defaults to 1 GiB)
     returns: bytes - The tar archive contents
     """
     container = _get_client().containers.get(id_or_name)
-    return b"".join(cast(Iterable[bytes], container.export()))
+    return join_bounded(cast(Iterable[bytes], container.export()), max_bytes, f"export of {id_or_name}")
 
 
 @mcp.tool()
-def get_container_archive(id_or_name: str, path: str) -> dict:
+def get_container_archive(id_or_name: str, path: str, max_bytes: int = MAX_PAYLOAD_BYTES) -> dict:
     """
     Retrieve a file or directory from a container as a tar archive.
 
     args:
         id_or_name: str - The container id or name
         path: str - Path inside the container
+        max_bytes: int - Abort with ValueError if the archive exceeds this many bytes (defaults to 1 GiB)
     returns: dict - Mapping with archive (bytes) and stat (dict) keys
     """
     container = _get_client().containers.get(id_or_name)
     stream, stat = container.get_archive(path)
-    return {"archive": b"".join(stream), "stat": stat}
+    return {"archive": join_bounded(stream, max_bytes, f"archive of {id_or_name}:{path}"), "stat": stat}
 
 
 @mcp.tool()
