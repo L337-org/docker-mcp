@@ -132,9 +132,9 @@ def test_buildx_build_cache_and_attestation_flags():
 
 def test_buildx_build_secret_and_ssh():
     with patch("tools.buildx.run_docker", return_value=_ok()) as run:
-        buildx_build(context=".", secret=["id=npmrc,src=~/.npmrc"], ssh=["default"])
+        buildx_build(context=".", secret=["id=npmrc,src=/home/user/.npmrc"], ssh=["default"])
     args = run.call_args.args[0]
-    assert args[args.index("--secret") + 1] == "id=npmrc,src=~/.npmrc"
+    assert args[args.index("--secret") + 1] == "id=npmrc,src=/home/user/.npmrc"
     assert args[args.index("--ssh") + 1] == "default"
 
 

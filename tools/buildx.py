@@ -103,8 +103,12 @@ def buildx_build(
         sbom: str - Shorthand for `--attest=type=sbom`; pass "true" or a config string
         provenance: str - Shorthand for `--attest=type=provenance`; pass "true", "false", or a config string
         attest: list[str] - Custom attestation specs (repeatable)
-        secret: list[str] - Secret specs (e.g. ["id=npmrc,src=~/.npmrc"])
-        ssh: list[str] - SSH agent socket / key specs (e.g. ["default"])
+        secret: list[str] - Secret specs (e.g. ["id=npmrc,src=/home/user/.npmrc"] or
+                            ["id=npmrc,env=NPM_TOKEN"]). Neither this tool nor the docker CLI
+                            expands `~` in `src=…`; use an absolute path or pre-expand via
+                            `pathlib.Path("~/.npmrc").expanduser()` before passing the spec.
+        ssh: list[str] - SSH agent socket / key specs (e.g. ["default"], which uses
+                         $SSH_AUTH_SOCK from the environment)
         timeout_seconds: float - Subprocess timeout (default 1800s)
     returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
     """
