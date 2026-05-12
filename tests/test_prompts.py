@@ -166,7 +166,9 @@ def test_recommend_base_image_uses_recommendations_and_verifies_with_compare():
     out = recommend_base_image("org/app:v1")
     assert "scout_recommendations" in out
     assert "scout_compare" in out
-    assert "registry_inspect_manifest" in out
+    # Manifest verification step must use buildx_imagetools_inspect (accepts a full ref),
+    # not registry_inspect_manifest (which strips tag/digest from `image`).
+    assert "buildx_imagetools_inspect" in out
 
 
 def test_inspect_multiarch_manifest_uses_buildx_imagetools_and_explains_replacement():

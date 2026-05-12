@@ -261,10 +261,9 @@ def plan_multiarch_build(image: str, platforms: str = "linux/amd64,linux/arm64",
     """
     Generate a plan for building and pushing a multi-platform image with buildx.
 
-    args:
-        image: str - Target image reference, e.g. "ghcr.io/org/app:v1"
-        platforms: str - Comma-separated platform list (default "linux/amd64,linux/arm64")
-        context: str - Build context path (default ".")
+    args: image: str - Target image reference, e.g. "ghcr.io/org/app:v1"
+    args: platforms: str - Comma-separated platform list (default "linux/amd64,linux/arm64")
+    args: context: str - Build context path (default ".")
     returns: str - A prompt instructing the agent to plan, build, and verify a multi-arch image
     """
     platforms_list = ", ".join(f'"{p.strip()}"' for p in platforms.split(",") if p.strip())
@@ -316,9 +315,8 @@ def compare_image_versions(old_image: str, new_image: str) -> str:
     """
     Generate a plan for comparing two image references via Scout.
 
-    args:
-        old_image: str - The baseline image reference
-        new_image: str - The candidate image reference
+    args: old_image: str - The baseline image reference
+    args: new_image: str - The candidate image reference
     returns: str - A prompt instructing the agent to compare and report
     """
     return (
@@ -353,7 +351,10 @@ def recommend_base_image(image: str) -> str:
         f'only_severity=["critical", "high"])` to confirm it actually resolves more CVEs than it '
         f"introduces. A refresh that fixes 3 highs and introduces 4 is not progress.\n"
         f"3. Verify the candidate exists on the registry and supports the platforms you build for: call "
-        f"`registry_inspect_manifest(image=<candidate>, reference=<tag>)` and check the platforms list.\n"
+        f"`buildx_imagetools_inspect(image=<candidate>, raw=True)` (which accepts a full ref like "
+        f"`python:3.13-slim`) and check the platforms list in the returned manifest. Avoid "
+        f"`registry_inspect_manifest` here — its `image` argument strips any `:tag`/`@digest`, so a full "
+        f"candidate ref would need to be split into separate `image` and `reference` arguments.\n"
         f"Report the recommended base, the CVEs it resolves, the CVEs it introduces (if any), and the "
         f"single-line Dockerfile change required. Do not modify any Dockerfile."
     )
@@ -395,10 +396,9 @@ def create_multiarch_manifest(target_tag: str, source_tags: str) -> str:
     Use this when reaching for `docker manifest create` + `docker manifest push` —
     `buildx_imagetools_create` does both in one step and handles OCI image indexes.
 
-    args:
-        target_tag: str - The new combined tag, e.g. "org/app:v1"
-        source_tags: str - Comma-separated source tags (each must already be pushed),
-                           e.g. "org/app:v1-amd64,org/app:v1-arm64"
+    args: target_tag: str - The new combined tag, e.g. "org/app:v1"
+    args: source_tags: str - Comma-separated source tags (each must already be pushed),
+                             e.g. "org/app:v1-amd64,org/app:v1-arm64"
     returns: str - A prompt instructing the agent to create and verify the manifest list
     """
     source_list = ", ".join(f'"{s.strip()}"' for s in source_tags.split(",") if s.strip())
