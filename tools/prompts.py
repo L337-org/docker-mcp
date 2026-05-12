@@ -254,3 +254,192 @@ def find_latest_image_tag(image: str) -> str:
         f"the user can sanity-check the image's provenance.\n"
         f"Report the recommended tag, its digest, and the supported platforms. Do not pull the image."
     )
+
+
+@mcp.prompt(description="Plan and run a multi-platform image build with buildx.")
+def plan_multiarch_build(image: str, platforms: str = "linux/amd64,linux/arm64", context: str = ".") -> str:
+    """
+    Generate a plan for building and pushing a multi-platform image with buildx.
+
+    args:
+        image: str - Target image reference, e.g. "ghcr.io/org/app:v1"
+        platforms: str - Comma-separated platform list (default "linux/amd64,linux/arm64")
+        context: str - Build context path (default ".")
+    returns: str - A prompt instructing the agent to plan, build, and verify a multi-arch image
+    """
+    platforms_list = ", ".join(f'"{p.strip()}"' for p in platforms.split(",") if p.strip())
+    return (
+        f"Build and push `{image}` for multiple platforms ({platforms}) using buildx:\n"
+        f"1. Call `buildx_ls` and confirm a non-`docker` driver is active (the default `docker` driver "
+        f"cannot do multi-platform; you need `docker-container` or another buildx driver). If only `docker` "
+        f"is available, call `buildx_create(name='multi', driver='docker-container', use=True, bootstrap=True)`.\n"
+        f'2. Call `buildx_imagetools_inspect(image="<base-image>", raw=True)` on each `FROM` reference to '
+        f"confirm every base image actually publishes the requested platforms — multi-arch builds silently "
+        f"fall back to slow QEMU emulation when a platform is missing.\n"
+        f'3. Call `buildx_build(context="{context}", tags=["{image}"], platforms=[{platforms_list}], '
+        f'push=True, provenance="mode=max", sbom="true")` to build, attest, and push in one step. The '
+        f"`--load` flag cannot be combined with multi-platform; results live only in the registry.\n"
+        f'4. After the build, call `buildx_imagetools_inspect(image="{image}", raw=True)` and confirm the '
+        f"published manifest list contains every requested platform.\n"
+        f"Surface any platform that was skipped or built via emulation before declaring success."
+    )
+
+
+@mcp.prompt(description="Audit an image's CVE posture with Docker Scout.")
+def audit_image_cves(image: str) -> str:
+    """
+    Generate a plan for walking through Scout's CVE reporting for an image.
+
+    args: image: str - Image reference to scan
+    returns: str - A prompt instructing the agent to scan, prioritize, and report
+    """
+    return (
+        f"Audit `{image}` for known vulnerabilities using Docker Scout:\n"
+        f'1. Call `scout_quickview(image="{image}")` first to get a one-screen summary of total CVE counts '
+        f"by severity. Stop here if everything is `0` and the user just needs reassurance.\n"
+        f'2. Call `scout_cves(image="{image}", only_severity=["critical", "high"], only_fixed=True)` to '
+        f"list actionable CVEs (high+critical with a fix available). Ignore lower-severity findings unless "
+        f"the user asks for them.\n"
+        f'3. Call `scout_cves(image="{image}", only_severity=["critical", "high"], ignore_base=True)` to '
+        f"separate CVEs introduced by the application image from those inherited from the base. CVEs that "
+        f"only appear in the unfiltered call are base-image issues — the right fix is a base bump, not a "
+        f"package patch.\n"
+        f"4. For each remaining CVE, report the package, installed version, fixed version, and CVE ID. "
+        f"Recommend the smallest patch that addresses the high-priority findings.\n"
+        f"Note: Scout's most useful data requires `docker login` on the host running this MCP server. If the "
+        f"output looks sparse, ask the user whether the host is authenticated."
+    )
+
+
+@mcp.prompt(description="Compare two image versions and report the CVE delta.")
+def compare_image_versions(old_image: str, new_image: str) -> str:
+    """
+    Generate a plan for comparing two image references via Scout.
+
+    args:
+        old_image: str - The baseline image reference
+        new_image: str - The candidate image reference
+    returns: str - A prompt instructing the agent to compare and report
+    """
+    return (
+        f"Compare `{old_image}` against `{new_image}` and report the security delta:\n"
+        f'1. Call `scout_compare(image="{new_image}", to="{old_image}", ignore_unchanged=True, '
+        f'only_severity=["critical", "high"])` to get the CVE diff filtered to actionable severities.\n'
+        f"2. Categorize the diff into:\n"
+        f"   - Resolved CVEs (present in old, absent in new)\n"
+        f"   - New CVEs (absent in old, present in new) — these are regressions worth flagging\n"
+        f"   - Carried-forward CVEs (unchanged)\n"
+        f"3. If there are new high/critical CVEs in the candidate, recommend whether to proceed, hold, "
+        f"or wait for a base-image refresh. Use `scout_recommendations` to check whether a different "
+        f"base tag would resolve them.\n"
+        f"Render the result as a short table; stop and ask before any rebuild or rollback."
+    )
+
+
+@mcp.prompt(description="Recommend a safer base image via Docker Scout.")
+def recommend_base_image(image: str) -> str:
+    """
+    Generate a plan for picking a better base image using Scout.
+
+    args: image: str - Image reference whose base should be reviewed
+    returns: str - A prompt instructing the agent to fetch and present recommendations
+    """
+    return (
+        f"Recommend a safer base image for `{image}`:\n"
+        f'1. Call `scout_recommendations(image="{image}")` to fetch Scout\'s base-image suggestions. '
+        f"Distinguish `refresh` recommendations (same major/minor, newer patches) from `update` "
+        f"recommendations (a different major/minor release).\n"
+        f'2. For each viable candidate base, call `scout_compare(image=<candidate>, to="{image}", '
+        f'only_severity=["critical", "high"])` to confirm it actually resolves more CVEs than it '
+        f"introduces. A refresh that fixes 3 highs and introduces 4 is not progress.\n"
+        f"3. Verify the candidate exists on the registry and supports the platforms you build for: call "
+        f"`registry_inspect_manifest(image=<candidate>, reference=<tag>)` and check the platforms list.\n"
+        f"Report the recommended base, the CVEs it resolves, the CVEs it introduces (if any), and the "
+        f"single-line Dockerfile change required. Do not modify any Dockerfile."
+    )
+
+
+@mcp.prompt(description="Inspect a multi-arch manifest list / OCI image index without pulling.")
+def inspect_multiarch_manifest(image: str) -> str:
+    """
+    Generate a plan for inspecting an image's manifest list.
+
+    Use this when reaching for `docker manifest inspect` — that command is in maintenance mode
+    and lacks support for OCI image indexes and attestations. `buildx_imagetools_inspect` is
+    the path forward.
+
+    args: image: str - Image reference (tag or digest), e.g. "alpine:3.19"
+    returns: str - A prompt instructing the agent to inspect and interpret the manifest
+    """
+    return (
+        f"Inspect the manifest for `{image}` without pulling it:\n"
+        f'1. Call `buildx_imagetools_inspect(image="{image}", raw=True)` to fetch the raw manifest JSON. '
+        f"This replaces `docker manifest inspect` and handles both single-platform manifests and "
+        f"multi-platform manifest lists / OCI image indexes.\n"
+        f"2. Identify the response shape:\n"
+        f"   - `application/vnd.oci.image.manifest.v1+json` or `…/docker.distribution.manifest.v2+json` "
+        f"=> single-platform image; report the architecture, OS, and layer count.\n"
+        f"   - `application/vnd.oci.image.index.v1+json` or `…/docker.distribution.manifest.list.v2+json` "
+        f"=> multi-platform index; report each entry's platform and digest.\n"
+        f"3. If the index also lists `attestation-manifest` entries (provenance / SBOM), call "
+        f"`buildx_imagetools_inspect` again on each attestation digest to surface those payloads.\n"
+        f"Render the result as a single table; do not pull or modify the image."
+    )
+
+
+@mcp.prompt(description="Create a multi-arch manifest list from existing per-platform tags.")
+def create_multiarch_manifest(target_tag: str, source_tags: str) -> str:
+    """
+    Generate a plan for stitching per-platform tags into a manifest list.
+
+    Use this when reaching for `docker manifest create` + `docker manifest push` —
+    `buildx_imagetools_create` does both in one step and handles OCI image indexes.
+
+    args:
+        target_tag: str - The new combined tag, e.g. "org/app:v1"
+        source_tags: str - Comma-separated source tags (each must already be pushed),
+                           e.g. "org/app:v1-amd64,org/app:v1-arm64"
+    returns: str - A prompt instructing the agent to create and verify the manifest list
+    """
+    source_list = ", ".join(f'"{s.strip()}"' for s in source_tags.split(",") if s.strip())
+    return (
+        f"Create the manifest list `{target_tag}` from {source_tags}:\n"
+        f"1. Confirm each source tag is already pushed to the registry by calling "
+        f"`buildx_imagetools_inspect` on each one — `imagetools create` only stitches; it cannot upload "
+        f"missing image layers.\n"
+        f'2. Call `buildx_imagetools_create(target="{target_tag}", sources=[{source_list}], dry_run=True)` '
+        f"first to print the resulting manifest without pushing. Show the user which platforms will be "
+        f"published under the combined tag.\n"
+        f"3. After the user approves, repeat without `dry_run` to actually push. This replaces the "
+        f"`docker manifest create && docker manifest push` pair in one operation.\n"
+        f'4. Verify with `buildx_imagetools_inspect(image="{target_tag}", raw=True)` that the published '
+        f"index contains every expected platform.\n"
+        f"Report the digest of the combined manifest at the end."
+    )
+
+
+@mcp.prompt(description="Translate `docker manifest …` commands into buildx imagetools equivalents.")
+def migrate_from_docker_manifest() -> str:
+    """
+    Generate a reference table mapping each `docker manifest` subcommand to its
+    buildx imagetools replacement. The standalone `docker manifest` command is in
+    maintenance mode and lacks support for OCI image indexes, attestations, and
+    annotations.
+
+    returns: str - A prompt the agent can hand to the user as a migration cheat-sheet
+    """
+    return (
+        "`docker manifest` is in maintenance mode. Use `buildx imagetools` for new work — it supports OCI "
+        "image indexes, attestations, and richer annotations.\n\n"
+        "Mapping:\n\n"
+        "| `docker manifest …`                  | This MCP server                          |\n"
+        "|--------------------------------------|------------------------------------------|\n"
+        "| `inspect REF`                        | `buildx_imagetools_inspect(REF)`         |\n"
+        "| `inspect --verbose REF`              | `buildx_imagetools_inspect(REF, raw=True)` |\n"
+        "| `create NEW SRC…` + `push NEW`       | `buildx_imagetools_create(NEW, [SRC…])` (push is implicit) |\n"
+        "| `create --amend NEW SRC…`            | `buildx_imagetools_create(NEW, [SRC…], append=True)` |\n"
+        "| `annotate NEW SRC --os/--arch/--variant` | `buildx_imagetools_create(NEW, [SRC…], annotations=[…])` (re-create from sources) |\n"
+        "| `push NEW`                           | Not needed — `buildx_imagetools_create` pushes |\n"
+        "| `rm NEW`                             | Not needed — `buildx_imagetools_create` overwrites |\n"
+        "\nWhen in doubt, run `buildx_imagetools_inspect(REF, raw=True)` first to see the current shape."
+    )

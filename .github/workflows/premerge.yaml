@@ -52,3 +52,49 @@ jobs:
 
       - name: Run ruff
         run: uvx ruff check .
+
+  integration-tests:
+    # Runs the suite gated by `-m integration` against the Docker daemon that
+    # ships pre-installed on ubuntu-latest runners. Skipped if the unit tests
+    # didn't pass — there's no point burning daemon time on a broken branch.
+    runs-on: [ubuntu-latest]
+    name: Run integration tests
+    needs: [pytest-run]
+    timeout-minutes: 20
+    steps:
+      - name: Check out source repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python environment
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install dependencies
+        run: uv sync --all-groups
+
+      - name: Verify Docker tooling on the runner
+        # ubuntu-latest ships Docker Engine + docker CLI + compose v2 + buildx.
+        # Scout is NOT pre-installed; tests skip cleanly via has_plugin().
+        run: |
+          docker version
+          docker info | head -20
+          docker compose version
+          docker buildx version
+          docker scout version 2>/dev/null || echo "scout not installed; scout integration tests will skip"
+
+      - name: Optional Docker Hub login to dodge anonymous rate limits
+        # Opt-in: set DOCKERHUB_USER / DOCKERHUB_TOKEN as repo secrets to authenticate.
+        # Without them, the job runs anonymous and the existing skip-on-pull-failure
+        # behaviour in the compose lifecycle test catches throttling.
+        if: ${{ env.DOCKERHUB_TOKEN != '' }}
+        env:
+          DOCKERHUB_USER: ${{ secrets.DOCKERHUB_USER }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: echo "$DOCKERHUB_TOKEN" | docker login --username "$DOCKERHUB_USER" --password-stdin
+
+      - name: Run integration tests
+        run: uv run pytest -m integration -v --tb=short

@@ -4,8 +4,10 @@
 # they work without a running daemon and without the docker CLI. Anonymous
 # (unauthenticated) access is used unless a username/password is supplied.
 
+import email.utils
 import re
-from typing import Any
+import time
+from typing import Any, NoReturn
 
 import httpx
 
@@ -16,6 +18,16 @@ _USER_AGENT = "docker-mcp/0.1"
 _HUB_API_BASE = "https://hub.docker.com/v2"
 _DEFAULT_REGISTRY = "registry-1.docker.io"
 _MAX_TAG_PAGES = 50  # cap on registry/Hub pagination follow-through
+
+# 429 rate-limit policy: if the registry tells us to wait this many seconds or less,
+# we sleep and transparently retry once. Anything longer is surfaced to the caller
+# so an agent / human can decide whether to back off rather than blocking inside a tool.
+_RATE_LIMIT_RETRY_THRESHOLD_SECONDS = 10.0
+
+# Errors emitted by email.utils.parsedate_to_datetime for non-date input. Bound to a
+# module-level tuple so ruff format leaves the `except` form alone — PEP 758 makes the
+# parentheses optional on Python 3.14, but we keep them for clarity to review bots.
+_RETRY_AFTER_PARSE_ERRORS: tuple[type[BaseException], ...] = (TypeError, ValueError)
 
 # Manifest media types we accept when inspecting a reference. The order matters:
 # clients with no preference get a manifest list first when one exists.
@@ -105,6 +117,68 @@ def _get_bearer_token(
     return token
 
 
+def _parse_retry_after(value: str | None) -> float | None:
+    """
+    Decode a `Retry-After` header (RFC 7231).
+
+    The value is either an integer number of seconds (``"30"``) or an HTTP-date
+    (``"Wed, 21 Oct 2026 07:28:00 GMT"``). Returns the delay in seconds, or None
+    if the header is missing or unparseable.
+    """
+    if not value:
+        return None
+    value = value.strip()
+    try:
+        return max(0.0, float(value))
+    except ValueError:
+        pass
+    try:
+        parsed = email.utils.parsedate_to_datetime(value)
+    except _RETRY_AFTER_PARSE_ERRORS:
+        return None
+    if parsed is None:
+        return None
+    delta = parsed.timestamp() - time.time()
+    return max(0.0, delta)
+
+
+def _raise_rate_limited(resp: httpx.Response, url: str) -> NoReturn:
+    retry_after = _parse_retry_after(resp.headers.get("Retry-After"))
+    suffix = f"; retry after ~{retry_after:.0f}s" if retry_after is not None else ""
+    raise RuntimeError(
+        f"Registry rate-limited (HTTP 429) for {url}{suffix}. Anonymous Docker Hub pulls are "
+        f"capped at ~100 requests / 6h per IP — authenticate with `docker login` (for SDK-backed "
+        f"tools) or pass `username`/`password` to `registry_list_tags` to raise the limit."
+    )
+
+
+def _get_with_429_policy(
+    client: httpx.Client,
+    url: str,
+    *,
+    headers: dict[str, str],
+    params: dict[str, str] | None = None,
+) -> httpx.Response:
+    """
+    Single GET that applies the project's 429 retry policy.
+
+    - On HTTP 429 with `Retry-After <= 10s`: sleep + retry once.
+    - On HTTP 429 with no Retry-After, or a longer delay, or a second 429: raise.
+    - Other status codes are returned as-is for the caller to handle.
+    """
+    resp = client.get(url, headers=headers, params=params)
+    if resp.status_code != 429:
+        return resp
+    retry_after = _parse_retry_after(resp.headers.get("Retry-After"))
+    if retry_after is None or retry_after > _RATE_LIMIT_RETRY_THRESHOLD_SECONDS:
+        _raise_rate_limited(resp, url)
+    time.sleep(retry_after)
+    resp = client.get(url, headers=headers, params=params)
+    if resp.status_code == 429:
+        _raise_rate_limited(resp, url)
+    return resp
+
+
 def _registry_get(
     registry: str,
     path: str,
@@ -114,20 +188,20 @@ def _registry_get(
     accept: str | None = None,
     timeout: float,
 ) -> httpx.Response:
-    """GET https://<registry>/<path>, transparently handling a Bearer 401 challenge."""
+    """GET https://<registry>/<path>, transparently handling a Bearer 401 challenge and 429 rate limits."""
     url = f"https://{registry}{path}"
     headers: dict[str, str] = {"User-Agent": _USER_AGENT}
     if accept:
         headers["Accept"] = accept
     with httpx.Client(timeout=timeout, follow_redirects=True) as client:
-        resp = client.get(url, headers=headers)
+        resp = _get_with_429_policy(client, url, headers=headers)
         if resp.status_code == 401:
             challenge = _parse_bearer_challenge(resp.headers.get("WWW-Authenticate", ""))
             if not challenge:
                 resp.raise_for_status()
             token = _get_bearer_token(client, challenge, username=username, password=password)
             headers["Authorization"] = f"Bearer {token}"
-            resp = client.get(url, headers=headers)
+            resp = _get_with_429_policy(client, url, headers=headers)
         resp.raise_for_status()
         return resp
 
@@ -286,7 +360,7 @@ def hub_list_tags(repository: str, limit: int = 100) -> dict:
     pages = 0
     with httpx.Client(timeout=_DEFAULT_TIMEOUT, follow_redirects=True) as client:
         while url and pages < _MAX_TAG_PAGES:
-            resp = client.get(url, headers={"User-Agent": _USER_AGENT})
+            resp = _get_with_429_policy(client, url, headers={"User-Agent": _USER_AGENT})
             resp.raise_for_status()
             body = resp.json()
             for entry in body.get("results", []) or []:
@@ -321,11 +395,8 @@ def hub_repo_info(repository: str) -> dict:
                     pull_count, last_updated, is_private, etc.)
     """
     repo = _hub_normalize(repository)
-    resp = httpx.get(
-        f"{_HUB_API_BASE}/repositories/{repo}/",
-        timeout=_DEFAULT_TIMEOUT,
-        headers={"User-Agent": _USER_AGENT},
-        follow_redirects=True,
-    )
+    url = f"{_HUB_API_BASE}/repositories/{repo}/"
+    with httpx.Client(timeout=_DEFAULT_TIMEOUT, follow_redirects=True) as client:
+        resp = _get_with_429_policy(client, url, headers={"User-Agent": _USER_AGENT})
     resp.raise_for_status()
     return resp.json()

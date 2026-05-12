@@ -1,13 +1,20 @@
 from tools.prompts import (
     audit_docker_contexts,
+    audit_image_cves,
     clean_environment,
+    compare_image_versions,
+    create_multiarch_manifest,
     deploy_compose_project,
     deploy_container,
     find_latest_image_tag,
+    inspect_multiarch_manifest,
     inspect_stack,
     lookup_docker_docs,
     migrate_container,
+    migrate_from_docker_manifest,
     plan_compose_stack,
+    plan_multiarch_build,
+    recommend_base_image,
     troubleshoot_compose_project,
     troubleshoot_container,
     verify_docker_method,
@@ -118,3 +125,75 @@ def test_find_latest_image_tag_uses_registry_tools():
     assert "registry_inspect_manifest" in out
     assert "hub_repo_info" in out
     assert "do not pull" in out.lower()
+
+
+def test_plan_multiarch_build_uses_buildx_and_emulation_warning():
+    out = plan_multiarch_build("ghcr.io/org/app:v1", platforms="linux/amd64,linux/arm64")
+    assert "ghcr.io/org/app:v1" in out
+    assert "buildx_ls" in out
+    assert "buildx_imagetools_inspect" in out
+    assert "buildx_build" in out
+    assert "linux/amd64" in out and "linux/arm64" in out
+    assert "emulation" in out.lower()
+
+
+def test_plan_multiarch_build_creates_docker_container_when_no_buildx_driver():
+    out = plan_multiarch_build("ghcr.io/org/app:v1")
+    assert "buildx_create" in out
+    assert "docker-container" in out
+
+
+def test_audit_image_cves_walks_quickview_then_cves():
+    out = audit_image_cves("alpine:3.19")
+    assert "alpine:3.19" in out
+    # quickview first, then drill in
+    assert out.index("scout_quickview") < out.index("scout_cves")
+    # Should mention severity filtering AND base separation
+    assert "critical" in out.lower()
+    assert "ignore_base" in out
+
+
+def test_compare_image_versions_uses_scout_compare():
+    out = compare_image_versions("org/app:v1", "org/app:v2")
+    assert "org/app:v1" in out
+    assert "org/app:v2" in out
+    assert "scout_compare" in out
+    assert "ignore_unchanged" in out
+    assert "regression" in out.lower()
+
+
+def test_recommend_base_image_uses_recommendations_and_verifies_with_compare():
+    out = recommend_base_image("org/app:v1")
+    assert "scout_recommendations" in out
+    assert "scout_compare" in out
+    assert "registry_inspect_manifest" in out
+
+
+def test_inspect_multiarch_manifest_uses_buildx_imagetools_and_explains_replacement():
+    out = inspect_multiarch_manifest("alpine:3.19")
+    assert "alpine:3.19" in out
+    assert "buildx_imagetools_inspect" in out
+    # The prompt must explain it replaces docker manifest inspect for discovery.
+    assert "docker manifest inspect" in out
+    # Should mention both image index and manifest list media types.
+    assert "image.index" in out or "manifest.list" in out
+
+
+def test_create_multiarch_manifest_dry_run_first():
+    out = create_multiarch_manifest("org/app:v1", "org/app:v1-amd64,org/app:v1-arm64")
+    assert "org/app:v1" in out
+    assert "buildx_imagetools_create" in out
+    assert "dry_run" in out
+    # Dry-run before live push
+    assert out.index("dry_run=True") < out.lower().rindex("approves")
+
+
+def test_migrate_from_docker_manifest_returns_mapping_table():
+    out = migrate_from_docker_manifest()
+    # Must mention each docker manifest subcommand and its replacement.
+    for cmd in ("inspect REF", "create NEW SRC", "annotate", "push NEW", "rm NEW"):
+        assert cmd in out
+    assert "buildx_imagetools_inspect" in out
+    assert "buildx_imagetools_create" in out
+    # And explain the why
+    assert "maintenance mode" in out.lower()

@@ -55,7 +55,9 @@ Once loaded, the agent gets MCP tools grouped by Docker domain. A few examples:
 - **System** — `ping`, `info`, `version`, `df`, `events`
 - **Compose** — `compose_up`, `compose_down`, `compose_ps`, `compose_logs`, `compose_config`, `compose_build`, `compose_pull`, `compose_run`, `compose_exec`, `compose_ls` *(wraps the `docker compose` CLI plugin)*
 - **Contexts** — `context_ls`, `context_inspect`, `context_create`, `context_use`, `context_rm` *(wraps the `docker context` CLI)*
-- **Registry / Hub** — `registry_list_tags`, `registry_inspect_manifest`, `hub_list_tags`, `hub_repo_info` *(HTTPS to OCI v2 registries and the Docker Hub API — no daemon required)*
+- **Registry / Hub** — `registry_list_tags`, `registry_inspect_manifest`, `hub_list_tags`, `hub_repo_info` *(HTTPS to OCI v2 registries and the Docker Hub API — no daemon required; transparent retry on a brief 429)*
+- **Buildx** — `buildx_build`, `buildx_bake`, `buildx_imagetools_inspect`, `buildx_imagetools_create`, `buildx_ls`, `buildx_inspect`, `buildx_du`, `buildx_prune`, `buildx_create`, `buildx_use`, `buildx_rm` *(wraps the `docker buildx` CLI plugin). Use `buildx_imagetools_*` in place of `docker manifest` — that command is in maintenance mode and lacks support for OCI image indexes and attestations.*
+- **Scout** — `scout_cves`, `scout_quickview`, `scout_recommendations`, `scout_compare`, `scout_sbom` *(wraps the `docker scout` CLI plugin; most features benefit from `docker login` on the host running this server).*
 
 The SDK-backed surface mirrors the [Docker SDK reference](https://docker-py.readthedocs.io/en/stable/) — if it's documented there, it's available here. The Compose and Context surfaces follow the [Compose CLI](https://docs.docker.com/reference/cli/docker/compose/) and [docker context](https://docs.docker.com/reference/cli/docker/context/) references.
 
@@ -97,6 +99,18 @@ Many AI clients let you invoke registered MCP prompts directly (in Claude Code, 
 /find_latest_image_tag image=ghcr.io/org/repo
 ```
 
+**Buildx, Scout, and multi-arch manifests**
+
+```
+/plan_multiarch_build image=ghcr.io/org/app:v1 platforms=linux/amd64,linux/arm64
+/audit_image_cves image=alpine:3.19
+/compare_image_versions old_image=org/app:v1 new_image=org/app:v2
+/recommend_base_image image=org/app:v1
+/inspect_multiarch_manifest image=alpine:3.19
+/create_multiarch_manifest target_tag=org/app:v1 source_tags=org/app:v1-amd64,org/app:v1-arm64
+/migrate_from_docker_manifest
+```
+
 …or in plain English:
 
 > Pull `redis:7-alpine` and run it as a container called `cache` on a new `app-net` network, exposing port 6379 only inside that network.
@@ -120,7 +134,7 @@ Connecting this server to an AI agent grants it the same level of access as a lo
   - **HTTPS-backed registry tools** (`registry_list_tags`, `registry_inspect_manifest`, `hub_list_tags`, `hub_repo_info`) talk to the registry directly over HTTPS and do NOT read `~/.docker/config.json`. The `registry_*` tools accept `username` / `password` for private registries; the `hub_*` tools currently support public Hub repositories only. Use a per-invocation token with the minimum required scope rather than a long-lived password.
 - **`exec_in_container`, `compose_exec`, and `compose_run` run arbitrary commands.** When any part of the command is derived from agent-controlled input, use an exec-form argv list that does not invoke a shell (e.g. `["python", "-V"]`). A list like `["sh", "-c", template]` that invokes a shell will interpret shell metacharacters in the untrusted substrings.
 - **Container archive paths.** `get_container_archive` and `put_container_archive` forward the supplied path verbatim to the daemon. The container is the trust boundary — if you do not trust its filesystem, do not assume `..` traversal will be rejected.
-- **Destructive operations have no built-in confirmation.** `prune_*`, `remove_*`, `kill_container`, `leave_swarm`, and `compose_down(volumes=True)` execute immediately. The shipped `clean_environment` prompt asks the agent to confirm before pruning volumes, but tool calls themselves are not gated. If you need an approval step, configure it at the MCP client (e.g. Claude Code's permission prompts) rather than relying on the server.
+- **Destructive operations have no built-in confirmation.** `prune_*`, `remove_*`, `kill_container`, `leave_swarm`, `compose_down(volumes=True)`, `buildx_prune` (always runs with `--force`), and `buildx_rm` execute immediately. The shipped `clean_environment` prompt asks the agent to confirm before pruning volumes, but tool calls themselves are not gated. If you need an approval step, configure it at the MCP client (e.g. Claude Code's permission prompts) rather than relying on the server.
 - **CLI shell-out attack surface.** Compose and Context tools spawn `docker` subprocesses on the host running this MCP server. Every invocation passes arguments as a list (no shell, no metacharacter interpretation), resolves the binary via `shutil.which`, and runs against a scrubbed environment (DOCKER_HOST and related vars only). Filesystem paths supplied to `compose_*` (project_dir, files) are read by the docker CLI on the server host — passing an unfamiliar path can expose any compose file the server's user can read.
 - **Docker Context retargeting.** `context_use` only changes the CLI default for subsequent CLI-backed tools. SDK-backed tools (`list_containers`, `pull_image`, etc.) keep using whatever daemon the docker-py client connected to at server startup. Restart the server with a different `DOCKER_HOST` / `DOCKER_CONTEXT` to retarget those. `context_create(skip_tls_verify=True)` disables TLS verification for a context; use only against trusted local daemons.
 
@@ -150,6 +164,8 @@ Contributions are welcome. The project values a tight mapping between the Docker
 │   ├── plugins.py
 │   ├── compose.py     # `docker compose` CLI plugin (shells out via _cli.py)
 │   ├── context.py     # `docker context` CLI (shells out via _cli.py)
+│   ├── buildx.py      # `docker buildx` CLI plugin (shells out via _cli.py)
+│   ├── scout.py       # `docker scout` CLI plugin (shells out via _cli.py)
 │   ├── registry.py    # OCI v2 registries + Docker Hub HTTPS APIs (no daemon)
 │   ├── prompts.py     # @mcp.prompt() templates for common docker workflows
 │   └── resources.py   # @mcp.resource() endpoints exposing SDK + CLI + registry docs
