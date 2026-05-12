@@ -1,4 +1,4 @@
-# library of mcp resources for viewing the docker SDK documentation
+# library of mcp resources for viewing docker SDK and CLI-feature documentation
 
 import json
 import urllib.request
@@ -7,7 +7,9 @@ from server import mcp
 
 DOCKER_DOCS_BASE_URL = "https://docker-py.readthedocs.io/en/stable"
 
-DOCS_SECTIONS = (
+# Sections served from the docker-py SDK documentation. Each maps to
+# DOCKER_DOCS_BASE_URL/<section>.html for backwards compatibility.
+SDK_SECTIONS: tuple[str, ...] = (
     "index",
     "client",
     "containers",
@@ -22,19 +24,48 @@ DOCS_SECTIONS = (
     "plugins",
 )
 
+# Sections served from external documentation sources (not docker-py). These cover the
+# functionality that this MCP server exposes via the docker CLI or by talking to a
+# registry directly, which the SDK does not document.
+EXTERNAL_SECTIONS: dict[str, str] = {
+    "compose": "https://docs.docker.com/compose/intro/compose-application-model/",
+    "compose-cli": "https://docs.docker.com/reference/cli/docker/compose/",
+    "compose-file": "https://docs.docker.com/reference/compose-file/",
+    "context": "https://docs.docker.com/engine/manage-resources/contexts/",
+    "context-cli": "https://docs.docker.com/reference/cli/docker/context/",
+    "registry-api": "https://distribution.github.io/distribution/spec/api/",
+    "oci-distribution-spec": "https://github.com/opencontainers/distribution-spec/blob/main/spec.md",
+    "hub-api": "https://docs.docker.com/reference/api/hub/latest/",
+}
+
+
+def _section_url(section: str) -> str:
+    if section in SDK_SECTIONS:
+        return f"{DOCKER_DOCS_BASE_URL}/{section}.html"
+    if section in EXTERNAL_SECTIONS:
+        return EXTERNAL_SECTIONS[section]
+    raise ValueError(f"Unknown documentation section '{section}'. Read docker-docs://contents to list valid sections.")
+
 
 @mcp.resource("docker-docs://contents", mime_type="application/json")
 def list_docs_sections() -> str:
     """
-    List the available Docker SDK documentation sections.
+    List the available documentation sections.
 
-    returns: str - JSON describing the base URL and the available section names
+    returns: str - JSON describing each section's source URL and how to read it
     """
+    sections = {section: f"{DOCKER_DOCS_BASE_URL}/{section}.html" for section in SDK_SECTIONS}
+    sections.update(EXTERNAL_SECTIONS)
     return json.dumps(
         {
-            "base_url": DOCKER_DOCS_BASE_URL,
-            "sections": list(DOCS_SECTIONS),
-            "usage": "Read docker-docs://<section> to fetch the documentation page for that section.",
+            "sdk_base_url": DOCKER_DOCS_BASE_URL,
+            "sections": sections,
+            "usage": (
+                "Read docker-docs://<section> to fetch the documentation for that section. "
+                "Sections under sdk_base_url cover the Docker SDK for Python; the remaining "
+                "sections cover docker CLI features (compose, context) and registry HTTP APIs "
+                "(OCI distribution spec, Docker Hub) that this server exposes outside the SDK."
+            ),
         },
         indent=2,
     )
@@ -43,15 +74,11 @@ def list_docs_sections() -> str:
 @mcp.resource("docker-docs://{section}", mime_type="text/html")
 def get_docs_section(section: str) -> str:
     """
-    Fetch the Docker SDK for Python documentation page for a section.
+    Fetch the documentation page for a section.
 
-    args: section: str - Section name (e.g. "containers", "images", "swarm")
-    returns: str - The HTML content of the documentation page
+    args: section: str - Section name from `docker-docs://contents`
+    returns: str - The HTML (or rendered Markdown) content of the documentation page
     """
-    if section not in DOCS_SECTIONS:
-        raise ValueError(
-            f"Unknown documentation section '{section}'. Read docker-docs://contents to list valid sections."
-        )
-    url = f"{DOCKER_DOCS_BASE_URL}/{section}.html"
-    with urllib.request.urlopen(url) as response:
-        return response.read().decode("utf-8")
+    url = _section_url(section)
+    with urllib.request.urlopen(url) as response:  # noqa: S310 — URL is built from a static allow-list
+        return response.read().decode("utf-8", errors="replace")
