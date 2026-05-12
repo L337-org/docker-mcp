@@ -52,3 +52,56 @@ jobs:
 
       - name: Run ruff
         run: uvx ruff check .
+
+  integration-tests:
+    # Runs the suite gated by `-m integration` against the Docker daemon that
+    # ships pre-installed on ubuntu-latest runners. Skipped if the unit tests
+    # didn't pass — there's no point burning daemon time on a broken branch.
+    runs-on: [ubuntu-latest]
+    name: Run integration tests
+    needs: [pytest-run]
+    timeout-minutes: 20
+    # The Hub-login step below gates on `env.DOCKERHUB_TOKEN`, which means the env
+    # var needs to be resolved by the time the step `if:` is evaluated. Step-scoped
+    # `env:` is set up too late for that, so we hoist the values to job-level env
+    # (which IS resolved before any step `if:` runs). Referencing `secrets.*`
+    # directly in the step `if:` is rejected at workflow-validation time with
+    # "Unrecognized named-value: 'secrets'", so this hoist is the only working
+    # shape for an opt-in-via-secret gate.
+    env:
+      DOCKERHUB_USER: ${{ secrets.DOCKERHUB_USER }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+    steps:
+      - name: Check out source repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python environment
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install dependencies
+        run: uv sync --all-groups
+
+      - name: Verify Docker tooling on the runner
+        # ubuntu-latest ships Docker Engine + docker CLI + compose v2 + buildx.
+        # Scout is NOT pre-installed; tests skip cleanly via has_plugin().
+        run: |
+          docker version
+          docker info | head -20
+          docker compose version
+          docker buildx version
+          docker scout version 2>/dev/null || echo "scout not installed; scout integration tests will skip"
+
+      - name: Optional Docker Hub login to dodge anonymous rate limits
+        # Opt-in: set DOCKERHUB_USER / DOCKERHUB_TOKEN as repo secrets to authenticate.
+        # Without them, the job runs anonymous and the existing skip-on-pull-failure
+        # behaviour in the compose lifecycle test catches throttling.
+        if: ${{ env.DOCKERHUB_TOKEN != '' && env.DOCKERHUB_USER != '' }}
+        run: echo "$DOCKERHUB_TOKEN" | docker login --username "$DOCKERHUB_USER" --password-stdin
+
+      - name: Run integration tests
+        run: uv run pytest -m integration -v --tb=short

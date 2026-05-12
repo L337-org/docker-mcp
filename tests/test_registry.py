@@ -312,15 +312,145 @@ def test_hub_repo_info_returns_body():
         "pull_count": 999999999,
         "is_private": False,
     }
-    with patch("tools.registry.httpx.get") as fake_get:
-        fake_get.return_value = httpx.Response(
+    seen_urls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_urls.append(str(request.url))
+        return httpx.Response(
             200,
             content=json.dumps(expected).encode(),
-            request=httpx.Request("GET", "https://hub.docker.com/v2/repositories/library/alpine/"),
             headers={"Content-Type": "application/json"},
         )
+
+    with _mock_client(handler):
         result = hub_repo_info("alpine")
     assert result == expected
-    fake_get.assert_called_once()
-    called_url = fake_get.call_args.args[0]
-    assert called_url == "https://hub.docker.com/v2/repositories/library/alpine/"
+    assert seen_urls == ["https://hub.docker.com/v2/repositories/library/alpine/"]
+
+
+# ---------- 429 rate-limit policy ----------
+
+
+def test_registry_list_tags_retries_once_on_short_retry_after():
+    calls: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(1)
+        if len(calls) == 1:
+            return httpx.Response(429, headers={"Retry-After": "0"})
+        return httpx.Response(200, json={"tags": ["v1", "v2"]})
+
+    with _mock_client(handler):
+        result = registry_list_tags("alpine")
+
+    assert result["tags"] == ["v1", "v2"]
+    assert len(calls) == 2
+
+
+def test_registry_list_tags_raises_when_retry_after_is_long():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(429, headers={"Retry-After": "3600"})
+
+    with _mock_client(handler):
+        with pytest.raises(RuntimeError, match="rate-limited.*retry after ~3600s") as excinfo:
+            registry_list_tags("alpine")
+    # Default registry is Docker Hub — message should mention the Hub-specific cap.
+    assert "Docker Hub" in str(excinfo.value)
+
+
+def test_registry_list_tags_message_is_generic_for_non_hub_registry():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(429, headers={"Retry-After": "3600"})
+
+    with _mock_client(handler):
+        with pytest.raises(RuntimeError, match="rate-limited") as excinfo:
+            registry_list_tags("ghcr.io/org/repo")
+    # GHCR is not Docker Hub — the Hub-specific guidance must not appear; the
+    # registry-agnostic hint about authenticating should.
+    msg = str(excinfo.value)
+    assert "Docker Hub" not in msg
+    assert "authenticate" in msg.lower()
+
+
+def test_registry_list_tags_raises_when_retry_after_missing():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(429)
+
+    with _mock_client(handler):
+        with pytest.raises(RuntimeError, match="rate-limited"):
+            registry_list_tags("alpine")
+
+
+def test_registry_list_tags_raises_on_second_429_after_retry():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(429, headers={"Retry-After": "0"})
+
+    with _mock_client(handler):
+        with pytest.raises(RuntimeError, match="rate-limited"):
+            registry_list_tags("alpine")
+
+
+def test_hub_list_tags_applies_429_policy():
+    calls: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(1)
+        if len(calls) == 1:
+            return httpx.Response(429, headers={"Retry-After": "0"})
+        return httpx.Response(200, json={"next": None, "results": [{"name": "v1"}]})
+
+    with _mock_client(handler):
+        result = hub_list_tags("alpine")
+
+    assert [t["name"] for t in result["tags"]] == ["v1"]
+    assert len(calls) == 2
+
+
+def test_hub_repo_info_applies_429_policy():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(429, headers={"Retry-After": "3600"})
+
+    with _mock_client(handler):
+        with pytest.raises(RuntimeError, match="rate-limited"):
+            hub_repo_info("alpine")
+
+
+def test_parse_retry_after_seconds():
+    from tools.registry import _parse_retry_after
+
+    assert _parse_retry_after("0") == 0.0
+    assert _parse_retry_after("30") == 30.0
+    assert _parse_retry_after("  5  ") == 5.0
+
+
+def test_parse_retry_after_http_date_in_future():
+    from tools.registry import _parse_retry_after
+
+    # An HTTP date far in the future should produce a positive value (the absolute number
+    # depends on the wall clock, so only assert ordering).
+    result = _parse_retry_after("Wed, 21 Oct 2099 07:28:00 GMT")
+    assert result is not None
+    assert result > 1000
+
+
+def test_parse_retry_after_treats_naive_date_as_utc():
+    """RFC 7231 says HTTP-dates are UTC. `-0000` parses to a naive datetime; we must
+    treat it as UTC rather than letting `.timestamp()` re-interpret in local time."""
+    from tools.registry import _parse_retry_after
+
+    # `-0000` is the only HTTP-date timezone notation that produces a naive datetime
+    # out of email.utils.parsedate_to_datetime. The same wall-clock moment expressed
+    # as `-0000` and `+0000` must yield the same delay value.
+    naive = _parse_retry_after("Wed, 21 Oct 2099 07:28:00 -0000")
+    aware = _parse_retry_after("Wed, 21 Oct 2099 07:28:00 +0000")
+    assert naive is not None and aware is not None
+    # Allow a 1s slack because two calls to time.time() bracket the math.
+    assert abs(naive - aware) < 1.0
+
+
+def test_parse_retry_after_invalid_returns_none():
+    from tools.registry import _parse_retry_after
+
+    assert _parse_retry_after(None) is None
+    assert _parse_retry_after("") is None
+    assert _parse_retry_after("not a date or number") is None

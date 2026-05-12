@@ -67,7 +67,9 @@ Each file maps to one Docker SDK domain (or, for CLI-only and registry-only feat
 | `tools/swarm.py` | Swarm init, join, leave | docker-py |
 | `tools/compose.py` | Docker Compose v2 | `docker compose` CLI via `_cli.py` |
 | `tools/context.py` | Docker CLI contexts | `docker context` CLI via `_cli.py` |
-| `tools/registry.py` | OCI v2 registries + Docker Hub | HTTPS via `httpx` (no daemon) |
+| `tools/buildx.py` | Buildx / BuildKit (multi-arch builds, imagetools — supersedes `docker manifest`) | `docker buildx` CLI via `_cli.py` |
+| `tools/scout.py` | Vulnerability scanning, SBOMs, base-image recommendations | `docker scout` CLI via `_cli.py` |
+| `tools/registry.py` | OCI v2 registries + Docker Hub (with 429 retry policy) | HTTPS via `httpx` (no daemon) |
 | `tools/prompts.py` | `@mcp.prompt()` workflow templates | — |
 | `tools/resources.py` | `@mcp.resource()` doc endpoints | — |
 

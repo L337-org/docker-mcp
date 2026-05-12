@@ -1,5 +1,6 @@
 # library of MCP tools for managing docker
 
+from tools.buildx import *
 from tools.client import *
 from tools.compose import *
 from tools.configs import *
@@ -12,6 +13,7 @@ from tools.plugins import *
 from tools.prompts import *
 from tools.registry import *
 from tools.resources import *
+from tools.scout import *
 from tools.secrets import *
 from tools.services import *
 from tools.swarm import *

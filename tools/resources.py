@@ -36,6 +36,11 @@ EXTERNAL_SECTIONS: dict[str, str] = {
     "registry-api": "https://distribution.github.io/distribution/spec/api/",
     "oci-distribution-spec": "https://github.com/opencontainers/distribution-spec/blob/main/spec.md",
     "hub-api": "https://docs.docker.com/reference/api/hub/latest/",
+    "buildx": "https://docs.docker.com/build/builders/",
+    "buildx-cli": "https://docs.docker.com/reference/cli/docker/buildx/",
+    "buildx-bake": "https://docs.docker.com/build/bake/reference/",
+    "scout": "https://docs.docker.com/scout/",
+    "scout-cli": "https://docs.docker.com/reference/cli/docker/scout/",
 }
 
 
