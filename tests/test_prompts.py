@@ -1,10 +1,14 @@
 from tools.prompts import (
+    audit_docker_contexts,
     clean_environment,
+    deploy_compose_project,
     deploy_container,
+    find_latest_image_tag,
     inspect_stack,
     lookup_docker_docs,
     migrate_container,
     plan_compose_stack,
+    troubleshoot_compose_project,
     troubleshoot_container,
     verify_docker_method,
 )
@@ -72,3 +76,45 @@ def test_plan_compose_stack_requires_plan_before_actions():
     assert "wordpress with mysql" in out
     assert out.index("plan") < out.index("create_network")
     assert "approve" in out.lower()
+
+
+def test_deploy_compose_project_includes_config_pull_up_ps_logs_in_order():
+    out = deploy_compose_project("/tmp/myproj", project_name="demo")
+    assert "/tmp/myproj" in out
+    assert "demo" in out
+    # The plan must inspect the config before mutating anything.
+    assert out.index("compose_config") < out.index("compose_up")
+    # And pull before up so failures surface early.
+    assert out.index("compose_pull") < out.index("compose_up")
+    assert out.index("compose_up") < out.index("compose_ps")
+    assert out.index("compose_ps") < out.index("compose_logs")
+    # Should warn about destructive teardown flags.
+    assert "--volumes" in out
+
+
+def test_deploy_compose_project_without_project_name_omits_arg():
+    out = deploy_compose_project("/tmp/myproj")
+    assert 'project_name="' not in out
+
+
+def test_troubleshoot_compose_project_gathers_state_first():
+    out = troubleshoot_compose_project("/tmp/myproj")
+    assert "/tmp/myproj" in out
+    assert out.index("compose_ps") < out.index("compose_logs")
+    assert "root cause" in out.lower()
+
+
+def test_audit_docker_contexts_lists_then_confirms():
+    out = audit_docker_contexts()
+    assert "context_ls" in out
+    assert out.index("context_ls") < out.index("info")
+    assert "docker-py" in out.lower() or "sdk" in out.lower()
+
+
+def test_find_latest_image_tag_uses_registry_tools():
+    out = find_latest_image_tag("ghcr.io/org/repo")
+    assert "ghcr.io/org/repo" in out
+    assert "registry_list_tags" in out
+    assert "registry_inspect_manifest" in out
+    assert "hub_repo_info" in out
+    assert "do not pull" in out.lower()

@@ -160,3 +160,97 @@ def plan_compose_stack(description: str) -> str:
         f"`create_network`, `create_volume`, `pull_image`, and `run_container`. End with `list_containers` "
         f"showing the running stack."
     )
+
+
+@mcp.prompt(description="Bring up a Docker Compose project and verify it's healthy.")
+def deploy_compose_project(project_dir: str, project_name: str | None = None) -> str:
+    """
+    Generate a plan for bringing up a compose project safely.
+
+    args: project_dir: str - Filesystem path to the directory containing the compose file
+    args: project_name: str - Optional compose project name override (defaults to the dir name)
+    returns: str - A prompt instructing the agent to validate, deploy, and verify the project
+    """
+    name_clause = f" with project name `{project_name}`" if project_name else ""
+    project_name_arg = f', project_name="{project_name}"' if project_name else ""
+    return (
+        f"Bring up the Docker Compose project at `{project_dir}`{name_clause}:\n"
+        f'1. Call `compose_config(project_dir="{project_dir}"{project_name_arg}, format="json")` to render '
+        f"the resolved config. Show the user which services, networks, and volumes will be created and ask for "
+        f"approval before touching the daemon. Flag any service that declares `privileged: true`, host bind "
+        f"mounts that escape the project, or env that looks like a secret.\n"
+        f'2. After approval, call `compose_pull(project_dir="{project_dir}"{project_name_arg})` to fetch images '
+        f"upfront so failures surface before containers start.\n"
+        f'3. Call `compose_up(project_dir="{project_dir}"{project_name_arg}, wait=True)` so the call blocks '
+        f"until services are healthy (or fails fast if a healthcheck is failing).\n"
+        f"4. Verify with `compose_ps` that every service is in `running` state.\n"
+        f"5. Tail recent logs with `compose_logs(tail=100)` and report anything that looks like an error.\n"
+        f"Stop and ask before adding `--volumes` to a later `compose_down` — that removes persistent data."
+    )
+
+
+@mcp.prompt(description="Diagnose a misbehaving Docker Compose project.")
+def troubleshoot_compose_project(project_dir: str, project_name: str | None = None) -> str:
+    """
+    Generate a diagnostic plan for a compose project that isn't behaving.
+
+    args: project_dir: str - Filesystem path to the directory containing the compose file
+    args: project_name: str - Optional compose project name override
+    returns: str - A prompt instructing the agent to gather state and identify the root cause
+    """
+    project_name_arg = f', project_name="{project_name}"' if project_name else ""
+    return (
+        f"Diagnose the Docker Compose project at `{project_dir}`:\n"
+        f'1. Call `compose_ps(project_dir="{project_dir}"{project_name_arg}, all=True)` to capture which '
+        f"services are running, exited, or restarting. Note exit codes.\n"
+        f"2. For every service that is not `running`, call `compose_logs(services=[<name>], tail=200, "
+        f"timestamps=True)` and look for the last error line.\n"
+        f'3. Call `compose_config(format="json")` to confirm the rendered config matches expectations '
+        f"(healthcheck, depends_on, env, volumes).\n"
+        f"4. If a service depends on another via `depends_on` with `condition: service_started`, check the "
+        f"dependency's healthcheck state — a missing healthcheck means `started` only confirms the process "
+        f"began, not that it's accepting connections.\n"
+        f"Summarize the root cause in one paragraph and propose a fix (config edit, image change, network "
+        f"adjustment) before changing anything."
+    )
+
+
+@mcp.prompt(description="Review available Docker contexts and the one this MCP server is targeting.")
+def audit_docker_contexts() -> str:
+    """
+    Generate a plan for inventorying contexts and confirming the daemon target.
+
+    returns: str - A prompt instructing the agent to enumerate contexts and confirm the active target
+    """
+    return (
+        "Audit the Docker context configuration on this host:\n"
+        "1. Call `context_ls` and present the table of contexts (name, current, daemon endpoint, description).\n"
+        "2. Highlight which context is `Current=true`. That's the one the docker CLI uses, but note that the\n"
+        "   long-lived docker-py client behind SDK-backed tools (e.g. `list_containers`) was bound at server\n"
+        "   startup — it does not retarget when `context_use` is called later.\n"
+        "3. Call `info` and report `Name`, `ServerVersion`, and `OperatingSystem`. Compare against the\n"
+        "   `DockerEndpoint` of the current context.\n"
+        "4. If multiple contexts point at different hosts, ask the user whether the active one is the\n"
+        "   intended target before any mutating operation."
+    )
+
+
+@mcp.prompt(description="Find the latest tag for an image without pulling it.")
+def find_latest_image_tag(image: str) -> str:
+    """
+    Generate a plan for picking the right tag of an image from a registry.
+
+    args: image: str - Image reference, e.g. "alpine", "ghcr.io/org/repo"
+    returns: str - A prompt instructing the agent to query the registry and recommend a tag
+    """
+    return (
+        f"Find the most appropriate tag for `{image}` without pulling it:\n"
+        f'1. Call `registry_list_tags(image="{image}", limit=200)` to enumerate available tags.\n'
+        f"2. Filter out floating tags (`latest`, `edge`, `nightly`) and pre-release suffixes (`-rc`, `-beta`, "
+        f"`-alpha`). Pick the highest stable semantic-version tag.\n"
+        f'3. Call `registry_inspect_manifest(image="{image}", reference=<picked-tag>)` to confirm the tag '
+        f"exists and capture the digest. If the response is an OCI image index, list the supported platforms.\n"
+        f"4. If `{image}` is a Docker Hub image, also call `hub_repo_info` to surface star and pull counts so "
+        f"the user can sanity-check the image's provenance.\n"
+        f"Report the recommended tag, its digest, and the supported platforms. Do not pull the image."
+    )
