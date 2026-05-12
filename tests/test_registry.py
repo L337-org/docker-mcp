@@ -352,8 +352,24 @@ def test_registry_list_tags_raises_when_retry_after_is_long():
         return httpx.Response(429, headers={"Retry-After": "3600"})
 
     with _mock_client(handler):
-        with pytest.raises(RuntimeError, match="rate-limited.*retry after ~3600s"):
+        with pytest.raises(RuntimeError, match="rate-limited.*retry after ~3600s") as excinfo:
             registry_list_tags("alpine")
+    # Default registry is Docker Hub — message should mention the Hub-specific cap.
+    assert "Docker Hub" in str(excinfo.value)
+
+
+def test_registry_list_tags_message_is_generic_for_non_hub_registry():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(429, headers={"Retry-After": "3600"})
+
+    with _mock_client(handler):
+        with pytest.raises(RuntimeError, match="rate-limited") as excinfo:
+            registry_list_tags("ghcr.io/org/repo")
+    # GHCR is not Docker Hub — the Hub-specific guidance must not appear; the
+    # registry-agnostic hint about authenticating should.
+    msg = str(excinfo.value)
+    assert "Docker Hub" not in msg
+    assert "authenticate" in msg.lower()
 
 
 def test_registry_list_tags_raises_when_retry_after_missing():

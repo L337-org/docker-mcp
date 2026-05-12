@@ -90,7 +90,9 @@ jobs:
         # Opt-in: set DOCKERHUB_USER / DOCKERHUB_TOKEN as repo secrets to authenticate.
         # Without them, the job runs anonymous and the existing skip-on-pull-failure
         # behaviour in the compose lifecycle test catches throttling.
-        if: ${{ env.DOCKERHUB_TOKEN != '' }}
+        # The `if:` must reference `secrets.*` directly — step-scoped `env:` is not
+        # available when the `if:` expression is evaluated.
+        if: ${{ secrets.DOCKERHUB_TOKEN != '' && secrets.DOCKERHUB_USER != '' }}
         env:
           DOCKERHUB_USER: ${{ secrets.DOCKERHUB_USER }}
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}

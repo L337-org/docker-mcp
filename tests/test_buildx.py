@@ -129,6 +129,11 @@ def test_buildx_build_returns_returncode_dict():
     assert result["stderr"] == "build failed"
 
 
+def test_buildx_build_rejects_push_and_load_together():
+    with pytest.raises(ValueError, match="`push` and `load` are mutually exclusive"):
+        buildx_build(context=".", push=True, load=True)
+
+
 # ---------- buildx_bake ----------
 
 
@@ -179,6 +184,11 @@ def test_buildx_imagetools_inspect_raw_and_format():
         buildx_imagetools_inspect("alpine:3.19", format="{{json .}}")
     args = run.call_args.args[0]
     assert args[args.index("--format") + 1] == "{{json .}}"
+
+
+def test_buildx_imagetools_inspect_rejects_raw_and_format_together():
+    with pytest.raises(ValueError, match="`raw` and `format` are mutually exclusive"):
+        buildx_imagetools_inspect("alpine:3.19", raw=True, format="{{json .}}")
 
 
 # ---------- buildx_imagetools_create ----------
@@ -316,6 +326,11 @@ def test_buildx_use_with_default_flags():
 def test_buildx_rm_requires_target():
     with pytest.raises(ValueError, match="`name` or `all_inactive=True`"):
         buildx_rm()
+
+
+def test_buildx_rm_rejects_name_and_all_inactive_together():
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        buildx_rm(name="builder-x", all_inactive=True)
 
 
 def test_buildx_rm_all_inactive():

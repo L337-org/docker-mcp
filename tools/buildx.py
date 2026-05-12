@@ -105,6 +105,12 @@ def buildx_build(
         timeout_seconds: float - Subprocess timeout (default 1800s)
     returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
     """
+    if push and load:
+        raise ValueError(
+            "buildx_build: `push` and `load` are mutually exclusive; --load only works for "
+            "single-platform builds loaded into the local image store, --push uploads to a "
+            "registry. Pick one (or use `output=` for a custom output spec)."
+        )
     args: list[str] = ["build", "--progress=plain"]
     for tag in tags or []:
         args.extend(["--tag", tag])
@@ -228,6 +234,12 @@ def buildx_imagetools_inspect(
                     When `raw=True` or `format="{{json .}}"`, `stdout` is a JSON document
                     the caller can parse.
     """
+    if raw and format is not None:
+        raise ValueError(
+            "buildx_imagetools_inspect: `raw` and `format` are mutually exclusive — `raw` "
+            "always emits the unmodified manifest JSON, while `format` runs a Go template "
+            "against a rendered view. Pick one."
+        )
     args: list[str] = ["imagetools", "inspect"]
     if raw:
         args.append("--raw")
@@ -472,6 +484,11 @@ def buildx_rm(
     """
     if not name and not all_inactive:
         raise ValueError("buildx_rm requires either `name` or `all_inactive=True`")
+    if name and all_inactive:
+        raise ValueError(
+            "buildx_rm: `name` and `all_inactive=True` are mutually exclusive — pass `name` to "
+            "remove a specific builder, or `all_inactive=True` to sweep every inactive one."
+        )
     args: list[str] = ["rm"]
     if all_inactive:
         args.append("--all-inactive")

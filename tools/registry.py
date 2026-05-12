@@ -142,14 +142,29 @@ def _parse_retry_after(value: str | None) -> float | None:
     return max(0.0, delta)
 
 
+# Hosts where Docker Hub's documented anonymous-pull cap applies. Used to tailor the
+# 429 error message — every other registry (GHCR, ECR, GAR, Quay, self-hosted, …)
+# enforces its own limits with different remedies, so a Hub-specific hint there is
+# more misleading than helpful.
+_DOCKER_HUB_HOSTS = frozenset({"registry-1.docker.io", "index.docker.io", "hub.docker.com"})
+
+
 def _raise_rate_limited(resp: httpx.Response, url: str) -> NoReturn:
     retry_after = _parse_retry_after(resp.headers.get("Retry-After"))
     suffix = f"; retry after ~{retry_after:.0f}s" if retry_after is not None else ""
-    raise RuntimeError(
-        f"Registry rate-limited (HTTP 429) for {url}{suffix}. Anonymous Docker Hub pulls are "
-        f"capped at ~100 requests / 6h per IP — authenticate with `docker login` (for SDK-backed "
-        f"tools) or pass `username`/`password` to `registry_list_tags` to raise the limit."
-    )
+    parsed_host = httpx.URL(url).host
+    if parsed_host in _DOCKER_HUB_HOSTS:
+        guidance = (
+            " Docker Hub caps anonymous pulls at ~100 requests / 6h per IP — "
+            "authenticate with `docker login` (for SDK-backed tools) or pass "
+            "`username`/`password` to `registry_list_tags` to raise the limit."
+        )
+    else:
+        guidance = (
+            " Consult the target registry's rate-limit policy; most registries raise the "
+            "limit substantially once you authenticate with `username`/`password`."
+        )
+    raise RuntimeError(f"Registry rate-limited (HTTP 429) for {url}{suffix}.{guidance}")
 
 
 def _get_with_429_policy(

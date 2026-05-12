@@ -201,8 +201,10 @@ def scout_sbom(
         image: str - Image reference
         format: str - SBOM format: "spdx" (default), "cyclonedx", or "list"
         platform: str - Platform of the image to analyze
-    returns: dict - {"format": <format>, "result": <parsed-json-when-format-is-json-or-raw-text>,
-                     "raw": <CliResult dict>}
+    returns: dict - {"format": <format>, "result": <…>, "raw": <CliResult dict>}.
+                    `result` is a parsed dict when `format` is one of "spdx", "cyclonedx",
+                    or "json" (all JSON serializations) and the stdout parses cleanly;
+                    otherwise (e.g. format="list", or unparseable JSON) it's the raw text.
     """
     args: list[str] = ["sbom", "--format", format]
     if platform is not None:
