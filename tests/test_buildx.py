@@ -65,7 +65,23 @@ def test_buildx_build_passes_tags_and_platforms():
     args = run.call_args.args[0]
     assert args.count("--tag") == 2
     assert args[args.index("org/app:v1") - 1] == "--tag"
-    assert args.count("--platform") == 2
+    # buildx --platform takes a comma-joined list as one value (the documented convention).
+    assert args.count("--platform") == 1
+    assert args[args.index("--platform") + 1] == "linux/amd64,linux/arm64"
+
+
+def test_buildx_build_single_platform_passes_one_flag():
+    with patch("tools.buildx.run_docker", return_value=_ok()) as run:
+        buildx_build(context=".", platforms=["linux/amd64"])
+    args = run.call_args.args[0]
+    assert args.count("--platform") == 1
+    assert args[args.index("--platform") + 1] == "linux/amd64"
+
+
+def test_buildx_build_omits_platform_when_not_supplied():
+    with patch("tools.buildx.run_docker", return_value=_ok()) as run:
+        buildx_build(context=".")
+    assert "--platform" not in run.call_args.args[0]
 
 
 def test_buildx_build_dict_args_emit_repeated_flags():
@@ -310,7 +326,9 @@ def test_buildx_create_driver_opts_repeat():
     assert args.count("--driver-opt") == 2
     assert "--use" in args
     assert "--bootstrap" in args
-    assert args.count("--platform") == 2
+    # Comma-joined platforms (the documented buildx convention).
+    assert args.count("--platform") == 1
+    assert args[args.index("--platform") + 1] == "linux/amd64,linux/arm64"
     assert args[args.index("--name") + 1] == "builder-x"
 
 

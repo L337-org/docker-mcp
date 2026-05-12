@@ -124,8 +124,11 @@ def buildx_build(
     args: list[str] = ["build", "--progress=plain"]
     for tag in tags or []:
         args.extend(["--tag", tag])
-    for platform in platforms or []:
-        args.extend(["--platform", platform])
+    # buildx documents `--platform` as a comma-separated list (e.g. `linux/amd64,linux/arm64`).
+    # The underlying flag is a stringArray, so repeating it would also work, but the comma
+    # form is the canonical invocation shown in all upstream docs.
+    if platforms:
+        args.extend(["--platform", ",".join(platforms)])
     if file is not None:
         args.extend(["--file", file])
     for key, value in (build_args or {}).items():
@@ -301,8 +304,8 @@ def buildx_imagetools_create(
         args.append("--dry-run")
     for annotation in annotations or []:
         args.extend(["--annotation", annotation])
-    for platform in platforms or []:
-        args.extend(["--platform", platform])
+    if platforms:
+        args.extend(["--platform", ",".join(platforms)])
     for f in files or []:
         args.extend(["--file", f])
     if builder is not None:
@@ -440,8 +443,8 @@ def buildx_create(
         args.append("--use")
     if bootstrap:
         args.append("--bootstrap")
-    for platform in platforms or []:
-        args.extend(["--platform", platform])
+    if platforms:
+        args.extend(["--platform", ",".join(platforms)])
     if config is not None:
         args.extend(["--config", config])
     if node_name is not None:
