@@ -20,6 +20,11 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 only-include = ["main.py", "server.py", "tools"]
 
+[tool.uv]
+# Security pin: urllib3 < 2.7.0 has multiple CVEs. Pulled in transitively
+# via docker -> requests. Bump when a newer fix is available.
+constraint-dependencies = ["urllib3>=2.7.0"]
+
 [tool.ruff]
 line-length = 120
 
