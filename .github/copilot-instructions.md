@@ -9,7 +9,7 @@ This file provides guidance to GitHub Copilot when working with code in this rep
 ## Architecture
 
 ### Entry point
-`main.py` imports `server` and `tools`, then calls `mcp.run(transport="stdio")`.
+`docker_mcp.py` imports `server` and `tools`, then calls `mcp.run(transport="stdio")`.
 
 ### Server singleton (`server.py`)
 `server.py` instantiates `FastMCP` and exports `mcp`. **Always import `mcp` from `server`**, never directly from the `mcp` package in tool files — doing so creates circular imports.
@@ -37,7 +37,7 @@ Each file in `tools/` maps to one section of the Docker SDK documentation and co
 | `tools/services.py` | Swarm services |
 | `tools/swarm.py` | Swarm init, join, leave |
 
-`tools/__init__.py` re-exports all modules so `main.py` only needs `import tools`.
+`tools/__init__.py` re-exports all modules so `docker_mcp.py` only needs `import tools`.
 
 ### Tests (`tests/`)
 Each `tools/<module>.py` has a corresponding `tests/test_<module>.py`. Tests use pytest. `tests/__init__.py` is intentionally empty. `tests/integration/` holds `@pytest.mark.integration` tests that require a real Docker daemon — excluded by default, run with `uv run pytest -m integration`.

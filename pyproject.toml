@@ -11,14 +11,14 @@ dependencies = [
 ]
 
 [project.scripts]
-docker-mcp = "main:main"
+docker-mcp = "docker_mcp:main"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-only-include = ["main.py", "server.py", "tools"]
+only-include = ["docker_mcp.py", "server.py", "tools"]
 
 [tool.uv]
 # Security pin: urllib3 < 2.7.0 has multiple CVEs. Pulled in transitively
@@ -32,7 +32,7 @@ line-length = 120
 "__init__.py" = ["F401", "F403"]
 
 [tool.pyright]
-include = ["main.py", "server.py", "tools", "tests"]
+include = ["docker_mcp.py", "server.py", "tools", "tests"]
 pythonVersion = "3.14"
 typeCheckingMode = "basic"
 reportMissingTypeStubs = false

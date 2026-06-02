@@ -146,7 +146,7 @@ Contributions are welcome. The project values a tight mapping between the Docker
 
 ```
 .
-├── main.py            # entry point — runs the FastMCP server over stdio
+├── docker_mcp.py      # entry point — runs the FastMCP server over stdio
 ├── server.py          # creates the FastMCP singleton (`mcp`) shared by every tool module
 ├── tools/             # one file per Docker SDK domain or CLI/registry feature
 │   ├── _cli.py        # cross-platform subprocess helper for docker CLI shell-outs (private)
@@ -223,7 +223,7 @@ To prevent hallucinated method names, the project includes a `/docker-sdk` Claud
 uv sync
 
 # run the server
-uv run python main.py
+uv run python docker_mcp.py
 # …or via the installed console script
 uv run docker-mcp
 

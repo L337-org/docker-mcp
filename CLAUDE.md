@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-`docker-mcp` is a Python MCP server (requires Python >=3.14) managed with `uv` that exposes the Docker SDK for Python as MCP tools. The entry point is `main.py`.
+`docker-mcp` is a Python MCP server (requires Python >=3.14) managed with `uv` that exposes the Docker SDK for Python as MCP tools. The entry point is `docker_mcp.py`.
 
 ## Commands
 
@@ -13,7 +13,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 uv sync
 
 # Run the project
-uv run python main.py
+uv run python docker_mcp.py
 
 # Add a dependency
 uv add <package>
@@ -38,7 +38,7 @@ uv run pre-commit install
 ## Architecture
 
 ### Entry point
-`main.py` imports `server` and `tools`, then calls `mcp.run(transport="stdio")`.
+`docker_mcp.py` imports `server` and `tools`, then calls `mcp.run(transport="stdio")`.
 
 ### Server singleton (`server.py`)
 Instantiates `FastMCP` and exports the `mcp` object. **All tool modules import `mcp` from here** — never import from `mcp` directly in tool files, as this would create circular imports.
@@ -48,7 +48,7 @@ from server import mcp
 ```
 
 ### Tools package (`tools/`)
-Each file maps to one Docker SDK domain (or, for CLI-only and registry-only features, one Docker feature area) and contains `@mcp.tool()` decorated functions. `tools/__init__.py` imports all public modules with `*` so `main.py` only needs `import tools`. Underscore-prefixed modules (`_cli.py`, `_utils.py`) are private helpers and stay out of the star-import.
+Each file maps to one Docker SDK domain (or, for CLI-only and registry-only features, one Docker feature area) and contains `@mcp.tool()` decorated functions. `tools/__init__.py` imports all public modules with `*` so `docker_mcp.py` only needs `import tools`. Underscore-prefixed modules (`_cli.py`, `_utils.py`) are private helpers and stay out of the star-import.
 
 | File | Domain | Backed by |
 |------|--------|-----------|
