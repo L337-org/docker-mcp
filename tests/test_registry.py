@@ -5,6 +5,7 @@ import httpx
 import pytest
 
 from docker_mcp.tools.registry import (
+    _env_credentials,
     _is_local_host,
     _next_link,
     _parse_bearer_challenge,
@@ -532,3 +533,55 @@ def test_parse_retry_after_invalid_returns_none():
     assert _parse_retry_after(None) is None
     assert _parse_retry_after("") is None
     assert _parse_retry_after("not a date or number") is None
+
+
+# ---------- _env_credentials ----------
+
+
+def test_env_credentials_explicit_args_win(monkeypatch):
+    monkeypatch.setenv("DOCKER_MCP_REGISTRY_USERNAME", "envuser")
+    monkeypatch.setenv("DOCKER_MCP_REGISTRY_PASSWORD", "envpass")
+    assert _env_credentials("arguser", "argpass") == ("arguser", "argpass")
+
+
+def test_env_credentials_partial_args_do_not_mix_with_env(monkeypatch):
+    # A username argument with no password must not silently pick up the env password.
+    monkeypatch.setenv("DOCKER_MCP_REGISTRY_USERNAME", "envuser")
+    monkeypatch.setenv("DOCKER_MCP_REGISTRY_PASSWORD", "envpass")
+    assert _env_credentials("arguser", None) == ("arguser", None)
+    assert _env_credentials(None, "argpass") == (None, "argpass")
+
+
+def test_env_credentials_fall_back_to_env_when_both_unset(monkeypatch):
+    monkeypatch.setenv("DOCKER_MCP_REGISTRY_USERNAME", "envuser")
+    monkeypatch.setenv("DOCKER_MCP_REGISTRY_PASSWORD", "envpass")
+    assert _env_credentials(None, None) == ("envuser", "envpass")
+
+
+def test_env_credentials_default_anonymous(monkeypatch):
+    monkeypatch.delenv("DOCKER_MCP_REGISTRY_USERNAME", raising=False)
+    monkeypatch.delenv("DOCKER_MCP_REGISTRY_PASSWORD", raising=False)
+    assert _env_credentials(None, None) == (None, None)
+
+
+def test_registry_list_tags_uses_env_credentials_for_token_auth(monkeypatch):
+    monkeypatch.setenv("DOCKER_MCP_REGISTRY_USERNAME", "envuser")
+    monkeypatch.setenv("DOCKER_MCP_REGISTRY_PASSWORD", "envpass")
+    saw_auth = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "auth.example.com":
+            saw_auth["header"] = request.headers.get("Authorization", "")
+            return httpx.Response(200, json={"token": "tok"})
+        if "Authorization" not in request.headers:
+            return httpx.Response(
+                401,
+                headers={"WWW-Authenticate": 'Bearer realm="https://auth.example.com/token",service="reg.example.com"'},
+            )
+        return httpx.Response(200, json={"name": "foo/bar", "tags": ["v1"]})
+
+    with _mock_client(handler):
+        result = registry_list_tags("reg.example.com/foo/bar")
+    assert result["tags"] == ["v1"]
+    # The env credentials were sent (basic auth) to the token endpoint without transiting tool args.
+    assert saw_auth["header"].startswith("Basic ")

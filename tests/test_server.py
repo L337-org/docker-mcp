@@ -142,3 +142,16 @@ def test_no_destructive_env_drops_destructive_tools():
 
 def test_default_env_registers_all_tools():
     assert _count_registered(None) == len(TOOL_CATEGORIES)
+
+
+# ---------- typed parameter schemas ----------
+
+
+def test_run_container_restart_policy_schema_is_typed():
+    # The RestartPolicy TypedDict must surface as a structured schema (enum'd Name field),
+    # not an opaque dict, so the agent knows the valid keys/values without guessing.
+    schema = _registered_tools()["run_container"].parameters
+    assert "RestartPolicy" in schema.get("$defs", {})
+    rp = schema["$defs"]["RestartPolicy"]["properties"]
+    assert set(rp) == {"Name", "MaximumRetryCount"}
+    assert set(rp["Name"]["enum"]) == {"no", "always", "on-failure", "unless-stopped"}

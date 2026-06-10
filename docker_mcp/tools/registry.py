@@ -7,6 +7,7 @@
 import datetime
 import email.utils
 import ipaddress
+import os
 import re
 import time
 from typing import Any, NoReturn
@@ -21,6 +22,25 @@ _USER_AGENT = "docker-mcp/0.1"
 _HUB_API_BASE = "https://hub.docker.com/v2"
 _DEFAULT_REGISTRY = "registry-1.docker.io"
 _MAX_TAG_PAGES = 50  # cap on registry/Hub pagination follow-through
+
+
+def _env_credentials(username: str | None, password: str | None) -> tuple[str | None, str | None]:
+    """
+    Fall back to DOCKER_MCP_REGISTRY_USERNAME / DOCKER_MCP_REGISTRY_PASSWORD when no explicit
+    credentials are passed.
+
+    Setting credentials in the server's environment keeps them out of tool arguments, which many
+    MCP clients log verbatim. The password may be a personal-access token. Explicit arguments win
+    over the environment; the env pair is only used when *both* arguments are unset, so a caller
+    can't accidentally mix an argument username with an environment password.
+    """
+    if username is not None or password is not None:
+        return username, password
+    return (
+        os.environ.get("DOCKER_MCP_REGISTRY_USERNAME"),
+        os.environ.get("DOCKER_MCP_REGISTRY_PASSWORD"),
+    )
+
 
 # 429 rate-limit policy: if the registry tells us to wait this many seconds or less,
 # we sleep and transparently retry once. Anything longer is surfaced to the caller
@@ -317,22 +337,24 @@ def registry_list_tags(
     registry. Anonymous if no credentials are passed.
 
     Note: this tool talks directly to the registry over HTTPS and does NOT read the local
-    Docker credential store (`~/.docker/config.json`). For private registries you must pass
-    `username` and `password` explicitly. Many MCP clients log tool arguments verbatim, so
-    treat any password you pass through this tool as exposed — prefer per-invocation tokens
-    with the minimum required scope rather than long-lived passwords.
+    Docker credential store (`~/.docker/config.json`). For private registries, prefer setting
+    DOCKER_MCP_REGISTRY_USERNAME / DOCKER_MCP_REGISTRY_PASSWORD in the server's environment —
+    that keeps credentials out of tool arguments, which many MCP clients log verbatim. Explicit
+    `username`/`password` arguments override the environment; if you must pass them, prefer a
+    per-invocation token with the minimum required scope rather than a long-lived password.
 
     args:
         image: str - Image reference, e.g. "alpine", "library/alpine", "ghcr.io/org/repo".
                      Any trailing `:tag` or `@digest` is stripped before listing.
-        username: str - Optional registry username (required only for private repos)
-        password: str - Optional registry password or token (required only for private repos)
+        username: str - Optional registry username (overrides DOCKER_MCP_REGISTRY_USERNAME)
+        password: str - Optional registry password or token (overrides DOCKER_MCP_REGISTRY_PASSWORD)
         limit: int - Maximum number of tags to return (default 1000; must be >= 1). The OCI
                      pagination loop is also capped at 50 pages to keep the call bounded.
     returns: dict - {"name": <repo>, "registry": <host>, "tags": [..], "truncated": bool}
     """
     if limit < 1:
         raise ValueError(f"limit must be >= 1, got {limit}")
+    username, password = _env_credentials(username, password)
     registry, repo = _parse_image_ref(image)
     tags: list[str] = []
     truncated = False
@@ -380,13 +402,14 @@ def registry_inspect_manifest(
         image: str - Image reference, e.g. "alpine", "ghcr.io/org/repo". Any trailing
                      `:tag` or `@digest` is stripped — pass the tag/digest as `reference`.
         reference: str - Tag or digest (default "latest")
-        username: str - Optional registry username (required only for private repos;
+        username: str - Optional registry username (overrides DOCKER_MCP_REGISTRY_USERNAME;
                         this tool does NOT read `~/.docker/config.json`)
-        password: str - Optional registry password or token
+        password: str - Optional registry password or token (overrides DOCKER_MCP_REGISTRY_PASSWORD)
     returns: dict - {"name": <repo>, "registry": <host>, "reference": <ref>,
                      "media_type": <Content-Type>, "digest": <Docker-Content-Digest>,
                      "manifest": <decoded JSON body>}
     """
+    username, password = _env_credentials(username, password)
     registry, repo = _parse_image_ref(image)
     resp = _registry_get(
         registry,

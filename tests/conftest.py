@@ -14,3 +14,7 @@ import os
 
 os.environ.pop("DOCKER_MCP_READONLY", None)
 os.environ.pop("DOCKER_MCP_NO_DESTRUCTIVE", None)
+# Registry credential fallbacks are read at call time (not import time), but clear them too so a
+# developer's shell credentials can't leak basic-auth headers into the registry tests' mock flows.
+os.environ.pop("DOCKER_MCP_REGISTRY_USERNAME", None)
+os.environ.pop("DOCKER_MCP_REGISTRY_PASSWORD", None)

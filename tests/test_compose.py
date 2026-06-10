@@ -14,6 +14,8 @@ from docker_mcp.tools.compose import (
     compose_ps,
     compose_pull,
     compose_restart,
+    compose_start,
+    compose_stop,
     compose_run,
     compose_up,
 )
@@ -331,3 +333,37 @@ def test_compose_ls_raises_on_failure():
     with patch("docker_mcp.tools.compose.run_docker", return_value=_fail("daemon unreachable")):
         with pytest.raises(RuntimeError, match="daemon unreachable"):
             compose_ls()
+
+
+# ---------- compose_stop / compose_start ----------
+
+
+def test_compose_stop_with_timeout_and_services():
+    with patch("docker_mcp.tools.compose.run_docker", return_value=_ok()) as run:
+        compose_stop(project_dir="/srv/app", stop_timeout_seconds=15, services=["web"])
+    args = run.call_args.args[0]
+    assert "stop" in args
+    assert args[args.index("--timeout") + 1] == "15"
+    assert args[-1] == "web"
+    assert run.call_args.kwargs["cwd"] == "/srv/app"
+
+
+def test_compose_stop_rejects_flag_like_service():
+    with pytest.raises(ValueError, match="parses as a flag"):
+        compose_stop(services=["--all"])
+
+
+def test_compose_start_passes_services_last():
+    with patch("docker_mcp.tools.compose.run_docker", return_value=_ok()) as run:
+        compose_start(project_name="demo", services=["web", "db"])
+    args = run.call_args.args[0]
+    assert "start" in args
+    assert args[args.index("--project-name") + 1] == "demo"
+    assert args[-2:] == ["web", "db"]
+
+
+def test_compose_start_returns_raw_dict_on_failure():
+    with patch("docker_mcp.tools.compose.run_docker", return_value=_fail("no such project")):
+        result = compose_start()
+    assert result["returncode"] == 1
+    assert "no such project" in result["stderr"]

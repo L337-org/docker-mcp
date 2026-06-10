@@ -341,6 +341,66 @@ def compose_restart(
 
 
 @tool()
+def compose_stop(
+    project_dir: str | None = None,
+    files: list[str] | None = None,
+    project_name: str | None = None,
+    services: list[str] | None = None,
+    stop_timeout_seconds: int | None = None,
+    timeout_seconds: float = _TIMEOUT_DOWN,
+) -> dict:
+    """
+    Stop services in a compose project without removing their containers.
+
+    Unlike `compose_down`, the containers, networks, and volumes survive — use `compose_start`
+    to bring the same containers back.
+
+    args:
+        project_dir: str - Working directory containing the compose file
+        files: list[str] - Explicit compose file paths
+        project_name: str - Compose project name override
+        services: list[str] - Specific services to stop (default: all)
+        stop_timeout_seconds: int - Grace period before SIGKILL (passed as `--timeout`)
+        timeout_seconds: float - Subprocess timeout (default 300s)
+    returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
+    """
+    args = [*_global_args(files, project_name, None), "stop"]
+    if stop_timeout_seconds is not None:
+        args.extend(["--timeout", str(stop_timeout_seconds)])
+    if services:
+        args.extend(safe_positional(s, "service") for s in services)
+    return _run_compose(args, cwd=project_dir, timeout=timeout_seconds).to_dict()
+
+
+@tool()
+def compose_start(
+    project_dir: str | None = None,
+    files: list[str] | None = None,
+    project_name: str | None = None,
+    services: list[str] | None = None,
+    timeout_seconds: float = _TIMEOUT_UP,
+) -> dict:
+    """
+    Start existing (stopped) containers of a compose project.
+
+    The counterpart to `compose_stop` — starts the containers that already exist for the project
+    without recreating them. Use `compose_up` to (re)create containers from the compose file.
+
+    args:
+        project_dir: str - Working directory containing the compose file
+        files: list[str] - Explicit compose file paths
+        project_name: str - Compose project name override
+        services: list[str] - Specific services to start (default: all)
+        timeout_seconds: float - Subprocess timeout (default 600s)
+    returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
+    """
+    args = [*_global_args(files, project_name, None), "start"]
+    if services:
+        args.extend(safe_positional(s, "service") for s in services)
+    return _run_compose(args, cwd=project_dir, timeout=timeout_seconds).to_dict()
+
+
+@tool()
 def compose_run(
     service: str,
     command: list[str] | None = None,

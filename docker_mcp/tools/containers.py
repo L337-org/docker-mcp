@@ -3,13 +3,20 @@
 import threading
 from collections.abc import Iterable
 from pathlib import Path
-from typing import Literal, cast
+from typing import Literal, TypedDict, cast
 
 import requests.exceptions
 
 from docker_mcp.server import tool
 from docker_mcp.tools._utils import MAX_PAYLOAD_BYTES, close_stream_quietly, drop_none, join_bounded, stream_to_file
 from docker_mcp.tools.client import _get_client
+
+
+class RestartPolicy(TypedDict, total=False):
+    """Restart policy for run_container, mirroring the `docker` module's expected dict shape."""
+
+    Name: Literal["no", "always", "on-failure", "unless-stopped"]
+    MaximumRetryCount: int  # only meaningful with Name="on-failure"
 
 
 @tool()
@@ -26,7 +33,7 @@ def run_container(
     user: str | None = None,
     working_dir: str | None = None,
     entrypoint: str | list | None = None,
-    restart_policy: dict | None = None,
+    restart_policy: RestartPolicy | None = None,
     labels: dict | list | None = None,
     remove: bool = False,
     auto_remove: bool = False,
@@ -53,7 +60,7 @@ def run_container(
         user: str - Username or UID to run as
         working_dir: str - Working directory inside the container
         entrypoint: str | list - Entrypoint to override the image default
-        restart_policy: dict - Restart policy, e.g. {'Name': 'on-failure'}
+        restart_policy: RestartPolicy - Restart policy, e.g. {'Name': 'on-failure', 'MaximumRetryCount': 3}
         labels: dict | list - Labels to set on the container
         remove: bool - Remove the container when it exits (only with detach=False)
         auto_remove: bool - Enable auto-removal of the container on daemon side

@@ -149,6 +149,8 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "compose_build": ToolCategory.MUTATING,
     "compose_pull": ToolCategory.MUTATING,
     "compose_restart": ToolCategory.MUTATING,
+    "compose_stop": ToolCategory.MUTATING,
+    "compose_start": ToolCategory.MUTATING,
     "compose_run": ToolCategory.MUTATING,
     "compose_exec": ToolCategory.MUTATING,
     "compose_ls": ToolCategory.READ_ONLY,

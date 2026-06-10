@@ -107,6 +107,15 @@ Multi-platform notes for new shell-out tools:
 - Always pass an explicit `timeout=` to `run_docker`; pick a generous ceiling for long-running ops (build/pull at 1800s) and a short one for queries.
 - Don't hardcode binary paths — Docker Desktop on Mac, Windows, and Linux all install `docker` differently; `shutil.which` is the only safe lookup.
 
+### CLI error convention (intentional, do not "unify")
+
+CLI-backed tools follow one of two error styles depending on what they return:
+
+- **Action tools** (`compose_up`, `buildx_build`, `context_use`, …) return the raw `{"returncode", "stdout", "stderr", "truncated"}` dict from `CliResult.to_dict()` and never raise on a non-zero exit — stderr is informative, and the agent decides what to do with a failure.
+- **Parsed-query tools** (`context_ls`, `buildx_ls`, `buildx_du`, `compose_ls`) return a parsed list/dict and therefore *cannot* return a useful partial result on failure — they raise `RuntimeError` via `_cli.py:raise_on_cli_failure`. (`compose_ps` is the hybrid: it returns `{"services": [...], "raw": <CliResult dict>}` so the caller gets both.)
+
+New CLI tools should pick the style matching their return shape rather than mixing them.
+
 ## Checklist when adding a new tool module
 
 When you add a new `docker_mcp/tools/<domain>.py` (especially for CLI features outside docker-py), update **all** of these — easy to miss:
