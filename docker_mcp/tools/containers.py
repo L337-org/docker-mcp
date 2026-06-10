@@ -15,7 +15,7 @@ from docker_mcp.tools.client import _get_client
 class RestartPolicy(TypedDict, total=False):
     """Restart policy for run_container, mirroring the `docker` module's expected dict shape."""
 
-    Name: Literal["always", "on-failure", "unless-stopped"]
+    Name: Literal["no", "always", "on-failure", "unless-stopped"]
     MaximumRetryCount: int  # only meaningful with Name="on-failure"
 
 

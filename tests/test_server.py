@@ -154,4 +154,4 @@ def test_run_container_restart_policy_schema_is_typed():
     assert "RestartPolicy" in schema.get("$defs", {})
     rp = schema["$defs"]["RestartPolicy"]["properties"]
     assert set(rp) == {"Name", "MaximumRetryCount"}
-    assert set(rp["Name"]["enum"]) == {"always", "on-failure", "unless-stopped"}
+    assert set(rp["Name"]["enum"]) == {"no", "always", "on-failure", "unless-stopped"}
