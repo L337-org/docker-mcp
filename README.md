@@ -134,6 +134,38 @@ Independently, every registered tool carries [MCP `ToolAnnotations`](https://mod
 
 For private registries, the HTTPS-backed `registry_*` tools fall back to **`DOCKER_MCP_REGISTRY_USERNAME`** / **`DOCKER_MCP_REGISTRY_PASSWORD`** from the server's environment when no explicit `username`/`password` arguments are passed (explicit arguments win; the env pair is only used when both arguments are unset). Setting credentials in the environment keeps them out of tool arguments, which many MCP clients log verbatim — the password may be a personal-access token.
 
+### Example: a read-only monitoring server
+
+All of these go in the `env` block of the server entry in your MCP client config (the same place as `DOCKER_HOST` above). For example, a read-only inspection server against a remote daemon:
+
+```json
+{
+  "mcpServers": {
+    "docker-mcp-readonly": {
+      "command": "uvx",
+      "args": [
+        "--from",
+        "git+https://github.com/GavinLucas/docker-mcp.git",
+        "docker-mcp"
+      ],
+      "env": {
+        "DOCKER_HOST": "tcp://staging-host:2376",
+        "DOCKER_TLS_VERIFY": "1",
+        "DOCKER_MCP_READONLY": "1"
+      }
+    }
+  }
+}
+```
+
+Swap `DOCKER_MCP_READONLY` for `DOCKER_MCP_NO_DESTRUCTIVE` to allow create/start/deploy while still making `remove_*` / `prune_*` / `kill_container` impossible. You can also register the same server twice under different names — a full-access entry you enable when needed and a read-only entry for everyday use. With `claude mcp` (Claude Code), the equivalent is:
+
+```bash
+claude mcp add docker-mcp-readonly \
+  --env DOCKER_MCP_READONLY=1 \
+  -- uvx --from git+https://github.com/GavinLucas/docker-mcp.git docker-mcp
+```
+
 ## Security considerations
 
 Connecting this server to an AI agent grants it the same level of access as a local Docker CLI session against the configured daemon. That is broad: the daemon's socket is effectively root-equivalent on the host running it. Treat the agent as a privileged user and weigh the risks below before enabling the server.
