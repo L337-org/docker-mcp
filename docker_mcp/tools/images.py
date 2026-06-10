@@ -1,7 +1,9 @@
 # library of mcp tools relating to image management
 
+from pathlib import Path
+
 from docker_mcp.server import tool
-from docker_mcp.tools._utils import MAX_PAYLOAD_BYTES, drop_none, join_bounded
+from docker_mcp.tools._utils import MAX_PAYLOAD_BYTES, drop_none, join_bounded, stream_to_file
 from docker_mcp.tools.client import _get_client
 
 
@@ -213,6 +215,9 @@ def load_image(data: bytes) -> list:
     """
     Load an image from a tarball produced by save_image.
 
+    For a tarball already on the host running this server, prefer `load_image_from_file` — it streams
+    from disk instead of carrying the (base64-encoded) bytes through the MCP protocol.
+
     args: data: bytes - Tarball contents
     returns: list - A list of loaded image attrs dicts
     """
@@ -220,18 +225,57 @@ def load_image(data: bytes) -> list:
 
 
 @tool()
+def load_image_from_file(file_path: str) -> list:
+    """
+    Load an image from a tar archive on the host running this MCP server.
+
+    Streams the file straight to the daemon, so it handles arbitrarily large images that would be
+    impractical to pass in band via `load_image`. The path is read by the server's user; `~` is expanded.
+
+    args: file_path: str - Path to a tarball produced by `docker save` / `save_image_to_file`
+    returns: list - A list of loaded image attrs dicts
+    """
+    path = Path(file_path).expanduser()
+    with path.open("rb") as handle:
+        return [i.attrs for i in _get_client().images.load(handle)]
+
+
+@tool()
 def save_image(name: str, named: bool = False, max_bytes: int = MAX_PAYLOAD_BYTES) -> bytes:
     """
-    Save an image as a tar archive.
+    Save an image as a tar archive, returned in band.
+
+    For anything but a small image prefer `save_image_to_file`, which streams to a host path; the
+    in-band bytes here are capped (default 32 MiB) because MCP base64-encodes them into the agent's context.
 
     args:
         name: str - Image name or id
         named: bool - Whether to keep the image name when saving
-        max_bytes: int - Abort with ValueError if the tarball exceeds this many bytes (defaults to 1 GiB)
+        max_bytes: int - Abort with ValueError if the tarball exceeds this many bytes (defaults to 32 MiB)
     returns: bytes - The tarball contents
     """
     image = _get_client().images.get(name)
     return join_bounded(image.save(named=named), max_bytes, f"save of image {name}")
+
+
+@tool()
+def save_image_to_file(name: str, dest_path: str, named: bool = False, overwrite: bool = False) -> dict:
+    """
+    Save an image as a tar archive written to a file on the host running this MCP server.
+
+    Streams the archive straight to disk (no in-band byte cap), so it handles large images. The file
+    is written by the server's user; `~` is expanded and an existing file is refused unless `overwrite=True`.
+
+    args:
+        name: str - Image name or id
+        dest_path: str - Destination path on the server host for the tarball
+        named: bool - Whether to keep the image name when saving
+        overwrite: bool - Replace dest_path if it already exists (default False)
+    returns: dict - {"path": <resolved path>, "bytes_written": int}
+    """
+    image = _get_client().images.get(name)
+    path, written = stream_to_file(image.save(named=named), dest_path, overwrite=overwrite)
+    return {"path": str(path), "bytes_written": written}
 
 
 @tool()

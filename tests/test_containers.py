@@ -13,14 +13,17 @@ from docker_mcp.tools.containers import (
     create_container,
     exec_in_container,
     export_container,
+    export_container_to_file,
     follow_container_logs,
     get_container,
     get_container_archive,
+    get_container_archive_to_file,
     kill_container,
     list_containers,
     pause_container,
     prune_containers,
     put_container_archive,
+    put_container_archive_from_file,
     remove_container,
     rename_container,
     resize_container,
@@ -347,3 +350,52 @@ def test_put_container_archive():
         mock_client.return_value.containers.get.return_value = container
         assert put_container_archive("web", "/etc", b"tar") is True
     container.put_archive.assert_called_once_with("/etc", b"tar")
+
+
+# ---------- file-path archive variants ----------
+
+
+def test_export_container_to_file_streams_and_returns_metadata(tmp_path):
+    container = MagicMock()
+    container.export.return_value = iter([b"aa", b"bbb"])
+    dest = tmp_path / "ct.tar"
+    with _patch() as mock_client:
+        mock_client.return_value.containers.get.return_value = container
+        result = export_container_to_file("web", str(dest))
+    assert dest.read_bytes() == b"aabbb"
+    assert result == {"path": str(dest), "bytes_written": 5}
+
+
+def test_export_container_to_file_refuses_existing(tmp_path):
+    dest = tmp_path / "ct.tar"
+    dest.write_bytes(b"old")
+    container = MagicMock()
+    container.export.return_value = iter([b"new"])
+    with _patch() as mock_client:
+        mock_client.return_value.containers.get.return_value = container
+        with pytest.raises(FileExistsError):
+            export_container_to_file("web", str(dest))
+
+
+def test_get_container_archive_to_file_writes_and_returns_stat(tmp_path):
+    container = MagicMock()
+    container.get_archive.return_value = (iter([b"tar", b"data"]), {"name": "etc", "size": 7})
+    dest = tmp_path / "etc.tar"
+    with _patch() as mock_client:
+        mock_client.return_value.containers.get.return_value = container
+        result = get_container_archive_to_file("web", "/etc", str(dest))
+    assert dest.read_bytes() == b"tardata"
+    assert result == {"path": str(dest), "bytes_written": 7, "stat": {"name": "etc", "size": 7}}
+
+
+def test_put_container_archive_from_file_streams_handle(tmp_path):
+    src = tmp_path / "payload.tar"
+    src.write_bytes(b"archive-bytes")
+    container = MagicMock()
+    container.put_archive.return_value = True
+    with _patch() as mock_client:
+        mock_client.return_value.containers.get.return_value = container
+        assert put_container_archive_from_file("web", "/dest", str(src)) is True
+    call = container.put_archive.call_args
+    assert call.args[0] == "/dest"
+    assert hasattr(call.args[1], "read")  # an open file handle, not raw bytes

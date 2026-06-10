@@ -63,8 +63,11 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "update_container": ToolCategory.MUTATING,
     "wait_container": ToolCategory.READ_ONLY,
     "export_container": ToolCategory.READ_ONLY,
+    "export_container_to_file": ToolCategory.MUTATING,  # writes a file on the server host
     "get_container_archive": ToolCategory.READ_ONLY,
+    "get_container_archive_to_file": ToolCategory.MUTATING,  # writes a file on the server host
     "put_container_archive": ToolCategory.MUTATING,
+    "put_container_archive_from_file": ToolCategory.MUTATING,
     # images
     "build_image": ToolCategory.MUTATING,
     "get_image": ToolCategory.READ_ONLY,
@@ -76,7 +79,9 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "search_images": ToolCategory.READ_ONLY,
     "prune_images": ToolCategory.DESTRUCTIVE,
     "load_image": ToolCategory.MUTATING,
+    "load_image_from_file": ToolCategory.MUTATING,
     "save_image": ToolCategory.READ_ONLY,
+    "save_image_to_file": ToolCategory.MUTATING,  # writes a file on the server host
     "tag_image": ToolCategory.MUTATING,
     "image_history": ToolCategory.READ_ONLY,
     # networks

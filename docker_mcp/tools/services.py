@@ -117,7 +117,7 @@ def service_logs(
         since: int - Show logs since this Unix timestamp
         timestamps: bool - Include timestamps
         tail: int | "all" - Number of lines from the end, or the literal "all"
-        max_bytes: int - Abort with ValueError if the buffered logs exceed this many bytes (default 1 GiB)
+        max_bytes: int - Abort with ValueError if the buffered logs exceed this many bytes (default 32 MiB)
     returns: str - Decoded log output
     """
     service = _get_client().services.get(service_id)

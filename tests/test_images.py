@@ -9,11 +9,13 @@ from docker_mcp.tools.images import (
     image_history,
     list_images,
     load_image,
+    load_image_from_file,
     prune_images,
     pull_image,
     push_image,
     remove_image,
     save_image,
+    save_image_to_file,
     search_images,
     tag_image,
 )
@@ -144,3 +146,55 @@ def test_image_history():
     with _patch() as mock_client:
         mock_client.return_value.images.get.return_value = image
         assert image_history("nginx") == [{"Id": "layer1"}]
+
+
+# ---------- file-path variants ----------
+
+
+def test_save_image_to_file_streams_and_returns_metadata(tmp_path):
+    image = MagicMock()
+    image.save.return_value = iter([b"abc", b"defgh"])
+    dest = tmp_path / "img.tar"
+    with _patch() as mock_client:
+        mock_client.return_value.images.get.return_value = image
+        result = save_image_to_file("alpine", str(dest))
+    assert dest.read_bytes() == b"abcdefgh"
+    assert result == {"path": str(dest), "bytes_written": 8}
+    image.save.assert_called_once_with(named=False)
+
+
+def test_save_image_to_file_refuses_existing_without_overwrite(tmp_path):
+    dest = tmp_path / "img.tar"
+    dest.write_bytes(b"old")
+    image = MagicMock()
+    image.save.return_value = iter([b"new"])
+    with _patch() as mock_client:
+        mock_client.return_value.images.get.return_value = image
+        with pytest.raises(FileExistsError, match="already exists"):
+            save_image_to_file("alpine", str(dest))
+    assert dest.read_bytes() == b"old"  # untouched
+
+
+def test_save_image_to_file_overwrite_replaces(tmp_path):
+    dest = tmp_path / "img.tar"
+    dest.write_bytes(b"old")
+    image = MagicMock()
+    image.save.return_value = iter([b"new"])
+    with _patch() as mock_client:
+        mock_client.return_value.images.get.return_value = image
+        save_image_to_file("alpine", str(dest), overwrite=True)
+    assert dest.read_bytes() == b"new"
+
+
+def test_load_image_from_file_streams_handle(tmp_path):
+    src = tmp_path / "img.tar"
+    src.write_bytes(b"tarball-bytes")
+    loaded = MagicMock()
+    loaded.attrs = {"Id": "img1"}
+    with _patch() as mock_client:
+        mock_client.return_value.images.load.return_value = [loaded]
+        result = load_image_from_file(str(src))
+    assert result == [{"Id": "img1"}]
+    # load() is handed an open binary file object, not the raw bytes.
+    passed = mock_client.return_value.images.load.call_args.args[0]
+    assert hasattr(passed, "read")

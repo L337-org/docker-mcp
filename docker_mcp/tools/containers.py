@@ -2,12 +2,13 @@
 
 import threading
 from collections.abc import Iterable
+from pathlib import Path
 from typing import Literal, cast
 
 import requests.exceptions
 
 from docker_mcp.server import tool
-from docker_mcp.tools._utils import MAX_PAYLOAD_BYTES, close_stream_quietly, drop_none, join_bounded
+from docker_mcp.tools._utils import MAX_PAYLOAD_BYTES, close_stream_quietly, drop_none, join_bounded, stream_to_file
 from docker_mcp.tools.client import _get_client
 
 
@@ -595,11 +596,14 @@ def wait_container(
 @tool()
 def export_container(id_or_name: str, max_bytes: int = MAX_PAYLOAD_BYTES) -> bytes:
     """
-    Export a container's filesystem as a tar archive.
+    Export a container's filesystem as a tar archive, returned in band.
+
+    For anything but a small container prefer `export_container_to_file`, which streams to a host
+    path; the in-band bytes here are capped (default 32 MiB) because MCP base64-encodes them.
 
     args:
         id_or_name: str - The container id or name
-        max_bytes: int - Abort with ValueError if the export exceeds this many bytes (defaults to 1 GiB)
+        max_bytes: int - Abort with ValueError if the export exceeds this many bytes (defaults to 32 MiB)
     returns: bytes - The tar archive contents
     """
     container = _get_client().containers.get(id_or_name)
@@ -607,14 +611,36 @@ def export_container(id_or_name: str, max_bytes: int = MAX_PAYLOAD_BYTES) -> byt
 
 
 @tool()
+def export_container_to_file(id_or_name: str, dest_path: str, overwrite: bool = False) -> dict:
+    """
+    Export a container's filesystem as a tar archive written to a file on the server host.
+
+    Streams straight to disk (no in-band byte cap), so it handles large containers. The file is
+    written by the server's user; `~` is expanded and an existing file is refused unless `overwrite=True`.
+
+    args:
+        id_or_name: str - The container id or name
+        dest_path: str - Destination path on the server host for the tarball
+        overwrite: bool - Replace dest_path if it already exists (default False)
+    returns: dict - {"path": <resolved path>, "bytes_written": int}
+    """
+    container = _get_client().containers.get(id_or_name)
+    path, written = stream_to_file(cast(Iterable[bytes], container.export()), dest_path, overwrite=overwrite)
+    return {"path": str(path), "bytes_written": written}
+
+
+@tool()
 def get_container_archive(id_or_name: str, path: str, max_bytes: int = MAX_PAYLOAD_BYTES) -> dict:
     """
-    Retrieve a file or directory from a container as a tar archive.
+    Retrieve a file or directory from a container as a tar archive, returned in band.
+
+    For large paths prefer `get_container_archive_to_file`, which streams to a host path; the in-band
+    bytes here are capped (default 32 MiB) because MCP base64-encodes them.
 
     args:
         id_or_name: str - The container id or name
         path: str - Path inside the container
-        max_bytes: int - Abort with ValueError if the archive exceeds this many bytes (defaults to 1 GiB)
+        max_bytes: int - Abort with ValueError if the archive exceeds this many bytes (defaults to 32 MiB)
     returns: dict - Mapping with archive (bytes) and stat (dict) keys
     """
     container = _get_client().containers.get(id_or_name)
@@ -623,9 +649,33 @@ def get_container_archive(id_or_name: str, path: str, max_bytes: int = MAX_PAYLO
 
 
 @tool()
+def get_container_archive_to_file(id_or_name: str, path: str, dest_path: str, overwrite: bool = False) -> dict:
+    """
+    Retrieve a file or directory from a container as a tar archive written to a file on the server host.
+
+    Streams straight to disk (no in-band byte cap). The file is written by the server's user; `~` is
+    expanded and an existing file is refused unless `overwrite=True`.
+
+    args:
+        id_or_name: str - The container id or name
+        path: str - Path inside the container
+        dest_path: str - Destination path on the server host for the tarball
+        overwrite: bool - Replace dest_path if it already exists (default False)
+    returns: dict - {"path": <resolved path>, "bytes_written": int, "stat": dict}
+    """
+    container = _get_client().containers.get(id_or_name)
+    stream, stat = container.get_archive(path)
+    written_path, written = stream_to_file(stream, dest_path, overwrite=overwrite)
+    return {"path": str(written_path), "bytes_written": written, "stat": stat}
+
+
+@tool()
 def put_container_archive(id_or_name: str, path: str, data: bytes) -> bool:
     """
     Upload a tar archive to a path inside a container.
+
+    For a tarball already on the server host, prefer `put_container_archive_from_file` — it streams
+    from disk instead of carrying the (base64-encoded) bytes through the MCP protocol.
 
     args:
         id_or_name: str - The container id or name
@@ -635,3 +685,23 @@ def put_container_archive(id_or_name: str, path: str, data: bytes) -> bool:
     """
     container = _get_client().containers.get(id_or_name)
     return container.put_archive(path, data)
+
+
+@tool()
+def put_container_archive_from_file(id_or_name: str, path: str, file_path: str) -> bool:
+    """
+    Upload a tar archive from a file on the server host to a path inside a container.
+
+    Streams the file straight to the daemon, so it handles large archives that would be impractical
+    to pass in band via `put_container_archive`. `file_path` is read by the server's user; `~` is expanded.
+
+    args:
+        id_or_name: str - The container id or name
+        path: str - Destination path inside the container (must already exist)
+        file_path: str - Path on the server host to the tar archive to upload
+    returns: bool - True if the upload succeeded
+    """
+    container = _get_client().containers.get(id_or_name)
+    source = Path(file_path).expanduser()
+    with source.open("rb") as handle:
+        return container.put_archive(path, handle)
