@@ -3,12 +3,12 @@
 from collections.abc import Iterable
 from typing import Literal, cast
 
-from docker_mcp.server import mcp
+from docker_mcp.server import tool
 from docker_mcp.tools._utils import MAX_PAYLOAD_BYTES, drop_none, join_bounded
 from docker_mcp.tools.client import _get_client
 
 
-@mcp.tool()
+@tool()
 def create_service(image: str, command: str | list | None = None, extra_kwargs: dict | None = None) -> dict:
     """
     Create a swarm service.
@@ -23,7 +23,7 @@ def create_service(image: str, command: str | list | None = None, extra_kwargs: 
     return _get_client().services.create(image, command=command, **kwargs).attrs
 
 
-@mcp.tool()
+@tool()
 def get_service(service_id: str, insert_defaults: bool | None = None) -> dict:
     """
     Get a swarm service by id or name.
@@ -36,7 +36,7 @@ def get_service(service_id: str, insert_defaults: bool | None = None) -> dict:
     return _get_client().services.get(service_id, insert_defaults=insert_defaults).attrs
 
 
-@mcp.tool()
+@tool()
 def list_services(filters: dict | None = None) -> list:
     """
     List swarm services.
@@ -47,7 +47,7 @@ def list_services(filters: dict | None = None) -> list:
     return [s.attrs for s in _get_client().services.list(**drop_none(filters=filters))]
 
 
-@mcp.tool()
+@tool()
 def update_service(service_id: str, updates: dict) -> bool:
     """
     Update a swarm service's configuration.
@@ -62,7 +62,7 @@ def update_service(service_id: str, updates: dict) -> bool:
     return True
 
 
-@mcp.tool()
+@tool()
 def remove_service(service_id: str) -> bool:
     """
     Stop and remove a swarm service.
@@ -74,7 +74,7 @@ def remove_service(service_id: str) -> bool:
     return True
 
 
-@mcp.tool()
+@tool()
 def service_tasks(service_id: str, filters: dict | None = None) -> list:
     """
     List the tasks of a swarm service.
@@ -88,7 +88,7 @@ def service_tasks(service_id: str, filters: dict | None = None) -> list:
     return service.tasks(filters=filters)
 
 
-@mcp.tool()
+@tool()
 def service_logs(
     service_id: str,
     details: bool = False,
@@ -139,7 +139,7 @@ def service_logs(
     return raw.decode("utf-8", errors="replace")
 
 
-@mcp.tool()
+@tool()
 def scale_service(service_id: str, replicas: int) -> bool:
     """
     Scale a swarm service to a number of replicas.
@@ -152,7 +152,7 @@ def scale_service(service_id: str, replicas: int) -> bool:
     return _get_client().services.get(service_id).scale(replicas)
 
 
-@mcp.tool()
+@tool()
 def force_update_service(service_id: str) -> bool:
     """
     Force update a swarm service even if its config has not changed.

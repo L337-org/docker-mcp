@@ -1,11 +1,11 @@
 # library of mcp tools relating to image management
 
-from docker_mcp.server import mcp
+from docker_mcp.server import tool
 from docker_mcp.tools._utils import MAX_PAYLOAD_BYTES, drop_none, join_bounded
 from docker_mcp.tools.client import _get_client
 
 
-@mcp.tool()
+@tool()
 def build_image(
     path: str | None = None,
     tag: str | None = None,
@@ -82,7 +82,7 @@ def build_image(
     return image.attrs
 
 
-@mcp.tool()
+@tool()
 def get_image(name: str) -> dict:
     """
     Get an image by name or id.
@@ -93,7 +93,7 @@ def get_image(name: str) -> dict:
     return _get_client().images.get(name).attrs
 
 
-@mcp.tool()
+@tool()
 def get_registry_data(name: str, auth_config: dict | None = None) -> dict:
     """
     Get registry data for an image without pulling it.
@@ -112,7 +112,7 @@ def get_registry_data(name: str, auth_config: dict | None = None) -> dict:
     return _get_client().images.get_registry_data(name, auth_config=auth_config).attrs
 
 
-@mcp.tool()
+@tool()
 def list_images(name: str | None = None, all: bool = False, filters: dict | None = None) -> list:
     """
     List images on the server.
@@ -126,7 +126,7 @@ def list_images(name: str | None = None, all: bool = False, filters: dict | None
     return [i.attrs for i in _get_client().images.list(name=name, all=all, filters=filters)]
 
 
-@mcp.tool()
+@tool()
 def pull_image(
     repository: str, tag: str | None = None, all_tags: bool = False, platform: str | None = None
 ) -> dict | list:
@@ -146,7 +146,7 @@ def pull_image(
     return result.attrs
 
 
-@mcp.tool()
+@tool()
 def push_image(repository: str, tag: str | None = None, auth_config: dict | None = None) -> str:
     """
     Push an image or repository to a registry.
@@ -169,7 +169,7 @@ def push_image(repository: str, tag: str | None = None, auth_config: dict | None
     return str(output)
 
 
-@mcp.tool()
+@tool()
 def remove_image(image: str, force: bool = False, noprune: bool = False) -> bool:
     """
     Remove an image.
@@ -184,7 +184,7 @@ def remove_image(image: str, force: bool = False, noprune: bool = False) -> bool
     return True
 
 
-@mcp.tool()
+@tool()
 def search_images(term: str, limit: int | None = None) -> list:
     """
     Search Docker Hub for images.
@@ -197,7 +197,7 @@ def search_images(term: str, limit: int | None = None) -> list:
     return _get_client().images.search(term=term, limit=limit)
 
 
-@mcp.tool()
+@tool()
 def prune_images(filters: dict | None = None) -> dict:
     """
     Remove unused images.
@@ -208,7 +208,7 @@ def prune_images(filters: dict | None = None) -> dict:
     return _get_client().images.prune(filters=filters)
 
 
-@mcp.tool()
+@tool()
 def load_image(data: bytes) -> list:
     """
     Load an image from a tarball produced by save_image.
@@ -219,7 +219,7 @@ def load_image(data: bytes) -> list:
     return [i.attrs for i in _get_client().images.load(data)]
 
 
-@mcp.tool()
+@tool()
 def save_image(name: str, named: bool = False, max_bytes: int = MAX_PAYLOAD_BYTES) -> bytes:
     """
     Save an image as a tar archive.
@@ -234,7 +234,7 @@ def save_image(name: str, named: bool = False, max_bytes: int = MAX_PAYLOAD_BYTE
     return join_bounded(image.save(named=named), max_bytes, f"save of image {name}")
 
 
-@mcp.tool()
+@tool()
 def tag_image(name: str, repository: str, tag: str | None = None, force: bool = False) -> bool:
     """
     Tag an image into a repository.
@@ -250,7 +250,7 @@ def tag_image(name: str, repository: str, tag: str | None = None, force: bool = 
     return image.tag(repository, tag=tag, force=force)
 
 
-@mcp.tool()
+@tool()
 def image_history(name: str) -> list:
     """
     Show the history of an image.

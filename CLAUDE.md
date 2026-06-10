@@ -38,17 +38,20 @@ uv run pre-commit install
 ## Architecture
 
 ### Entry point
-The `docker_mcp` package is the entry point. `docker_mcp/__init__.py` defines `main()` and side-effect-imports the `server` and `tools` submodules (which registers all `@mcp.tool()` decorators). `docker_mcp/__main__.py` calls `main()` so `python -m docker_mcp` works; the installed `docker-mcp` console script also targets `docker_mcp:main`.
+The `docker_mcp` package is the entry point. `docker_mcp/__init__.py` defines `main()` and side-effect-imports the `server` and `tools` submodules (which registers all `@tool()` decorators). `docker_mcp/__main__.py` calls `main()` so `python -m docker_mcp` works; the installed `docker-mcp` console script also targets `docker_mcp:main`.
 
 ### Server singleton (`docker_mcp/server.py`)
-Instantiates `FastMCP` and exports the `mcp` object. **All tool modules import `mcp` from here** — never import from `mcp` directly in tool files, as this would create circular imports.
+Instantiates `FastMCP`, exports the `mcp` object, and exports the `tool` registration helper. **Tool modules import `tool` from here and decorate with `@tool()`** (never import from `mcp` directly — that would create circular imports). `@mcp.prompt()` / `@mcp.resource()` modules still import `mcp`.
 
 ```python
-from docker_mcp.server import mcp
+from docker_mcp.server import tool   # tool modules
+from docker_mcp.server import mcp    # prompts / resources only
 ```
 
+`server.py` also owns the central **`TOOL_CATEGORIES`** map (every tool name → `READ_ONLY` / `MUTATING` / `DESTRUCTIVE`). The `@tool()` decorator uses it to (a) attach `ToolAnnotations` (`readOnlyHint` / `destructiveHint`, plus `idempotentHint` for the prune family) and (b) skip registration entirely under the read-only env switches `DOCKER_MCP_READONLY` (only read-only tools) and `DOCKER_MCP_NO_DESTRUCTIVE` (everything except destructive). Every registered tool must have a `TOOL_CATEGORIES` entry — `tests/test_server.py` fails if the map and the registered set drift.
+
 ### Tools package (`docker_mcp/tools/`)
-Each file maps to one Docker SDK domain (or, for CLI-only and registry-only features, one Docker feature area) and contains `@mcp.tool()` decorated functions. `docker_mcp/tools/__init__.py` imports all public modules with `*` so `docker_mcp/__init__.py` only needs `from docker_mcp import tools`. Underscore-prefixed modules (`_cli.py`, `_utils.py`) are private helpers and stay out of the star-import.
+Each file maps to one Docker SDK domain (or, for CLI-only and registry-only features, one Docker feature area) and contains `@tool()` decorated functions. `docker_mcp/tools/__init__.py` imports all public modules with `*` so `docker_mcp/__init__.py` only needs `from docker_mcp import tools`. Underscore-prefixed modules (`_cli.py`, `_utils.py`) are private helpers and stay out of the star-import.
 
 | File | Domain | Backed by |
 |------|--------|-----------|
@@ -83,7 +86,7 @@ Each `docker_mcp/tools/<module>.py` has a corresponding `tests/test_<module>.py`
 - New Docker functionality goes in the matching `docker_mcp/tools/<domain>.py` file, not in a new file.
 - Every new `docker_mcp/tools/` file must be imported in `docker_mcp/tools/__init__.py` (private `_*.py` helpers excluded).
 - Every new `docker_mcp/tools/<module>.py` must have a matching `tests/test_<module>.py`.
-- Tool functions are decorated with `@mcp.tool` and import `mcp` from `docker_mcp.server`.
+- Tool functions are decorated with `@tool()` (imported from `docker_mcp.server`) and must have a `TOOL_CATEGORIES` entry in `docker_mcp/server.py`.
 - Line length limit: 120 characters (enforced by ruff and flake8).
 
 ## CLI shell-out policy
@@ -109,19 +112,23 @@ Multi-platform notes for new shell-out tools:
 When you add a new `docker_mcp/tools/<domain>.py` (especially for CLI features outside docker-py), update **all** of these — easy to miss:
 
 1. `docker_mcp/tools/__init__.py` — star-import.
-2. `tests/test_<domain>.py` — unit tests using mocks.
-3. `tests/integration/test_<domain>.py` — at least one happy-path test against a real daemon (override `skip_if_no_daemon` if the module doesn't need one).
-4. `docker_mcp/tools/prompts.py` — at least one `@mcp.prompt()` template using the new tools.
-5. `docker_mcp/tools/resources.py` — add a section under `SDK_SECTIONS` or `EXTERNAL_SECTIONS` pointing at the authoritative docs.
-6. `README.md` — append to "What the agent can do" and "Security considerations" (the latter only if a new class of risk is introduced).
-7. `SECURITY.md` — only if a new class of risk is introduced beyond what's already documented.
+2. `docker_mcp/server.py` — add a `TOOL_CATEGORIES` entry for every new tool (`READ_ONLY` / `MUTATING` / `DESTRUCTIVE`); `tests/test_server.py` fails otherwise.
+3. `tests/test_<domain>.py` — unit tests using mocks.
+4. `tests/integration/test_<domain>.py` — at least one happy-path test against a real daemon (override `skip_if_no_daemon` if the module doesn't need one).
+5. `docker_mcp/tools/prompts.py` — at least one `@mcp.prompt()` template using the new tools.
+6. `docker_mcp/tools/resources.py` — add a section under `SDK_SECTIONS` or `EXTERNAL_SECTIONS` pointing at the authoritative docs.
+7. `README.md` — append to "What the agent can do" and "Security considerations" (the latter only if a new class of risk is introduced).
+8. `SECURITY.md` — only if a new class of risk is introduced beyond what's already documented.
 
 ### Tool function format
 
-All `@mcp.tool` functions must follow this exact docstring format:
+All `@tool()` functions must follow this exact docstring format:
 
 ```python
-@mcp.tool()
+from docker_mcp.server import tool
+
+
+@tool()
 def mcp_example(name: str):
     """
     Say hello to someone by name.

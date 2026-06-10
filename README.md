@@ -123,6 +123,15 @@ Many AI clients let you invoke registered MCP prompts directly (in Claude Code, 
 > List my Docker contexts and tell me which daemon this MCP server is currently talking to.
 > Find the most recent stable tag for `ghcr.io/org/repo` without pulling it, and tell me which platforms it supports.
 
+## Configuration
+
+Two environment variables restrict which tools are registered when the server starts. Because they drop tools at registration time, a disabled tool never appears in the client's tool list — this is a server-side guarantee, not a client-side prompt. Set either to `1` / `true` / `yes` / `on`:
+
+- **`DOCKER_MCP_READONLY`** — register only read-only tools (queries, log/data reads, scans). Every tool that changes state is omitted. Use this for monitoring or inspection agents that must not be able to modify anything.
+- **`DOCKER_MCP_NO_DESTRUCTIVE`** — register everything *except* destructive tools (`remove_*`, `prune_*`, `kill_container`, `compose_down`, `leave_swarm`, `context_rm`, `buildx_prune`, `buildx_rm`). A "no data loss" mode that still allows creating and starting resources. `DOCKER_MCP_READONLY` is stricter and wins if both are set.
+
+Independently, every registered tool carries [MCP `ToolAnnotations`](https://modelcontextprotocol.io/) — `readOnlyHint` on queries and `destructiveHint` on destructive operations (plus `idempotentHint` on the prune family) — so a client like Claude Code can auto-allow safe reads and gate destructive calls. The classification lives in `TOOL_CATEGORIES` in `docker_mcp/server.py`.
+
 ## Security considerations
 
 Connecting this server to an AI agent grants it the same level of access as a local Docker CLI session against the configured daemon. That is broad: the daemon's socket is effectively root-equivalent on the host running it. Treat the agent as a privileged user and weigh the risks below before enabling the server.
@@ -136,7 +145,7 @@ Connecting this server to an AI agent grants it the same level of access as a lo
 - **Swarm secret material transits tool calls too.** Beyond registry credentials, several swarm tools carry secret material through arguments or return values that MCP clients may log: `create_secret(data=...)` and `create_config(data=...)` take the payload as an argument, `get_secret` / `get_config` return the stored object, `join_swarm(join_token=...)` and `unlock_swarm(key=...)` take cluster join/unlock secrets, and `get_swarm_unlock_key` returns the unlock key. Treat all of these as exposed in any client that records tool traffic, and prefer provisioning swarm secrets out-of-band on the host rather than through the agent.
 - **`exec_in_container`, `compose_exec`, and `compose_run` run arbitrary commands.** When any part of the command is derived from agent-controlled input, use an exec-form argv list that does not invoke a shell (e.g. `["python", "-V"]`). A list like `["sh", "-c", template]` that invokes a shell will interpret shell metacharacters in the untrusted substrings.
 - **Container archive paths.** `get_container_archive` and `put_container_archive` forward the supplied path verbatim to the daemon. The container is the trust boundary — if you do not trust its filesystem, do not assume `..` traversal will be rejected.
-- **Destructive operations have no built-in confirmation.** `prune_*`, `remove_*`, `kill_container`, `leave_swarm`, `compose_down(volumes=True)`, `buildx_prune` (always runs with `--force`), and `buildx_rm` execute immediately. The shipped `clean_environment` prompt asks the agent to confirm before pruning volumes, but tool calls themselves are not gated. If you need an approval step, configure it at the MCP client (e.g. Claude Code's permission prompts) rather than relying on the server.
+- **Destructive operations have no built-in confirmation.** `prune_*`, `remove_*`, `kill_container`, `leave_swarm`, `compose_down(volumes=True)`, `buildx_prune` (always runs with `--force`), and `buildx_rm` execute immediately. These tools carry the `destructiveHint` annotation, so a client like Claude Code can gate them, and the shipped `clean_environment` prompt asks the agent to confirm before pruning volumes — but tool calls themselves are not gated by the server. For a hard guarantee, run with `DOCKER_MCP_NO_DESTRUCTIVE=1` (drops them entirely) or `DOCKER_MCP_READONLY=1` (see [Configuration](#configuration)); for an approval step, configure it at the MCP client.
 - **CLI shell-out attack surface.** Compose, Context, Buildx, and Scout tools spawn `docker` subprocesses on the host running this MCP server. Every invocation passes arguments as a list (no shell, no metacharacter interpretation), resolves the binary via `shutil.which`, and runs against a scrubbed environment (DOCKER_HOST and related vars only). Positional values (image refs, service / context / builder names, build contexts) are additionally rejected if they start with `-`, so an argument can't be smuggled in as a CLI flag (e.g. a service named `--output=…`); the one deliberate exception is the trailing command in `compose_exec` / `compose_run`, which is meant to be an arbitrary argv. Filesystem paths supplied to `compose_*` (project_dir, files) are read by the docker CLI on the server host — passing an unfamiliar path can expose any compose file the server's user can read.
 - **Docker Context retargeting.** `context_use` only changes the CLI default for subsequent CLI-backed tools. SDK-backed tools (`list_containers`, `pull_image`, etc.) keep using whatever daemon the docker-py client connected to when it was first created (lazily, on the first SDK-backed tool call). Restart the server with a different `DOCKER_HOST` / `DOCKER_CONTEXT`, or call `reconnect` (see below), to retarget those. `context_create(skip_tls_verify=True)` disables TLS verification for a context; use only against trusted local daemons.
 - **`reconnect` retargets the trust boundary at runtime.** `reconnect(docker_host=...)` rebuilds the shared SDK client and points it at a different daemon without a server restart — which moves the root-equivalent trust boundary to whatever endpoint is passed. Only allow it against daemons the agent is authorized to control. The `docker_host` argument is logged like any tool call, and an `ssh://` target authenticates via the server host's SSH agent / `known_hosts`. The new endpoint is validated before the previous client is replaced, so a bad target leaves the working client in place.
@@ -182,10 +191,13 @@ Each `docker_mcp/tools/<file>.py` has a matching `tests/test_<file>.py`. New mod
 
 ### Conventions
 
-Tool functions are decorated with `@mcp.tool()` (note the parentheses — required by FastMCP) and follow this docstring style:
+Tool functions are decorated with `@tool()` (the project's wrapper around `@mcp.tool()`, imported from `docker_mcp.server`) and follow this docstring style:
 
 ```python
-@mcp.tool()
+from docker_mcp.server import tool
+
+
+@tool()
 def mcp_example(name: str):
     """
     Say hello to someone by name.
@@ -196,7 +208,8 @@ def mcp_example(name: str):
     return f"Hello, {name}!"
 ```
 
-- Import `mcp` from `docker_mcp.server`, never directly from the `mcp` package — that creates a circular import.
+- Import `tool` from `docker_mcp.server` (and, for prompts/resources, `mcp`), never directly from the `mcp` package — that creates a circular import.
+- Every tool needs a `TOOL_CATEGORIES` entry in `docker_mcp/server.py` (`READ_ONLY` / `MUTATING` / `DESTRUCTIVE`); the central map drives the tool's `ToolAnnotations` and the read-only env switches, and `tests/test_server.py` fails if it drifts from the registered set.
 - Line length is 120 characters (enforced by ruff).
 - CLI shell-outs must go through `docker_mcp/tools/_cli.py:run_docker` — never call `subprocess.run` directly from a tool module. The helper enforces `shell=False`, resolves the binary via `shutil.which` (cross-platform), decodes output as UTF-8 with replace, caps the captured bytes, scrubs the environment, and suppresses console pop-ups on Windows.
 

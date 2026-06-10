@@ -1,11 +1,11 @@
 # library of mcp tools relating to network management
 
-from docker_mcp.server import mcp
+from docker_mcp.server import tool
 from docker_mcp.tools._utils import drop_none
 from docker_mcp.tools.client import _get_client
 
 
-@mcp.tool()
+@tool()
 def create_network(
     name: str,
     driver: str | None = None,
@@ -53,7 +53,7 @@ def create_network(
     return _get_client().networks.create(name, **kwargs).attrs
 
 
-@mcp.tool()
+@tool()
 def get_network(network_id: str) -> dict:
     """
     Get a network by id or name.
@@ -64,7 +64,7 @@ def get_network(network_id: str) -> dict:
     return _get_client().networks.get(network_id).attrs
 
 
-@mcp.tool()
+@tool()
 def list_networks(
     names: list | None = None,
     ids: list | None = None,
@@ -85,7 +85,7 @@ def list_networks(
     return [n.attrs for n in _get_client().networks.list(**kwargs)]
 
 
-@mcp.tool()
+@tool()
 def prune_networks(filters: dict | None = None) -> dict:
     """
     Remove unused networks.
@@ -96,7 +96,7 @@ def prune_networks(filters: dict | None = None) -> dict:
     return _get_client().networks.prune(filters=filters)
 
 
-@mcp.tool()
+@tool()
 def remove_network(network_id: str) -> bool:
     """
     Remove a network.
@@ -108,7 +108,7 @@ def remove_network(network_id: str) -> bool:
     return True
 
 
-@mcp.tool()
+@tool()
 def connect_network(
     network_id: str,
     container: str,
@@ -146,7 +146,7 @@ def connect_network(
     return True
 
 
-@mcp.tool()
+@tool()
 def disconnect_network(network_id: str, container: str, force: bool = False) -> bool:
     """
     Disconnect a container from a network.

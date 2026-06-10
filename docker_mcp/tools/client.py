@@ -7,7 +7,7 @@ import docker
 import requests.exceptions
 from docker.errors import DockerException
 
-from docker_mcp.server import mcp
+from docker_mcp.server import tool
 from docker_mcp.tools._utils import close_stream_quietly
 
 _client: docker.DockerClient | None = None
@@ -47,7 +47,7 @@ def _get_client() -> docker.DockerClient:
         return _client
 
 
-@mcp.tool()
+@tool()
 def ping() -> bool:
     """
     Check that the Docker server is responsive.
@@ -57,7 +57,7 @@ def ping() -> bool:
     return _get_client().ping()
 
 
-@mcp.tool()
+@tool()
 def version() -> dict:
     """
     Return Docker server version information.
@@ -67,7 +67,7 @@ def version() -> dict:
     return _get_client().version()
 
 
-@mcp.tool()
+@tool()
 def info() -> dict:
     """
     Return system-wide Docker information.
@@ -77,7 +77,7 @@ def info() -> dict:
     return _get_client().info()
 
 
-@mcp.tool()
+@tool()
 def df() -> dict:
     """
     Return Docker disk usage information.
@@ -87,7 +87,7 @@ def df() -> dict:
     return _get_client().df()
 
 
-@mcp.tool()
+@tool()
 def login(
     username: str,
     password: str,
@@ -124,7 +124,7 @@ def login(
     )
 
 
-@mcp.tool()
+@tool()
 def events(
     since: str | None = None,
     until: str | None = None,
@@ -168,7 +168,7 @@ def events(
     return collected
 
 
-@mcp.tool()
+@tool()
 def close() -> bool:
     """
     Close the Docker client session and reset the cached client.
@@ -183,7 +183,7 @@ def close() -> bool:
     return True
 
 
-@mcp.tool()
+@tool()
 def reconnect(docker_host: str | None = None) -> dict:
     """
     Rebuild the shared Docker SDK client, optionally retargeting it at a different daemon.

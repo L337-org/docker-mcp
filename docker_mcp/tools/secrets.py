@@ -1,11 +1,11 @@
 # library of mcp tools relating to swarm secrets management
 
-from docker_mcp.server import mcp
+from docker_mcp.server import tool
 from docker_mcp.tools._utils import drop_none
 from docker_mcp.tools.client import _get_client
 
 
-@mcp.tool()
+@tool()
 def create_secret(name: str, data: bytes, labels: dict | None = None, driver: dict | None = None) -> dict:
     """
     Create a swarm secret.
@@ -21,7 +21,7 @@ def create_secret(name: str, data: bytes, labels: dict | None = None, driver: di
     return _get_client().secrets.create(**kwargs).attrs
 
 
-@mcp.tool()
+@tool()
 def get_secret(secret_id: str) -> dict:
     """
     Get a swarm secret by id.
@@ -32,7 +32,7 @@ def get_secret(secret_id: str) -> dict:
     return _get_client().secrets.get(secret_id).attrs
 
 
-@mcp.tool()
+@tool()
 def list_secrets(filters: dict | None = None) -> list:
     """
     List swarm secrets.
@@ -43,7 +43,7 @@ def list_secrets(filters: dict | None = None) -> list:
     return [s.attrs for s in _get_client().secrets.list(**drop_none(filters=filters))]
 
 
-@mcp.tool()
+@tool()
 def remove_secret(secret_id: str) -> bool:
     """
     Remove a swarm secret.

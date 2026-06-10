@@ -1,11 +1,11 @@
 # library of mcp tools relating to docker swarm
 
-from docker_mcp.server import mcp
+from docker_mcp.server import tool
 from docker_mcp.tools._utils import drop_none
 from docker_mcp.tools.client import _get_client
 
 
-@mcp.tool()
+@tool()
 def init_swarm(
     advertise_addr: str | None = None,
     listen_addr: str = "0.0.0.0:2377",
@@ -54,7 +54,7 @@ def init_swarm(
     return _get_client().swarm.init(**kwargs)
 
 
-@mcp.tool()
+@tool()
 def join_swarm(
     remote_addrs: list,
     join_token: str,
@@ -82,7 +82,7 @@ def join_swarm(
     return _get_client().swarm.join(**kwargs)
 
 
-@mcp.tool()
+@tool()
 def leave_swarm(force: bool = False) -> bool:
     """
     Leave the current swarm.
@@ -93,7 +93,7 @@ def leave_swarm(force: bool = False) -> bool:
     return _get_client().swarm.leave(force=force)
 
 
-@mcp.tool()
+@tool()
 def update_swarm(
     rotate_worker_token: bool = False,
     rotate_manager_token: bool = False,
@@ -115,7 +115,7 @@ def update_swarm(
     )
 
 
-@mcp.tool()
+@tool()
 def reload_swarm() -> dict:
     """
     Reload the swarm and return its current attrs.
@@ -127,7 +127,7 @@ def reload_swarm() -> dict:
     return swarm.attrs
 
 
-@mcp.tool()
+@tool()
 def unlock_swarm(key: str) -> bool:
     """
     Unlock a locked swarm.
@@ -138,7 +138,7 @@ def unlock_swarm(key: str) -> bool:
     return _get_client().swarm.unlock(key)
 
 
-@mcp.tool()
+@tool()
 def get_swarm_unlock_key() -> dict:
     """
     Return the swarm unlock key.

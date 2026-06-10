@@ -4,7 +4,7 @@
 # cache export/import, attestations (SBOM/provenance), and manifest-list operations.
 # These tools wrap the CLI via tools/_cli.py for cross-platform safety.
 
-from docker_mcp.server import mcp
+from docker_mcp.server import tool
 from docker_mcp.tools._cli import (
     CliResult,
     parse_ndjson,
@@ -28,7 +28,7 @@ def _run_buildx(args: list[str], *, cwd: str | None = None, timeout: float) -> C
     return run_docker(["buildx", *args], cwd=cwd, timeout=timeout)
 
 
-@mcp.tool()
+@tool()
 def buildx_build(
     context: str,
     tags: list[str] | None = None,
@@ -163,7 +163,7 @@ def buildx_build(
     return _run_buildx(args, timeout=timeout_seconds).to_dict()
 
 
-@mcp.tool()
+@tool()
 def buildx_bake(
     targets: list[str] | None = None,
     files: list[str] | None = None,
@@ -212,7 +212,7 @@ def buildx_bake(
     return _run_buildx(args, cwd=cwd, timeout=timeout_seconds).to_dict()
 
 
-@mcp.tool()
+@tool()
 def buildx_imagetools_inspect(
     image: str,
     raw: bool = False,
@@ -254,7 +254,7 @@ def buildx_imagetools_inspect(
     return _run_buildx(args, timeout=_TIMEOUT_QUERY).to_dict()
 
 
-@mcp.tool()
+@tool()
 def buildx_imagetools_create(
     target: str,
     sources: list[str],
@@ -304,7 +304,7 @@ def buildx_imagetools_create(
     return _run_buildx(args, timeout=timeout_seconds).to_dict()
 
 
-@mcp.tool()
+@tool()
 def buildx_ls() -> list:
     """
     List builder instances.
@@ -318,7 +318,7 @@ def buildx_ls() -> list:
     return parse_ndjson(result.stdout, truncated=result.truncated, what="buildx ls output")
 
 
-@mcp.tool()
+@tool()
 def buildx_inspect(name: str | None = None, bootstrap: bool = False) -> dict:
     """
     Inspect a builder instance.
@@ -337,7 +337,7 @@ def buildx_inspect(name: str | None = None, bootstrap: bool = False) -> dict:
     return _run_buildx(args, timeout=_TIMEOUT_QUERY).to_dict()
 
 
-@mcp.tool()
+@tool()
 def buildx_du(builder: str | None = None) -> list:
     """
     Report BuildKit cache disk usage as a list of records.
@@ -358,7 +358,7 @@ def buildx_du(builder: str | None = None) -> list:
     return parse_ndjson(result.stdout, truncated=result.truncated, what="buildx du output")
 
 
-@mcp.tool()
+@tool()
 def buildx_prune(
     all: bool = False,
     filter: dict | None = None,
@@ -404,7 +404,7 @@ def buildx_prune(
     return _run_buildx(args, timeout=timeout_seconds).to_dict()
 
 
-@mcp.tool()
+@tool()
 def buildx_create(
     name: str | None = None,
     driver: str | None = None,
@@ -453,7 +453,7 @@ def buildx_create(
     return _run_buildx(args, timeout=_TIMEOUT_QUERY).to_dict()
 
 
-@mcp.tool()
+@tool()
 def buildx_use(name: str, default: bool = False, global_default: bool = False) -> dict:
     """
     Switch the current builder.
@@ -473,7 +473,7 @@ def buildx_use(name: str, default: bool = False, global_default: bool = False) -
     return _run_buildx(args, timeout=_TIMEOUT_QUERY).to_dict()
 
 
-@mcp.tool()
+@tool()
 def buildx_rm(
     name: str | None = None,
     all_inactive: bool = False,
