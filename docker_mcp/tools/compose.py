@@ -7,10 +7,15 @@
 # (`-T`, `--no-follow`) so they can't block the MCP server. To stream logs or
 # attach, use the host CLI directly.
 
-import json
-
 from docker_mcp.server import mcp
-from docker_mcp.tools._cli import CliResult, require_plugin, run_docker
+from docker_mcp.tools._cli import (
+    CliResult,
+    parse_json_or_ndjson,
+    raise_on_cli_failure,
+    require_plugin,
+    run_docker,
+    safe_positional,
+)
 
 # Per-operation timeout ceilings (seconds). Builds and pulls can run for many minutes
 # against slow registries / large contexts, so they get longer ceilings than queries.
@@ -41,30 +46,6 @@ def _global_args(
 def _run_compose(subcommand_args: list[str], *, cwd: str | None, timeout: float) -> CliResult:
     require_plugin("compose")
     return run_docker(["compose", *subcommand_args], cwd=cwd, timeout=timeout)
-
-
-def _parse_compose_json(text: str) -> list[dict] | dict | None:
-    """
-    Parse `docker compose ... --format json` output.
-
-    Compose v2.21+ emits NDJSON (one object per line); older versions emit a single JSON
-    array. Returns the parsed structure on success or None if the body is empty.
-    """
-    stripped = text.strip()
-    if not stripped:
-        return None
-    # Try single-JSON-document parse first (covers `compose config --format json` and the older `ps` format).
-    try:
-        return json.loads(stripped)
-    except json.JSONDecodeError:
-        pass
-    items: list[dict] = []
-    for line in stripped.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        items.append(json.loads(line))
-    return items
 
 
 @mcp.tool()
@@ -110,7 +91,7 @@ def compose_up(
     if wait:
         args.append("--wait")
     if services:
-        args.extend(services)
+        args.extend(safe_positional(s, "service") for s in services)
     return _run_compose(args, cwd=project_dir, timeout=timeout_seconds).to_dict()
 
 
@@ -169,9 +150,13 @@ def compose_ps(
     if all:
         args.append("--all")
     if services:
-        args.extend(services)
+        args.extend(safe_positional(s, "service") for s in services)
     result = _run_compose(args, cwd=project_dir, timeout=_TIMEOUT_QUERY)
-    parsed = _parse_compose_json(result.stdout) if result.returncode == 0 else None
+    parsed = (
+        parse_json_or_ndjson(result.stdout, truncated=result.truncated, what="compose ps output")
+        if result.returncode == 0
+        else None
+    )
     if isinstance(parsed, dict):
         # Single-service `compose ps --format json` (older versions) returns one object.
         services_list: list[dict] = [parsed]
@@ -220,7 +205,7 @@ def compose_logs(
     if timestamps:
         args.append("--timestamps")
     if services:
-        args.extend(services)
+        args.extend(safe_positional(s, "service") for s in services)
     return _run_compose(args, cwd=project_dir, timeout=_TIMEOUT_QUERY).to_dict()
 
 
@@ -257,7 +242,7 @@ def compose_config(
     if result.returncode != 0:
         config = None
     elif format == "json" and not services_only:
-        parsed = _parse_compose_json(result.stdout)
+        parsed = parse_json_or_ndjson(result.stdout, truncated=result.truncated, what="compose config output")
         config = parsed if parsed is not None else result.stdout
     else:
         config = result.stdout
@@ -293,7 +278,7 @@ def compose_build(
     if no_cache:
         args.append("--no-cache")
     if services:
-        args.extend(services)
+        args.extend(safe_positional(s, "service") for s in services)
     return _run_compose(args, cwd=project_dir, timeout=timeout_seconds).to_dict()
 
 
@@ -322,7 +307,7 @@ def compose_pull(
     if ignore_pull_failures:
         args.append("--ignore-pull-failures")
     if services:
-        args.extend(services)
+        args.extend(safe_positional(s, "service") for s in services)
     return _run_compose(args, cwd=project_dir, timeout=timeout_seconds).to_dict()
 
 
@@ -351,7 +336,7 @@ def compose_restart(
     if stop_timeout_seconds is not None:
         args.extend(["--timeout", str(stop_timeout_seconds)])
     if services:
-        args.extend(services)
+        args.extend(safe_positional(s, "service") for s in services)
     return _run_compose(args, cwd=project_dir, timeout=timeout_seconds).to_dict()
 
 
@@ -409,7 +394,7 @@ def compose_run(
         args.extend(["--name", name])
     for key, value in (env or {}).items():
         args.extend(["--env", f"{key}={value}"])
-    args.append(service)
+    args.append(safe_positional(service, "service"))
     if command:
         args.extend(command)
     return _run_compose(args, cwd=project_dir, timeout=timeout_seconds).to_dict()
@@ -457,7 +442,7 @@ def compose_exec(
         args.extend(["--user", user])
     for key, value in (env or {}).items():
         args.extend(["--env", f"{key}={value}"])
-    args.append(service)
+    args.append(safe_positional(service, "service"))
     args.extend(command)
     return _run_compose(args, cwd=project_dir, timeout=timeout_seconds).to_dict()
 
@@ -475,11 +460,8 @@ def compose_ls(all: bool = False) -> list:
         args.append("--all")
     require_plugin("compose")
     result = run_docker(args, timeout=_TIMEOUT_QUERY)
-    if result.returncode != 0:
-        raise RuntimeError(
-            f"`docker compose ls` failed with exit code {result.returncode}: {result.stderr.strip() or '<no output>'}"
-        )
-    parsed = _parse_compose_json(result.stdout)
+    raise_on_cli_failure(result, "compose ls")
+    parsed = parse_json_or_ndjson(result.stdout, truncated=result.truncated, what="compose ls output")
     if isinstance(parsed, list):
         return parsed
     if isinstance(parsed, dict):

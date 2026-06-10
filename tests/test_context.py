@@ -139,3 +139,16 @@ def test_context_rm_with_force():
     with patch("docker_mcp.tools.context.run_docker", return_value=_ok("remote\n")) as run:
         context_rm("remote", force=True)
     run.assert_called_once_with(["context", "rm", "remote", "--force"])
+
+
+# ---------- argument-injection defense ----------
+
+
+def test_context_use_rejects_flag_like_name():
+    with pytest.raises(ValueError, match="parses as a flag"):
+        context_use("--help")
+
+
+def test_context_rm_rejects_flag_like_name():
+    with pytest.raises(ValueError, match="parses as a flag"):
+        context_rm("-x")

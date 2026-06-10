@@ -189,3 +189,16 @@ def test_scout_sbom_with_platform():
         scout_sbom("alpine:3.19", platform="linux/arm64")
     args = run.call_args.args[0]
     assert args[args.index("--platform") + 1] == "linux/arm64"
+
+
+# ---------- argument-injection defense ----------
+
+
+def test_scout_cves_rejects_flag_like_image():
+    with pytest.raises(ValueError, match="parses as a flag"):
+        scout_cves(image="--output=/etc/passwd")
+
+
+def test_scout_compare_rejects_flag_like_image():
+    with pytest.raises(ValueError, match="parses as a flag"):
+        scout_compare(image="-x", to="alpine:3.19")

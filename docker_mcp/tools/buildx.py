@@ -4,10 +4,15 @@
 # cache export/import, attestations (SBOM/provenance), and manifest-list operations.
 # These tools wrap the CLI via tools/_cli.py for cross-platform safety.
 
-import json
-
 from docker_mcp.server import mcp
-from docker_mcp.tools._cli import CliResult, require_plugin, run_docker
+from docker_mcp.tools._cli import (
+    CliResult,
+    parse_ndjson,
+    raise_on_cli_failure,
+    require_plugin,
+    run_docker,
+    safe_positional,
+)
 
 # Per-operation timeout ceilings (seconds). Builds and pulls against slow registries or
 # large contexts routinely run for many minutes, so they get longer ceilings than queries.
@@ -21,40 +26,6 @@ _TIMEOUT_PRUNE = 600.0
 def _run_buildx(args: list[str], *, cwd: str | None = None, timeout: float) -> CliResult:
     require_plugin("buildx")
     return run_docker(["buildx", *args], cwd=cwd, timeout=timeout)
-
-
-def _raise_on_failure(result: CliResult, action: str) -> None:
-    if result.returncode != 0:
-        raise RuntimeError(
-            f"`docker buildx {action}` failed with exit code {result.returncode}: "
-            f"{result.stderr.strip() or result.stdout.strip() or '<no output>'}"
-        )
-
-
-def _parse_json_lines(text: str, *, truncated: bool = False, what: str = "buildx output") -> list[dict]:
-    """
-    Parse one JSON object per non-blank line of `text`.
-
-    args:
-        text: NDJSON to parse
-        truncated: True if the underlying stdout was capped by run_docker's byte limit.
-                   When set, the final non-blank line is assumed to be a partial record
-                   and is dropped before parsing rather than crashing on a half-record.
-        what: short label used in error messages, e.g. "buildx du output".
-    """
-    lines = [line.strip() for line in text.splitlines() if line.strip()]
-    if truncated and lines:
-        lines = lines[:-1]
-    items: list[dict] = []
-    for line_number, line in enumerate(lines, start=1):
-        try:
-            items.append(json.loads(line))
-        except json.JSONDecodeError as exc:
-            raise RuntimeError(
-                f"Could not parse {what} as JSON (line {line_number}, truncated={truncated}): {exc}. "
-                f"Snippet: {line[:200]!r}"
-            ) from exc
-    return items
 
 
 @mcp.tool()
@@ -188,7 +159,7 @@ def buildx_build(
         args.extend(["--secret", spec])
     for spec in ssh or []:
         args.extend(["--ssh", spec])
-    args.append(context)
+    args.append(safe_positional(context, "build context"))
     return _run_buildx(args, timeout=timeout_seconds).to_dict()
 
 
@@ -279,7 +250,7 @@ def buildx_imagetools_inspect(
         args.extend(["--format", format])
     if builder is not None:
         args.extend(["--builder", builder])
-    args.append(image)
+    args.append(safe_positional(image, "image"))
     return _run_buildx(args, timeout=_TIMEOUT_QUERY).to_dict()
 
 
@@ -329,7 +300,7 @@ def buildx_imagetools_create(
         args.extend(["--file", f])
     if builder is not None:
         args.extend(["--builder", builder])
-    args.extend(sources)
+    args.extend(safe_positional(s, "source") for s in sources)
     return _run_buildx(args, timeout=timeout_seconds).to_dict()
 
 
@@ -343,8 +314,8 @@ def buildx_ls() -> list:
                     last (likely partial) record is dropped before parsing.
     """
     result = _run_buildx(["ls", "--format", "{{json .}}"], timeout=_TIMEOUT_QUERY)
-    _raise_on_failure(result, "ls")
-    return _parse_json_lines(result.stdout, truncated=result.truncated, what="buildx ls output")
+    raise_on_cli_failure(result, "buildx ls")
+    return parse_ndjson(result.stdout, truncated=result.truncated, what="buildx ls output")
 
 
 @mcp.tool()
@@ -362,7 +333,7 @@ def buildx_inspect(name: str | None = None, bootstrap: bool = False) -> dict:
     if bootstrap:
         args.append("--bootstrap")
     if name is not None:
-        args.append(name)
+        args.append(safe_positional(name, "builder name"))
     return _run_buildx(args, timeout=_TIMEOUT_QUERY).to_dict()
 
 
@@ -383,8 +354,8 @@ def buildx_du(builder: str | None = None) -> list:
     if builder is not None:
         args.extend(["--builder", builder])
     result = _run_buildx(args, timeout=_TIMEOUT_QUERY)
-    _raise_on_failure(result, "du")
-    return _parse_json_lines(result.stdout, truncated=result.truncated, what="buildx du output")
+    raise_on_cli_failure(result, "buildx du")
+    return parse_ndjson(result.stdout, truncated=result.truncated, what="buildx du output")
 
 
 @mcp.tool()
@@ -498,7 +469,7 @@ def buildx_use(name: str, default: bool = False, global_default: bool = False) -
         args.append("--default")
     if global_default:
         args.append("--global")
-    args.append(name)
+    args.append(safe_positional(name, "builder name"))
     return _run_buildx(args, timeout=_TIMEOUT_QUERY).to_dict()
 
 
@@ -538,5 +509,5 @@ def buildx_rm(
     if force:
         args.append("--force")
     if name is not None:
-        args.append(name)
+        args.append(safe_positional(name, "builder name"))
     return _run_buildx(args, timeout=_TIMEOUT_QUERY).to_dict()

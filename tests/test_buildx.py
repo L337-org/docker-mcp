@@ -4,7 +4,6 @@ import pytest
 
 from docker_mcp.tools._cli import CliResult
 from docker_mcp.tools.buildx import (
-    _parse_json_lines,
     buildx_bake,
     buildx_build,
     buildx_create,
@@ -31,40 +30,6 @@ def _ok(stdout: str = "", stderr: str = "") -> CliResult:
 
 def _fail(stderr: str, returncode: int = 1) -> CliResult:
     return CliResult(returncode=returncode, stdout="", stderr=stderr, truncated=False)
-
-
-# ---------- _parse_json_lines ----------
-
-
-def test_parse_json_lines_handles_ndjson():
-    assert _parse_json_lines('{"a": 1}\n{"a": 2}\n') == [{"a": 1}, {"a": 2}]
-
-
-def test_parse_json_lines_skips_blank_lines():
-    assert _parse_json_lines('{"a": 1}\n\n{"a": 2}\n') == [{"a": 1}, {"a": 2}]
-
-
-def test_parse_json_lines_empty_returns_empty_list():
-    assert _parse_json_lines("") == []
-
-
-def test_parse_json_lines_drops_partial_last_line_when_truncated():
-    # Last entry is cut off (no closing brace) — should be dropped when truncated=True.
-    body = '{"a": 1}\n{"a": 2}\n{"a": 3, "b":'
-    assert _parse_json_lines(body, truncated=True) == [{"a": 1}, {"a": 2}]
-
-
-def test_parse_json_lines_raises_descriptively_on_garbage_when_not_truncated():
-    body = '{"a": 1}\nnot-json-at-all'
-    with pytest.raises(RuntimeError, match="Could not parse .* JSON.*line 2.*truncated=False"):
-        _parse_json_lines(body, truncated=False, what="buildx test output")
-
-
-def test_parse_json_lines_truncated_keeps_complete_earlier_records():
-    body = '{"a": 1}\n{"a": 2}'  # the second is "complete" but we still drop it when truncated
-    # When truncated=True, the last line is always dropped on the assumption it may be partial.
-    # That's a conservative call — the alternative (trying to detect completeness) is brittle.
-    assert _parse_json_lines(body, truncated=True) == [{"a": 1}]
 
 
 # ---------- buildx_build ----------
@@ -396,3 +361,21 @@ def test_buildx_rm_named_with_force():
     args = run.call_args.args[0]
     assert "--force" in args
     assert args[-1] == "builder-x"
+
+
+# ---------- argument-injection defense ----------
+
+
+def test_buildx_build_rejects_flag_like_context():
+    with pytest.raises(ValueError, match="parses as a flag"):
+        buildx_build(context="--output=type=local,dest=/etc")
+
+
+def test_buildx_imagetools_inspect_rejects_flag_like_image():
+    with pytest.raises(ValueError, match="parses as a flag"):
+        buildx_imagetools_inspect(image="--raw")
+
+
+def test_buildx_imagetools_create_rejects_flag_like_source():
+    with pytest.raises(ValueError, match="parses as a flag"):
+        buildx_imagetools_create(target="me/img:latest", sources=["ok/img:amd64", "--bad"])

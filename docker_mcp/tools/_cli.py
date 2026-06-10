@@ -5,6 +5,7 @@
 # console suppression, env scrubbing, byte-level output caps) live in one place.
 
 import functools
+import json
 import os
 import shutil
 import subprocess
@@ -183,3 +184,97 @@ def require_plugin(name: str) -> None:
             f"install it via your distribution's docker-{name}-plugin package "
             f"(or follow the upstream docs)."
         )
+
+
+def safe_positional(value: str, what: str = "value") -> str:
+    """
+    Validate a string that will be appended as a *positional* docker CLI argument.
+
+    `shell=False` (enforced by `run_docker`) blocks shell-metacharacter injection, but it does NOT
+    block *flag* injection: the docker CLI parses any argument starting with '-' as an option, even
+    when we intend it as a positional value. For example a service list of ["--follow"] handed to
+    `docker compose logs` would silently become a flag rather than a (nonexistent) service name,
+    and an image of "--output=/etc/x" handed to a scout/buildx subcommand could smuggle a flag that
+    writes to the server host's filesystem.
+
+    A legitimate image reference, service, context, or builder name never starts with '-', so we
+    reject those outright with an actionable error. Returns `value` unchanged when it is safe, so
+    call sites can wrap inline: `args.append(safe_positional(image, "image"))`.
+    """
+    if value.startswith("-"):
+        raise ValueError(
+            f"Refusing to pass {what}={value!r} as a positional docker argument: it starts with '-', "
+            f"which the docker CLI parses as a flag rather than a value. This is blocked to prevent "
+            f"flag injection; a real {what} cannot start with '-'."
+        )
+    return value
+
+
+def raise_on_cli_failure(result: CliResult, command: str) -> None:
+    """
+    Raise RuntimeError if a docker subprocess exited non-zero.
+
+    args:
+        result: the CliResult from run_docker.
+        command: the docker subcommand for the message, e.g. "buildx ls" or "context inspect".
+    """
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"`docker {command}` failed with exit code {result.returncode}: "
+            f"{result.stderr.strip() or result.stdout.strip() or '<no output>'}"
+        )
+
+
+def parse_ndjson(text: str, *, truncated: bool = False, what: str = "docker output") -> list[dict]:
+    """
+    Parse one JSON object per non-blank line (NDJSON), as emitted by `docker ... --format '{{json .}}'`.
+
+    args:
+        text: the NDJSON body to parse.
+        truncated: True if the underlying stdout was capped by run_docker's byte limit. When set,
+                   the final non-blank line is assumed to be a partial record and is dropped before
+                   parsing rather than crashing on a half-record.
+        what: short label used in error messages, e.g. "buildx ls output".
+    """
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if truncated and lines:
+        lines = lines[:-1]
+    items: list[dict] = []
+    for line_number, line in enumerate(lines, start=1):
+        try:
+            items.append(json.loads(line))
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(
+                f"Could not parse {what} as JSON (line {line_number}, truncated={truncated}): {exc}. "
+                f"Snippet: {line[:200]!r}"
+            ) from exc
+    return items
+
+
+def parse_json_or_ndjson(
+    text: str, *, truncated: bool = False, what: str = "docker output"
+) -> list[dict] | dict | None:
+    """
+    Parse output that may be a single JSON document OR NDJSON.
+
+    Compose v2.21+ emits NDJSON (one object per line); older versions emit a single JSON array or
+    object. Returns the parsed structure on success, or None if the body is empty.
+
+    args:
+        text: the body to parse.
+        truncated: True if the underlying stdout was capped by run_docker's byte limit. When set,
+                   the NDJSON branch drops the final (likely partial) line rather than crashing on a
+                   half-record; see `parse_ndjson`.
+        what: short label used in error messages, e.g. "compose ps output".
+    """
+    stripped = text.strip()
+    if not stripped:
+        return None
+    # Try a single-JSON-document parse first (covers `compose config --format json` and older `ps`).
+    # A truncated single document can't parse cleanly, so this falls through to the NDJSON branch,
+    # which handles truncation and raises a descriptive error on a genuinely unparseable body.
+    try:
+        return json.loads(stripped)
+    except json.JSONDecodeError:
+        pass
+    return parse_ndjson(stripped, truncated=truncated, what=what)

@@ -8,8 +8,12 @@ from docker_mcp.tools._cli import (
     MAX_CLI_OUTPUT_BYTES,
     CliResult,
     has_plugin,
+    parse_json_or_ndjson,
+    parse_ndjson,
+    raise_on_cli_failure,
     require_plugin,
     run_docker,
+    safe_positional,
 )
 
 
@@ -193,3 +197,108 @@ def test_require_plugin_silent_when_present():
 def test_cli_result_to_dict_is_serializable():
     r = CliResult(0, "out", "err", False)
     assert r.to_dict() == {"returncode": 0, "stdout": "out", "stderr": "err", "truncated": False}
+
+
+# ---------- safe_positional ----------
+
+
+@pytest.mark.parametrize("value", ["alpine", "ghcr.io/org/repo:v1", "localhost:5000/x", "web", "my-context"])
+def test_safe_positional_allows_normal_values(value):
+    assert safe_positional(value, "image") == value
+
+
+@pytest.mark.parametrize("value", ["-rf", "--follow", "--output=/etc/passwd", "-"])
+def test_safe_positional_rejects_leading_dash(value):
+    with pytest.raises(ValueError, match="parses as a flag"):
+        safe_positional(value, "service")
+
+
+def test_safe_positional_error_names_the_argument_kind():
+    with pytest.raises(ValueError, match="service="):
+        safe_positional("--rm", "service")
+
+
+# ---------- raise_on_cli_failure ----------
+
+
+def test_raise_on_cli_failure_silent_on_zero_exit():
+    raise_on_cli_failure(CliResult(0, "ok", "", False), "buildx ls")
+
+
+def test_raise_on_cli_failure_raises_with_command_and_stderr():
+    with pytest.raises(RuntimeError, match=r"`docker buildx ls` failed with exit code 2: boom"):
+        raise_on_cli_failure(CliResult(2, "", "boom", False), "buildx ls")
+
+
+def test_raise_on_cli_failure_falls_back_to_stdout_then_placeholder():
+    with pytest.raises(RuntimeError, match="only-on-stdout"):
+        raise_on_cli_failure(CliResult(1, "only-on-stdout", "", False), "context inspect")
+    with pytest.raises(RuntimeError, match="<no output>"):
+        raise_on_cli_failure(CliResult(1, "", "", False), "context inspect")
+
+
+# ---------- parse_ndjson ----------
+
+
+def test_parse_ndjson_handles_ndjson():
+    assert parse_ndjson('{"a": 1}\n{"a": 2}\n') == [{"a": 1}, {"a": 2}]
+
+
+def test_parse_ndjson_skips_blank_lines():
+    assert parse_ndjson('{"a": 1}\n\n{"a": 2}\n') == [{"a": 1}, {"a": 2}]
+
+
+def test_parse_ndjson_empty_returns_empty_list():
+    assert parse_ndjson("") == []
+
+
+def test_parse_ndjson_drops_partial_last_line_when_truncated():
+    body = '{"a": 1}\n{"a": 2}\n{"a": 3, "b":'
+    assert parse_ndjson(body, truncated=True) == [{"a": 1}, {"a": 2}]
+
+
+def test_parse_ndjson_raises_descriptively_on_garbage_when_not_truncated():
+    body = '{"a": 1}\nnot-json-at-all'
+    with pytest.raises(RuntimeError, match="Could not parse .* JSON.*line 2.*truncated=False"):
+        parse_ndjson(body, truncated=False, what="buildx test output")
+
+
+def test_parse_ndjson_truncated_always_drops_last_line():
+    # When truncated=True the last line is dropped unconditionally — a conservative call,
+    # since detecting completeness of a JSON fragment is brittle.
+    assert parse_ndjson('{"a": 1}\n{"a": 2}', truncated=True) == [{"a": 1}]
+
+
+# ---------- parse_json_or_ndjson ----------
+
+
+def test_parse_json_or_ndjson_handles_array():
+    assert parse_json_or_ndjson('[{"a": 1}, {"a": 2}]') == [{"a": 1}, {"a": 2}]
+
+
+def test_parse_json_or_ndjson_handles_ndjson():
+    assert parse_json_or_ndjson('{"a": 1}\n{"a": 2}\n') == [{"a": 1}, {"a": 2}]
+
+
+def test_parse_json_or_ndjson_handles_single_object():
+    assert parse_json_or_ndjson('{"a": 1}') == {"a": 1}
+
+
+def test_parse_json_or_ndjson_empty_returns_none():
+    assert parse_json_or_ndjson("") is None
+    assert parse_json_or_ndjson("   \n  ") is None
+
+
+def test_parse_json_or_ndjson_drops_partial_last_ndjson_line_when_truncated():
+    # NDJSON whose final record was cut off by the output cap: the complete earlier
+    # records must still parse, and the partial tail is dropped rather than crashing.
+    body = '{"Name":"a"}\n{"Name":"b"}\n{"Name":"c","Sta'
+    assert parse_json_or_ndjson(body, truncated=True) == [{"Name": "a"}, {"Name": "b"}]
+
+
+def test_parse_json_or_ndjson_truncated_ndjson_without_drop_raises_descriptively():
+    # Same body, but if we (wrongly) claimed it wasn't truncated, the partial line is a
+    # hard parse error surfaced with a descriptive RuntimeError, not a raw JSONDecodeError.
+    body = '{"Name":"a"}\n{"Name":"c","Sta'
+    with pytest.raises(RuntimeError, match="Could not parse compose ls output as JSON.*line 2"):
+        parse_json_or_ndjson(body, truncated=False, what="compose ls output")

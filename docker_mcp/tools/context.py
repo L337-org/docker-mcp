@@ -7,15 +7,7 @@
 import json
 
 from docker_mcp.server import mcp
-from docker_mcp.tools._cli import CliResult, run_docker
-
-
-def _raise_on_failure(result: CliResult, action: str) -> None:
-    if result.returncode != 0:
-        raise RuntimeError(
-            f"`docker context {action}` failed with exit code {result.returncode}: "
-            f"{result.stderr.strip() or result.stdout.strip() or '<no output>'}"
-        )
+from docker_mcp.tools._cli import parse_ndjson, raise_on_cli_failure, run_docker, safe_positional
 
 
 @mcp.tool()
@@ -31,14 +23,8 @@ def context_ls() -> list:
     returns: list - One dict per context with at least name, description, dockerEndpoint, and current
     """
     result = run_docker(["context", "ls", "--format", "{{json .}}"])
-    _raise_on_failure(result, "ls")
-    contexts: list = []
-    for line in result.stdout.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        contexts.append(json.loads(line))
-    return contexts
+    raise_on_cli_failure(result, "context ls")
+    return parse_ndjson(result.stdout, truncated=result.truncated, what="context ls output")
 
 
 @mcp.tool()
@@ -49,8 +35,8 @@ def context_inspect(name: str) -> dict:
     args: name: str - Context name (use the `Name` field from `context_ls`)
     returns: dict - The parsed `docker context inspect` entry for that context
     """
-    result = run_docker(["context", "inspect", name])
-    _raise_on_failure(result, "inspect")
+    result = run_docker(["context", "inspect", safe_positional(name, "context name")])
+    raise_on_cli_failure(result, "context inspect")
     parsed = json.loads(result.stdout)
     # `docker context inspect` always returns a JSON array, even for a single name.
     if isinstance(parsed, list):
@@ -92,7 +78,7 @@ def context_create(
         docker_spec_parts.append(f"key={tls_key}")
     if skip_tls_verify:
         docker_spec_parts.append("skip-tls-verify=true")
-    args = ["context", "create", name, "--docker", ",".join(docker_spec_parts)]
+    args = ["context", "create", safe_positional(name, "context name"), "--docker", ",".join(docker_spec_parts)]
     if description is not None:
         args.extend(["--description", description])
     return run_docker(args).to_dict()
@@ -110,7 +96,7 @@ def context_use(name: str) -> dict:
     args: name: str - Existing context name to set as default
     returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
     """
-    return run_docker(["context", "use", name]).to_dict()
+    return run_docker(["context", "use", safe_positional(name, "context name")]).to_dict()
 
 
 @mcp.tool()
@@ -123,7 +109,7 @@ def context_rm(name: str, force: bool = False) -> dict:
         force: bool - Force removal even if the context is the current one
     returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
     """
-    args = ["context", "rm", name]
+    args = ["context", "rm", safe_positional(name, "context name")]
     if force:
         args.append("--force")
     return run_docker(args).to_dict()

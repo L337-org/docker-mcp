@@ -5,7 +5,6 @@ import pytest
 from docker_mcp.tools._cli import CliResult
 from docker_mcp.tools.compose import (
     _global_args,
-    _parse_compose_json,
     compose_build,
     compose_config,
     compose_down,
@@ -56,26 +55,6 @@ def test_global_args_multiple_files_and_profiles():
         "--profile",
         "tools",
     ]
-
-
-# ---------- _parse_compose_json ----------
-
-
-def test_parse_compose_json_handles_array():
-    assert _parse_compose_json('[{"a": 1}, {"a": 2}]') == [{"a": 1}, {"a": 2}]
-
-
-def test_parse_compose_json_handles_ndjson():
-    assert _parse_compose_json('{"a": 1}\n{"a": 2}\n') == [{"a": 1}, {"a": 2}]
-
-
-def test_parse_compose_json_handles_single_object():
-    assert _parse_compose_json('{"a": 1}') == {"a": 1}
-
-
-def test_parse_compose_json_empty_returns_none():
-    assert _parse_compose_json("") is None
-    assert _parse_compose_json("   \n  ") is None
 
 
 # ---------- compose_up ----------

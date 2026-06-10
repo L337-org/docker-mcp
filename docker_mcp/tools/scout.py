@@ -8,7 +8,7 @@
 import json
 
 from docker_mcp.server import mcp
-from docker_mcp.tools._cli import CliResult, require_plugin, run_docker
+from docker_mcp.tools._cli import CliResult, require_plugin, run_docker, safe_positional
 
 # Scout calls are CDN-backed network queries; 5 minutes is plenty for any one image.
 _TIMEOUT_SCOUT = 300.0
@@ -68,7 +68,7 @@ def scout_cves(
         args.append("--ignore-base")
     if platform is not None:
         args.extend(["--platform", platform])
-    args.append(image)
+    args.append(safe_positional(image, "image"))
     result = _run_scout(args)
     return {"format": format, "result": _maybe_parse_json(result.stdout, format), "raw": result.to_dict()}
 
@@ -88,7 +88,7 @@ def scout_quickview(image: str, format: str = "json", platform: str | None = Non
     args: list[str] = ["quickview", "--format", format]
     if platform is not None:
         args.extend(["--platform", platform])
-    args.append(image)
+    args.append(safe_positional(image, "image"))
     result = _run_scout(args)
     return {"format": format, "result": _maybe_parse_json(result.stdout, format), "raw": result.to_dict()}
 
@@ -128,7 +128,7 @@ def scout_recommendations(
         args.extend(["--tag", tag])
     if platform is not None:
         args.extend(["--platform", platform])
-    args.append(image)
+    args.append(safe_positional(image, "image"))
     result = _run_scout(args)
     return {"format": format, "result": _maybe_parse_json(result.stdout, format), "raw": result.to_dict()}
 
@@ -179,7 +179,7 @@ def scout_compare(
         args.append("--ignore-unchanged")
     if platform is not None:
         args.extend(["--platform", platform])
-    args.append(image)
+    args.append(safe_positional(image, "image"))
     result = _run_scout(args)
     return {"format": format, "result": _maybe_parse_json(result.stdout, format), "raw": result.to_dict()}
 
@@ -213,7 +213,7 @@ def scout_sbom(
     args: list[str] = ["sbom", "--format", format]
     if platform is not None:
         args.extend(["--platform", platform])
-    args.append(image)
+    args.append(safe_positional(image, "image"))
     result = _run_scout(args)
     # SPDX and CycloneDX are both JSON; the cyclonedx-xml variant returns XML.
     parse_as_json = format in {"spdx", "cyclonedx", "json"}
