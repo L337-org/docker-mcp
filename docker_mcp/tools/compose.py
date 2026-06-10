@@ -152,7 +152,11 @@ def compose_ps(
     if services:
         args.extend(safe_positional(s, "service") for s in services)
     result = _run_compose(args, cwd=project_dir, timeout=_TIMEOUT_QUERY)
-    parsed = parse_json_or_ndjson(result.stdout) if result.returncode == 0 else None
+    parsed = (
+        parse_json_or_ndjson(result.stdout, truncated=result.truncated, what="compose ps output")
+        if result.returncode == 0
+        else None
+    )
     if isinstance(parsed, dict):
         # Single-service `compose ps --format json` (older versions) returns one object.
         services_list: list[dict] = [parsed]
@@ -238,7 +242,7 @@ def compose_config(
     if result.returncode != 0:
         config = None
     elif format == "json" and not services_only:
-        parsed = parse_json_or_ndjson(result.stdout)
+        parsed = parse_json_or_ndjson(result.stdout, truncated=result.truncated, what="compose config output")
         config = parsed if parsed is not None else result.stdout
     else:
         config = result.stdout
@@ -457,7 +461,7 @@ def compose_ls(all: bool = False) -> list:
     require_plugin("compose")
     result = run_docker(args, timeout=_TIMEOUT_QUERY)
     raise_on_cli_failure(result, "compose ls")
-    parsed = parse_json_or_ndjson(result.stdout)
+    parsed = parse_json_or_ndjson(result.stdout, truncated=result.truncated, what="compose ls output")
     if isinstance(parsed, list):
         return parsed
     if isinstance(parsed, dict):

@@ -251,25 +251,30 @@ def parse_ndjson(text: str, *, truncated: bool = False, what: str = "docker outp
     return items
 
 
-def parse_json_or_ndjson(text: str) -> list[dict] | dict | None:
+def parse_json_or_ndjson(
+    text: str, *, truncated: bool = False, what: str = "docker output"
+) -> list[dict] | dict | None:
     """
     Parse output that may be a single JSON document OR NDJSON.
 
     Compose v2.21+ emits NDJSON (one object per line); older versions emit a single JSON array or
     object. Returns the parsed structure on success, or None if the body is empty.
+
+    args:
+        text: the body to parse.
+        truncated: True if the underlying stdout was capped by run_docker's byte limit. When set,
+                   the NDJSON branch drops the final (likely partial) line rather than crashing on a
+                   half-record; see `parse_ndjson`.
+        what: short label used in error messages, e.g. "compose ps output".
     """
     stripped = text.strip()
     if not stripped:
         return None
     # Try a single-JSON-document parse first (covers `compose config --format json` and older `ps`).
+    # A truncated single document can't parse cleanly, so this falls through to the NDJSON branch,
+    # which handles truncation and raises a descriptive error on a genuinely unparseable body.
     try:
         return json.loads(stripped)
     except json.JSONDecodeError:
         pass
-    items: list[dict] = []
-    for line in stripped.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        items.append(json.loads(line))
-    return items
+    return parse_ndjson(stripped, truncated=truncated, what=what)

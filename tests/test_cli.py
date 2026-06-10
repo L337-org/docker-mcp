@@ -287,3 +287,18 @@ def test_parse_json_or_ndjson_handles_single_object():
 def test_parse_json_or_ndjson_empty_returns_none():
     assert parse_json_or_ndjson("") is None
     assert parse_json_or_ndjson("   \n  ") is None
+
+
+def test_parse_json_or_ndjson_drops_partial_last_ndjson_line_when_truncated():
+    # NDJSON whose final record was cut off by the output cap: the complete earlier
+    # records must still parse, and the partial tail is dropped rather than crashing.
+    body = '{"Name":"a"}\n{"Name":"b"}\n{"Name":"c","Sta'
+    assert parse_json_or_ndjson(body, truncated=True) == [{"Name": "a"}, {"Name": "b"}]
+
+
+def test_parse_json_or_ndjson_truncated_ndjson_without_drop_raises_descriptively():
+    # Same body, but if we (wrongly) claimed it wasn't truncated, the partial line is a
+    # hard parse error surfaced with a descriptive RuntimeError, not a raw JSONDecodeError.
+    body = '{"Name":"a"}\n{"Name":"c","Sta'
+    with pytest.raises(RuntimeError, match="Could not parse compose ls output as JSON.*line 2"):
+        parse_json_or_ndjson(body, truncated=False, what="compose ls output")
