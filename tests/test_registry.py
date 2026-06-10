@@ -127,6 +127,13 @@ def test_is_local_host_false_for_public(host):
     assert _is_local_host(host) is False
 
 
+def test_is_local_host_recognizes_ip_literal_with_trailing_dot():
+    # The host is normalized (trailing dot stripped) before being parsed as an IP, so a
+    # fully-qualified loopback literal is still classified local.
+    assert _is_local_host("127.0.0.1.") is True
+    assert _is_local_host("10.0.0.1.") is True
+
+
 # ---------- _validate_bearer_realm ----------
 
 

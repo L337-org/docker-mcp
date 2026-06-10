@@ -114,11 +114,13 @@ def _is_local_host(host: str) -> bool:
     h = host.lower().rstrip(".")
     if h == "localhost" or h.endswith((".localhost", ".local", ".internal")):
         return True
+    # Parse the *normalized* host so an IP literal with a trailing dot (e.g. "127.0.0.1.") is still
+    # recognized rather than slipping through as a non-local name.
     try:
-        ip = ipaddress.ip_address(host)
+        ip = ipaddress.ip_address(h)
     except ValueError:
         return False
-    return ip.is_loopback or ip.is_private or ip.is_link_local or ip.is_reserved or ip.is_unspecified
+    return ip.is_loopback or ip.is_private or ip.is_link_local
 
 
 def _validate_bearer_realm(realm: str, registry: str) -> None:
