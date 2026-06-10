@@ -14,7 +14,7 @@ from urllib.parse import urlparse
 
 import httpx
 
-from docker_mcp.server import mcp
+from docker_mcp.server import tool
 
 _DEFAULT_TIMEOUT = 30.0
 _USER_AGENT = "docker-mcp/0.1"
@@ -303,7 +303,7 @@ def _next_link(link_header: str | None) -> str | None:
     return None
 
 
-@mcp.tool()
+@tool()
 def registry_list_tags(
     image: str,
     username: str | None = None,
@@ -363,7 +363,7 @@ def registry_list_tags(
     return {"name": repo, "registry": registry, "tags": tags, "truncated": truncated}
 
 
-@mcp.tool()
+@tool()
 def registry_inspect_manifest(
     image: str,
     reference: str = "latest",
@@ -413,7 +413,7 @@ def _hub_normalize(repository: str) -> str:
     return repository
 
 
-@mcp.tool()
+@tool()
 def hub_list_tags(repository: str, limit: int = 100) -> dict:
     """
     List tags on a Docker Hub repository with Hub-specific metadata.
@@ -466,7 +466,7 @@ def hub_list_tags(repository: str, limit: int = 100) -> dict:
     return {"name": repo, "tags": tags, "truncated": truncated}
 
 
-@mcp.tool()
+@tool()
 def hub_repo_info(repository: str) -> dict:
     """
     Fetch Docker Hub metadata for a repository.

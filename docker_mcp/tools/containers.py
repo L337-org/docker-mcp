@@ -6,12 +6,12 @@ from typing import Literal, cast
 
 import requests.exceptions
 
-from docker_mcp.server import mcp
+from docker_mcp.server import tool
 from docker_mcp.tools._utils import MAX_PAYLOAD_BYTES, close_stream_quietly, drop_none, join_bounded
 from docker_mcp.tools.client import _get_client
 
 
-@mcp.tool()
+@tool()
 def run_container(
     image: str,
     command: str | list | None = None,
@@ -102,7 +102,7 @@ def run_container(
     return str(result)
 
 
-@mcp.tool()
+@tool()
 def create_container(image: str, command: str | list | None = None, extra_kwargs: dict | None = None) -> dict:
     """
     Create a container without starting it.
@@ -118,7 +118,7 @@ def create_container(image: str, command: str | list | None = None, extra_kwargs
     return container.attrs
 
 
-@mcp.tool()
+@tool()
 def get_container(id_or_name: str) -> dict:
     """
     Get a container by id or name.
@@ -129,7 +129,7 @@ def get_container(id_or_name: str) -> dict:
     return _get_client().containers.get(id_or_name).attrs
 
 
-@mcp.tool()
+@tool()
 def list_containers(
     all: bool = False,
     since: str | None = None,
@@ -161,7 +161,7 @@ def list_containers(
     return [c.attrs for c in _get_client().containers.list(**kwargs)]
 
 
-@mcp.tool()
+@tool()
 def prune_containers(filters: dict | None = None) -> dict:
     """
     Remove stopped containers.
@@ -172,7 +172,7 @@ def prune_containers(filters: dict | None = None) -> dict:
     return _get_client().containers.prune(filters=filters)
 
 
-@mcp.tool()
+@tool()
 def start_container(id_or_name: str) -> dict:
     """
     Start a container.
@@ -186,7 +186,7 @@ def start_container(id_or_name: str) -> dict:
     return container.attrs
 
 
-@mcp.tool()
+@tool()
 def stop_container(id_or_name: str, timeout: int = 10) -> dict:
     """
     Stop a container.
@@ -202,7 +202,7 @@ def stop_container(id_or_name: str, timeout: int = 10) -> dict:
     return container.attrs
 
 
-@mcp.tool()
+@tool()
 def restart_container(id_or_name: str, timeout: int = 10) -> dict:
     """
     Restart a container.
@@ -218,7 +218,7 @@ def restart_container(id_or_name: str, timeout: int = 10) -> dict:
     return container.attrs
 
 
-@mcp.tool()
+@tool()
 def kill_container(id_or_name: str, signal: str | None = None) -> dict:
     """
     Send a signal to a container.
@@ -234,7 +234,7 @@ def kill_container(id_or_name: str, signal: str | None = None) -> dict:
     return container.attrs
 
 
-@mcp.tool()
+@tool()
 def pause_container(id_or_name: str) -> dict:
     """
     Pause all processes in a container.
@@ -248,7 +248,7 @@ def pause_container(id_or_name: str) -> dict:
     return container.attrs
 
 
-@mcp.tool()
+@tool()
 def unpause_container(id_or_name: str) -> dict:
     """
     Resume all processes in a paused container.
@@ -262,7 +262,7 @@ def unpause_container(id_or_name: str) -> dict:
     return container.attrs
 
 
-@mcp.tool()
+@tool()
 def remove_container(id_or_name: str, v: bool = False, link: bool = False, force: bool = False) -> bool:
     """
     Remove a container.
@@ -279,7 +279,7 @@ def remove_container(id_or_name: str, v: bool = False, link: bool = False, force
     return True
 
 
-@mcp.tool()
+@tool()
 def container_logs(
     id_or_name: str,
     stdout: bool = True,
@@ -317,7 +317,7 @@ def container_logs(
     return str(output)
 
 
-@mcp.tool()
+@tool()
 def follow_container_logs(
     id_or_name: str,
     limit_lines: int = 200,
@@ -374,7 +374,7 @@ def follow_container_logs(
     return "\n".join(collected)
 
 
-@mcp.tool()
+@tool()
 def container_stats(id_or_name: str) -> dict:
     """
     Get a single resource usage stats snapshot for a container.
@@ -386,7 +386,7 @@ def container_stats(id_or_name: str) -> dict:
     return cast(dict, container.stats(decode=True, stream=False))
 
 
-@mcp.tool()
+@tool()
 def container_top(id_or_name: str, ps_args: str | None = None) -> dict:
     """
     Show the running processes inside a container.
@@ -400,7 +400,7 @@ def container_top(id_or_name: str, ps_args: str | None = None) -> dict:
     return cast(dict, container.top(ps_args=ps_args))
 
 
-@mcp.tool()
+@tool()
 def exec_in_container(
     id_or_name: str,
     cmd: str | list,
@@ -463,7 +463,7 @@ def exec_in_container(
     return {"exit_code": result.exit_code, "output": output}
 
 
-@mcp.tool()
+@tool()
 def commit_container(
     id_or_name: str,
     repository: str | None = None,
@@ -501,7 +501,7 @@ def commit_container(
     return image.attrs
 
 
-@mcp.tool()
+@tool()
 def container_diff(id_or_name: str) -> list:
     """
     Inspect changes on a container's filesystem.
@@ -513,7 +513,7 @@ def container_diff(id_or_name: str) -> list:
     return container.diff()
 
 
-@mcp.tool()
+@tool()
 def rename_container(id_or_name: str, name: str) -> dict:
     """
     Rename a container.
@@ -529,7 +529,7 @@ def rename_container(id_or_name: str, name: str) -> dict:
     return container.attrs
 
 
-@mcp.tool()
+@tool()
 def resize_container(id_or_name: str, height: int, width: int) -> bool:
     """
     Resize the tty session of a container.
@@ -545,7 +545,7 @@ def resize_container(id_or_name: str, height: int, width: int) -> bool:
     return True
 
 
-@mcp.tool()
+@tool()
 def update_container(id_or_name: str, updates: dict) -> dict:
     """
     Update resource limits on a running container.
@@ -561,7 +561,7 @@ def update_container(id_or_name: str, updates: dict) -> dict:
     return container.attrs
 
 
-@mcp.tool()
+@tool()
 def wait_container(
     id_or_name: str,
     timeout: int | None = 600,
@@ -592,7 +592,7 @@ def wait_container(
         ) from exc
 
 
-@mcp.tool()
+@tool()
 def export_container(id_or_name: str, max_bytes: int = MAX_PAYLOAD_BYTES) -> bytes:
     """
     Export a container's filesystem as a tar archive.
@@ -606,7 +606,7 @@ def export_container(id_or_name: str, max_bytes: int = MAX_PAYLOAD_BYTES) -> byt
     return join_bounded(cast(Iterable[bytes], container.export()), max_bytes, f"export of {id_or_name}")
 
 
-@mcp.tool()
+@tool()
 def get_container_archive(id_or_name: str, path: str, max_bytes: int = MAX_PAYLOAD_BYTES) -> dict:
     """
     Retrieve a file or directory from a container as a tar archive.
@@ -622,7 +622,7 @@ def get_container_archive(id_or_name: str, path: str, max_bytes: int = MAX_PAYLO
     return {"archive": join_bounded(stream, max_bytes, f"archive of {id_or_name}:{path}"), "stat": stat}
 
 
-@mcp.tool()
+@tool()
 def put_container_archive(id_or_name: str, path: str, data: bytes) -> bool:
     """
     Upload a tar archive to a path inside a container.

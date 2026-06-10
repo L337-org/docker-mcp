@@ -1,11 +1,11 @@
 # library of mcp tools relating to swarm config management
 
-from docker_mcp.server import mcp
+from docker_mcp.server import tool
 from docker_mcp.tools._utils import drop_none
 from docker_mcp.tools.client import _get_client
 
 
-@mcp.tool()
+@tool()
 def create_config(name: str, data: bytes, labels: dict | None = None, templating: dict | None = None) -> dict:
     """
     Create a swarm config.
@@ -21,7 +21,7 @@ def create_config(name: str, data: bytes, labels: dict | None = None, templating
     return _get_client().configs.create(**kwargs).attrs
 
 
-@mcp.tool()
+@tool()
 def get_config(config_id: str) -> dict:
     """
     Get a swarm config by id.
@@ -32,7 +32,7 @@ def get_config(config_id: str) -> dict:
     return _get_client().configs.get(config_id).attrs
 
 
-@mcp.tool()
+@tool()
 def list_configs(filters: dict | None = None) -> list:
     """
     List swarm configs.
@@ -43,7 +43,7 @@ def list_configs(filters: dict | None = None) -> list:
     return [c.attrs for c in _get_client().configs.list(**drop_none(filters=filters))]
 
 
-@mcp.tool()
+@tool()
 def remove_config(config_id: str) -> bool:
     """
     Remove a swarm config.

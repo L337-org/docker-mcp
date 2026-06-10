@@ -1,10 +1,10 @@
 # library of mcp tools relating to plugin management
 
-from docker_mcp.server import mcp
+from docker_mcp.server import tool
 from docker_mcp.tools.client import _get_client
 
 
-@mcp.tool()
+@tool()
 def get_plugin(name: str) -> dict:
     """
     Get an installed plugin by name.
@@ -15,7 +15,7 @@ def get_plugin(name: str) -> dict:
     return _get_client().plugins.get(name).attrs
 
 
-@mcp.tool()
+@tool()
 def install_plugin(remote_name: str, local_name: str | None = None) -> dict:
     """
     Install a plugin from a remote reference.
@@ -28,7 +28,7 @@ def install_plugin(remote_name: str, local_name: str | None = None) -> dict:
     return _get_client().plugins.install(remote_name, local_name=local_name).attrs
 
 
-@mcp.tool()
+@tool()
 def list_plugins() -> list:
     """
     List installed plugins.
@@ -38,7 +38,7 @@ def list_plugins() -> list:
     return [p.attrs for p in _get_client().plugins.list()]
 
 
-@mcp.tool()
+@tool()
 def configure_plugin(name: str, options: dict) -> bool:
     """
     Configure a plugin's settings.
@@ -52,7 +52,7 @@ def configure_plugin(name: str, options: dict) -> bool:
     return True
 
 
-@mcp.tool()
+@tool()
 def disable_plugin(name: str, force: bool = False) -> bool:
     """
     Disable a plugin.
@@ -66,7 +66,7 @@ def disable_plugin(name: str, force: bool = False) -> bool:
     return True
 
 
-@mcp.tool()
+@tool()
 def enable_plugin(name: str, timeout: int = 0) -> bool:
     """
     Enable a plugin.
@@ -80,7 +80,7 @@ def enable_plugin(name: str, timeout: int = 0) -> bool:
     return True
 
 
-@mcp.tool()
+@tool()
 def push_plugin(name: str) -> dict:
     """
     Push a plugin to a remote registry.
@@ -91,7 +91,7 @@ def push_plugin(name: str) -> dict:
     return _get_client().plugins.get(name).push()
 
 
-@mcp.tool()
+@tool()
 def remove_plugin(name: str, force: bool = False) -> bool:
     """
     Remove a plugin.
@@ -105,7 +105,7 @@ def remove_plugin(name: str, force: bool = False) -> bool:
     return True
 
 
-@mcp.tool()
+@tool()
 def upgrade_plugin(name: str, remote: str | None = None) -> bool:
     """
     Upgrade a plugin.

@@ -1,11 +1,11 @@
 # library of mcp tools relating to swarm node management
 
-from docker_mcp.server import mcp
+from docker_mcp.server import tool
 from docker_mcp.tools._utils import drop_none
 from docker_mcp.tools.client import _get_client
 
 
-@mcp.tool()
+@tool()
 def get_node(id_or_name: str) -> dict:
     """
     Get a swarm node by id or name.
@@ -16,7 +16,7 @@ def get_node(id_or_name: str) -> dict:
     return _get_client().nodes.get(id_or_name).attrs
 
 
-@mcp.tool()
+@tool()
 def list_nodes(filters: dict | None = None) -> list:
     """
     List swarm nodes.
@@ -27,7 +27,7 @@ def list_nodes(filters: dict | None = None) -> list:
     return [n.attrs for n in _get_client().nodes.list(**drop_none(filters=filters))]
 
 
-@mcp.tool()
+@tool()
 def update_node(id_or_name: str, node_spec: dict) -> bool:
     """
     Update a node's spec (availability, name, role, labels).

@@ -7,7 +7,7 @@
 
 import json
 
-from docker_mcp.server import mcp
+from docker_mcp.server import tool
 from docker_mcp.tools._cli import CliResult, require_plugin, run_docker, safe_positional
 
 # Scout calls are CDN-backed network queries; 5 minutes is plenty for any one image.
@@ -32,7 +32,7 @@ def _maybe_parse_json(text: str, format: str) -> dict | list | str | None:
         return text
 
 
-@mcp.tool()
+@tool()
 def scout_cves(
     image: str,
     only_fixed: bool = False,
@@ -73,7 +73,7 @@ def scout_cves(
     return {"format": format, "result": _maybe_parse_json(result.stdout, format), "raw": result.to_dict()}
 
 
-@mcp.tool()
+@tool()
 def scout_quickview(image: str, format: str = "json", platform: str | None = None) -> dict:
     """
     Render a compact summary of an image's CVE posture.
@@ -93,7 +93,7 @@ def scout_quickview(image: str, format: str = "json", platform: str | None = Non
     return {"format": format, "result": _maybe_parse_json(result.stdout, format), "raw": result.to_dict()}
 
 
-@mcp.tool()
+@tool()
 def scout_recommendations(
     image: str,
     only_refresh: bool = False,
@@ -133,7 +133,7 @@ def scout_recommendations(
     return {"format": format, "result": _maybe_parse_json(result.stdout, format), "raw": result.to_dict()}
 
 
-@mcp.tool()
+@tool()
 def scout_compare(
     image: str,
     to: str | None = None,
@@ -184,7 +184,7 @@ def scout_compare(
     return {"format": format, "result": _maybe_parse_json(result.stdout, format), "raw": result.to_dict()}
 
 
-@mcp.tool()
+@tool()
 def scout_sbom(
     image: str,
     format: str = "spdx",

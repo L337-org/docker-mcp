@@ -7,7 +7,7 @@
 # (`-T`, `--no-follow`) so they can't block the MCP server. To stream logs or
 # attach, use the host CLI directly.
 
-from docker_mcp.server import mcp
+from docker_mcp.server import tool
 from docker_mcp.tools._cli import (
     CliResult,
     parse_json_or_ndjson,
@@ -48,7 +48,7 @@ def _run_compose(subcommand_args: list[str], *, cwd: str | None, timeout: float)
     return run_docker(["compose", *subcommand_args], cwd=cwd, timeout=timeout)
 
 
-@mcp.tool()
+@tool()
 def compose_up(
     project_dir: str | None = None,
     files: list[str] | None = None,
@@ -95,7 +95,7 @@ def compose_up(
     return _run_compose(args, cwd=project_dir, timeout=timeout_seconds).to_dict()
 
 
-@mcp.tool()
+@tool()
 def compose_down(
     project_dir: str | None = None,
     files: list[str] | None = None,
@@ -126,7 +126,7 @@ def compose_down(
     return _run_compose(args, cwd=project_dir, timeout=timeout_seconds).to_dict()
 
 
-@mcp.tool()
+@tool()
 def compose_ps(
     project_dir: str | None = None,
     files: list[str] | None = None,
@@ -167,7 +167,7 @@ def compose_ps(
     return {"services": services_list, "raw": result.to_dict()}
 
 
-@mcp.tool()
+@tool()
 def compose_logs(
     project_dir: str | None = None,
     files: list[str] | None = None,
@@ -209,7 +209,7 @@ def compose_logs(
     return _run_compose(args, cwd=project_dir, timeout=_TIMEOUT_QUERY).to_dict()
 
 
-@mcp.tool()
+@tool()
 def compose_config(
     project_dir: str | None = None,
     files: list[str] | None = None,
@@ -249,7 +249,7 @@ def compose_config(
     return {"config": config, "raw": result.to_dict()}
 
 
-@mcp.tool()
+@tool()
 def compose_build(
     project_dir: str | None = None,
     files: list[str] | None = None,
@@ -282,7 +282,7 @@ def compose_build(
     return _run_compose(args, cwd=project_dir, timeout=timeout_seconds).to_dict()
 
 
-@mcp.tool()
+@tool()
 def compose_pull(
     project_dir: str | None = None,
     files: list[str] | None = None,
@@ -311,7 +311,7 @@ def compose_pull(
     return _run_compose(args, cwd=project_dir, timeout=timeout_seconds).to_dict()
 
 
-@mcp.tool()
+@tool()
 def compose_restart(
     project_dir: str | None = None,
     files: list[str] | None = None,
@@ -340,7 +340,7 @@ def compose_restart(
     return _run_compose(args, cwd=project_dir, timeout=timeout_seconds).to_dict()
 
 
-@mcp.tool()
+@tool()
 def compose_run(
     service: str,
     command: list[str] | None = None,
@@ -400,7 +400,7 @@ def compose_run(
     return _run_compose(args, cwd=project_dir, timeout=timeout_seconds).to_dict()
 
 
-@mcp.tool()
+@tool()
 def compose_exec(
     service: str,
     command: list[str],
@@ -447,7 +447,7 @@ def compose_exec(
     return _run_compose(args, cwd=project_dir, timeout=timeout_seconds).to_dict()
 
 
-@mcp.tool()
+@tool()
 def compose_ls(all: bool = False) -> list:
     """
     List compose projects known to the daemon (across all directories).

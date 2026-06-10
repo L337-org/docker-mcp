@@ -1,11 +1,11 @@
 # library of mcp tools relating to volume management
 
-from docker_mcp.server import mcp
+from docker_mcp.server import tool
 from docker_mcp.tools._utils import drop_none
 from docker_mcp.tools.client import _get_client
 
 
-@mcp.tool()
+@tool()
 def create_volume(
     name: str | None = None,
     driver: str | None = None,
@@ -26,7 +26,7 @@ def create_volume(
     return _get_client().volumes.create(**kwargs).attrs
 
 
-@mcp.tool()
+@tool()
 def get_volume(volume_id: str) -> dict:
     """
     Get a volume by name.
@@ -37,7 +37,7 @@ def get_volume(volume_id: str) -> dict:
     return _get_client().volumes.get(volume_id).attrs
 
 
-@mcp.tool()
+@tool()
 def list_volumes(filters: dict | None = None) -> list:
     """
     List volumes.
@@ -48,7 +48,7 @@ def list_volumes(filters: dict | None = None) -> list:
     return [v.attrs for v in _get_client().volumes.list(**drop_none(filters=filters))]
 
 
-@mcp.tool()
+@tool()
 def prune_volumes(filters: dict | None = None) -> dict:
     """
     Remove unused volumes.
@@ -59,7 +59,7 @@ def prune_volumes(filters: dict | None = None) -> dict:
     return _get_client().volumes.prune(filters=filters)
 
 
-@mcp.tool()
+@tool()
 def remove_volume(volume_id: str, force: bool = False) -> bool:
     """
     Remove a volume.
