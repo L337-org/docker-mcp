@@ -112,13 +112,13 @@ def events(
     timeout_seconds: float = 30.0,
 ) -> list:
     """
-    Stream real-time events from the Docker server, returning when `limit` events have been
-    collected or `timeout_seconds` elapses — whichever comes first.
+    Stream real-time events from the Docker server, bounded by `limit` events or `timeout_seconds`.
 
-    Both bounds matter: `limit` caps how many events accumulate in memory, while `timeout_seconds`
-    caps how long the call blocks. Without the time bound a quiet daemon (fewer than `limit` events,
-    no `until`) would block the tool call indefinitely, since the event stream only yields when an
-    event actually occurs.
+    The call returns when `limit` events have been collected or `timeout_seconds` elapses, whichever
+    comes first. Both bounds matter: `limit` caps how many events accumulate in memory, while
+    `timeout_seconds` caps how long the call blocks. Without the time bound a quiet daemon (fewer
+    than `limit` events, no `until`) would block the tool call indefinitely, since the event stream
+    only yields when an event actually occurs.
 
     args:
         since: str - Show events created since this timestamp

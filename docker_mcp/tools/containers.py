@@ -328,13 +328,13 @@ def follow_container_logs(
     timeout_seconds: float = 30.0,
 ) -> str:
     """
-    Tail a container's log stream, returning when `limit_lines` lines have been collected,
-    `timeout_seconds` elapses, or the container exits — whichever comes first.
+    Tail a container's log stream, bounded by `limit_lines`, `timeout_seconds`, or container exit.
 
-    Wraps the streaming logs API of the `docker` module so the agent can watch live output
-    without blocking forever. `limit_lines` bounds memory; `timeout_seconds` bounds wall-clock
-    time, which matters for a quiet but long-lived container that would otherwise never emit the
-    line that lets the call return.
+    The call returns when `limit_lines` lines have been collected, `timeout_seconds` elapses, or the
+    container exits, whichever comes first. Wraps the streaming logs API of the `docker` module so
+    the agent can watch live output without blocking forever. `limit_lines` bounds memory;
+    `timeout_seconds` bounds wall-clock time, which matters for a quiet but long-lived container
+    that would otherwise never emit the line that lets the call return.
 
     args:
         id_or_name: str - The container id or name
