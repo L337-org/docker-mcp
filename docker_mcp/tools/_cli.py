@@ -4,12 +4,13 @@
 # `run_docker()` so the platform-specific concerns (binary discovery, Windows
 # console suppression, env scrubbing, byte-level output caps) live in one place.
 
-import functools
 import json
 import os
 import shutil
 import subprocess
 import sys
+import threading
+import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -164,15 +165,36 @@ def run_docker(
 # flag as a syntax error.
 _PLUGIN_PROBE_ERRORS: tuple[type[BaseException], ...] = (FileNotFoundError, subprocess.TimeoutExpired)
 
+# Plugin availability is cached with a short TTL rather than forever (the old `functools.cache`):
+# a plugin installed (or removed) while the server is running becomes visible within the TTL
+# instead of requiring a restart. The probe shells out, so the TTL also avoids re-probing on
+# every call. `_plugin_cache` maps plugin name -> (monotonic timestamp, available).
+_PLUGIN_CACHE_TTL_SECONDS = 60.0
+_plugin_cache: dict[str, tuple[float, bool]] = {}
+_plugin_cache_lock = threading.Lock()
 
-@functools.cache
+
+def _clear_plugin_cache() -> None:
+    """Drop all cached plugin-availability results (used by tests; also handy after install/remove)."""
+    with _plugin_cache_lock:
+        _plugin_cache.clear()
+
+
 def has_plugin(name: str) -> bool:
-    """Return True if `docker <name> version` exits 0. Cached per process."""
+    """Return True if `docker <name> version` exits 0. Cached per process with a short TTL."""
+    now = time.monotonic()
+    with _plugin_cache_lock:
+        entry = _plugin_cache.get(name)
+        if entry is not None and now - entry[0] < _PLUGIN_CACHE_TTL_SECONDS:
+            return entry[1]
     try:
         result = run_docker([name, "version"], timeout=10)
+        available = result.returncode == 0
     except _PLUGIN_PROBE_ERRORS:
-        return False
-    return result.returncode == 0
+        available = False
+    with _plugin_cache_lock:
+        _plugin_cache[name] = (time.monotonic(), available)
+    return available
 
 
 def require_plugin(name: str) -> None:

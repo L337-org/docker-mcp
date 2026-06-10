@@ -5,7 +5,7 @@ import pytest
 from docker.errors import DockerException
 
 import docker_mcp.tools.client as client_module
-from docker_mcp.tools.client import _get_client, close, df, events, info, login, ping, version
+from docker_mcp.tools.client import _get_client, close, df, events, info, login, ping, reconnect, version
 
 
 class _BlockingStream:
@@ -123,3 +123,44 @@ def test_close_when_no_cached_client():
     client_module._client = None
     assert close() is True
     assert client_module._client is None
+
+
+def test_reconnect_with_explicit_host_swaps_and_closes_old():
+    old_client = MagicMock()
+    new_client = MagicMock()
+    new_client.version.return_value = {"Version": "25.0.0"}
+    client_module._client = old_client
+    with patch("docker_mcp.tools.client.docker.DockerClient", return_value=new_client) as ctor:
+        result = reconnect(docker_host="tcp://10.0.0.5:2376")
+    ctor.assert_called_once_with(base_url="tcp://10.0.0.5:2376")
+    assert result == {"Version": "25.0.0"}
+    assert client_module._client is new_client
+    old_client.close.assert_called_once()  # the previous client is torn down after the swap
+    client_module._client = None
+
+
+def test_reconnect_without_host_rebuilds_from_env():
+    new_client = MagicMock()
+    new_client.version.return_value = {"Version": "26.0.0"}
+    client_module._client = None
+    with patch("docker_mcp.tools.client.docker.from_env", return_value=new_client) as from_env:
+        result = reconnect()
+    from_env.assert_called_once_with()
+    assert result == {"Version": "26.0.0"}
+    assert client_module._client is new_client
+    client_module._client = None
+
+
+def test_reconnect_keeps_old_client_when_new_endpoint_unreachable():
+    old_client = MagicMock()
+    new_client = MagicMock()
+    new_client.version.side_effect = DockerException("connection refused")
+    client_module._client = old_client
+    with patch("docker_mcp.tools.client.docker.DockerClient", return_value=new_client):
+        with pytest.raises(RuntimeError, match="daemon is unreachable"):
+            reconnect(docker_host="tcp://unreachable:2376")
+    # The working client must survive a failed reconnect, and the half-built one is closed.
+    assert client_module._client is old_client
+    new_client.close.assert_called_once()
+    old_client.close.assert_not_called()
+    client_module._client = None

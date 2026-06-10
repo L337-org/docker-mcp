@@ -1,4 +1,5 @@
 import subprocess
+import time
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -19,9 +20,9 @@ from docker_mcp.tools._cli import (
 
 @pytest.fixture(autouse=True)
 def _clear_plugin_cache():  # pyright: ignore[reportUnusedFunction]
-    has_plugin.cache_clear()
+    cli_module._clear_plugin_cache()
     yield
-    has_plugin.cache_clear()
+    cli_module._clear_plugin_cache()
 
 
 def _fake_completed(stdout: bytes = b"", stderr: bytes = b"", returncode: int = 0) -> MagicMock:
@@ -169,7 +170,7 @@ def test_has_plugin_false_on_timeout():
         assert has_plugin("compose") is False
 
 
-def test_has_plugin_is_cached():
+def test_has_plugin_is_cached_within_ttl():
     call_count = {"n": 0}
 
     def fake_run(*_a, **_k):
@@ -181,6 +182,36 @@ def test_has_plugin_is_cached():
         has_plugin("compose")
         has_plugin("compose")
     assert call_count["n"] == 1
+
+
+def test_has_plugin_reprobes_after_ttl_expires():
+    call_count = {"n": 0}
+
+    def fake_run(*_a, **_k):
+        call_count["n"] += 1
+        return CliResult(0, "v1", "", False)
+
+    # Force the cached entry to look older than the TTL so the next call re-probes — this is what
+    # lets a plugin installed mid-session become visible without restarting the server.
+    with patch("docker_mcp.tools._cli.run_docker", side_effect=fake_run):
+        has_plugin("compose")
+        with patch("docker_mcp.tools._cli.time.monotonic", return_value=time.monotonic() + 10_000):
+            has_plugin("compose")
+    assert call_count["n"] == 2
+
+
+def test_clear_plugin_cache_forces_reprobe():
+    call_count = {"n": 0}
+
+    def fake_run(*_a, **_k):
+        call_count["n"] += 1
+        return CliResult(0, "v1", "", False)
+
+    with patch("docker_mcp.tools._cli.run_docker", side_effect=fake_run):
+        has_plugin("compose")
+        cli_module._clear_plugin_cache()
+        has_plugin("compose")
+    assert call_count["n"] == 2
 
 
 def test_require_plugin_raises_when_missing():
