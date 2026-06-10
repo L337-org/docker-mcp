@@ -1,6 +1,8 @@
+import threading
 from unittest.mock import MagicMock, patch
 
 import pytest
+import requests.exceptions
 
 from docker_mcp.tools.containers import (
     commit_container,
@@ -180,6 +182,31 @@ def test_follow_container_logs_returns_all_when_stream_ends_first():
         assert follow_container_logs("web", limit_lines=200) == "only"
 
 
+def test_follow_container_logs_returns_on_timeout_when_quiet():
+    # A long-lived container that emits nothing would block forever; the watchdog closes the
+    # CancellableStream after timeout_seconds so the call returns what it has.
+    closed = threading.Event()
+
+    class _BlockingLogStream:
+        def __iter__(self):
+            return self
+
+        def __next__(self):
+            closed.wait(timeout=5)
+            raise StopIteration
+
+        def close(self):
+            closed.set()
+
+    container = MagicMock()
+    container.logs.return_value = _BlockingLogStream()
+    with _patch() as mock_client:
+        mock_client.return_value.containers.get.return_value = container
+        result = follow_container_logs("web", timeout_seconds=0.1)
+    assert result == ""
+    assert closed.is_set()
+
+
 def test_container_stats():
     container = MagicMock()
     container.stats.return_value = {"cpu": 1}
@@ -259,13 +286,23 @@ def test_update_container():
     container.update.assert_called_once_with(cpu_shares=512)
 
 
-def test_wait_container():
+def test_wait_container_uses_finite_default_timeout():
     container = MagicMock()
     container.wait.return_value = {"StatusCode": 0}
     with _patch() as mock_client:
         mock_client.return_value.containers.get.return_value = container
         assert wait_container("web") == {"StatusCode": 0}
-    container.wait.assert_called_once_with(timeout=None, condition="not-running")
+    # Default timeout is finite so the tool can't block the server indefinitely.
+    container.wait.assert_called_once_with(timeout=600, condition="not-running")
+
+
+def test_wait_container_raises_clean_error_on_timeout():
+    container = MagicMock()
+    container.wait.side_effect = requests.exceptions.ReadTimeout("timed out")
+    with _patch() as mock_client:
+        mock_client.return_value.containers.get.return_value = container
+        with pytest.raises(RuntimeError, match="did not reach condition .* within 600s"):
+            wait_container("web")
 
 
 def test_export_container():

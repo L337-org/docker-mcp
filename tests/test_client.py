@@ -1,3 +1,4 @@
+import threading
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -5,6 +6,27 @@ from docker.errors import DockerException
 
 import docker_mcp.tools.client as client_module
 from docker_mcp.tools.client import _get_client, close, df, events, info, login, ping, version
+
+
+class _BlockingStream:
+    """A CancellableStream stand-in: __next__ blocks until close() is called from another thread."""
+
+    def __init__(self) -> None:
+        self._closed = threading.Event()
+        self.close_calls = 0
+
+    def __iter__(self) -> _BlockingStream:
+        return self
+
+    def __next__(self) -> dict:
+        # Wait (with a generous safety cap so a broken test can't hang) until close() fires, then
+        # end iteration the way CancellableStream does once its socket is shut down.
+        self._closed.wait(timeout=5)
+        raise StopIteration
+
+    def close(self) -> None:
+        self.close_calls += 1
+        self._closed.set()
 
 
 def test_ping():
@@ -67,6 +89,18 @@ def test_events_stops_at_limit():
     with patch("docker_mcp.tools.client._get_client", return_value=mock_client):
         result = events(limit=3)
     assert result == [{"event": "0"}, {"event": "1"}, {"event": "2"}]
+
+
+def test_events_returns_on_timeout_when_stream_is_quiet():
+    # A quiet daemon (no events, no `until`) would block forever without the watchdog. The timer
+    # closes the stream after `timeout_seconds`, unblocking iteration and returning what we have.
+    stream = _BlockingStream()
+    mock_client = MagicMock()
+    mock_client.events.return_value = stream
+    with patch("docker_mcp.tools.client._get_client", return_value=mock_client):
+        result = events(timeout_seconds=0.1)
+    assert result == []
+    assert stream.close_calls >= 1
 
 
 def test_get_client_wraps_daemon_unreachable():

@@ -1,10 +1,28 @@
 # internal helpers shared across tool modules
 
-from typing import Any
 from collections.abc import Iterable
+from typing import Any
 
 # Default cap (1 GiB) for tools that accumulate daemon-side byte streams in memory.
 MAX_PAYLOAD_BYTES = 1_073_741_824
+
+
+def close_stream_quietly(stream: Any) -> None:
+    """
+    Best-effort close of a docker `CancellableStream` (or anything with `.close()`).
+
+    Used by the log/event tools that arm a watchdog timer to `stream.close()` on a wall-clock
+    deadline: when the tool finishes first we still close to free the socket, and a close that
+    races with the timer (or a stream that's already shut down) must not surface as an error.
+    """
+    close = getattr(stream, "close", None)
+    if close is None:
+        return
+    try:
+        close()
+    except OSError:
+        # Socket already shut down (e.g. our close() raced the watchdog timer) — nothing to do.
+        pass  # noqa: S110 — intentional: a redundant close is a no-op, not a failure
 
 
 def drop_none(**kwargs: Any) -> dict[str, Any]:

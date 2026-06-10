@@ -1,9 +1,10 @@
 # library of mcp tools relating to swarm service management
 
-from typing import Literal
+from collections.abc import Iterable
+from typing import Literal, cast
 
 from docker_mcp.server import mcp
-from docker_mcp.tools._utils import drop_none
+from docker_mcp.tools._utils import MAX_PAYLOAD_BYTES, drop_none, join_bounded
 from docker_mcp.tools.client import _get_client
 
 
@@ -91,48 +92,51 @@ def service_tasks(service_id: str, filters: dict | None = None) -> list:
 def service_logs(
     service_id: str,
     details: bool = False,
-    follow: bool = False,
     stdout: bool = True,
     stderr: bool = True,
     since: int = 0,
     timestamps: bool = False,
     tail: int | Literal["all"] = "all",
+    max_bytes: int = MAX_PAYLOAD_BYTES,
 ) -> str:
     """
-    Get the log stream of a swarm service.
+    Get a bounded snapshot of a swarm service's logs (never follows).
 
-    The default `tail="all"` returns the entire log buffer, which can be very large
-    on long-running services and may exceed the agent's context. Pass an integer
-    (e.g. `tail=500`) to constrain output, or use `since` to bound the time range.
+    `follow` is intentionally not exposed: this tool joins the whole stream into one string before
+    returning, so following would block forever and grow the buffer without limit. Collection is
+    capped at `max_bytes` (raising ValueError if exceeded) so a noisy service can't OOM the server.
+    The default `tail="all"` returns the entire buffer, which can be very large on long-running
+    services and may exceed the agent's context — pass an integer (e.g. `tail=500`) or use `since`
+    to constrain output.
 
     args:
         service_id: str - The service id or name
         details: bool - Show extra details
-        follow: bool - Follow the log stream
         stdout: bool - Include stdout
         stderr: bool - Include stderr
         since: int - Show logs since this Unix timestamp
         timestamps: bool - Include timestamps
         tail: int | "all" - Number of lines from the end, or the literal "all"
+        max_bytes: int - Abort with ValueError if the buffered logs exceed this many bytes (default 1 GiB)
     returns: str - Decoded log output
     """
     service = _get_client().services.get(service_id)
     output = service.logs(
         details=details,
-        follow=follow,
+        follow=False,
         stdout=stdout,
         stderr=stderr,
         since=since,
         timestamps=timestamps,
         tail=tail,
     )
-    chunks = []
-    for chunk in output:
-        if isinstance(chunk, bytes):
-            chunks.append(chunk.decode("utf-8", errors="replace"))
-        else:
-            chunks.append(str(chunk))
-    return "".join(chunks)
+
+    def _as_bytes(chunks: Iterable) -> Iterable[bytes]:
+        for chunk in chunks:
+            yield chunk if isinstance(chunk, bytes) else str(chunk).encode("utf-8", errors="replace")
+
+    raw = join_bounded(_as_bytes(cast(Iterable, output)), max_bytes, f"logs of service {service_id}")
+    return raw.decode("utf-8", errors="replace")
 
 
 @mcp.tool()

@@ -1,10 +1,13 @@
 # library of mcp tools relating to container management
 
-from typing import Literal, cast
+import threading
 from collections.abc import Iterable
+from typing import Literal, cast
+
+import requests.exceptions
 
 from docker_mcp.server import mcp
-from docker_mcp.tools._utils import MAX_PAYLOAD_BYTES, drop_none, join_bounded
+from docker_mcp.tools._utils import MAX_PAYLOAD_BYTES, close_stream_quietly, drop_none, join_bounded
 from docker_mcp.tools.client import _get_client
 
 
@@ -322,13 +325,16 @@ def follow_container_logs(
     stderr: bool = True,
     timestamps: bool = False,
     since: float | None = None,
+    timeout_seconds: float = 30.0,
 ) -> str:
     """
-    Tail a container's log stream, returning at most `limit_lines` newly emitted lines.
+    Tail a container's log stream, returning when `limit_lines` lines have been collected,
+    `timeout_seconds` elapses, or the container exits — whichever comes first.
 
-    Wraps the streaming logs API of the `docker` module so the agent can watch live
-    output without blocking forever — the call returns once `limit_lines` lines have
-    been collected or the container exits.
+    Wraps the streaming logs API of the `docker` module so the agent can watch live output
+    without blocking forever. `limit_lines` bounds memory; `timeout_seconds` bounds wall-clock
+    time, which matters for a quiet but long-lived container that would otherwise never emit the
+    line that lets the call return.
 
     args:
         id_or_name: str - The container id or name
@@ -337,6 +343,8 @@ def follow_container_logs(
         stderr: bool - Include stderr
         timestamps: bool - Include timestamps
         since: float - Only return logs created after this unix timestamp
+        timeout_seconds: float - Maximum wall-clock seconds to follow before returning what was
+                                 collected so far (defaults to 30)
     returns: str - Decoded log output containing up to `limit_lines` lines
     """
     container = _get_client().containers.get(id_or_name)
@@ -349,12 +357,20 @@ def follow_container_logs(
         since=since,
     )
     collected: list[str] = []
-    for chunk in stream:
-        text = chunk.decode("utf-8", errors="replace") if isinstance(chunk, bytes) else str(chunk)
-        for line in text.splitlines():
-            collected.append(line)
-            if len(collected) >= limit_lines:
-                return "\n".join(collected)
+    # container.logs(stream=True) returns a CancellableStream; a watchdog timer closes its socket
+    # on the deadline, which unblocks the iteration even when the container emits nothing.
+    timer = threading.Timer(timeout_seconds, lambda: close_stream_quietly(stream))
+    timer.start()
+    try:
+        for chunk in stream:
+            text = chunk.decode("utf-8", errors="replace") if isinstance(chunk, bytes) else str(chunk)
+            for line in text.splitlines():
+                collected.append(line)
+                if len(collected) >= limit_lines:
+                    return "\n".join(collected)
+    finally:
+        timer.cancel()
+        close_stream_quietly(stream)
     return "\n".join(collected)
 
 
@@ -548,20 +564,32 @@ def update_container(id_or_name: str, updates: dict) -> dict:
 @mcp.tool()
 def wait_container(
     id_or_name: str,
-    timeout: int | None = None,
+    timeout: int | None = 600,
     condition: Literal["not-running", "next-exit", "removed"] = "not-running",
 ) -> dict:
     """
     Block until a container stops, then return its exit info.
 
+    The default `timeout` is finite (600s) so the call can't block the MCP server indefinitely on
+    a container that never reaches `condition`. When the timeout is exceeded a RuntimeError is
+    raised (poll `get_container` instead, or pass a larger `timeout`). Pass `timeout=None` to
+    restore the old unbounded behavior — only do so if you are sure the wait will complete.
+
     args:
         id_or_name: str - The container id or name
-        timeout: int - Maximum seconds to wait
+        timeout: int | None - Maximum seconds to wait before raising (default 600; None waits forever)
         condition: "not-running" | "next-exit" | "removed" - State to wait for
     returns: dict - The wait result with StatusCode and Error keys
     """
     container = _get_client().containers.get(id_or_name)
-    return cast(dict, container.wait(timeout=timeout, condition=condition))
+    try:
+        return cast(dict, container.wait(timeout=timeout, condition=condition))
+    except requests.exceptions.ReadTimeout as exc:
+        raise RuntimeError(
+            f"Container {id_or_name!r} did not reach condition {condition!r} within {timeout}s. "
+            f"Poll `get_container` for its current state, or call `wait_container` with a larger "
+            f"`timeout` (or `timeout=None` to wait indefinitely)."
+        ) from exc
 
 
 @mcp.tool()

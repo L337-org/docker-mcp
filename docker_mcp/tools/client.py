@@ -1,11 +1,13 @@
 # library of mcp tools relating to client management
 
 import os
+import threading
 
 import docker
 from docker.errors import DockerException
 
 from docker_mcp.server import mcp
+from docker_mcp.tools._utils import close_stream_quietly
 
 _client: docker.DockerClient | None = None
 
@@ -107,24 +109,41 @@ def events(
     until: str | None = None,
     filters: dict | None = None,
     limit: int = 100,
+    timeout_seconds: float = 30.0,
 ) -> list:
     """
-    Stream real-time events from the Docker server, capped at `limit` events.
+    Stream real-time events from the Docker server, returning when `limit` events have been
+    collected or `timeout_seconds` elapses — whichever comes first.
+
+    Both bounds matter: `limit` caps how many events accumulate in memory, while `timeout_seconds`
+    caps how long the call blocks. Without the time bound a quiet daemon (fewer than `limit` events,
+    no `until`) would block the tool call indefinitely, since the event stream only yields when an
+    event actually occurs.
 
     args:
         since: str - Show events created since this timestamp
         until: str - Show events created until this timestamp
         filters: dict - Filters to apply to the event stream
-        limit: int - Maximum number of events to return (defaults to 100). Required because
-                     an unbounded stream would block the tool call indefinitely when `until` is None.
+        limit: int - Maximum number of events to return (defaults to 100)
+        timeout_seconds: float - Maximum wall-clock seconds to wait before returning what was
+                                 collected so far (defaults to 30)
     returns: list - A list of decoded event dicts (length <= limit)
     """
     stream = _get_client().events(since=since, until=until, filters=filters, decode=True)
     collected: list = []
-    for event in stream:
-        collected.append(event)
-        if len(collected) >= limit:
-            break
+    # The event stream is a CancellableStream; closing its socket from a watchdog timer unblocks
+    # the iteration below (the blocked read surfaces as StopIteration), giving a hard time bound
+    # even when no events ever arrive.
+    timer = threading.Timer(timeout_seconds, lambda: close_stream_quietly(stream))
+    timer.start()
+    try:
+        for event in stream:
+            collected.append(event)
+            if len(collected) >= limit:
+                break
+    finally:
+        timer.cancel()
+        close_stream_quietly(stream)
     return collected
 
 

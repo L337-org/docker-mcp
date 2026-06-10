@@ -232,6 +232,7 @@ dependencies = [
     { name = "docker" },
     { name = "httpx" },
     { name = "mcp" },
+    { name = "requests" },
 ]
 
 [package.dev-dependencies]
@@ -247,6 +248,7 @@ requires-dist = [
     { name = "docker", specifier = ">=7.1.0" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "mcp", specifier = ">=1.27.1" },
+    { name = "requests", specifier = ">=2.26.0" },
 ]
 
 [package.metadata.requires-dev]
