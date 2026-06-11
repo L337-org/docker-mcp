@@ -61,7 +61,7 @@ Once loaded, the agent gets MCP tools grouped by Docker domain. A few examples:
 
 The SDK-backed surface mirrors the [Docker SDK reference](https://docker-py.readthedocs.io/en/stable/) — if it's documented there, it's available here. The Compose and Context surfaces follow the [Compose CLI](https://docs.docker.com/reference/cli/docker/compose/) and [docker context](https://docs.docker.com/reference/cli/docker/context/) references.
 
-The server also publishes the Docker SDK for Python reference and selected Docker CLI / registry references as MCP resources so the agent can consult them at runtime: read `docker-docs://contents` for the section index, then `docker-docs://<section>` (e.g. `docker-docs://containers`, `docker-docs://compose`, `docker-docs://oci-distribution-spec`) for the rendered page. A further resource, `docker-mcp://tool-catalog`, lists every tool this server knows about with its domain, mutation category, and whether the active configuration registered it — useful for confirming the blast radius of a tool, or why one is absent from the live list.
+The server also publishes the Docker SDK for Python reference and selected Docker CLI / registry references as MCP resources so the agent can consult them at runtime: read `docker-docs://contents` for the section index, then `docker-docs://<section>` (e.g. `docker-docs://containers`, `docker-docs://compose`, `docker-docs://oci-distribution-spec`, `docker-docs://dockerfile`, `docker-docs://build-best-practices`, `docker-docs://engine-security`) for the rendered page. A further resource, `docker-mcp://tool-catalog`, lists every tool this server knows about with its domain, mutation category, and whether the active configuration registered it — useful for confirming the blast radius of a tool, or why one is absent from the live list.
 
 ### Example prompts
 
@@ -97,6 +97,18 @@ Many AI clients let you invoke registered MCP prompts directly (in Claude Code, 
 /troubleshoot_compose_project project_dir=/srv/myapp
 /audit_docker_contexts
 /find_latest_image_tag image=ghcr.io/org/repo
+```
+
+**Auditing, security, and host operations**
+
+```
+/review_dockerfile dockerfile_path=/srv/myapp/Dockerfile
+/audit_container_security
+/debug_container_networking source=web target=db
+/investigate_disk_usage
+/backup_volume volume=pgdata dest_path=/backups/pgdata.tar
+/restore_volume volume=pgdata source_path=/backups/pgdata.tar
+/audit_swarm_health
 ```
 
 **Buildx, Scout, and multi-arch manifests**

@@ -1,21 +1,27 @@
 from docker_mcp.tools.prompts import (
+    audit_container_security,
     audit_docker_contexts,
     audit_image_cves,
     audit_swarm_health,
+    backup_volume,
     clean_environment,
     compare_image_versions,
     create_multiarch_manifest,
+    debug_container_networking,
     deploy_compose_project,
     deploy_container,
     find_latest_image_tag,
     inspect_multiarch_manifest,
     inspect_stack,
+    investigate_disk_usage,
     lookup_docker_docs,
     migrate_container,
     migrate_from_docker_manifest,
     plan_compose_stack,
     plan_multiarch_build,
     recommend_base_image,
+    restore_volume,
+    review_dockerfile,
     troubleshoot_compose_project,
     troubleshoot_container,
     verify_docker_method,
@@ -49,20 +55,28 @@ def test_troubleshoot_container_covers_logs_and_state():
         assert tool in out
 
 
-def test_migrate_container_preserves_config():
+def test_migrate_container_preserves_config_with_rename_rollback():
     out = migrate_container("api-1", "myorg/api:v2")
     assert "api-1" in out
     assert "myorg/api:v2" in out
+    # New flow keeps the old container as a rollback: capture -> stop -> rename to -old -> run new
+    # under the original name, and only remove the old one last.
     assert out.index("get_container") < out.index("stop_container")
-    assert out.index("stop_container") < out.index("remove_container")
-    assert out.index("remove_container") < out.index("run_container")
+    assert out.index("stop_container") < out.index("rename_container")
+    assert out.index("rename_container") < out.index("run_container")
+    assert out.index("run_container") < out.rindex("remove_container")
+    assert "api-1-old" in out
+    assert "rollback" in out.lower()
 
 
 def test_clean_environment_default_scope_skips_volumes():
     out = clean_environment()
     assert "prune_containers" in out
     assert "prune_images" in out
+    assert "buildx_prune" in out  # build cache is often the biggest reclaimable chunk
     assert "prune_volumes" not in out
+    # Opens and closes with df for a before/after delta.
+    assert out.count("`df`") >= 2
 
 
 def test_clean_environment_all_scope_includes_volumes_with_warning():
@@ -210,3 +224,62 @@ def test_migrate_from_docker_manifest_returns_mapping_table():
     assert "buildx_imagetools_create" in out
     # And explain the why
     assert "maintenance mode" in out.lower()
+
+
+def test_review_dockerfile_reads_docs_and_covers_security():
+    out = review_dockerfile("/app/Dockerfile")
+    assert "/app/Dockerfile" in out
+    # Must point the agent at the authoritative references rather than relying on memory.
+    assert "docker-docs://dockerfile" in out
+    assert "docker-docs://build-best-practices" in out
+    # Core checks.
+    for needle in ("USER", "HEALTHCHECK", "secret", "latest"):
+        assert needle.lower() in out.lower()
+
+
+def test_audit_container_security_inspects_hostconfig_risks():
+    out = audit_container_security()
+    assert "list_containers" in out
+    assert "get_container" in out
+    for risk in ("Privileged", "docker.sock", "host", "CapAdd"):
+        assert risk in out
+    # Read-only audit.
+    assert "do not change" in out.lower() or "read-only" in out.lower()
+
+
+def test_debug_container_networking_compares_networks_and_tests():
+    out = debug_container_networking("web", "db")
+    assert "web" in out
+    assert "db" in out
+    assert "get_container" in out
+    assert "connect_network" in out
+    assert "exec_in_container" in out
+    # Should distinguish DNS from connection failure.
+    assert "dns" in out.lower()
+
+
+def test_investigate_disk_usage_breaks_down_by_bucket():
+    out = investigate_disk_usage()
+    for tool in ("df", "list_images", "image_history", "buildx_du", "list_volumes"):
+        assert tool in out
+    # Diagnosis only — defers actual pruning to clean_environment.
+    assert "clean_environment" in out
+
+
+def test_backup_volume_uses_helper_container_and_host_path():
+    out = backup_volume("pgdata", "/backups/pg.tar")
+    assert "pgdata" in out
+    assert "/backups/pg.tar" in out
+    assert "get_container" in out  # matches get_container_archive_to_file / get_container
+    assert "remove_container" in out  # helper is cleaned up
+    assert "tar" in out.lower()
+
+
+def test_restore_volume_is_destructive_and_confirms():
+    out = restore_volume("pgdata", "/backups/pg.tar")
+    assert "pgdata" in out
+    assert "/backups/pg.tar" in out
+    assert "put_container_archive_from_file" in out
+    assert "create_volume" in out
+    # Restoring overwrites existing data — must confirm.
+    assert "confirm" in out.lower() or "destructive" in out.lower()

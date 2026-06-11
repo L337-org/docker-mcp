@@ -46,6 +46,10 @@ EXTERNAL_SECTIONS: dict[str, str] = {
     "buildx-bake": "https://docs.docker.com/build/bake/reference/",
     "scout": "https://docs.docker.com/scout/",
     "scout-cli": "https://docs.docker.com/reference/cli/docker/scout/",
+    "dockerfile": "https://docs.docker.com/reference/dockerfile/",
+    "build-best-practices": "https://docs.docker.com/build/building/best-practices/",
+    "engine-security": "https://docs.docker.com/engine/security/",
+    "engine-api": "https://docs.docker.com/reference/api/engine/",
 }
 
 

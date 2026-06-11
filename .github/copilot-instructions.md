@@ -104,7 +104,7 @@ def mcp_example(name: str):
 
 ### MCP prompts
 
-`docker_mcp/tools/prompts.py` exposes `@mcp.prompt(description=...)` templates that return prompt strings to guide multi-step docker workflows (deploy, migrate, troubleshoot, prune, doc lookup). Use the same docstring format as tools.
+`docker_mcp/tools/prompts.py` exposes `@mcp.prompt(description=...)` templates that return prompt strings to guide multi-step docker workflows (deploy, migrate, troubleshoot, prune, audit/security, networking, volume backup/restore, doc lookup). Use the same docstring format as tools.
 
 ## Docker SDK Policy
 

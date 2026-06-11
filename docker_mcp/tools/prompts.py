@@ -87,14 +87,21 @@ def migrate_container(container: str, new_image: str) -> str:
     returns: str - A prompt instructing the agent to perform a safe migration
     """
     return (
-        f"Migrate container `{container}` to image `{new_image}` without losing its configuration:\n"
+        f"Migrate container `{container}` to image `{new_image}` without losing its configuration, "
+        f"keeping the old container as an instant rollback until the new one is proven healthy:\n"
         f"1. Use `get_container` to capture the current name, env vars, mounts, ports, network, and restart "
-        f"policy.\n"
+        f"policy. Show this captured config back to the user before changing anything.\n"
         f"2. Use `pull_image` to fetch `{new_image}`.\n"
-        f"3. Use `stop_container` followed by `remove_container` on the old container.\n"
-        f"4. Use `run_container` to start a new container with the captured config but the new image.\n"
-        f"5. Verify with `list_containers` and `container_logs` that the replacement is healthy.\n"
-        f"Show the captured config back to the user before recreating the container."
+        f"3. Use `stop_container` on `{container}`, then `rename_container` it to `{container}-old` "
+        f"(instead of removing it) so the original name is free and the old container survives as a "
+        f"rollback target.\n"
+        f"4. Use `run_container` to start a new container under the original name `{container}` with the "
+        f"captured config but the new image.\n"
+        f"5. Verify with `list_containers` and `container_logs` that the replacement is healthy. If it is "
+        f"NOT, roll back: `stop_container`/`remove_container` the new one and `rename_container` "
+        f"`{container}-old` back to `{container}`, then `start_container`.\n"
+        f"6. Only once the replacement is confirmed healthy, `remove_container` `{container}-old`. Ask "
+        f"the user before this final removal — it discards the rollback path."
     )
 
 
@@ -108,17 +115,22 @@ def clean_environment(scope: str = "stopped") -> str:
     """
     base = (
         "Reclaim docker disk usage safely:\n"
-        "1. Use `df` to show current disk usage so the user sees a before/after.\n"
+        "1. Use `df` to capture current disk usage as a before snapshot. Note the `BuildCache` total — "
+        "on a machine that builds images it is frequently the single largest reclaimable chunk, and "
+        "neither `prune_containers` nor `prune_images` touches it.\n"
         "2. Use `prune_containers` to remove stopped containers.\n"
         "3. Use `prune_images` (without `filters={'dangling': False}`) to remove dangling images only.\n"
+        "4. Use `buildx_prune` to reclaim BuildKit build cache. It always runs with `--force`; if the "
+        "`df` from step 1 showed a large `BuildCache`, this is where most of the space comes back. "
+        "Mention that an immediately-following rebuild will be slower with a cold cache.\n"
     )
     if scope == "all":
         base += (
-            "4. Use `prune_networks` to remove unused user-defined networks.\n"
-            "5. Use `prune_volumes` ONLY after explicitly confirming with the user — volumes can hold "
+            "5. Use `prune_networks` to remove unused user-defined networks.\n"
+            "6. Use `prune_volumes` ONLY after explicitly confirming with the user — volumes can hold "
             "irreplaceable data.\n"
         )
-    base += "Report the total space reclaimed at the end."
+    base += "Finish with `df` again and report the before/after delta and total space reclaimed."
     return base
 
 
@@ -483,4 +495,185 @@ def migrate_from_docker_manifest() -> str:
         "| `push NEW`                           | Not needed — `buildx_imagetools_create` pushes |\n"
         "| `rm NEW`                             | Not needed — `buildx_imagetools_create` overwrites |\n"
         "\nWhen in doubt, run `buildx_imagetools_inspect(image=REF, raw=True)` first to see the current shape."
+    )
+
+
+@mcp.prompt(description="Review a Dockerfile for security, correctness, and cache-efficiency issues.")
+def review_dockerfile(dockerfile_path: str) -> str:
+    """
+    Generate a plan for reviewing a Dockerfile against Docker's reference and best practices.
+
+    args: dockerfile_path: str - Filesystem path to the Dockerfile to review
+    returns: str - A prompt instructing the agent to read the Dockerfile and the authoritative docs, then critique it
+    """
+    return (
+        f"Review the Dockerfile at `{dockerfile_path}`. First read the authoritative docs so the review "
+        f"reflects current guidance, not memory: read the MCP resources `docker-docs://dockerfile` "
+        f"(instruction reference) and `docker-docs://build-best-practices`. Then read the Dockerfile and "
+        f"check for:\n"
+        f"1. Unpinned/floating base images (`FROM image:latest` or no tag) — recommend a specific tag or "
+        f"a digest pin for reproducibility.\n"
+        f"2. No `USER` directive (the image runs as root) — recommend creating and switching to a "
+        f"non-root user.\n"
+        f"3. Secrets baked into layers: credentials in `ENV`/`ARG`, `COPY`'d private keys, or tokens on "
+        f"`RUN` lines. These persist in the image history even if later removed — flag every one.\n"
+        f"4. Missing `HEALTHCHECK` for a long-running service image.\n"
+        f"5. Cache-inefficient layer order — e.g. `COPY . .` before installing dependencies, so every "
+        f"source change busts the dependency layer. Dependency manifests should be copied and installed "
+        f"before the rest of the source.\n"
+        f"6. `ADD` where `COPY` would do, `apt-get install` without `--no-install-recommends` or without "
+        f"cleaning the apt lists in the same layer, and missing `.dockerignore` consequences.\n"
+        f"Report findings grouped by severity (security first), each with the offending line and the "
+        f"concrete fix. Do not modify the Dockerfile — propose the diff and let the user apply it."
+    )
+
+
+@mcp.prompt(description="Audit running containers for risky runtime configuration (privilege, host access).")
+def audit_container_security() -> str:
+    """
+    Generate a plan for sweeping running containers for dangerous runtime settings.
+
+    returns: str - A prompt instructing the agent to inspect each container's HostConfig and flag risks
+    """
+    return (
+        "Audit the security posture of running containers. This is read-only — do not change anything. "
+        "For background on why these settings matter, the MCP resource `docker-docs://engine-security` "
+        "covers the daemon's trust model.\n"
+        "1. Call `list_containers` (running only) to get the set to audit.\n"
+        "2. For each container, call `get_container` and inspect its `HostConfig` / `Config`, flagging:\n"
+        "   - `Privileged: true` — the container can do almost anything the host can; the highest-"
+        "severity finding.\n"
+        "   - A bind mount of the Docker socket (`/var/run/docker.sock`) — equivalent to root on the "
+        "host, since the container can drive the daemon.\n"
+        "   - Host namespaces: `NetworkMode: host`, `PidMode: host`, `IpcMode: host` — these remove "
+        "isolation from the host.\n"
+        "   - Added capabilities (`CapAdd`), especially `SYS_ADMIN`/`NET_ADMIN`/`SYS_PTRACE`, and "
+        "`SecurityOpt` entries that disable seccomp/apparmor (`seccomp=unconfined`).\n"
+        "   - Writable bind mounts of sensitive host paths (`/`, `/etc`, `/var/run`, the user's home).\n"
+        "   - Running as root: no `User` set in `Config` (note this is best-effort — the image's "
+        "default user isn't always visible from inspect).\n"
+        "   - No resource limits: `Memory` and `NanoCpus` of 0 mean the container can exhaust the host.\n"
+        "Render a table: container name, each risk found, severity. Summarize the most exposed container "
+        "and the single highest-priority remediation. Recommend, but do not perform, any changes."
+    )
+
+
+@mcp.prompt(description="Diagnose why one container cannot reach another over the network.")
+def debug_container_networking(source: str, target: str) -> str:
+    """
+    Generate a plan for diagnosing container-to-container connectivity.
+
+    args:
+        source: str - The container that cannot connect (name or ID)
+        target: str - The container it is trying to reach (name or ID)
+    returns: str - A prompt instructing the agent to compare networks and test connectivity
+    """
+    return (
+        f"Diagnose why container `{source}` cannot reach `{target}`. Work from the most common cause "
+        f"(not on a shared network) outward:\n"
+        f"1. Call `get_container` on both and compare `NetworkSettings.Networks`. If they share no "
+        f"user-defined network, that is almost certainly the problem — containers on the default bridge "
+        f"cannot resolve each other by name; they must share a user-defined network. Recommend "
+        f"`connect_network` to attach them to a common one.\n"
+        f"2. If they DO share a network, note the DNS alias `{target}` should resolve to (the service/"
+        f"container name or a network alias on that shared network).\n"
+        f"3. From inside `{source}`, use `exec_in_container` to test, preferring an exec-form argv: "
+        f"resolve DNS (e.g. `['getent', 'hosts', '{target}']`) and test the port "
+        f"(`['nc', '-z', '-w', '2', '{target}', '<port>']` if `nc` exists). Distinguish a DNS failure "
+        f"(name doesn't resolve) from a connection failure (resolves but refused/timed out).\n"
+        f"4. If DNS resolves but the connection is refused, check that `{target}` actually listens on "
+        f"that port and on `0.0.0.0` rather than `127.0.0.1` — use `get_container` for its exposed "
+        f"ports and `container_logs` to confirm the service started.\n"
+        f"5. Distinguish container-to-container reachability from host-published ports: a missing "
+        f"`-p`/`ports` mapping only affects access from the host, not between containers on a shared "
+        f"network.\n"
+        f"State the root cause in one sentence and the concrete fix; do not change anything without "
+        f"showing it first."
+    )
+
+
+@mcp.prompt(description="Investigate what is consuming docker disk space before pruning.")
+def investigate_disk_usage() -> str:
+    """
+    Generate a plan for attributing docker disk usage to a cause before reclaiming it.
+
+    returns: str - A prompt instructing the agent to break down usage across images, containers, volumes, and cache
+    """
+    return (
+        "Find out WHAT is consuming docker disk space before reclaiming any of it — this is read-only "
+        "diagnosis, not cleanup:\n"
+        "1. Call `df` for the top-line split across Images, Containers, Local Volumes, and Build Cache. "
+        "Identify which bucket dominates — the fix differs for each.\n"
+        "2. If Images dominate: call `list_images` and sort by size. For the largest, call "
+        "`image_history` to see which layers are heavy (a fat `COPY`, an un-cleaned package cache) and "
+        "whether several images share base layers (so the on-disk cost is less than the sum of sizes).\n"
+        "3. If Build Cache dominates: call `buildx_du` for the cache breakdown. This is reclaimable with "
+        "`buildx_prune` and is invisible to `prune_images`.\n"
+        "4. If Local Volumes dominate: call `list_volumes` and cross-reference with `list_containers"
+        "(all=True)` to spot dangling volumes no container references — but do NOT assume a dangling "
+        "volume is junk; it may hold data whose container is gone.\n"
+        "5. If Containers dominate: look for stopped containers with large writable layers (`container_"
+        "diff` shows what a container wrote on top of its image).\n"
+        "Report a breakdown with the dominant cause, the specific offenders, and what each would reclaim "
+        "— then point at the `clean_environment` prompt for the actual pruning. Recommend nothing "
+        "destructive here."
+    )
+
+
+@mcp.prompt(description="Back up a named volume's contents to a tar file on the server host.")
+def backup_volume(volume: str, dest_path: str) -> str:
+    """
+    Generate a plan for backing up a named volume using a throwaway container.
+
+    args:
+        volume: str - The named volume to back up
+        dest_path: str - Host path (on the server) to write the tar archive to
+    returns: str - A prompt instructing the agent to tar the volume out via a helper container
+    """
+    return (
+        f"Back up the contents of volume `{volume}` to `{dest_path}` on the server host. Docker has no "
+        f"native volume-export API, so use a throwaway container that mounts the volume:\n"
+        f'1. Confirm the volume exists with `get_volume("{volume}")`.\n'
+        f"2. Quiesce writers if integrity matters: if a running container has `{volume}` mounted and is "
+        f"writing to it, a hot copy can be inconsistent — note which containers use it (cross-reference "
+        f"`list_containers`) and offer to `stop_container` them first, or warn that the backup is "
+        f"crash-consistent only.\n"
+        f"3. Create a helper container with the volume mounted read-only and tar its contents to stdout, "
+        f"e.g. `create_container` from `alpine` with command "
+        f'`["tar", "-cf", "-", "-C", "/data", "."]` and the volume mounted at `/data`.\n'
+        f"4. Stream the archive out of the helper with `get_container_archive_to_file` (or run the tar "
+        f"and capture stdout), writing to `{dest_path}`. Note that `{dest_path}` is on the host running "
+        f"this MCP server, written as the server's user.\n"
+        f"5. Remove the helper container with `remove_container`, and restart anything you stopped in "
+        f"step 2.\n"
+        f"Report the archive path and size. Treat `restore_volume` as the inverse operation."
+    )
+
+
+@mcp.prompt(description="Restore a named volume's contents from a tar file on the server host.")
+def restore_volume(volume: str, source_path: str) -> str:
+    """
+    Generate a plan for restoring a named volume from a tar archive using a throwaway container.
+
+    args:
+        volume: str - The named volume to restore into
+        source_path: str - Host path (on the server) to read the tar archive from
+    returns: str - A prompt instructing the agent to untar an archive into a volume via a helper container
+    """
+    return (
+        f"Restore the contents of `{source_path}` into volume `{volume}`. This is the inverse of "
+        f"`backup_volume` and is destructive to whatever `{volume}` currently holds — confirm with the "
+        f"user before overwriting:\n"
+        f"1. Check whether `{volume}` already exists with `get_volume`. If it does and holds data, STOP "
+        f'and confirm the overwrite. If it does not, `create_volume("{volume}")`.\n'
+        f"2. Ensure no running container is using `{volume}` — restoring underneath a live writer "
+        f"corrupts state. Use `list_containers` to check and offer to `stop_container` them first.\n"
+        f"3. Create a helper container from `alpine` with `{volume}` mounted read-write at `/data` and a "
+        f"command that clears and untars, e.g. extracting the archive piped to its stdin into `/data`.\n"
+        f"4. Push the archive in with `put_container_archive_from_file` reading `{source_path}` (a path "
+        f"on the host running this MCP server), or run the helper's `tar -xf -` against the streamed "
+        f"archive.\n"
+        f"5. Remove the helper with `remove_container` and restart anything you stopped.\n"
+        f"Verify by mounting the volume in a quick `alpine ls` helper and confirming the expected files "
+        f"are present. Report what was restored."
     )
