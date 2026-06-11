@@ -7,17 +7,25 @@ from docker_mcp.tools.compose import (
     _global_args,
     compose_build,
     compose_config,
+    compose_cp,
     compose_down,
     compose_exec,
+    compose_images,
+    compose_kill,
     compose_logs,
     compose_ls,
+    compose_pause,
+    compose_port,
     compose_ps,
     compose_pull,
     compose_restart,
+    compose_run,
     compose_start,
     compose_stop,
-    compose_run,
+    compose_top,
+    compose_unpause,
     compose_up,
+    compose_wait,
 )
 
 
@@ -367,3 +375,156 @@ def test_compose_start_returns_raw_dict_on_failure():
         result = compose_start()
     assert result["returncode"] == 1
     assert "no such project" in result["stderr"]
+
+
+# ---------- compose_images ----------
+
+
+def test_compose_images_parses_json_list():
+    body = '[{"Service":"web","Repository":"nginx","Tag":"1.27"}]'
+    with patch("docker_mcp.tools.compose.run_docker", return_value=_ok(body)) as run:
+        result = compose_images(project_dir="/srv/app", services=["web"])
+    assert result == [{"Service": "web", "Repository": "nginx", "Tag": "1.27"}]
+    argv = run.call_args.args[0]
+    assert argv[:1] == ["compose"]
+    assert "images" in argv and "--format" in argv and "json" in argv
+    assert argv[-1] == "web"
+
+
+def test_compose_images_single_object_wrapped():
+    with patch("docker_mcp.tools.compose.run_docker", return_value=_ok('{"Service":"web"}')):
+        assert compose_images() == [{"Service": "web"}]
+
+
+def test_compose_images_raises_on_failure():
+    with patch("docker_mcp.tools.compose.run_docker", return_value=_fail("no such project")):
+        with pytest.raises(RuntimeError, match="compose images"):
+            compose_images()
+
+
+# ---------- compose_port ----------
+
+
+def test_compose_port_parses_host_and_port():
+    with patch("docker_mcp.tools.compose.run_docker", return_value=_ok("0.0.0.0:49153\n")) as run:
+        result = compose_port("web", 80, protocol="tcp")
+    assert result["published"] == "0.0.0.0:49153"
+    assert result["host"] == "0.0.0.0"  # noqa: S104 — asserting parsed CLI output, not binding a socket
+    assert result["port"] == 49153
+    argv = run.call_args.args[0]
+    assert "port" in argv
+    assert "--protocol" in argv and "tcp" in argv
+    assert argv[-2:] == ["web", "80"]
+
+
+def test_compose_port_passes_index_and_udp():
+    with patch("docker_mcp.tools.compose.run_docker", return_value=_ok("0.0.0.0:5353")) as run:
+        compose_port("dns", 53, protocol="udp", index=2)
+    argv = run.call_args.args[0]
+    assert "udp" in argv
+    assert "--index" in argv and "2" in argv
+
+
+def test_compose_port_unpublished_is_none():
+    with patch("docker_mcp.tools.compose.run_docker", return_value=_ok("")):
+        result = compose_port("web", 80)
+    assert result["published"] is None
+    assert result["host"] is None and result["port"] is None
+    assert result["bindings"] == []
+
+
+def test_compose_port_multiline_parses_first_binding_and_lists_all():
+    # A port can be published on several addresses (IPv4 + IPv6); each is its own line.
+    out = "0.0.0.0:8080\n[::]:8080\n"
+    with patch("docker_mcp.tools.compose.run_docker", return_value=_ok(out)):
+        result = compose_port("web", 80)
+    # First binding drives the scalar fields; no newline/second-line leakage into host.
+    assert result["published"] == "0.0.0.0:8080"
+    assert result["host"] == "0.0.0.0"  # noqa: S104 — asserting parsed CLI output, not binding a socket
+    assert result["port"] == 8080
+    # All bindings are preserved, and the IPv6 line splits on the last colon (port stays intact).
+    assert result["bindings"] == ["0.0.0.0:8080", "[::]:8080"]
+
+
+def test_compose_port_raises_on_failure():
+    with patch("docker_mcp.tools.compose.run_docker", return_value=_fail("no such service")):
+        with pytest.raises(RuntimeError, match="compose port"):
+            compose_port("web", 80)
+
+
+# ---------- compose_wait ----------
+
+
+def test_compose_wait_builds_args_and_returns_raw():
+    with patch("docker_mcp.tools.compose.run_docker", return_value=_ok("0\n")) as run:
+        result = compose_wait(["batch"], project_dir="/srv/app", timeout_seconds=120)
+    assert result["returncode"] == 0
+    argv = run.call_args.args[0]
+    assert "wait" in argv
+    assert argv[-1] == "batch"
+    assert run.call_args.kwargs["timeout"] == 120
+
+
+def test_compose_wait_requires_a_service():
+    with pytest.raises(ValueError, match="at least one"):
+        compose_wait([])
+
+
+# ---------- compose_top ----------
+
+
+def test_compose_top_returns_raw_output():
+    with patch("docker_mcp.tools.compose.run_docker", return_value=_ok("UID PID ...")) as run:
+        result = compose_top(services=["web"])
+    assert result["stdout"] == "UID PID ..."
+    argv = run.call_args.args[0]
+    assert "top" in argv
+    assert argv[-1] == "web"
+
+
+# ---------- compose_cp ----------
+
+
+def test_compose_cp_builds_args_both_positionals():
+    with patch("docker_mcp.tools.compose.run_docker", return_value=_ok()) as run:
+        compose_cp("web:/app/log.txt", "/tmp/log.txt", index=2, all_containers=True)
+    argv = run.call_args.args[0]
+    assert "cp" in argv
+    assert "--index" in argv and "2" in argv
+    assert "--all" in argv
+    assert argv[-2:] == ["web:/app/log.txt", "/tmp/log.txt"]
+
+
+def test_compose_cp_rejects_stdout_dash_dest():
+    # `-` (stdout) starts with '-', so safe_positional blocks it; binary streaming isn't supported here.
+    with pytest.raises(ValueError, match="flag"):
+        compose_cp("web:/app/log.txt", "-")
+
+
+# ---------- compose_kill / pause / unpause ----------
+
+
+def test_compose_kill_default_signal_omits_flag():
+    with patch("docker_mcp.tools.compose.run_docker", return_value=_ok()) as run:
+        compose_kill(services=["web"])
+    argv = run.call_args.args[0]
+    assert "kill" in argv
+    assert "--signal" not in argv  # SIGKILL is the default; no flag needed
+    assert argv[-1] == "web"
+
+
+def test_compose_kill_custom_signal():
+    with patch("docker_mcp.tools.compose.run_docker", return_value=_ok()) as run:
+        compose_kill(signal="SIGTERM", remove_orphans=True)
+    argv = run.call_args.args[0]
+    assert "--signal" in argv and "SIGTERM" in argv
+    assert "--remove-orphans" in argv
+
+
+def test_compose_pause_and_unpause():
+    with patch("docker_mcp.tools.compose.run_docker", return_value=_ok()) as run:
+        compose_pause(services=["web"])
+    assert "pause" in run.call_args.args[0]
+    with patch("docker_mcp.tools.compose.run_docker", return_value=_ok()) as run:
+        compose_unpause(services=["web"])
+    assert "unpause" in run.call_args.args[0]

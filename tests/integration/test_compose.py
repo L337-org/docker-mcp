@@ -7,7 +7,17 @@ from pathlib import Path
 import pytest
 
 from docker_mcp.tools._cli import has_plugin
-from docker_mcp.tools.compose import compose_config, compose_down, compose_ls, compose_ps, compose_up
+from docker_mcp.tools.compose import (
+    compose_config,
+    compose_down,
+    compose_images,
+    compose_ls,
+    compose_pause,
+    compose_ps,
+    compose_top,
+    compose_unpause,
+    compose_up,
+)
 
 # A tiny compose project: one alpine container that sleeps. Avoids pulling a large image
 # while still exercising the up/ps/down cycle.
@@ -56,13 +66,20 @@ def test_compose_config_json_parses(compose_project):
 
 def _pull_or_skip(compose_project):
     """Pull project images upfront. Skip the test if the registry can't be reached in a reasonable time."""
+    import subprocess
+
     from docker_mcp.tools.compose import compose_pull
 
-    result = compose_pull(
-        project_dir=compose_project["dir"],
-        project_name=compose_project["name"],
-        timeout_seconds=180.0,
-    )
+    try:
+        result = compose_pull(
+            project_dir=compose_project["dir"],
+            project_name=compose_project["name"],
+            timeout_seconds=180.0,
+        )
+    except subprocess.TimeoutExpired:
+        # A slow registry makes the pull subprocess time out (run_docker raises rather than returning
+        # non-zero), so catch it here and skip cleanly instead of failing the lifecycle test.
+        pytest.skip("compose pull timed out (slow network/registry); skipping")
     if result["returncode"] != 0:
         pytest.skip(f"could not pull compose project images (network/registry?): {result['stderr'][:200]}")
 
@@ -101,3 +118,27 @@ def test_compose_ls_after_up_includes_project(compose_project):
     projects = compose_ls()
     names = {p.get("Name") for p in projects}
     assert compose_project["name"] in names
+
+
+def test_compose_images_top_pause_unpause(compose_project):
+    _pull_or_skip(compose_project)
+    up = compose_up(
+        project_dir=compose_project["dir"],
+        project_name=compose_project["name"],
+        timeout_seconds=120.0,
+    )
+    assert up["returncode"] == 0, up["stderr"]
+
+    # images: the sleeper service runs an alpine image.
+    images = compose_images(project_dir=compose_project["dir"], project_name=compose_project["name"])
+    assert any("alpine" in (img.get("Repository") or "") for img in images)
+
+    # top: the sleeper's process table is returned as raw stdout.
+    top = compose_top(project_dir=compose_project["dir"], project_name=compose_project["name"])
+    assert top["returncode"] == 0, top["stderr"]
+
+    # pause then unpause round-trips cleanly.
+    paused = compose_pause(project_dir=compose_project["dir"], project_name=compose_project["name"])
+    assert paused["returncode"] == 0, paused["stderr"]
+    unpaused = compose_unpause(project_dir=compose_project["dir"], project_name=compose_project["name"])
+    assert unpaused["returncode"] == 0, unpaused["stderr"]
