@@ -113,6 +113,7 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "get_node": ToolCategory.READ_ONLY,
     "list_nodes": ToolCategory.READ_ONLY,
     "update_node": ToolCategory.MUTATING,
+    "remove_node": ToolCategory.DESTRUCTIVE,
     # services
     "create_service": ToolCategory.MUTATING,
     "get_service": ToolCategory.READ_ONLY,
@@ -123,6 +124,7 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "service_logs": ToolCategory.READ_ONLY,
     "scale_service": ToolCategory.MUTATING,
     "force_update_service": ToolCategory.MUTATING,
+    "rollback_service": ToolCategory.MUTATING,
     # swarm
     "init_swarm": ToolCategory.MUTATING,
     "join_swarm": ToolCategory.MUTATING,
@@ -131,6 +133,8 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "reload_swarm": ToolCategory.READ_ONLY,
     "unlock_swarm": ToolCategory.MUTATING,
     "get_swarm_unlock_key": ToolCategory.READ_ONLY,
+    "get_swarm_join_tokens": ToolCategory.READ_ONLY,
+    "rotate_swarm_join_token": ToolCategory.MUTATING,
     # plugins
     "get_plugin": ToolCategory.READ_ONLY,
     "install_plugin": ToolCategory.MUTATING,

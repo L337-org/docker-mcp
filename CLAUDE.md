@@ -171,5 +171,8 @@ def mcp_example(name: str):
 
 Do not assume any method exists because it sounds plausible. If you cannot confirm it from the documentation, say so and do not use it.
 
+When the high-level SDK has no method for an operation (e.g. swarm node removal, service rollback), drop to the low-level **`APIClient` via `_get_client().api`** — its methods (`remove_node`, `update_service`, `inspect_service`, …) are documented at https://docker-py.readthedocs.io/en/stable/api.html and must be verified the same way. Prefer the high-level object API when it exists; reach for `client.api` only for the gaps.
+
 Docker SDK docs: https://docker-py.readthedocs.io/en/stable/index.html  
+Docker SDK low-level API: https://docker-py.readthedocs.io/en/stable/api.html  
 Docker SDK GitHub: https://github.com/docker/docker-py

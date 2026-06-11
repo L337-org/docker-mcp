@@ -1,6 +1,7 @@
 from docker_mcp.tools.prompts import (
     audit_docker_contexts,
     audit_image_cves,
+    audit_swarm_health,
     clean_environment,
     compare_image_versions,
     create_multiarch_manifest,
@@ -116,6 +117,16 @@ def test_audit_docker_contexts_lists_then_confirms():
     assert "context_ls" in out
     assert out.index("context_ls") < out.index("info")
     assert "docker-py" in out.lower() or "sdk" in out.lower()
+
+
+def test_audit_swarm_health_covers_nodes_services_and_tasks():
+    out = audit_swarm_health()
+    for tool in ("list_nodes", "list_services", "service_tasks", "service_logs"):
+        assert tool in out
+    # Node enumeration should precede the per-service task drill-down.
+    assert out.index("list_nodes") < out.index("service_tasks")
+    # Read-only audit: it must not invoke remove_node, only mention it as a follow-up.
+    assert "do not call it" in out.lower() or "do not change anything" in out.lower()
 
 
 def test_find_latest_image_tag_uses_registry_tools():

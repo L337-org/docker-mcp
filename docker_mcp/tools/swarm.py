@@ -146,3 +146,49 @@ def get_swarm_unlock_key() -> dict:
     returns: dict - The unlock key info
     """
     return _get_client().swarm.get_unlock_key()
+
+
+def _read_join_tokens(swarm: object) -> dict:
+    """Pull the {Worker, Manager} join tokens out of a (freshly reloaded) swarm's raw attrs."""
+    tokens = getattr(swarm, "attrs", {}).get("JoinTokens", {})
+    return {"Worker": tokens.get("Worker"), "Manager": tokens.get("Manager")}
+
+
+@tool()
+def get_swarm_join_tokens() -> dict:
+    """
+    Return the swarm's worker and manager join tokens.
+
+    These are the tokens a new node passes to `join_swarm` — without one, `join_swarm` cannot be
+    called, so this closes the init -> join loop. The tokens are secret bearer credentials (anyone
+    holding the manager token can join as a manager); treat the result as sensitive and avoid logging
+    it. Reads `swarm.attrs["JoinTokens"]` after a reload, so it always reflects the current tokens.
+
+    returns: dict - {"Worker": <worker join token>, "Manager": <manager join token>}
+    """
+    swarm = _get_client().swarm
+    swarm.reload()
+    return _read_join_tokens(swarm)
+
+
+@tool()
+def rotate_swarm_join_token(rotate_worker: bool = False, rotate_manager: bool = False) -> dict:
+    """
+    Rotate the worker and/or manager join token, then return the fresh tokens.
+
+    Rotating invalidates the old token immediately — nodes that have already joined are unaffected,
+    but any pending invitations using the old token will fail. At least one of `rotate_worker` /
+    `rotate_manager` must be True. Wraps `swarm.update(rotate_*_token=...)` and re-reads the tokens so
+    the caller gets the new value in one step.
+
+    args:
+        rotate_worker: bool - Rotate the worker join token
+        rotate_manager: bool - Rotate the manager join token
+    returns: dict - {"Worker": <worker join token>, "Manager": <manager join token>} after rotation
+    """
+    if not (rotate_worker or rotate_manager):
+        raise ValueError("Set rotate_worker and/or rotate_manager to True — nothing to rotate otherwise.")
+    swarm = _get_client().swarm
+    swarm.update(rotate_worker_token=rotate_worker, rotate_manager_token=rotate_manager)
+    swarm.reload()
+    return _read_join_tokens(swarm)

@@ -13,8 +13,10 @@ fix is available.
 The trust boundary, credential-handling guidance, and known risks
 (privileged containers, host bind mounts, `exec_in_container`,
 `compose_exec` / `compose_run`, container archive paths, destructive
-operations, the CLI shell-out attack surface, and Docker context
-retargeting) are documented in
+operations, secret material in tool traffic — registry credentials,
+swarm secrets/configs, and swarm join/unlock tokens (the manager join
+token is cluster-root-equivalent) — the CLI shell-out attack surface,
+and Docker context retargeting) are documented in
 [README.md → Security considerations](README.md#security-considerations).
 Read that section before connecting an AI agent to this server.
 

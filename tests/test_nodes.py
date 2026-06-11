@@ -1,6 +1,6 @@
 from unittest.mock import MagicMock, patch
 
-from docker_mcp.tools.nodes import get_node, list_nodes, update_node
+from docker_mcp.tools.nodes import get_node, list_nodes, remove_node, update_node
 
 
 def _patch():
@@ -37,3 +37,18 @@ def test_update_node():
         mock_client.return_value.nodes.get.return_value = node
         assert update_node("n1", spec) is True
     node.update.assert_called_once_with(spec)
+
+
+def test_remove_node_goes_through_low_level_api():
+    with _patch() as mock_client:
+        mock_client.return_value.api.remove_node.return_value = True
+        assert remove_node("n1") is True
+    # High-level SDK has no Node.remove(); must use APIClient.remove_node with force defaulting False.
+    mock_client.return_value.api.remove_node.assert_called_once_with("n1", force=False)
+
+
+def test_remove_node_force():
+    with _patch() as mock_client:
+        mock_client.return_value.api.remove_node.return_value = True
+        assert remove_node("n1", force=True) is True
+    mock_client.return_value.api.remove_node.assert_called_once_with("n1", force=True)

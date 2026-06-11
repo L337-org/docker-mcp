@@ -40,3 +40,21 @@ def update_node(id_or_name: str, node_spec: dict) -> bool:
     node = _get_client().nodes.get(id_or_name)
     node.update(node_spec)
     return True
+
+
+@tool()
+def remove_node(node_id: str, force: bool = False) -> bool:
+    """
+    Remove a node from the swarm.
+
+    A node should normally be drained (`update_node` with Availability "drain") and have left the
+    swarm before removal. Removing an active or reachable node requires `force=True`; prefer draining
+    first so its tasks reschedule cleanly. The high-level SDK has no Node.remove(), so this goes
+    through the low-level APIClient.
+
+    args:
+        node_id: str - The node id (or name) to remove
+        force: bool - Force removal of an active/reachable node
+    returns: bool - True after the node is removed
+    """
+    return _get_client().api.remove_node(node_id, force=force)

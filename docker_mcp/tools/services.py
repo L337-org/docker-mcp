@@ -162,3 +162,39 @@ def force_update_service(service_id: str) -> bool:
     """
     _get_client().services.get(service_id).force_update()
     return True
+
+
+@tool()
+def rollback_service(service_id: str) -> dict:
+    """
+    Roll a swarm service back to its previous spec (the docker `service rollback` equivalent).
+
+    Re-applies the service's `PreviousSpec` — the spec from before the most recent `update_service` /
+    `scale_service` / `force_update_service`. Raises ValueError if the service has no PreviousSpec
+    (it has never been updated, or was already rolled back). The high-level SDK exposes no rollback,
+    so this reads the current version and previous spec via the low-level APIClient and submits them
+    with `update_service`.
+
+    args: service_id: str - The service id or name
+    returns: dict - The daemon response (a dict with a "Warnings" key)
+    """
+    api = _get_client().api
+    info = api.inspect_service(service_id)
+    previous = info.get("PreviousSpec")
+    if not previous:
+        raise ValueError(
+            f"Service {service_id} has no PreviousSpec to roll back to (never updated, or already rolled back)."
+        )
+    version = info["Version"]["Index"]
+    return api.update_service(
+        service_id,
+        version,
+        task_template=previous.get("TaskTemplate"),
+        name=previous.get("Name"),
+        labels=previous.get("Labels"),
+        mode=previous.get("Mode"),
+        update_config=previous.get("UpdateConfig"),
+        rollback_config=previous.get("RollbackConfig"),
+        networks=previous.get("Networks"),
+        endpoint_spec=previous.get("EndpointSpec"),
+    )

@@ -41,7 +41,7 @@ Each file maps to one Docker SDK domain or one CLI/registry feature area. Unders
 | `plugins.py` | Plugin install and management | docker-py |
 | `secrets.py` | Swarm secrets | docker-py |
 | `services.py` | Swarm services | docker-py |
-| `swarm.py` | Swarm init, join, leave | docker-py |
+| `swarm.py` | Swarm init, join, leave, join tokens | docker-py |
 | `compose.py` | Docker Compose v2 | `docker compose` CLI via `_cli.py` |
 | `context.py` | Docker CLI contexts | `docker context` CLI via `_cli.py` |
 | `buildx.py` | Buildx / BuildKit | `docker buildx` CLI via `_cli.py` |
@@ -111,5 +111,8 @@ def mcp_example(name: str):
 **Only use `docker` module methods that are documented in the official reference.**
 Always verify the exact method name, parameter names, and return type at https://docker-py.readthedocs.io/en/stable/ before writing or suggesting code. Do not suggest methods that sound plausible but are not in the docs.
 
+When the high-level SDK lacks a method (e.g. swarm node removal, service rollback), use the low-level `APIClient` via `_get_client().api` (`remove_node`, `update_service`, `inspect_service`, …), documented at https://docker-py.readthedocs.io/en/stable/api.html — verified the same way. Prefer the high-level object API where it exists.
+
 Docker SDK docs: https://docker-py.readthedocs.io/en/stable/index.html
+Docker SDK low-level API: https://docker-py.readthedocs.io/en/stable/api.html
 Docker SDK GitHub: https://github.com/docker/docker-py

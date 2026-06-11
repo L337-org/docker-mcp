@@ -235,6 +235,34 @@ def audit_docker_contexts() -> str:
     )
 
 
+@mcp.prompt(description="Audit the health of a docker swarm: nodes, services, and task convergence.")
+def audit_swarm_health() -> str:
+    """
+    Generate a plan for assessing whether a swarm and its services are healthy.
+
+    returns: str - A prompt instructing the agent to enumerate nodes/services and flag problems
+    """
+    return (
+        "Audit the health of this docker swarm. Do not change anything — this is read-only:\n"
+        "1. Call `list_nodes` and flag any node whose `Status.State` is not `ready` or whose "
+        "`Spec.Availability` is `drain`/`pause`. Note manager nodes (`Spec.Role == manager`) and "
+        "whether `ManagerStatus.Reachability` is `reachable` — an unreachable manager threatens "
+        "quorum. Call out if you have an even number of managers or only one (no fault tolerance).\n"
+        "2. Call `list_services`. For each service, compare desired vs running replicas: read the "
+        "mode from `Spec.Mode` (Replicated count vs Global) and call `service_tasks(service_id, "
+        "filters={'desired-state': 'running'})` to count tasks actually running.\n"
+        "3. For any service that is under-replicated, call `service_tasks` without the filter and "
+        "look for tasks stuck in `rejected`/`failed`, or rapidly cycling through `shutdown` -> "
+        "`starting` (a crash loop). Pull `Status.Err` and `Status.Message` off the failing task.\n"
+        "4. For a service that is crash-looping, call `service_logs(service_id, tail=200, "
+        "timestamps=True)` and surface the last error.\n"
+        "5. If a node is drained and should be removed, note that `remove_node` (force only if it is "
+        "still reachable) is the follow-up — but do not call it as part of this audit.\n"
+        "Summarize as a table: nodes (state/availability/role/reachability) and services (desired vs "
+        "running, status). End with a one-paragraph health verdict and the single most urgent fix."
+    )
+
+
 @mcp.prompt(description="Find the latest tag for an image without pulling it.")
 def find_latest_image_tag(image: str) -> str:
     """

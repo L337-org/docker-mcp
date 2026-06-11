@@ -8,6 +8,7 @@ from docker_mcp.tools.services import (
     get_service,
     list_services,
     remove_service,
+    rollback_service,
     scale_service,
     service_logs,
     service_tasks,
@@ -115,3 +116,38 @@ def test_force_update_service():
         mock_client.return_value.services.get.return_value = service
         assert force_update_service("svc1") is True
     service.force_update.assert_called_once()
+
+
+def test_rollback_service_reapplies_previous_spec_at_current_version():
+    previous = {
+        "Name": "web",
+        "Labels": {"role": "web"},
+        "TaskTemplate": {"ContainerSpec": {"Image": "nginx:1.24"}},
+        "Mode": {"Replicated": {"Replicas": 3}},
+        "UpdateConfig": {"Parallelism": 1},
+        "RollbackConfig": {"Parallelism": 1},
+        "EndpointSpec": {"Ports": []},
+    }
+    info = {"Version": {"Index": 42}, "Spec": {"TaskTemplate": {}}, "PreviousSpec": previous}
+    with _patch() as mock_client:
+        api = mock_client.return_value.api
+        api.inspect_service.return_value = info
+        api.update_service.return_value = {"Warnings": None}
+        assert rollback_service("svc1") == {"Warnings": None}
+    args, kwargs = api.update_service.call_args
+    assert args == ("svc1", 42)  # current version index, so the daemon accepts the update
+    assert kwargs["task_template"] == previous["TaskTemplate"]
+    assert kwargs["name"] == "web"
+    assert kwargs["mode"] == previous["Mode"]
+    assert kwargs["endpoint_spec"] == previous["EndpointSpec"]
+    assert kwargs["networks"] is None  # absent from PreviousSpec -> unset
+
+
+def test_rollback_service_without_previous_spec_raises():
+    info = {"Version": {"Index": 7}, "Spec": {}, "PreviousSpec": None}
+    with _patch() as mock_client:
+        api = mock_client.return_value.api
+        api.inspect_service.return_value = info
+        with pytest.raises(ValueError, match="no PreviousSpec"):
+            rollback_service("svc1")
+    api.update_service.assert_not_called()
