@@ -632,21 +632,24 @@ def backup_volume(volume: str, dest_path: str) -> str:
     """
     return (
         f"Back up the contents of volume `{volume}` to `{dest_path}` on the server host. Docker has no "
-        f"native volume-export API, so use a throwaway container that mounts the volume:\n"
+        f"native volume-export API, so mount the volume into a throwaway container and pull its "
+        f"filesystem out through the Docker archive API:\n"
         f'1. Confirm the volume exists with `get_volume("{volume}")`.\n'
         f"2. Quiesce writers if integrity matters: if a running container has `{volume}` mounted and is "
         f"writing to it, a hot copy can be inconsistent — note which containers use it (cross-reference "
         f"`list_containers`) and offer to `stop_container` them first, or warn that the backup is "
         f"crash-consistent only.\n"
-        f"3. Create a helper container with the volume mounted read-only and tar its contents to stdout, "
-        f"e.g. `create_container` from `alpine` with command "
-        f'`["tar", "-cf", "-", "-C", "/data", "."]` and the volume mounted at `/data`.\n'
-        f"4. Stream the archive out of the helper with `get_container_archive_to_file` (or run the tar "
-        f"and capture stdout), writing to `{dest_path}`. Note that `{dest_path}` is on the host running "
-        f"this MCP server, written as the server's user.\n"
+        f"3. Create a helper container with the volume mounted at `/data`, e.g. `create_container` from "
+        f"`alpine` with `{volume}` mounted at `/data`. It does not need to run — the archive API reads "
+        f"the volume through the mount whether or not the container is started; no `tar` binary in the "
+        f"image is required.\n"
+        f'4. Call `get_container_archive_to_file(<helper>, path="/data", dest_path="{dest_path}")` to '
+        f"write the volume contents as a tar to `{dest_path}` (a path on the host running this MCP "
+        f"server, written as the server's user). The archive is rooted at `data/` (the API names the "
+        f"tar after the path's last component) — `restore_volume` relies on that, so don't repackage it.\n"
         f"5. Remove the helper container with `remove_container`, and restart anything you stopped in "
         f"step 2.\n"
-        f"Report the archive path and size. Treat `restore_volume` as the inverse operation."
+        f"Report the archive path and size. `restore_volume` is the exact inverse."
     )
 
 
@@ -664,16 +667,21 @@ def restore_volume(volume: str, source_path: str) -> str:
         f"Restore the contents of `{source_path}` into volume `{volume}`. This is the inverse of "
         f"`backup_volume` and is destructive to whatever `{volume}` currently holds — confirm with the "
         f"user before overwriting:\n"
-        f"1. Check whether `{volume}` already exists with `get_volume`. If it does and holds data, STOP "
-        f'and confirm the overwrite. If it does not, `create_volume("{volume}")`.\n'
+        f"1. Check whether `{volume}` already exists with `get_volume`. There is no way to tell whether "
+        f"a volume holds data without mounting it, so if the volume already exists, STOP and confirm the "
+        f'overwrite regardless. If it does not exist, `create_volume("{volume}")`.\n'
         f"2. Ensure no running container is using `{volume}` — restoring underneath a live writer "
         f"corrupts state. Use `list_containers` to check and offer to `stop_container` them first.\n"
-        f"3. Create a helper container from `alpine` with `{volume}` mounted read-write at `/data` and a "
-        f"command that clears and untars, e.g. extracting the archive piped to its stdin into `/data`.\n"
-        f"4. Push the archive in with `put_container_archive_from_file` reading `{source_path}` (a path "
-        f"on the host running this MCP server), or run the helper's `tar -xf -` against the streamed "
-        f"archive.\n"
-        f"5. Remove the helper with `remove_container` and restart anything you stopped.\n"
-        f"Verify by mounting the volume in a quick `alpine ls` helper and confirming the expected files "
-        f"are present. Report what was restored."
+        f"3. Create AND start a helper container from `alpine` with `{volume}` mounted read-write at "
+        f'`/data` (e.g. command `["sleep", "3600"]` so it stays up for the exec).\n'
+        f'4. Clear stale files first with `exec_in_container(<helper>, ["sh", "-c", "rm -rf /data/* '
+        f'/data/.[!.]* /data/..?* 2>/dev/null || true"])` — otherwise files not present in the archive '
+        f"survive the restore.\n"
+        f'5. Call `put_container_archive_from_file(<helper>, path="/", file_path="{source_path}")`. Use '
+        f'`path="/"`, not `/data`: a `backup_volume` archive is rooted at `data/`, so extracting it at '
+        f"the root lands the contents back in `/data` (extracting at `/data` would nest them in "
+        f"`/data/data`). `{source_path}` is read from the host running this MCP server.\n"
+        f"6. Remove the helper with `remove_container` and restart anything you stopped.\n"
+        f'Verify with `exec_in_container(<helper>, ["ls", "/data"])` (before removing it) or a quick '
+        f"`alpine ls` helper, confirming the expected files are present. Report what was restored."
     )

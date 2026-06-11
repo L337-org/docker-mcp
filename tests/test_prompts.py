@@ -266,20 +266,25 @@ def test_investigate_disk_usage_breaks_down_by_bucket():
     assert "clean_environment" in out
 
 
-def test_backup_volume_uses_helper_container_and_host_path():
+def test_backup_volume_uses_archive_api_not_stdout_tar():
     out = backup_volume("pgdata", "/backups/pg.tar")
     assert "pgdata" in out
     assert "/backups/pg.tar" in out
-    assert "get_container" in out  # matches get_container_archive_to_file / get_container
+    # Single coherent approach: the Docker archive API, not piping tar to stdout.
+    assert "get_container_archive_to_file" in out
     assert "remove_container" in out  # helper is cleaned up
-    assert "tar" in out.lower()
+    # The archive-root caveat that lets backup/restore round-trip must be stated.
+    assert "data/" in out
 
 
-def test_restore_volume_is_destructive_and_confirms():
+def test_restore_volume_confirms_clears_and_uses_root_path():
     out = restore_volume("pgdata", "/backups/pg.tar")
     assert "pgdata" in out
     assert "/backups/pg.tar" in out
     assert "put_container_archive_from_file" in out
     assert "create_volume" in out
-    # Restoring overwrites existing data — must confirm.
-    assert "confirm" in out.lower() or "destructive" in out.lower()
+    # Existing volume => always confirm (can't tell whether it holds data without mounting).
+    assert "confirm" in out.lower()
+    # Must clear stale files before extracting, and extract at "/" (not /data) to avoid nesting.
+    assert "exec_in_container" in out
+    assert 'path="/"' in out
