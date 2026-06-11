@@ -63,7 +63,14 @@ def test_buildx_build_scratch_context_succeeds(build_context: Path):
 def test_buildx_imagetools_inspect_alpine_returns_manifest():
     # `alpine:3` is a multi-arch manifest list on Docker Hub. The call hits the registry
     # over HTTPS via buildx; no local image is required.
-    result = buildx_imagetools_inspect("alpine:3", raw=True)
+    import subprocess
+
+    try:
+        result = buildx_imagetools_inspect("alpine:3", raw=True)
+    except subprocess.TimeoutExpired:
+        # A slow registry makes the inspect subprocess time out (run_docker raises rather than
+        # returning non-zero); skip cleanly instead of failing on a network hiccup.
+        pytest.skip("buildx imagetools inspect timed out (slow registry/network); skipping")
     if result["returncode"] != 0:
         pytest.skip(f"buildx imagetools inspect unreachable (registry/network?): {result['stderr'][:200]}")
     assert result["stdout"].strip().startswith("{")

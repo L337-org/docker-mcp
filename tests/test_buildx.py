@@ -428,6 +428,32 @@ def test_buildx_history_inspect_omits_ref_when_empty():
     assert argv[-1] == "json"
 
 
+def test_buildx_history_inspect_normalizes_qualified_ls_ref():
+    # A `buildx history ls` ref is "<builder>/<node>/<id>", but inspect only accepts the bare id —
+    # the tool reduces it and targets the builder named in the ref.
+    with patch("docker_mcp.tools.buildx.run_docker", return_value=_ok("{}")) as run:
+        buildx_history_inspect(ref="default/default/abc123")
+    argv = run.call_args.args[0]
+    assert argv[-1] == "abc123"  # bare id, not the qualified path
+    assert "--builder" in argv and argv[argv.index("--builder") + 1] == "default"
+
+
+def test_buildx_history_inspect_explicit_builder_overrides_ref_builder():
+    with patch("docker_mcp.tools.buildx.run_docker", return_value=_ok("{}")) as run:
+        buildx_history_inspect(ref="default/default/abc123", builder="other")
+    argv = run.call_args.args[0]
+    assert argv[argv.index("--builder") + 1] == "other"
+    assert argv[-1] == "abc123"
+
+
+def test_buildx_history_inspect_caret_ref_passes_through():
+    with patch("docker_mcp.tools.buildx.run_docker", return_value=_ok("{}")) as run:
+        buildx_history_inspect(ref="^0")
+    argv = run.call_args.args[0]
+    assert argv[-1] == "^0"  # no "/", unchanged
+    assert "--builder" not in argv  # nothing to derive
+
+
 def test_buildx_history_inspect_non_object_wrapped_in_raw():
     # Valid JSON that isn't an object (e.g. an array) falls back to {"raw": <stdout>}.
     # (Genuinely unparseable output raises instead, surfacing the parse error.)
