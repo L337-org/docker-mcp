@@ -27,8 +27,14 @@ _TIMEOUT_RM = 300.0
 _RESOLVE_IMAGE_CHOICES = frozenset({"always", "changed", "never"})
 
 
+# JSON output is requested with the `{{json .}}` Go template rather than the `--format json`
+# shorthand: the `json` keyword was only added to the docker CLI formatter in ~v23.0, whereas the
+# template renders one JSON object per line (NDJSON) on every version we might run against.
+_JSON_FORMAT = "{{json .}}"
+
+
 def _parse_stack_list(stdout: str, *, truncated: bool, what: str) -> list[dict]:
-    """Normalize `docker stack <ls|ps|services> --format json` output to a list of dicts."""
+    """Normalize `docker stack <ls|ps|services> --format '{{json .}}'` output to a list of dicts."""
     parsed = parse_json_or_ndjson(stdout, truncated=truncated, what=what)
     if isinstance(parsed, list):
         return parsed
@@ -89,13 +95,13 @@ def stack_deploy(
 @tool()
 def stack_ls() -> list:
     """
-    List the stacks deployed to the swarm, parsed from `--format json`.
+    List the stacks deployed to the swarm, parsed from `--format '{{json .}}'`.
 
     Requires the target daemon to be a swarm manager (raises otherwise).
 
     returns: list - One dict per stack (name, services count, orchestrator)
     """
-    result = run_docker(["stack", "ls", "--format", "json"], timeout=_TIMEOUT_QUERY)
+    result = run_docker(["stack", "ls", "--format", _JSON_FORMAT], timeout=_TIMEOUT_QUERY)
     raise_on_cli_failure(result, "stack ls")
     return _parse_stack_list(result.stdout, truncated=result.truncated, what="stack ls output")
 
@@ -103,7 +109,7 @@ def stack_ls() -> list:
 @tool()
 def stack_ps(stack_name: str, no_trunc: bool = False, filters: list[str] | None = None) -> list:
     """
-    List the tasks of a stack, parsed from `--format json`.
+    List the tasks of a stack, parsed from `--format '{{json .}}'`.
 
     args:
         stack_name: str - The stack to list tasks for
@@ -111,7 +117,7 @@ def stack_ps(stack_name: str, no_trunc: bool = False, filters: list[str] | None 
         filters: list[str] - Repeatable `--filter` expressions, e.g. ["desired-state=running"]
     returns: list - One dict per task (id, name, node, image, desired/current state, error)
     """
-    args = ["stack", "ps", "--format", "json"]
+    args = ["stack", "ps", "--format", _JSON_FORMAT]
     if no_trunc:
         args.append("--no-trunc")
     for f in filters or []:
@@ -125,14 +131,14 @@ def stack_ps(stack_name: str, no_trunc: bool = False, filters: list[str] | None 
 @tool()
 def stack_services(stack_name: str, filters: list[str] | None = None) -> list:
     """
-    List the services of a stack, parsed from `--format json`.
+    List the services of a stack, parsed from `--format '{{json .}}'`.
 
     args:
         stack_name: str - The stack to list services for
         filters: list[str] - Repeatable `--filter` expressions, e.g. ["name=web"]
     returns: list - One dict per service (id, name, mode, replicas, image, ports)
     """
-    args = ["stack", "services", "--format", "json"]
+    args = ["stack", "services", "--format", _JSON_FORMAT]
     for f in filters or []:
         args.extend(["--filter", f])
     args.append(safe_positional(stack_name, "stack name"))

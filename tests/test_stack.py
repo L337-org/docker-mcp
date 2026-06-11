@@ -92,7 +92,8 @@ def test_stack_ls_parses_ndjson():
         run.return_value = _ok(stdout=ndjson)
         result = stack_ls()
     assert [s["Name"] for s in result] == ["web", "db"]
-    assert run.call_args.args[0] == ["stack", "ls", "--format", "json"]
+    # JSON via the Go template, not the --format json shorthand (which needs docker >= ~v23).
+    assert run.call_args.args[0] == ["stack", "ls", "--format", "{{json .}}"]
 
 
 def test_stack_ls_single_object_wrapped_in_list():
