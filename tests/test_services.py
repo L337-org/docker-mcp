@@ -141,6 +141,8 @@ def test_rollback_service_reapplies_previous_spec_at_current_version():
     assert kwargs["mode"] == previous["Mode"]
     assert kwargs["endpoint_spec"] == previous["EndpointSpec"]
     assert kwargs["networks"] is None  # absent from PreviousSpec -> unset
+    # Must replace with PreviousSpec, not merge over the current spec — so fetch_current_spec is False.
+    assert kwargs["fetch_current_spec"] is False
 
 
 def test_rollback_service_without_previous_spec_raises():

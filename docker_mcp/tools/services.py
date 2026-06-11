@@ -186,6 +186,10 @@ def rollback_service(service_id: str) -> dict:
             f"Service {service_id} has no PreviousSpec to roll back to (never updated, or already rolled back)."
         )
     version = info["Version"]["Index"]
+    # fetch_current_spec=False is the docker-py default, but pass it explicitly: rollback must *replace*
+    # the service with PreviousSpec, not merge PreviousSpec over the current spec. With it False the
+    # daemon-side base is empty, so fields absent from PreviousSpec are genuinely unset (the intended
+    # rollback), not silently carried over from the spec we're rolling away from.
     return api.update_service(
         service_id,
         version,
@@ -197,4 +201,5 @@ def rollback_service(service_id: str) -> dict:
         rollback_config=previous.get("RollbackConfig"),
         networks=previous.get("Networks"),
         endpoint_spec=previous.get("EndpointSpec"),
+        fetch_current_spec=False,
     )

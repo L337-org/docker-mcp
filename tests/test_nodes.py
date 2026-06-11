@@ -39,16 +39,23 @@ def test_update_node():
     node.update.assert_called_once_with(spec)
 
 
-def test_remove_node_goes_through_low_level_api():
+def test_remove_node_resolves_name_to_id_then_uses_low_level_api():
+    node = MagicMock()
+    node.id = "abc123fullid"
     with _patch() as mock_client:
+        mock_client.return_value.nodes.get.return_value = node
         mock_client.return_value.api.remove_node.return_value = True
-        assert remove_node("n1") is True
-    # High-level SDK has no Node.remove(); must use APIClient.remove_node with force defaulting False.
-    mock_client.return_value.api.remove_node.assert_called_once_with("n1", force=False)
+        assert remove_node("worker-1") is True
+    # A name must be resolved to its ID first — APIClient.remove_node only accepts an ID.
+    mock_client.return_value.nodes.get.assert_called_once_with("worker-1")
+    mock_client.return_value.api.remove_node.assert_called_once_with("abc123fullid", force=False)
 
 
 def test_remove_node_force():
+    node = MagicMock()
+    node.id = "abc123fullid"
     with _patch() as mock_client:
+        mock_client.return_value.nodes.get.return_value = node
         mock_client.return_value.api.remove_node.return_value = True
         assert remove_node("n1", force=True) is True
-    mock_client.return_value.api.remove_node.assert_called_once_with("n1", force=True)
+    mock_client.return_value.api.remove_node.assert_called_once_with("abc123fullid", force=True)
