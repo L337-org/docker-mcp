@@ -202,7 +202,7 @@ Connecting this server to an AI agent grants it the same level of access as a lo
 
 ## Changelog
 
-The tool surface has been built out across two completed roadmaps. PR numbers link to the change.
+The tool surface has been built out across two completed roadmaps. Each `#NNN` is a pull request on GitHub.
 
 ### Feature & coverage roadmap (2026-06-11)
 
