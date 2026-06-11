@@ -429,6 +429,136 @@ def registry_inspect_manifest(
     }
 
 
+@tool()
+def registry_get_config(
+    image: str,
+    reference: str = "latest",
+    platform: str = "linux/amd64",
+    username: str | None = None,
+    password: str | None = None,
+) -> dict:
+    """
+    Fetch and parse an image's config blob from a registry without pulling the image.
+
+    This answers "what's actually inside this image?" — the config blob holds the env vars,
+    entrypoint/cmd, working dir, exposed ports, user, labels, and the layer history that
+    `registry_inspect_manifest` only points at (via the manifest's `config.digest`). It resolves the
+    config in up to three hops: fetch the manifest; if it's a multi-platform index, select the
+    `platform` entry and fetch that platform's manifest; then fetch and parse the config blob.
+
+    args:
+        image: str - Image reference, e.g. "alpine", "ghcr.io/org/repo". Any trailing `:tag`/`@digest`
+                     is stripped — pass the tag/digest as `reference`.
+        reference: str - Tag or digest (default "latest")
+        platform: str - Platform to select from a multi-platform image, "os/arch[/variant]"
+                        (default "linux/amd64"); ignored for single-platform images
+        username: str - Optional registry username (overrides DOCKER_MCP_REGISTRY_USERNAME)
+        password: str - Optional registry password or token (overrides DOCKER_MCP_REGISTRY_PASSWORD)
+    returns: dict - {"name", "registry", "reference", "platform", "config_digest", "config": <parsed>}
+                    where `platform` is the selected platform (None if the image is single-platform)
+    """
+    username, password = _env_credentials(username, password)
+    registry, repo = _parse_image_ref(image)
+
+    def _fetch_manifest(ref: str) -> dict:
+        resp = _registry_get(
+            registry,
+            f"/v2/{repo}/manifests/{ref}",
+            username=username,
+            password=password,
+            accept=_MANIFEST_ACCEPT,
+            timeout=_DEFAULT_TIMEOUT,
+        )
+        return resp.json()
+
+    manifest = _fetch_manifest(reference)
+    selected_platform: str | None = None
+    # A manifest list / OCI image index has "manifests"; a single-platform manifest has "config".
+    if "manifests" in manifest:
+        digest = _select_platform_digest(manifest, platform)
+        selected_platform = platform
+        manifest = _fetch_manifest(digest)
+
+    config = manifest.get("config")
+    if not isinstance(config, dict) or "digest" not in config:
+        raise RuntimeError(
+            f"Manifest for {repo}:{reference} has no config descriptor; cannot fetch the config blob "
+            f"(media type {manifest.get('mediaType', 'unknown')!r})."
+        )
+    config_digest = config["digest"]
+    blob = _registry_get(
+        registry,
+        f"/v2/{repo}/blobs/{config_digest}",
+        username=username,
+        password=password,
+        accept=None,
+        timeout=_DEFAULT_TIMEOUT,
+    )
+    return {
+        "name": repo,
+        "registry": registry,
+        "reference": reference,
+        "platform": selected_platform,
+        "config_digest": config_digest,
+        "config": blob.json(),
+    }
+
+
+def _parse_platform(platform: str) -> tuple[str, str, str | None]:
+    """Split "os/arch[/variant]" (e.g. "linux/amd64", "linux/arm/v7") into (os, arch, variant)."""
+    parts = platform.split("/")
+    if len(parts) == 2:
+        return parts[0], parts[1], None
+    if len(parts) == 3:
+        return parts[0], parts[1], parts[2]
+    raise ValueError(f"platform must be 'os/arch' or 'os/arch/variant', got {platform!r}")
+
+
+def _select_platform_digest(index: dict, platform: str) -> str:
+    """
+    Pick the sub-manifest digest matching `platform` from a manifest list / OCI image index.
+
+    Skips attestation manifests (which carry no real os/arch). Raises ValueError if no entry
+    matches, listing what the index does offer so the caller can retry with a valid platform.
+    """
+    want_os, want_arch, want_variant = _parse_platform(platform)
+    available: list[str] = []
+    for entry in index.get("manifests", []) or []:
+        plat = entry.get("platform", {})
+        os_, arch = plat.get("os"), plat.get("architecture")
+        if os_ in (None, "unknown") or arch in (None, "unknown"):
+            continue  # attestation / non-image manifest
+        variant = plat.get("variant")
+        available.append("/".join(p for p in (os_, arch, variant) if p))
+        if os_ == want_os and arch == want_arch and (want_variant is None or variant == want_variant):
+            digest = entry.get("digest")
+            if digest:
+                return digest
+    raise ValueError(
+        f"No manifest for platform {platform!r} in image index. Available platforms: "
+        f"{', '.join(sorted(set(available))) or 'none'}."
+    )
+
+
+def _parse_ratelimit_header(value: str | None) -> tuple[int | None, int | None]:
+    """
+    Decode a Docker Hub `RateLimit-Limit` / `RateLimit-Remaining` header.
+
+    The format is "<count>;w=<window-seconds>" (e.g. "100;w=21600") or occasionally a bare count.
+    Returns (count, window_seconds); either element is None when absent or unparseable.
+    """
+    if not value:
+        return (None, None)
+    head = value.split(";", 1)[0].strip()
+    try:
+        count: int | None = int(head)
+    except ValueError:
+        count = None
+    window_match = re.search(r"w=(\d+)", value)
+    window = int(window_match.group(1)) if window_match else None
+    return (count, window)
+
+
 def _hub_normalize(repository: str) -> str:
     """Normalize a Hub repository to "namespace/name" form (official images get "library/")."""
     if "/" not in repository:
@@ -507,3 +637,58 @@ def hub_repo_info(repository: str) -> dict:
         resp = _get_with_429_policy(client, url, headers={"User-Agent": _USER_AGENT})
     resp.raise_for_status()
     return resp.json()
+
+
+# The image Docker publishes specifically for probing pull-rate limits. A HEAD against its manifest
+# returns the RateLimit headers without counting as a pull (only manifest GETs are metered).
+_RATELIMIT_REPO = "ratelimitpreview/test"
+
+
+@tool()
+def hub_rate_limit(username: str | None = None, password: str | None = None) -> dict:
+    """
+    Report the caller's remaining Docker Hub pull-rate-limit budget.
+
+    Docker Hub meters image pulls per IP (anonymous) or per account (authenticated). This checks the
+    budget by sending a HEAD to the `ratelimitpreview/test` manifest on `registry-1.docker.io` and
+    reading the `RateLimit-Limit` / `RateLimit-Remaining` headers — a HEAD is not counted as a pull,
+    so the check itself doesn't consume budget. Call it before a large `compose_pull` / `pull_image`
+    to avoid hitting the cap mid-deploy.
+
+    Credentials raise the limit (and switch metering from per-IP to per-account); like the other
+    registry tools, it falls back to DOCKER_MCP_REGISTRY_USERNAME / DOCKER_MCP_REGISTRY_PASSWORD and
+    does NOT read `~/.docker/config.json`. Accounts/plans with no pull limit return no RateLimit
+    headers — reported here as `"unlimited": true`.
+
+    args:
+        username: str - Optional Hub username (overrides DOCKER_MCP_REGISTRY_USERNAME)
+        password: str - Optional Hub password or token (overrides DOCKER_MCP_REGISTRY_PASSWORD)
+    returns: dict - {"authenticated", "limit", "remaining", "window_seconds", "unlimited"}
+    """
+    username, password = _env_credentials(username, password)
+    registry = _DEFAULT_REGISTRY
+    url = f"https://{registry}/v2/{_RATELIMIT_REPO}/manifests/latest"
+    headers: dict[str, str] = {"User-Agent": _USER_AGENT, "Accept": _MANIFEST_ACCEPT}
+    with httpx.Client(timeout=_DEFAULT_TIMEOUT, follow_redirects=True) as client:
+        resp = client.head(url, headers=headers)
+        if resp.status_code == 401:
+            challenge = _parse_bearer_challenge(resp.headers.get("WWW-Authenticate", ""))
+            if not challenge:
+                resp.raise_for_status()
+            token = _get_bearer_token(client, challenge, username=username, password=password, registry=registry)
+            headers["Authorization"] = f"Bearer {token}"
+            resp = client.head(url, headers=headers)
+        # 429 means the limit is already spent — that's a valid answer (remaining 0), not an error to
+        # raise; the RateLimit headers are still present. Only raise for genuinely unexpected statuses.
+        if resp.status_code not in (200, 429):
+            resp.raise_for_status()
+    limit, window = _parse_ratelimit_header(resp.headers.get("RateLimit-Limit"))
+    remaining, _ = _parse_ratelimit_header(resp.headers.get("RateLimit-Remaining"))
+    return {
+        "authenticated": bool(username and password),
+        "limit": limit,
+        "remaining": remaining,
+        "window_seconds": window,
+        # No RateLimit headers at all => this account/plan isn't pull-limited.
+        "unlimited": limit is None and remaining is None,
+    }

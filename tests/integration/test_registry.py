@@ -8,7 +8,9 @@ import pytest
 
 from docker_mcp.tools.registry import (
     hub_list_tags,
+    hub_rate_limit,
     hub_repo_info,
+    registry_get_config,
     registry_inspect_manifest,
     registry_list_tags,
 )
@@ -60,3 +62,23 @@ def test_hub_repo_info_alpine_has_pull_count():
     assert info.get("name") == "alpine"
     assert info.get("user") == "library"
     assert isinstance(info.get("pull_count"), int)
+
+
+def test_registry_get_config_alpine_amd64():
+    result = registry_get_config("alpine", reference="latest", platform="linux/amd64")
+    assert result["config_digest"].startswith("sha256:")
+    # alpine publishes a multi-platform index, so a platform should have been selected.
+    assert result["platform"] == "linux/amd64"
+    config = result["config"]
+    assert config.get("architecture") == "amd64"
+    assert config.get("os") == "linux"
+    # The config blob carries the runtime config (Cmd/Entrypoint live under "config").
+    assert "config" in config
+
+
+def test_hub_rate_limit_anonymous_returns_budget():
+    result = hub_rate_limit()
+    assert result["authenticated"] is False
+    # Anonymous Hub pulls are metered, so we expect a numeric budget (unless Docker changes policy,
+    # in which case "unlimited" would be True — accept either rather than asserting a brittle number).
+    assert result["unlimited"] or isinstance(result["remaining"], int)

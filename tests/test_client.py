@@ -5,7 +5,7 @@ import pytest
 from docker.errors import DockerException
 
 import docker_mcp.tools.client as client_module
-from docker_mcp.tools.client import _get_client, close, df, events, info, login, ping, reconnect, version
+from docker_mcp.tools.client import _get_client, close, df, events, info, login, logout, ping, reconnect, version
 
 
 class _BlockingStream:
@@ -72,6 +72,46 @@ def test_login():
         reauth=False,
         dockercfg_path=None,
     )
+
+
+def _client_with_auths(auths: dict) -> MagicMock:
+    """A mock client whose APIClient carries a real _auth_configs dict (login's storage shape)."""
+    mock_client = MagicMock()
+    mock_client.api._auth_configs = {"auths": auths}
+    return mock_client
+
+
+def test_logout_clears_all_cached_credentials_by_default():
+    mock_client = _client_with_auths({"docker.io": {"username": "u"}, "ghcr.io": {"username": "v"}})
+    with patch("docker_mcp.tools.client._get_client", return_value=mock_client):
+        result = logout()
+    assert sorted(result["cleared"]) == ["docker.io", "ghcr.io"]
+    assert mock_client.api._auth_configs["auths"] == {}
+
+
+def test_logout_clears_only_the_named_registry():
+    mock_client = _client_with_auths({"docker.io": {"username": "u"}, "ghcr.io": {"username": "v"}})
+    with patch("docker_mcp.tools.client._get_client", return_value=mock_client):
+        result = logout(registry="ghcr.io")
+    assert result == {"cleared": ["ghcr.io"]}
+    # The other registry's credential is left intact.
+    assert set(mock_client.api._auth_configs["auths"]) == {"docker.io"}
+
+
+def test_logout_named_registry_not_present_is_a_noop():
+    mock_client = _client_with_auths({"docker.io": {"username": "u"}})
+    with patch("docker_mcp.tools.client._get_client", return_value=mock_client):
+        result = logout(registry="quay.io")
+    assert result == {"cleared": []}
+    assert set(mock_client.api._auth_configs["auths"]) == {"docker.io"}
+
+
+def test_logout_degrades_to_noop_when_internal_shape_is_absent():
+    # If a future docker-py drops/renames _auth_configs, logout must not raise.
+    mock_client = MagicMock()
+    mock_client.api._auth_configs = None
+    with patch("docker_mcp.tools.client._get_client", return_value=mock_client):
+        assert logout() == {"cleared": []}
 
 
 def test_events_collects_full_stream_when_under_limit():

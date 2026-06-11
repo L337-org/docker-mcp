@@ -281,9 +281,14 @@ def find_latest_image_tag(image: str) -> str:
         f"`-alpha`). Pick the highest stable semantic-version tag.\n"
         f'3. Call `registry_inspect_manifest(image="{image}", reference=<picked-tag>)` to confirm the tag '
         f"exists and capture the digest. If the response is an OCI image index, list the supported platforms.\n"
-        f"4. If `{image}` is a Docker Hub image, also call `hub_repo_info` to surface star and pull counts so "
-        f"the user can sanity-check the image's provenance.\n"
-        f"Report the recommended tag, its digest, and the supported platforms. Do not pull the image."
+        f'4. Call `registry_get_config(image="{image}", reference=<picked-tag>)` to read the image config '
+        f"without pulling — surface the labels (e.g. `org.opencontainers.image.source`/`revision`), the "
+        f"exposed ports, entrypoint, and user so the user can vet what the tag actually contains.\n"
+        f"5. If `{image}` is a Docker Hub image, also call `hub_repo_info` to surface star and pull counts so "
+        f"the user can sanity-check the image's provenance. If you intend to pull afterwards, call "
+        f"`hub_rate_limit` first to confirm there's pull budget left.\n"
+        f"Report the recommended tag, its digest, the supported platforms, and key config/labels. Do not "
+        f"pull the image."
     )
 
 

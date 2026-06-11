@@ -31,7 +31,7 @@ Each file maps to one Docker SDK domain or one CLI/registry feature area. Unders
 |------|--------|-----------|
 | `_cli.py` | Cross-platform subprocess helper (private) | — |
 | `_utils.py` | Shared helpers: `drop_none`, `join_bounded`, `stream_to_file`, `close_stream_quietly`, `MAX_PAYLOAD_BYTES` (private) | — |
-| `client.py` | `DockerClient` — connection, lifecycle, `reconnect` | docker-py |
+| `client.py` | `DockerClient` — connection, lifecycle, `login`/`logout`, `reconnect` | docker-py |
 | `containers.py` | Container lifecycle and management | docker-py |
 | `images.py` | Image pull, build, push, inspect, save/load | docker-py |
 | `networks.py` | Network create, connect, inspect | docker-py |
