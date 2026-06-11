@@ -125,6 +125,44 @@ def login(
 
 
 @tool()
+def logout(registry: str | None = None) -> dict:
+    """
+    Clear cached registry credentials from this server's in-memory Docker client.
+
+    docker-py and the Docker Engine have no true logout: `login` validates against the registry (the
+    daemon's `/auth` endpoint is stateless) and caches the credentials in-process on the shared
+    client. This tool drops that in-memory cache so a credential supplied via `login` no longer
+    lingers in the server's memory. It does NOT contact the daemon and does NOT touch the host's
+    `~/.docker/config.json`.
+
+    With no `registry`, every cached credential is cleared. Pass a `registry` to clear just that
+    entry — the key must match what was passed to `login` (the Docker Hub default is cached under
+    "docker.io"). `close` / `reconnect` also clear the cache, by discarding the client entirely.
+
+    Note: this reaches into a private docker-py attribute (`api._auth_configs`); it is written
+    defensively and degrades to clearing nothing if that internal shape changes in a future
+    docker-py release.
+
+    args: registry: str | None - Registry key to clear, or None to clear every cached credential
+    returns: dict - {"cleared": [<registry keys removed>]}
+    """
+    api = _get_client().api
+    # _auth_configs is a private docker-py attribute: an AuthConfig (dict subclass) whose "auths" key
+    # maps registry -> credential. Guard its presence/shape instead of assuming, so a docker-py change
+    # downgrades to a no-op rather than an AttributeError mid-tool.
+    auth_configs = getattr(api, "_auth_configs", None)
+    auths = auth_configs.get("auths") if isinstance(auth_configs, dict) else None
+    if not isinstance(auths, dict) or not auths:
+        return {"cleared": []}
+    if registry is None:
+        cleared = list(auths.keys())
+        auths.clear()
+    else:
+        cleared = [registry] if auths.pop(registry, None) is not None else []
+    return {"cleared": cleared}
+
+
+@tool()
 def events(
     since: str | None = None,
     until: str | None = None,

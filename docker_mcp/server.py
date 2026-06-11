@@ -37,6 +37,7 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "df": ToolCategory.READ_ONLY,
     "events": ToolCategory.READ_ONLY,
     "login": ToolCategory.MUTATING,
+    "logout": ToolCategory.MUTATING,
     "close": ToolCategory.MUTATING,
     "reconnect": ToolCategory.MUTATING,
     # containers
@@ -186,8 +187,10 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     # registry (HTTPS, no daemon)
     "registry_list_tags": ToolCategory.READ_ONLY,
     "registry_inspect_manifest": ToolCategory.READ_ONLY,
+    "registry_get_config": ToolCategory.READ_ONLY,
     "hub_list_tags": ToolCategory.READ_ONLY,
     "hub_repo_info": ToolCategory.READ_ONLY,
+    "hub_rate_limit": ToolCategory.READ_ONLY,
 }
 
 # Destructive tools whose effect is idempotent — re-running has no additional effect (the targets

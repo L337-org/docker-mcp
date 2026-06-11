@@ -10,10 +10,15 @@ from docker_mcp.tools.registry import (
     _next_link,
     _parse_bearer_challenge,
     _parse_image_ref,
+    _parse_platform,
+    _parse_ratelimit_header,
+    _select_platform_digest,
     _strip_tag_and_digest,
     _validate_bearer_realm,
     hub_list_tags,
+    hub_rate_limit,
     hub_repo_info,
+    registry_get_config,
     registry_inspect_manifest,
     registry_list_tags,
 )
@@ -615,3 +620,202 @@ def test_registry_inspect_manifest_uses_env_credentials_for_token_auth(monkeypat
     assert result["manifest"] == {"schemaVersion": 2}
     assert result["digest"] == "sha256:d"
     assert saw_auth["header"].startswith("Basic ")
+
+
+# ---------- platform / ratelimit helpers ----------
+
+
+def test_parse_platform_two_and_three_parts():
+    assert _parse_platform("linux/amd64") == ("linux", "amd64", None)
+    assert _parse_platform("linux/arm/v7") == ("linux", "arm", "v7")
+
+
+def test_parse_platform_invalid_raises():
+    with pytest.raises(ValueError, match="os/arch"):
+        _parse_platform("linux")
+
+
+def test_select_platform_digest_matches_and_skips_attestation():
+    index = {
+        "manifests": [
+            {"digest": "sha256:att", "platform": {"os": "unknown", "architecture": "unknown"}},
+            {"digest": "sha256:amd", "platform": {"os": "linux", "architecture": "amd64"}},
+        ]
+    }
+    assert _select_platform_digest(index, "linux/amd64") == ("sha256:amd", "linux/amd64")
+
+
+def test_select_platform_digest_honors_variant():
+    index = {
+        "manifests": [
+            {"digest": "sha256:v6", "platform": {"os": "linux", "architecture": "arm", "variant": "v6"}},
+            {"digest": "sha256:v7", "platform": {"os": "linux", "architecture": "arm", "variant": "v7"}},
+        ]
+    }
+    assert _select_platform_digest(index, "linux/arm/v7") == ("sha256:v7", "linux/arm/v7")
+
+
+def test_select_platform_digest_omitted_variant_reports_actual_selected_variant():
+    # "linux/arm64" (no variant) matches the arm64/v8 entry, and the returned platform reflects the
+    # variant actually selected so the caller is never misled about which one they got.
+    index = {
+        "manifests": [{"digest": "sha256:v8", "platform": {"os": "linux", "architecture": "arm64", "variant": "v8"}}]
+    }
+    assert _select_platform_digest(index, "linux/arm64") == ("sha256:v8", "linux/arm64/v8")
+
+
+def test_select_platform_digest_no_match_lists_available():
+    index = {"manifests": [{"digest": "sha256:amd", "platform": {"os": "linux", "architecture": "amd64"}}]}
+    with pytest.raises(ValueError, match="linux/amd64"):
+        _select_platform_digest(index, "windows/amd64")
+
+
+def test_parse_ratelimit_header_variants():
+    assert _parse_ratelimit_header("100;w=21600") == (100, 21600)
+    assert _parse_ratelimit_header("100") == (100, None)
+    assert _parse_ratelimit_header(None) == (None, None)
+    assert _parse_ratelimit_header("garbage") == (None, None)
+
+
+# ---------- registry_get_config ----------
+
+
+def test_registry_get_config_single_platform_fetches_blob():
+    config_blob = {"architecture": "amd64", "os": "linux", "config": {"Entrypoint": ["/bin/sh"]}}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path == "/v2/library/alpine/manifests/3.19":
+            return httpx.Response(
+                200,
+                json={
+                    "mediaType": "application/vnd.oci.image.manifest.v1+json",
+                    "config": {"digest": "sha256:cfg", "mediaType": "application/vnd.oci.image.config.v1+json"},
+                    "layers": [],
+                },
+            )
+        if path == "/v2/library/alpine/blobs/sha256:cfg":
+            return httpx.Response(200, json=config_blob)
+        return httpx.Response(404)
+
+    with _mock_client(handler):
+        result = registry_get_config("alpine", reference="3.19")
+    assert result["name"] == "library/alpine"
+    assert result["registry"] == "registry-1.docker.io"
+    assert result["platform"] is None  # single-platform image
+    assert result["config_digest"] == "sha256:cfg"
+    assert result["config"] == config_blob
+
+
+def test_registry_get_config_selects_platform_from_index():
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path == "/v2/library/alpine/manifests/latest":
+            return httpx.Response(
+                200,
+                json={
+                    "mediaType": "application/vnd.oci.image.index.v1+json",
+                    "manifests": [
+                        {"digest": "sha256:amd", "platform": {"os": "linux", "architecture": "amd64"}},
+                        {"digest": "sha256:arm", "platform": {"os": "linux", "architecture": "arm64"}},
+                    ],
+                },
+            )
+        if path == "/v2/library/alpine/manifests/sha256:arm":
+            return httpx.Response(200, json={"config": {"digest": "sha256:armcfg"}, "layers": []})
+        if path == "/v2/library/alpine/blobs/sha256:armcfg":
+            return httpx.Response(200, json={"architecture": "arm64", "os": "linux"})
+        return httpx.Response(404)
+
+    with _mock_client(handler):
+        result = registry_get_config("alpine", platform="linux/arm64")
+    assert result["platform"] == "linux/arm64"
+    assert result["config_digest"] == "sha256:armcfg"
+    assert result["config"]["architecture"] == "arm64"
+
+
+def test_registry_get_config_reports_actual_variant_not_caller_input():
+    # Caller asks for "linux/arm64" (no variant); the index only has arm64/v8. The reported platform
+    # must reflect the entry actually selected (".../v8"), not the bare string the caller passed.
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path == "/v2/library/alpine/manifests/latest":
+            return httpx.Response(
+                200,
+                json={
+                    "mediaType": "application/vnd.oci.image.index.v1+json",
+                    "manifests": [
+                        {"digest": "sha256:v8", "platform": {"os": "linux", "architecture": "arm64", "variant": "v8"}},
+                    ],
+                },
+            )
+        if path == "/v2/library/alpine/manifests/sha256:v8":
+            return httpx.Response(200, json={"config": {"digest": "sha256:cfg"}, "layers": []})
+        if path == "/v2/library/alpine/blobs/sha256:cfg":
+            return httpx.Response(200, json={"architecture": "arm64", "variant": "v8", "os": "linux"})
+        return httpx.Response(404)
+
+    with _mock_client(handler):
+        result = registry_get_config("alpine", platform="linux/arm64")
+    assert result["platform"] == "linux/arm64/v8"
+
+
+def test_registry_get_config_raises_when_no_config_descriptor():
+    def handler(request: httpx.Request) -> httpx.Response:
+        # Neither an index ("manifests") nor a normal image manifest ("config").
+        return httpx.Response(200, json={"mediaType": "application/weird", "layers": []})
+
+    with _mock_client(handler):
+        with pytest.raises(RuntimeError, match="no config descriptor"):
+            registry_get_config("alpine", reference="3.19")
+
+
+# ---------- hub_rate_limit ----------
+
+
+def _ratelimit_handler(final: httpx.Response):
+    """Build a handler that walks the bearer flow and returns `final` for the authed HEAD."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "auth.docker.io":
+            return httpx.Response(200, json={"token": "t"})
+        if "Authorization" not in request.headers:
+            return httpx.Response(
+                401,
+                headers={
+                    "WWW-Authenticate": 'Bearer realm="https://auth.docker.io/token",service="registry.docker.io"'
+                },
+            )
+        return final
+
+    return handler
+
+
+def test_hub_rate_limit_anonymous_reports_remaining():
+    final = httpx.Response(200, headers={"RateLimit-Limit": "100;w=21600", "RateLimit-Remaining": "76;w=21600"})
+    with _mock_client(_ratelimit_handler(final)):
+        result = hub_rate_limit()
+    assert result == {
+        "authenticated": False,
+        "limit": 100,
+        "remaining": 76,
+        "window_seconds": 21600,
+        "unlimited": False,
+    }
+
+
+def test_hub_rate_limit_reports_zero_on_429_without_raising():
+    final = httpx.Response(429, headers={"RateLimit-Limit": "100;w=21600", "RateLimit-Remaining": "0;w=21600"})
+    with _mock_client(_ratelimit_handler(final)):
+        result = hub_rate_limit()
+    assert result["limit"] == 100
+    assert result["remaining"] == 0
+
+
+def test_hub_rate_limit_unlimited_when_no_headers():
+    with _mock_client(_ratelimit_handler(httpx.Response(200))):
+        result = hub_rate_limit(username="u", password="p")
+    assert result["authenticated"] is True
+    assert result["unlimited"] is True
+    assert result["limit"] is None
+    assert result["remaining"] is None
