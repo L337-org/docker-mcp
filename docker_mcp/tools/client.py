@@ -1,14 +1,17 @@
 # library of mcp tools relating to client management
 
 import os
+import sys
 import threading
+from pathlib import Path
 
 import docker
 import requests.exceptions
 from docker.errors import DockerException
+from docker.models.containers import Container
 
 from docker_mcp.server import tool
-from docker_mcp.tools._utils import close_stream_quietly
+from docker_mcp.tools._utils import classify_host_kernel, close_stream_quietly, env_flag, in_container
 
 _client: docker.DockerClient | None = None
 # Guards every read/swap of `_client`. FastMCP runs sync tools concurrently in a worker
@@ -20,6 +23,55 @@ _client_lock = threading.Lock()
 # docker-py raises DockerException for protocol/config problems and lets requests' own
 # connection/timeout errors through for an unreachable endpoint.
 _CONNECT_ERRORS: tuple[type[BaseException], ...] = (DockerException, requests.exceptions.RequestException)
+
+# The full id of the container this server runs in, pinned once at startup (see startup_preflight).
+# Stays None on the host install or whenever we can't identify ourselves, which leaves the
+# self-termination guard inert. Env var lets an operator who really means it bypass the guard.
+_self_container_id: str | None = None
+_SELF_TERMINATE_OVERRIDE_ENV = "DOCKER_MCP_ALLOW_SELF_TERMINATE"
+
+
+def _detect_self_container_id(client: docker.DockerClient) -> str | None:
+    """
+    Resolve the full id of the container this server runs in, or None if it can't be determined.
+
+    Docker sets the container's short id as its hostname by default, so we look that up via the
+    daemon. Returns None if the hostname was overridden (`--hostname`) or the lookup fails — the
+    self-termination guard then stays inert rather than guessing.
+    """
+    hostname = (os.environ.get("HOSTNAME") or "").strip()
+    if not hostname:
+        try:
+            hostname = Path("/etc/hostname").read_text(encoding="utf-8").strip()
+        except OSError:
+            hostname = ""
+    if not hostname:
+        return None
+    try:
+        return client.containers.get(hostname).id
+    except _CONNECT_ERRORS:
+        return None
+
+
+def guard_not_self(container: Container) -> None:
+    """
+    Refuse a destructive lifecycle action against this server's own container.
+
+    An accident guard, not a security boundary: it only constrains calls made through this server's
+    tools. A human recovering a wedged server runs `docker rm -f` from their own shell, which never
+    touches this server. Inert when we aren't containerized or couldn't identify ourselves, and
+    bypassable with DOCKER_MCP_ALLOW_SELF_TERMINATE=1.
+    """
+    if _self_container_id is None or container.id != _self_container_id:
+        return
+    if env_flag(_SELF_TERMINATE_OVERRIDE_ENV):
+        return
+    raise RuntimeError(
+        f"Refusing to operate on the docker-mcp server's own container ({container.short_id} "
+        f"{container.name}) — this would terminate the MCP session mid-call. Set "
+        f"{_SELF_TERMINATE_OVERRIDE_ENV}=1 to override, or run the action from the host shell "
+        f"(e.g. `docker rm -f`), which bypasses this server entirely."
+    )
 
 
 def _close_client_quietly(client: docker.DockerClient) -> None:
@@ -257,3 +309,75 @@ def reconnect(docker_host: str | None = None) -> dict:
     if old_client is not None and old_client is not new_client:
         _close_client_quietly(old_client)
     return version_info
+
+
+def _connection_help(exc: BaseException) -> str:
+    """OS-aware guidance, emitted when the startup ping fails, for getting the daemon reachable."""
+    lines = [f"docker-mcp: cannot reach the Docker daemon ({exc})."]
+    host = os.environ.get("DOCKER_HOST")
+    if host:
+        lines.append(f"  DOCKER_HOST is set to {host} — verify that endpoint is reachable.")
+    if not in_container():
+        lines.append("  Is Docker running, and is DOCKER_HOST set correctly?")
+        return "\n".join(lines)
+    lines.append("  Running in a container: the daemon socket must be bind-mounted in, or DOCKER_HOST set.")
+    kind = classify_host_kernel()
+    if kind == "wsl2":
+        lines.append(
+            "  Host looks like Windows/WSL2 — the engine listens on a named pipe, not a unix socket. "
+            "Pass `-e DOCKER_HOST=tcp://host.docker.internal:2375` (enable the TCP endpoint in Docker "
+            "Desktop) or mount the WSL-side socket."
+        )
+    elif kind == "docker-desktop":
+        lines.append(
+            "  Host looks like Docker Desktop (macOS) — mount the Desktop socket: "
+            "`-v $HOME/.docker/run/docker.sock:/var/run/docker.sock` (or enable 'Allow the default "
+            "Docker socket' in Settings and mount `/var/run/docker.sock`)."
+        )
+    else:
+        lines.append(
+            "  Mount the daemon socket: `-v /var/run/docker.sock:/var/run/docker.sock` "
+            "(rootless: `-v $XDG_RUNTIME_DIR/docker.sock:/var/run/docker.sock`)."
+        )
+    return "\n".join(lines)
+
+
+def _connection_summary(client: docker.DockerClient) -> str:
+    """One-line confirmation of which daemon we reached, plus self-guard status when containerized."""
+    try:
+        details = client.info()
+    except _CONNECT_ERRORS:
+        details = {}
+    os_name = details.get("OperatingSystem") or "unknown"
+    security_options = details.get("SecurityOptions") or []
+    rootless = any(isinstance(opt, str) and "name=rootless" in opt for opt in security_options)
+    suffix = " (rootless)" if rootless else ""
+    note = ""
+    if in_container():
+        note = (
+            f"; self-termination guard active for container {_self_container_id[:12]}"
+            if _self_container_id
+            else "; self-termination guard inactive (could not identify own container)"
+        )
+    return f"docker-mcp: connected to Docker daemon — {os_name}{suffix}{note}."
+
+
+def startup_preflight() -> None:
+    """
+    Best-effort startup diagnostics, written only to stderr (stdout is the MCP stdio channel).
+
+    Pings the daemon; on failure prints OS-aware connection guidance and returns without raising, so
+    a client that only wants the tool list still starts. On success, pins this server's own container
+    id for the self-termination guard (when containerized) and prints a one-line confirmation of the
+    daemon it reached. Never raises — diagnostics must not crash startup.
+    """
+    global _self_container_id
+    try:
+        client = _get_client()
+        client.ping()
+    except Exception as exc:  # noqa: BLE001 — startup diagnostics must never abort the server
+        print(_connection_help(exc), file=sys.stderr, flush=True)
+        return
+    if in_container():
+        _self_container_id = _detect_self_container_id(client)
+    print(_connection_summary(client), file=sys.stderr, flush=True)

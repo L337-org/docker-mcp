@@ -84,6 +84,13 @@ Each `docker_mcp/tools/<module>.py` has a corresponding `tests/test_<module>.py`
 
 `tests/integration/` holds tests that hit a real Docker daemon. `tests/integration/conftest.py` auto-marks every test in the directory with `@pytest.mark.integration` (excluded by default via `addopts = "-m 'not integration'"` in `pyproject.toml`) and provides an autouse `skip_if_no_daemon` fixture so the suite skips cleanly when no daemon is reachable. Run with `uv run pytest -m integration`.
 
+### Container image (`Dockerfile`)
+
+An additional distribution channel alongside uvx-from-git (which is unchanged). One multi-stage `Dockerfile` builds variants via build args (`INSTALL_CLI`, `INSTALL_SCOUT`, `DISABLE_DOMAINS`): `full` (docker CLI + compose + buildx + scout) and `no-scout` (sets `DOCKER_MCP_DISABLE=scout` so the absent-plugin scout tools don't register) are **published to GHCR on each GitHub Release** (`full` → `:latest`/`:<version>`, `no-scout` → `:no-scout`/`:<version>-no-scout`); `lite` (`INSTALL_CLI=0`, docker-py SDK only — CLI domains degrade via `has_plugin()`) is buildable but not published. `.github/workflows/images.yaml` builds+measures on PRs/pushes to main; `.github/workflows/publish-images.yaml` pushes multi-arch images to GHCR on a GitHub Release (kept a separate workflow so it never shows as a skipped check on PRs). Two container-aware guards live behind `_utils.in_container()` (true when `/.dockerenv` exists or `DOCKER_MCP_IN_CONTAINER=1`, set in the image) and are **inert on the host install**:
+
+- **Filesystem guard** (`_utils.py`): `assert_host_writable` (hooked into `stream_to_file`) refuses a `*_to_file` write to a path that isn't a host bind mount (silent loss on `--rm`); `host_read_path` enriches the "missing file" case on reads. `_host_backed` parses `/proc/self/mountinfo`.
+- **Self-termination guard** (`client.py`): `startup_preflight()` (called from `main()`) pings the daemon, prints OS-aware socket hints to **stderr** (never stdout — that's the stdio channel) on failure, and pins the server's own container id; `guard_not_self` then makes the destructive container-lifecycle tools refuse to act on self (override: `DOCKER_MCP_ALLOW_SELF_TERMINATE=1`).
+
 ## Conventions
 
 - New Docker functionality goes in the matching `docker_mcp/tools/<domain>.py` file, not in a new file.

@@ -1,0 +1,96 @@
+name: 'Build container images'
+
+# On PRs / pushes to main: builds the two published variants (full, no-scout) for amd64 and reports
+# their sizes, plus a cross-arch smoke build — nothing is pushed. Publishing to GHCR happens on a
+# GitHub Release, in the separate publish-images.yaml workflow. See README "Run as a container".
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - 'Dockerfile'
+      - '.dockerignore'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - 'docker_mcp/**'
+      - '.github/workflows/images.yaml'
+  workflow_dispatch:
+
+jobs:
+
+  build-and-measure:
+    # Build each variant for amd64, load it locally, and emit its size to the job summary. amd64-only
+    # here keeps it fast (load can't take a multi-arch result); cross-arch is covered by the smoke job.
+    runs-on: ubuntu-latest
+    name: Build & measure (${{ matrix.variant }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: full
+            install_cli: '1'
+            install_scout: '1'
+            disable_domains: ''
+          - variant: no-scout
+            install_cli: '1'
+            install_scout: '0'
+            disable_domains: 'scout'
+    steps:
+      - name: Check out source repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
+
+      - name: Build image (${{ matrix.variant }})
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: docker-mcp:${{ matrix.variant }}
+          build-args: |
+            INSTALL_CLI=${{ matrix.install_cli }}
+            INSTALL_SCOUT=${{ matrix.install_scout }}
+            DISABLE_DOMAINS=${{ matrix.disable_domains }}
+
+      - name: Report image size
+        run: |
+          size=$(docker image inspect "docker-mcp:${{ matrix.variant }}" --format '{{.Size}}')
+          human=$(numfmt --to=iec --suffix=B "$size")
+          {
+            echo "### Image size — \`${{ matrix.variant }}\`"
+            echo ""
+            echo "**$human**  ($size bytes)"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  multiarch-smoke:
+    # Confirm the Dockerfile cross-builds for arm64 too (the published images must be multi-arch).
+    # Build only — no load (a multi-arch result can't be loaded into the local docker) and no push.
+    runs-on: ubuntu-latest
+    name: Cross-arch build smoke (full)
+    steps:
+      - name: Check out source repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4.1.0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
+
+      - name: Build full variant for amd64 + arm64
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: false
+          tags: docker-mcp:full
+          build-args: |
+            INSTALL_CLI=1
+            INSTALL_SCOUT=1

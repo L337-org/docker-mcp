@@ -2,6 +2,7 @@
 /.*
 !/.python-version
 !/.gitignore
+!/.dockerignore
 !/.github/
 !/.cursor/
 !/.vscode/

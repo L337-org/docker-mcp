@@ -3,14 +3,20 @@
 import threading
 import time
 from collections.abc import Iterable
-from pathlib import Path
 from typing import Literal, TypedDict, cast
 
 import requests.exceptions
 
 from docker_mcp.server import tool
-from docker_mcp.tools._utils import MAX_PAYLOAD_BYTES, close_stream_quietly, drop_none, join_bounded, stream_to_file
-from docker_mcp.tools.client import _get_client
+from docker_mcp.tools._utils import (
+    MAX_PAYLOAD_BYTES,
+    close_stream_quietly,
+    drop_none,
+    host_read_path,
+    join_bounded,
+    stream_to_file,
+)
+from docker_mcp.tools.client import _get_client, guard_not_self
 
 
 class RestartPolicy(TypedDict, total=False):
@@ -206,6 +212,7 @@ def stop_container(id_or_name: str, timeout: int = 10) -> dict:
     returns: dict - The container's attrs after stop
     """
     container = _get_client().containers.get(id_or_name)
+    guard_not_self(container)
     container.stop(timeout=timeout)
     container.reload()
     return container.attrs
@@ -222,6 +229,7 @@ def restart_container(id_or_name: str, timeout: int = 10) -> dict:
     returns: dict - The container's attrs after restart
     """
     container = _get_client().containers.get(id_or_name)
+    guard_not_self(container)
     container.restart(timeout=timeout)
     container.reload()
     return container.attrs
@@ -238,6 +246,7 @@ def kill_container(id_or_name: str, signal: str | None = None) -> dict:
     returns: dict - The container's attrs after kill
     """
     container = _get_client().containers.get(id_or_name)
+    guard_not_self(container)
     container.kill(signal=signal)
     container.reload()
     return container.attrs
@@ -252,6 +261,7 @@ def pause_container(id_or_name: str) -> dict:
     returns: dict - The container's attrs after pause
     """
     container = _get_client().containers.get(id_or_name)
+    guard_not_self(container)
     container.pause()
     container.reload()
     return container.attrs
@@ -284,6 +294,7 @@ def remove_container(id_or_name: str, v: bool = False, link: bool = False, force
     returns: bool - True after removal completes
     """
     container = _get_client().containers.get(id_or_name)
+    guard_not_self(container)
     container.remove(v=v, link=link, force=force)
     return True
 
@@ -786,6 +797,6 @@ def put_container_archive_from_file(id_or_name: str, path: str, file_path: str) 
     returns: bool - True if the upload succeeded
     """
     container = _get_client().containers.get(id_or_name)
-    source = Path(file_path).expanduser()
+    source = host_read_path(file_path)
     with source.open("rb") as handle:
         return container.put_archive(path, handle)

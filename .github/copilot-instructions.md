@@ -30,7 +30,7 @@ Each file maps to one Docker SDK domain or one CLI/registry feature area. Unders
 | File | Domain | Backed by |
 |------|--------|-----------|
 | `_cli.py` | Cross-platform subprocess helper (private) | — |
-| `_utils.py` | Shared helpers: `drop_none`, `join_bounded`, `stream_to_file`, `close_stream_quietly`, `MAX_PAYLOAD_BYTES` (private) | — |
+| `_utils.py` | Shared helpers: `drop_none`, `join_bounded`, `stream_to_file`, `close_stream_quietly`, `MAX_PAYLOAD_BYTES`, plus the container guards `in_container` / `assert_host_writable` / `host_read_path` / `classify_host_kernel` (private) | — |
 | `client.py` | `DockerClient` — connection, lifecycle, `login`/`logout`, `reconnect` | docker-py |
 | `containers.py` | Container lifecycle and management | docker-py |
 | `images.py` | Image pull, build, push, inspect, save/load | docker-py |
@@ -55,6 +55,13 @@ Each file maps to one Docker SDK domain or one CLI/registry feature area. Unders
 
 ### Tests (`tests/`)
 Each `docker_mcp/tools/<module>.py` has a corresponding `tests/test_<module>.py`; `tests/test_server.py` covers the classification/registration machinery. Tests use pytest with mocks. `tests/integration/` holds tests that need a real Docker daemon — excluded by default, run with `uv run pytest -m integration`. `tests/conftest.py` clears the `DOCKER_MCP_*` env switches so the suite is hermetic.
+
+### Container image (`Dockerfile`)
+
+An additional distribution channel alongside the uvx-from-git install (unchanged). One ARG-gated multi-stage `Dockerfile` builds `full` (docker CLI + compose + buildx + scout) and `no-scout` (sets `DOCKER_MCP_DISABLE=scout` so absent-plugin scout tools don't register), published to GHCR on each GitHub Release via `.github/workflows/publish-images.yaml` (build/measure on PRs/pushes is the separate `images.yaml`); `lite` (`INSTALL_CLI=0`) is buildable but not published. Two container-aware guards live behind `_utils.in_container()` (true when `/.dockerenv` exists or `DOCKER_MCP_IN_CONTAINER=1`) and are **inert on the host install** — keep them in mind when editing `_utils.py` or the file-path tools:
+
+- **Filesystem guard** — `assert_host_writable` (hooked into `stream_to_file`) refuses a `*_to_file` write to a path that isn't a host bind mount (it would be lost on `--rm`); `host_read_path` enriches the read-side "missing file" case.
+- **Self-termination guard** — `client.startup_preflight()` (called from `main()`) pins the server's own container id and prints OS-aware socket hints to stderr; `client.guard_not_self` stops the destructive container-lifecycle tools (`remove`/`kill`/`stop`/`restart`/`pause_container`) from acting on the server's own container (override `DOCKER_MCP_ALLOW_SELF_TERMINATE=1`).
 
 ## Conventions
 

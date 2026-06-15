@@ -1,0 +1,82 @@
+name: 'Publish container images'
+
+# Publishes the container images to GHCR on each GitHub Release. Kept in its own workflow (rather than
+# a release-gated job inside images.yaml) so it never shows up as a skipped check on pull requests.
+#   full     -> ghcr.io/gavinlucas/docker-mcp:latest    + :<version>
+#   no-scout -> ghcr.io/gavinlucas/docker-mcp:no-scout   + :<version>-no-scout
+# where <version> is the release tag with any leading "v" stripped.
+
+permissions:
+  contents: read
+
+on:
+  release:
+    types: [published]
+
+jobs:
+
+  publish:
+    name: Publish ${{ matrix.variant }} to GHCR
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: full
+            install_cli: '1'
+            install_scout: '1'
+            disable_domains: ''
+          - variant: no-scout
+            install_cli: '1'
+            install_scout: '0'
+            disable_domains: 'scout'
+    steps:
+      - name: Check out source repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - name: Compute image tags
+        id: meta
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          img=ghcr.io/gavinlucas/docker-mcp
+          version="${RELEASE_TAG#v}"
+          if [ "${{ matrix.variant }}" = "full" ]; then
+            tags="$img:latest,$img:$version"
+          else
+            tags="$img:no-scout,$img:$version-no-scout"
+          fi
+          echo "tags=$tags" >> "$GITHUB_OUTPUT"
+          echo "Publishing \`${{ matrix.variant }}\` as: $tags" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4.1.0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
+
+      - name: Log in to GHCR
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push ${{ matrix.variant }}
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          # image.source links the GHCR package to this repo (visibility + "connected repository").
+          labels: |
+            org.opencontainers.image.source=https://github.com/GavinLucas/docker-mcp
+            org.opencontainers.image.version=${{ github.event.release.tag_name }}
+          build-args: |
+            INSTALL_CLI=${{ matrix.install_cli }}
+            INSTALL_SCOUT=${{ matrix.install_scout }}
+            DISABLE_DOMAINS=${{ matrix.disable_domains }}

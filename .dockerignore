@@ -1,0 +1,27 @@
+# Keep the build context small and reproducible: only pyproject.toml, uv.lock, README.md and the
+# docker_mcp package are needed (see Dockerfile). Everything else is excluded.
+.git
+.github
+.venv
+venv
+__pycache__
+*.py[cod]
+*$py.class
+.pytest_cache
+.ruff_cache
+.coverage
+htmlcov
+build
+dist
+wheels
+*.egg-info
+.idea
+.vscode
+.cursor
+.claude
+tests
+.DS_Store
+*~
+*.bak
+Dockerfile
+.dockerignore
