@@ -32,6 +32,84 @@ Add an entry to your AI tool's MCP configuration (commonly `mcp.json` or the equ
 
 To pin a specific revision, append `@<tag-or-commit>` to the git URL.
 
+### Run as a container
+
+Running the server as a container removes the Python / uv / git prerequisites entirely — the only
+thing the host needs is Docker, which you already have. Prebuilt multi-arch images (linux/amd64 +
+linux/arm64) are published to GHCR on each release; point your MCP client at `docker run`:
+
+```json
+{
+  "mcpServers": {
+    "docker-mcp": {
+      "command": "docker",
+      "args": [
+        "run", "--rm", "-i",
+        "-v", "/var/run/docker.sock:/var/run/docker.sock",
+        "ghcr.io/gavinlucas/docker-mcp:latest"
+      ],
+      "env": {}
+    }
+  }
+}
+```
+
+`-i` is required (the server speaks MCP over stdio); `--rm` cleans up when the client disconnects. To
+pin a version, replace `:latest` with a release tag (e.g. `:1.3.0`).
+
+**Image variants.** Two variants are published to `ghcr.io/gavinlucas/docker-mcp`, both built from one
+`Dockerfile`. The CLI-backed domains (Compose, Stack, Buildx, Scout, Context) shell out to the
+`docker` CLI and its plugins.
+
+| Variant | Tags | Approx. size | Includes |
+|---------|------|-------------|----------|
+| `full` *(default)* | `:latest`, `:<version>` | ~510 MB | docker CLI + compose + buildx + **scout** |
+| `no-scout` | `:no-scout`, `:<version>-no-scout` | ~315 MB | docker CLI + compose + buildx |
+
+Scout's plugin binary alone accounts for the ~195 MB jump from `no-scout` to `full`. The `no-scout`
+image also defaults `DOCKER_MCP_DISABLE=scout`, so the scout *tools* don't register — the agent is
+never offered tools whose CLI plugin isn't present (it sees a smaller, fully-working tool list rather
+than scout tools that error on every call). Override at runtime with `-e DOCKER_MCP_DISABLE=...` if you
+ever need to change the disabled set (note it replaces, not appends).
+
+**Building it yourself.** All variants build from the repo's `Dockerfile` via build args:
+
+```bash
+docker build -t docker-mcp:full .                                           # full (default)
+docker build --build-arg INSTALL_SCOUT=0 --build-arg DISABLE_DOMAINS=scout \
+  -t docker-mcp:no-scout .                                                  # no-scout
+docker build --build-arg INSTALL_CLI=0 -t docker-mcp:lite .                 # lite (SDK-only, ~165 MB)
+```
+
+The `lite` image (docker-py SDK tools only — Compose/Buildx/Scout/Context degrade to "plugin
+unavailable") is buildable but not published.
+
+**Reaching the daemon from inside the container.** The image defaults `DOCKER_HOST` to
+`unix:///var/run/docker.sock`, so mounting your host's socket onto that path is all that's needed.
+Where the host socket *is*, however, varies — and the server prints a platform-aware hint to stderr
+if it can't connect at startup:
+
+- **Linux:** `-v /var/run/docker.sock:/var/run/docker.sock` (rootless: `-v $XDG_RUNTIME_DIR/docker.sock:/var/run/docker.sock`).
+- **macOS (Docker Desktop):** the real socket is usually `~/.docker/run/docker.sock` — mount it onto the in-container path: `-v $HOME/.docker/run/docker.sock:/var/run/docker.sock` (or enable *Settings → Advanced → Allow the default Docker socket* and use `/var/run/docker.sock`).
+- **Windows (Docker Desktop / WSL2):** the engine uses a named pipe, not a unix socket — prefer `-e DOCKER_HOST=tcp://host.docker.internal:2375` (enable the TCP endpoint in Docker Desktop).
+- **Remote / TLS / SSH daemon:** skip the socket mount and pass `-e DOCKER_HOST=...` (plus the TLS vars below) — see [Talking to a remote daemon](#talking-to-a-remote-daemon).
+
+**Host filesystem access.** Inside a container, the file-path tools (`save_image_to_file`,
+`load_image_from_file`, `export_container_to_file`, the container-archive `*_to_file` /
+`*_from_file` variants, and compose `project_dir` / `files`) resolve paths *inside the container*,
+not on your host. Bind-mount any directory you want to exchange files through — using the **same
+path inside and out** keeps host and container paths identical:
+
+```
+-v $HOME/docker-work:$HOME/docker-work
+```
+
+If you call one of these tools with a path that isn't on a bind mount, the server refuses up front
+with a message telling you exactly which `-v` to add — a write to an unmapped path would otherwise be
+silently discarded when the container exits. (The in-band byte tools, capped at 32 MiB, need no
+mount.) Configuration env vars (`DOCKER_MCP_READONLY`, `DOCKER_HOST`, etc.) go in the client's `env`
+block exactly as for the uvx install.
+
 ### Talking to a remote daemon
 
 The server connects through `docker.from_env()`, so anything the standard Docker CLI honours works here too. Common overrides via `env`:
@@ -186,6 +264,7 @@ claude mcp add docker-mcp-readonly \
 Connecting this server to an AI agent grants it the same level of access as a local Docker CLI session against the configured daemon. That is broad: the daemon's socket is effectively root-equivalent on the host running it. Treat the agent as a privileged user and weigh the risks below before enabling the server.
 
 - **Use a scoped daemon.** Prefer pointing `DOCKER_HOST` at a daemon dedicated to workloads the agent is allowed to touch (a development VM, a remote sandbox, Docker Desktop, a rootless install) rather than your production socket. The daemon is the trust boundary — there is no per-tool authorization layer.
+- **Running as a container.** Mounting `/var/run/docker.sock` into the container grants it the same root-equivalent access to that daemon as the uvx install has — no more, no less, but now explicit in the `docker run` line. The same scoped-daemon advice applies: prefer mounting a socket for, or pointing `DOCKER_HOST` at, a daemon the agent is allowed to control. Note that when containerized the file-path tools read and write *the container's* filesystem, so they can only reach host directories you bind-mount in (see [Run as a container](#run-as-a-container)). As an accident guard, the destructive container-lifecycle tools (`remove_container`, `kill_container`, `stop_container`, `restart_container`, `pause_container`) refuse to act on the server's *own* container so the agent can't end its own session mid-call; this is convenience, not a security boundary (it's bypassable with `DOCKER_MCP_ALLOW_SELF_TERMINATE=1`, and a human can always recover the container from the host shell), and it does not constrain the many other ways a daemon-privileged agent can affect the host.
 - **Privileged containers and host mounts.** `run_container` accepts `privileged=True` and arbitrary `volumes`. A privileged container, or one that bind-mounts `/` from the host, can trivially escape to the host filesystem. Avoid letting the agent set these unless you have reviewed the request. Compose files can declare the same — review the rendered `compose_config` output before approving `compose_up` on an unfamiliar project.
 - **Pass-through `extra_kwargs` / `updates` bypass the visible schema.** `run_container`, `create_container`, `create_service` (`extra_kwargs`) and `update_container`, `update_service` (`updates`) forward an arbitrary dict straight into the Docker SDK. A client that gates on, say, `privileged=False` in the tool's declared parameters can still be bypassed via `extra_kwargs={"privileged": True, "pid_mode": "host"}`. These escape hatches are consistent with the "daemon is the trust boundary" model, but any allow/deny policy you build at the MCP-client layer must account for them rather than trusting the named parameters alone.
 - **Registry credentials.** Many MCP clients log tool calls verbatim, so treat any password or `auth_config` you pass through a tool as exposed.

@@ -8,4 +8,7 @@ def main():
     """
     Main function to run the MCP server.
     """
+    from docker_mcp.tools.client import startup_preflight
+
+    startup_preflight()
     mcp.run(transport="stdio")

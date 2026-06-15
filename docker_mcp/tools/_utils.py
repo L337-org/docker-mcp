@@ -12,6 +12,180 @@ from typing import Any
 # a host path instead. The cap is per-call and overridable via each tool's `max_bytes` argument.
 MAX_PAYLOAD_BYTES = 33_554_432
 
+# Set in our published container images so the in-container guards engage even if /.dockerenv is
+# ever absent (e.g. an unusual runtime). On the host (uvx) install neither signal is present, so
+# every guard below is a no-op and the existing behaviour is unchanged.
+IN_CONTAINER_ENV = "DOCKER_MCP_IN_CONTAINER"
+
+# /proc/self/mountinfo fstypes that never represent a host bind mount: the container's own overlay
+# root and the assorted pseudo / in-memory filesystems. A path whose nearest mount is one of these
+# is NOT backed by the host, so a write there is lost when the container exits. Real bind mounts
+# (ext4, xfs, virtiofs, fuse.grpcfuse on Docker Desktop, …) fall outside this set.
+_PSEUDO_FSTYPES = frozenset(
+    {
+        "overlay",
+        "tmpfs",
+        "proc",
+        "sysfs",
+        "cgroup",
+        "cgroup2",
+        "devpts",
+        "mqueue",
+        "shm",
+        "devtmpfs",
+        "fuse.lxcfs",
+        "nsfs",
+        "tracefs",
+        "debugfs",
+        "securityfs",
+        "pstore",
+        "bpf",
+        "configfs",
+        "hugetlbfs",
+        "fusectl",
+        "ramfs",
+        "binfmt_misc",
+    }
+)
+
+
+def env_flag(name: str) -> bool:
+    """True if the named environment variable is set to a truthy value (1/true/yes/on)."""
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def in_container() -> bool:
+    """
+    True when this server is running inside a container.
+
+    Docker writes `/.dockerenv` into every container, and our published images additionally set
+    `DOCKER_MCP_IN_CONTAINER=1`. Either signal flips on the in-container filesystem and
+    self-termination guards; on the host install neither is present so those guards are inert.
+    """
+    return env_flag(IN_CONTAINER_ENV) or Path("/.dockerenv").exists()
+
+
+def _unescape_mountinfo_field(field: str) -> str:
+    """Decode the octal escapes the kernel applies to mountinfo path fields (space/tab/newline/\\)."""
+    return field.replace("\\040", " ").replace("\\011", "\t").replace("\\012", "\n").replace("\\134", "\\")
+
+
+def _read_mountinfo() -> list[tuple[str, str]]:
+    """
+    Return (mount_point, fstype) pairs from /proc/self/mountinfo, or [] if it can't be read.
+
+    The format is `ID PARENT MAJ:MIN ROOT MOUNT_POINT OPTIONS... - FSTYPE SOURCE SUPER_OPTS`; the
+    number of optional fields before the literal ` - ` separator varies, so we split on it.
+    """
+    try:
+        raw = Path("/proc/self/mountinfo").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    mounts: list[tuple[str, str]] = []
+    for line in raw.splitlines():
+        left, sep, right = line.partition(" - ")
+        if not sep:
+            continue
+        left_fields = left.split()
+        right_fields = right.split()
+        if len(left_fields) < 5 or not right_fields:
+            continue
+        mounts.append((_unescape_mountinfo_field(left_fields[4]), right_fields[0]))
+    return mounts
+
+
+def _host_backed(path: Path) -> bool:
+    """
+    True if `path` falls under a real host bind mount inside the container.
+
+    Finds the longest mount point in /proc/self/mountinfo that is a prefix of the path (matching the
+    directory it would live in, since the file itself may not exist yet) and checks that mount's
+    fstype is not a pseudo / overlay filesystem. Conservative: returns False when mountinfo is
+    unavailable, so the guards prefer a (recoverable) false alarm over a silent data-loss write.
+    """
+    mounts = _read_mountinfo()
+    if not mounts:
+        return False
+    try:
+        target = str(path.resolve())
+    except OSError:
+        target = str(path)
+    best_len = -1
+    best_fstype = ""
+    for mount_point, fstype in mounts:
+        mp = mount_point.rstrip("/") or "/"
+        covers = mp == "/" or target == mp or target.startswith(mp + "/")
+        if covers and len(mp) > best_len:
+            best_len, best_fstype = len(mp), fstype
+    return best_len >= 0 and best_fstype not in _PSEUDO_FSTYPES
+
+
+def _unmapped_path_message(path: Path, *, for_write: bool) -> str:
+    """Actionable error text telling the user how to bind-mount a host directory into the container."""
+    if for_write:
+        verb, consequence = (
+            "write to",
+            ("it would land in the container's ephemeral filesystem and be lost when the container exits"),
+        )
+    else:
+        verb, consequence = "read from", "no such path is visible inside the container"
+    parent = path.parent
+    return (
+        f"Cannot {verb} {path}: {consequence}. This docker-mcp server is running in a container, so "
+        f"host paths must be bind-mounted in. Add a mount for the directory to the `docker run` args "
+        f"in your MCP client config — e.g. `-v {parent}:{parent}` (using the same path inside and out "
+        f"keeps host and container paths identical) — then retry. Small payloads can use the in-band "
+        f"byte tools instead, which need no mount."
+    )
+
+
+def assert_host_writable(dest_path: str) -> None:
+    """
+    Pre-flight guard for the `*_to_file` tools: refuse a destination that isn't on a host bind mount.
+
+    A no-op outside a container. Inside one, a write to a non-mounted path silently lands in the
+    container's overlay layer and vanishes on `--rm`, so we fail up front with mount instructions
+    rather than reporting a phantom success.
+    """
+    if not in_container():
+        return
+    if not _host_backed(Path(dest_path).expanduser()):
+        raise RuntimeError(_unmapped_path_message(Path(dest_path).expanduser(), for_write=True))
+
+
+def host_read_path(file_path: str) -> Path:
+    """
+    Resolve a host read path, enriching the "missing file" case with mount guidance in a container.
+
+    Returns the expanded path unchanged on the host install, or when the file genuinely exists (it
+    may legitimately live inside the container's image). Only when running in a container, the file
+    is absent, and its location isn't a host bind mount do we raise the actionable mount message
+    instead of letting a bare FileNotFoundError surface.
+    """
+    path = Path(file_path).expanduser()
+    if in_container() and not path.exists() and not _host_backed(path):
+        raise RuntimeError(_unmapped_path_message(path, for_write=False))
+    return path
+
+
+def classify_host_kernel() -> str:
+    """
+    Best-effort host-OS classification from the shared kernel string (containers share the host
+    kernel), used to tailor socket-mount hints when the daemon is unreachable.
+
+    Returns 'wsl2' (Windows/WSL2), 'docker-desktop' (LinuxKit VM — usually macOS), 'linux' (a native
+    Linux daemon), or 'unknown' when os.uname() is unavailable (non-POSIX).
+    """
+    try:
+        release = os.uname().release.lower()
+    except AttributeError:  # os.uname() is POSIX-only
+        return "unknown"
+    if "microsoft" in release or "wsl" in release:
+        return "wsl2"
+    if "linuxkit" in release:
+        return "docker-desktop"
+    return "linux"
+
 
 def close_stream_quietly(stream: Any) -> None:
     """
@@ -60,7 +234,11 @@ def stream_to_file(chunks: Iterable[bytes], dest_path: str, *, overwrite: bool =
     failure (daemon disconnect, disk full, iterator error) never leaves a partial/corrupt file at
     `dest_path` and never truncates an existing file it ends up not replacing. The source iterator
     is best-effort closed either way, so an aborted docker stream doesn't leak its socket.
+
+    When running in a container, refuses up front if `dest_path` isn't on a host bind mount (the
+    write would otherwise be silently discarded on `--rm`); see `assert_host_writable`.
     """
+    assert_host_writable(dest_path)
     path = Path(dest_path).expanduser()
     if path.exists() and not overwrite:
         raise FileExistsError(f"{path} already exists; pass overwrite=True to replace it.")

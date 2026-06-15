@@ -1,9 +1,7 @@
 # library of mcp tools relating to image management
 
-from pathlib import Path
-
 from docker_mcp.server import tool
-from docker_mcp.tools._utils import MAX_PAYLOAD_BYTES, drop_none, join_bounded, stream_to_file
+from docker_mcp.tools._utils import MAX_PAYLOAD_BYTES, drop_none, host_read_path, join_bounded, stream_to_file
 from docker_mcp.tools.client import _get_client
 
 
@@ -235,7 +233,7 @@ def load_image_from_file(file_path: str) -> list:
     args: file_path: str - Path to a tarball produced by `docker save` / `save_image_to_file`
     returns: list - A list of loaded image attrs dicts
     """
-    path = Path(file_path).expanduser()
+    path = host_read_path(file_path)
     with path.open("rb") as handle:
         return [i.attrs for i in _get_client().images.load(handle)]
 

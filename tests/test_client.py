@@ -1,4 +1,6 @@
 import threading
+import types
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -227,3 +229,105 @@ def test_events_returns_collected_when_stream_close_raises():
     with patch("docker_mcp.tools.client._get_client", return_value=mock_client):
         result = events(limit=10)
     assert result == [{"event": "a"}, {"event": "b"}]
+
+
+# ---------- self-termination guard ----------
+
+
+def _fake_container(cid: str, name: str = "docker-mcp") -> Any:
+    return types.SimpleNamespace(id=cid, short_id=cid[:12], name=name)
+
+
+def test_guard_not_self_inert_when_identity_unknown(monkeypatch):
+    monkeypatch.setattr(client_module, "_self_container_id", None)
+    # No pinned identity → never raises, whatever the target.
+    assert client_module.guard_not_self(_fake_container("abc123")) is None
+
+
+def test_guard_not_self_allows_other_container(monkeypatch):
+    monkeypatch.setattr(client_module, "_self_container_id", "self-full-id")
+    assert client_module.guard_not_self(_fake_container("other-id")) is None
+
+
+def test_guard_not_self_blocks_own_container(monkeypatch):
+    monkeypatch.setattr(client_module, "_self_container_id", "self-full-id")
+    with pytest.raises(RuntimeError, match="own container"):
+        client_module.guard_not_self(_fake_container("self-full-id", name="docker-mcp"))
+
+
+def test_guard_not_self_override_env_bypasses(monkeypatch):
+    monkeypatch.setattr(client_module, "_self_container_id", "self-full-id")
+    monkeypatch.setenv("DOCKER_MCP_ALLOW_SELF_TERMINATE", "1")
+    assert client_module.guard_not_self(_fake_container("self-full-id")) is None
+
+
+# ---------- _detect_self_container_id ----------
+
+
+def test_detect_self_container_id_from_hostname(monkeypatch):
+    monkeypatch.setenv("HOSTNAME", "deadbeef1234")
+    mock_client = MagicMock()
+    mock_client.containers.get.return_value = types.SimpleNamespace(id="deadbeef1234fullid")
+    assert client_module._detect_self_container_id(mock_client) == "deadbeef1234fullid"
+    mock_client.containers.get.assert_called_once_with("deadbeef1234")
+
+
+def test_detect_self_container_id_none_when_lookup_fails(monkeypatch):
+    monkeypatch.setenv("HOSTNAME", "deadbeef1234")
+    mock_client = MagicMock()
+    mock_client.containers.get.side_effect = DockerException("not found")
+    assert client_module._detect_self_container_id(mock_client) is None
+
+
+# ---------- startup_preflight ----------
+
+
+def test_startup_preflight_unreachable_prints_help_and_does_not_raise(monkeypatch, capsys):
+    monkeypatch.setattr(client_module, "_self_container_id", None)
+    monkeypatch.setattr(client_module, "in_container", lambda: False)
+    monkeypatch.setattr(client_module, "_get_client", lambda: (_ for _ in ()).throw(RuntimeError("no daemon")))
+    client_module.startup_preflight()  # must not raise
+    err = capsys.readouterr().err
+    assert "cannot reach the Docker daemon" in err
+    assert client_module._self_container_id is None
+
+
+def test_startup_preflight_in_container_help_is_os_aware(monkeypatch, capsys):
+    monkeypatch.setattr(client_module, "in_container", lambda: True)
+    monkeypatch.setattr(client_module, "classify_host_kernel", lambda: "docker-desktop")
+    monkeypatch.setattr(client_module, "_get_client", lambda: (_ for _ in ()).throw(RuntimeError("no daemon")))
+    client_module.startup_preflight()
+    err = capsys.readouterr().err
+    assert "Docker Desktop (macOS)" in err
+    assert "docker.sock" in err
+
+
+def test_startup_preflight_success_on_host_pins_nothing(monkeypatch, capsys):
+    monkeypatch.setattr(client_module, "_self_container_id", None)
+    monkeypatch.setattr(client_module, "in_container", lambda: False)
+    mock_client = MagicMock()
+    mock_client.ping.return_value = True
+    mock_client.info.return_value = {"OperatingSystem": "Ubuntu 22.04", "SecurityOptions": []}
+    monkeypatch.setattr(client_module, "_get_client", lambda: mock_client)
+    client_module.startup_preflight()
+    assert client_module._self_container_id is None
+    assert "connected to Docker daemon — Ubuntu 22.04" in capsys.readouterr().err
+
+
+def test_startup_preflight_success_in_container_pins_self(monkeypatch, capsys):
+    monkeypatch.setattr(client_module, "_self_container_id", None)
+    monkeypatch.setattr(client_module, "in_container", lambda: True)
+    monkeypatch.setenv("HOSTNAME", "cafe1234")
+    mock_client = MagicMock()
+    mock_client.ping.return_value = True
+    mock_client.containers.get.return_value = types.SimpleNamespace(id="cafe1234fullid")
+    mock_client.info.return_value = {
+        "OperatingSystem": "Docker Desktop",
+        "SecurityOptions": ["name=seccomp", "name=rootless"],
+    }
+    monkeypatch.setattr(client_module, "_get_client", lambda: mock_client)
+    client_module.startup_preflight()
+    assert client_module._self_container_id == "cafe1234fullid"
+    err = capsys.readouterr().err
+    assert "(rootless)" in err
+    assert "self-termination guard active" in err

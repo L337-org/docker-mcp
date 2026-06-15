@@ -1,10 +1,19 @@
+import types
+from pathlib import Path
+
 import pytest
 from docker.errors import DockerException
 
+from docker_mcp.tools import _utils
 from docker_mcp.tools._utils import (
     MAX_PAYLOAD_BYTES,
+    assert_host_writable,
+    classify_host_kernel,
     close_stream_quietly,
     drop_none,
+    env_flag,
+    host_read_path,
+    in_container,
     join_bounded,
     stream_to_file,
 )
@@ -200,3 +209,177 @@ def test_stream_to_file_closes_stream(tmp_path):
     chunks = _ClosingChunks([b"a", b"b"])
     stream_to_file(chunks, str(tmp_path / "o.bin"))
     assert chunks.closed
+
+
+# ---------- env_flag ----------
+
+
+@pytest.mark.parametrize("value", ["1", "true", "TRUE", "Yes", "on", "  on  "])
+def test_env_flag_truthy(monkeypatch, value):
+    monkeypatch.setenv("DOCKER_MCP_X", value)
+    assert env_flag("DOCKER_MCP_X") is True
+
+
+@pytest.mark.parametrize("value", ["0", "false", "no", "off", "", "maybe"])
+def test_env_flag_falsy(monkeypatch, value):
+    monkeypatch.setenv("DOCKER_MCP_X", value)
+    assert env_flag("DOCKER_MCP_X") is False
+
+
+def test_env_flag_unset_is_false(monkeypatch):
+    monkeypatch.delenv("DOCKER_MCP_X", raising=False)
+    assert env_flag("DOCKER_MCP_X") is False
+
+
+# ---------- in_container ----------
+# NOTE: the autouse `_force_host_install` fixture patches `_utils.in_container`, but `from ... import
+# in_container` here binds the real function, so these exercise the genuine logic.
+
+
+def test_in_container_true_via_env(monkeypatch):
+    monkeypatch.setenv("DOCKER_MCP_IN_CONTAINER", "1")
+    assert in_container() is True
+
+
+def test_in_container_true_via_dockerenv(monkeypatch):
+    monkeypatch.delenv("DOCKER_MCP_IN_CONTAINER", raising=False)
+    monkeypatch.setattr(_utils.Path, "exists", lambda self: str(self) == "/.dockerenv")
+    assert in_container() is True
+
+
+def test_in_container_false_when_no_signal(monkeypatch):
+    monkeypatch.delenv("DOCKER_MCP_IN_CONTAINER", raising=False)
+    monkeypatch.setattr(_utils.Path, "exists", lambda self: False)
+    assert in_container() is False
+
+
+# ---------- _host_backed ----------
+
+
+def _mounts(*pairs):
+    return list(pairs)
+
+
+def test_host_backed_true_for_real_bind_mount(monkeypatch):
+    monkeypatch.setattr(_utils, "_read_mountinfo", lambda: _mounts(("/", "overlay"), ("/host/data", "ext4")))
+    assert _utils._host_backed(Path("/host/data/sub/img.tar")) is True
+
+
+def test_host_backed_false_for_overlay_root(monkeypatch):
+    monkeypatch.setattr(_utils, "_read_mountinfo", lambda: _mounts(("/", "overlay")))
+    assert _utils._host_backed(Path("/tmp/img.tar")) is False
+
+
+def test_host_backed_false_for_tmpfs_mount(monkeypatch):
+    # A tmpfs is in-memory and also lost on exit, so it must not count as host-backed.
+    monkeypatch.setattr(_utils, "_read_mountinfo", lambda: _mounts(("/", "overlay"), ("/scratch", "tmpfs")))
+    assert _utils._host_backed(Path("/scratch/img.tar")) is False
+
+
+def test_host_backed_longest_prefix_wins(monkeypatch):
+    # /host is host-backed but the nested /host/cache is tmpfs — the longest match decides.
+    monkeypatch.setattr(
+        _utils, "_read_mountinfo", lambda: _mounts(("/", "overlay"), ("/host", "ext4"), ("/host/cache", "tmpfs"))
+    )
+    assert _utils._host_backed(Path("/host/keep/x")) is True
+    assert _utils._host_backed(Path("/host/cache/x")) is False
+
+
+def test_host_backed_false_when_mountinfo_unavailable(monkeypatch):
+    monkeypatch.setattr(_utils, "_read_mountinfo", list)  # empty
+    assert _utils._host_backed(Path("/anything")) is False
+
+
+def test_read_mountinfo_parses_and_unescapes(monkeypatch):
+    content = (
+        "36 35 98:0 / / rw,noatime - overlay overlay rw\n"
+        "41 36 0:5 / /host/my\\040dir rw - ext4 /dev/sda1 rw\n"
+        "garbage line without separator\n"
+    )
+    monkeypatch.setattr(_utils.Path, "read_text", lambda self, **kw: content)
+    assert _utils._read_mountinfo() == [("/", "overlay"), ("/host/my dir", "ext4")]
+
+
+# ---------- assert_host_writable ----------
+
+
+def test_assert_host_writable_noop_on_host():
+    # autouse fixture already pins in_container False; an unmapped path must be allowed.
+    assert assert_host_writable("/nowhere/img.tar") is None
+
+
+def test_assert_host_writable_allows_mapped_path_in_container(monkeypatch):
+    monkeypatch.setattr(_utils, "in_container", lambda: True)
+    monkeypatch.setattr(_utils, "_host_backed", lambda path: True)
+    assert assert_host_writable("/host/img.tar") is None
+
+
+def test_assert_host_writable_rejects_unmapped_path_in_container(monkeypatch):
+    monkeypatch.setattr(_utils, "in_container", lambda: True)
+    monkeypatch.setattr(_utils, "_host_backed", lambda path: False)
+    with pytest.raises(RuntimeError, match="bind-mounted in"):
+        assert_host_writable("/scratch/img.tar")
+
+
+def test_stream_to_file_guard_blocks_unmapped_write_in_container(monkeypatch, tmp_path):
+    monkeypatch.setattr(_utils, "in_container", lambda: True)
+    monkeypatch.setattr(_utils, "_host_backed", lambda path: False)
+    dest = tmp_path / "out.bin"
+    with pytest.raises(RuntimeError, match="lost when the container exits"):
+        stream_to_file(iter([b"data"]), str(dest))
+    assert not dest.exists()  # refused before any bytes were written
+
+
+# ---------- host_read_path ----------
+
+
+def test_host_read_path_noop_on_host_returns_expanded(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    # missing file on host: still returned (the natural open() error surfaces later)
+    assert host_read_path("~/missing.tar") == tmp_path / "missing.tar"
+
+
+def test_host_read_path_existing_file_allowed_in_container(monkeypatch, tmp_path):
+    monkeypatch.setattr(_utils, "in_container", lambda: True)
+    monkeypatch.setattr(_utils, "_host_backed", lambda path: False)
+    existing = tmp_path / "img.tar"
+    existing.write_bytes(b"x")
+    assert host_read_path(str(existing)) == existing
+
+
+def test_host_read_path_missing_unmapped_raises_in_container(monkeypatch, tmp_path):
+    monkeypatch.setattr(_utils, "in_container", lambda: True)
+    monkeypatch.setattr(_utils, "_host_backed", lambda path: False)
+    with pytest.raises(RuntimeError, match="no such path is visible"):
+        host_read_path(str(tmp_path / "missing.tar"))
+
+
+def test_host_read_path_missing_but_mapped_allowed_in_container(monkeypatch, tmp_path):
+    monkeypatch.setattr(_utils, "in_container", lambda: True)
+    monkeypatch.setattr(_utils, "_host_backed", lambda path: True)
+    target = tmp_path / "missing.tar"
+    assert host_read_path(str(target)) == target
+
+
+# ---------- classify_host_kernel ----------
+
+
+@pytest.mark.parametrize(
+    "release, expected",
+    [
+        ("5.15.0-91-generic", "linux"),
+        ("5.15.153.1-microsoft-standard-WSL2", "wsl2"),
+        ("6.6.31-linuxkit", "docker-desktop"),
+    ],
+)
+def test_classify_host_kernel(monkeypatch, release, expected):
+    monkeypatch.setattr(_utils.os, "uname", lambda: types.SimpleNamespace(release=release))
+    assert classify_host_kernel() == expected
+
+
+def test_classify_host_kernel_unknown_without_uname(monkeypatch):
+    def _no_uname():
+        raise AttributeError("os.uname is POSIX-only")
+
+    monkeypatch.setattr(_utils.os, "uname", _no_uname)
+    assert classify_host_kernel() == "unknown"
