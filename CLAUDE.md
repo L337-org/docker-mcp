@@ -60,6 +60,7 @@ Each file maps to one Docker SDK domain (or, for CLI-only and registry-only feat
 |------|--------|-----------|
 | `docker_mcp/tools/_cli.py` | Cross-platform subprocess helper (private) | — |
 | `docker_mcp/tools/_utils.py` | Shared helpers (private) | — |
+| `docker_mcp/tools/_labels.py` | Provenance labels stamped on created resources (private) | — |
 | `docker_mcp/tools/client.py` | `DockerClient` — connection and low-level client | docker-py |
 | `docker_mcp/tools/containers.py` | Container lifecycle and management | docker-py |
 | `docker_mcp/tools/images.py` | Image pull, build, push, inspect | docker-py |
@@ -99,6 +100,12 @@ An additional distribution channel alongside uvx-from-git (which is unchanged). 
 - Every new `docker_mcp/tools/<module>.py` must have a matching `tests/test_<module>.py`.
 - Tool functions are decorated with `@tool()` (imported from `docker_mcp.server`) and must have a `TOOL_CATEGORIES` entry in `docker_mcp/server.py`.
 - Line length limit: 120 characters (enforced by ruff and flake8).
+
+## Provenance labels
+
+Resources this server **creates** are stamped with `docker-mcp-server.*` provenance labels (`.managed=true`, `.version`, `.tool`, `.created`) via `docker_mcp/tools/_labels.py`, so the agent/operator can later enumerate that footprint — `list_containers(managed_only=True)`, or `--filter label=docker-mcp-server.managed=true`. Stamping is **on by default** and additive (a caller-supplied label always wins on a key collision); `DOCKER_MCP_NO_LABELS=1` turns it off. The prefix is the bare project name (deliberately not reverse-DNS) and is a single constant in `_labels.py`.
+
+When adding a new create tool that accepts a `labels` dict, route it through `_labels.py:with_provenance(labels, "<tool_name>")` (it accepts the dict/list/None shapes the SDK accepts and returns `None` — feed it through `drop_none` — when stamping is off and the caller passed nothing). The six stamped creators today are `run_container`, `create_container`, `create_network`, `create_volume`, `create_service` (service-level `labels` only, not `container_labels`), `create_config`, `create_secret`. **Image builds are intentionally NOT stamped** — a build label changes the resulting image digest. Compose/stack containers (created via CLI shell-out) are also unstamped. New `managed_only`-style label filters go through `_labels.py:managed_filter`.
 
 ## CLI shell-out policy
 

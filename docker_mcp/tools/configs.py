@@ -1,6 +1,7 @@
 # library of mcp tools relating to swarm config management
 
 from docker_mcp.server import tool
+from docker_mcp.tools._labels import with_provenance
 from docker_mcp.tools._utils import drop_none
 from docker_mcp.tools.client import _get_client
 
@@ -17,7 +18,11 @@ def create_config(name: str, data: bytes, labels: dict | None = None, templating
         templating: dict - Templating driver configuration
     returns: dict - The created config's attrs
     """
-    kwargs: dict = {"name": name, "data": data, **drop_none(labels=labels, templating=templating)}
+    kwargs: dict = {
+        "name": name,
+        "data": data,
+        **drop_none(labels=with_provenance(labels, "create_config"), templating=templating),
+    }
     return _get_client().configs.create(**kwargs).attrs
 
 

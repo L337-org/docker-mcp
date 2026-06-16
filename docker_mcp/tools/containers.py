@@ -8,6 +8,7 @@ from typing import Literal, TypedDict, cast
 import requests.exceptions
 
 from docker_mcp.server import tool
+from docker_mcp.tools._labels import managed_filter, with_provenance
 from docker_mcp.tools._utils import (
     MAX_PAYLOAD_BYTES,
     close_stream_quietly,
@@ -93,7 +94,7 @@ def run_container(
             working_dir=working_dir,
             entrypoint=entrypoint,
             restart_policy=restart_policy,
-            labels=labels,
+            labels=with_provenance(labels, "run_container"),
             mem_limit=mem_limit,
             cpu_count=cpu_count,
         ),
@@ -128,7 +129,10 @@ def create_container(image: str, command: str | list | None = None, extra_kwargs
         extra_kwargs: dict - Additional keyword arguments forwarded to ContainerCollection.create
     returns: dict - The created container's attrs
     """
-    kwargs = extra_kwargs or {}
+    kwargs = dict(extra_kwargs or {})
+    labels = with_provenance(kwargs.get("labels"), "create_container")
+    if labels is not None:
+        kwargs["labels"] = labels
     container = _get_client().containers.create(image, command=command, **kwargs)
     return container.attrs
 
@@ -153,6 +157,7 @@ def list_containers(
     filters: dict | None = None,
     sparse: bool = False,
     ignore_removed: bool = False,
+    managed_only: bool = False,
 ) -> list:
     """
     List containers.
@@ -165,8 +170,12 @@ def list_containers(
         filters: dict - Filter by attributes (e.g. status, label)
         sparse: bool - Skip inspect calls and return less detail
         ignore_removed: bool - Ignore containers removed during listing
+        managed_only: bool - Only return containers created by this MCP server (filters on the
+                             docker-mcp-server.managed label); combines with any `filters` given
     returns: list - A list of container attrs dicts
     """
+    if managed_only:
+        filters = managed_filter(filters)
     kwargs: dict = {
         "all": all,
         "sparse": sparse,

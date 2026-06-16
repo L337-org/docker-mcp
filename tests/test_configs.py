@@ -15,7 +15,11 @@ def test_create_config():
         result = create_config("myconfig", b"data", labels={"a": "b"})
     assert result == {"ID": "cfg1"}
     kwargs = mock_client.return_value.configs.create.call_args.kwargs
-    assert kwargs == {"name": "myconfig", "data": b"data", "labels": {"a": "b"}}
+    assert kwargs["name"] == "myconfig"
+    assert kwargs["data"] == b"data"
+    # caller label preserved alongside the provenance stamp (on by default)
+    assert kwargs["labels"]["a"] == "b"
+    assert kwargs["labels"]["docker-mcp-server.managed"] == "true"
 
 
 def test_get_config():

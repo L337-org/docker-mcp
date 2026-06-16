@@ -29,7 +29,23 @@ def test_create_service():
     assert result == {"ID": "svc1"}
     args, kwargs = mock_client.return_value.services.create.call_args
     assert args == ("nginx",)
-    assert kwargs == {"command": "nginx", "name": "web"}
+    assert kwargs["command"] == "nginx"
+    assert kwargs["name"] == "web"
+    # service-level labels carry the provenance stamp (on by default)
+    assert kwargs["labels"]["docker-mcp-server.managed"] == "true"
+    assert kwargs["labels"]["docker-mcp-server.tool"] == "create_service"
+
+
+def test_create_service_does_not_stamp_container_labels():
+    service = MagicMock()
+    service.attrs = {"ID": "svc1"}
+    with _patch() as mock_client:
+        mock_client.return_value.services.create.return_value = service
+        create_service("nginx", extra_kwargs={"container_labels": {"app": "web"}})
+    kwargs = mock_client.return_value.services.create.call_args.kwargs
+    # container_labels is left untouched; provenance only goes on the service-level labels
+    assert kwargs["container_labels"] == {"app": "web"}
+    assert "docker-mcp-server.managed" in kwargs["labels"]
 
 
 def test_get_service():

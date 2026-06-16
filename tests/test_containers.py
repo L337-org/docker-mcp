@@ -102,6 +102,37 @@ def test_list_containers_with_filters():
     assert kwargs["filters"] == {"status": "running"}
 
 
+def test_list_containers_managed_only_injects_label_filter():
+    with _patch() as mock_client:
+        mock_client.return_value.containers.list.return_value = []
+        list_containers(managed_only=True, filters={"status": "running"})
+    kwargs = mock_client.return_value.containers.list.call_args.kwargs
+    assert kwargs["filters"]["status"] == "running"
+    assert kwargs["filters"]["label"] == "docker-mcp-server.managed=true"
+
+
+def test_run_container_stamps_provenance_label():
+    container = MagicMock()
+    container.attrs = {"Id": "abc"}
+    with _patch() as mock_client:
+        mock_client.return_value.containers.run.return_value = container
+        run_container("nginx", labels={"team": "infra"})
+    labels = mock_client.return_value.containers.run.call_args.kwargs["labels"]
+    assert labels["docker-mcp-server.managed"] == "true"
+    assert labels["team"] == "infra"  # caller label preserved
+
+
+def test_create_container_stamps_provenance_label():
+    container = MagicMock()
+    container.attrs = {"Id": "abc"}
+    with _patch() as mock_client:
+        mock_client.return_value.containers.create.return_value = container
+        create_container("nginx")
+    labels = mock_client.return_value.containers.create.call_args.kwargs["labels"]
+    assert labels["docker-mcp-server.managed"] == "true"
+    assert labels["docker-mcp-server.tool"] == "create_container"
+
+
 def test_prune_containers():
     with _patch() as mock_client:
         mock_client.return_value.containers.prune.return_value = {"SpaceReclaimed": 100}
