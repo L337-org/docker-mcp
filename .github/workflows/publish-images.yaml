@@ -10,7 +10,7 @@ name: 'Publish container images'
 # (docker.io/gavinlucas/docker-mcp-server) when the DOCKERHUB_USER / DOCKERHUB_TOKEN repo secrets are
 # set. The Docker Hub mirror is opt-in: with the secrets unset the Hub login/tags/description steps are
 # skipped and only GHCR is pushed, so a release never fails for lack of Hub credentials. The Hub token
-# must have Read/Write scope.
+# must have read/write/delete scope (the description-sync API rejects a read/write-only token with 403).
 
 permissions:
   contents: read
@@ -113,9 +113,10 @@ jobs:
             DISABLE_DOMAINS=${{ matrix.disable_domains }}
 
   dockerhub-description:
-    # Mirror the repo README onto the Docker Hub repository's description page (the point of the Hub
-    # mirror is discoverability). Runs once per release after the images are pushed, and is opt-in like
-    # the mirror: both steps are gated on the DOCKERHUB_* secrets, so nothing runs when they're unset.
+    # Sync DOCKERHUB.md (a slim, container-focused readme — the full README.md exceeds Hub's 25 KB cap)
+    # onto the Docker Hub repository's description page (the point of the Hub mirror is discoverability).
+    # Runs once per release after the images are pushed, and is opt-in like the mirror: both steps are
+    # gated on the DOCKERHUB_* secrets, so nothing runs when they're unset.
     name: Sync Docker Hub description
     runs-on: ubuntu-latest
     needs: [publish]
@@ -134,4 +135,6 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USER }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
           repository: gavinlucas/docker-mcp-server
+          # Dedicated, container-focused readme — the full README.md exceeds Docker Hub's 25,000-byte cap.
+          readme-filepath: ./DOCKERHUB.md
           short-description: "MCP server exposing the Docker SDK for Python and docker CLI as tools for AI agents"

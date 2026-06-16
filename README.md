@@ -115,7 +115,7 @@ if it can't connect at startup:
 
 - **Linux:** `-v /var/run/docker.sock:/var/run/docker.sock` (rootless: `-v $XDG_RUNTIME_DIR/docker.sock:/var/run/docker.sock`).
 - **macOS (Docker Desktop):** the real socket is usually `~/.docker/run/docker.sock` — mount it onto the in-container path: `-v $HOME/.docker/run/docker.sock:/var/run/docker.sock` (or enable *Settings → Advanced → Allow the default Docker socket* and use `/var/run/docker.sock`).
-- **Windows (Docker Desktop / WSL2):** the engine uses a named pipe, not a unix socket — prefer `-e DOCKER_HOST=tcp://host.docker.internal:2375` (enable the TCP endpoint in Docker Desktop).
+- **Windows (Docker Desktop / WSL2):** the engine uses a named pipe, not a Unix socket — prefer `-e DOCKER_HOST=tcp://host.docker.internal:2375` (enable the TCP endpoint in Docker Desktop). That endpoint is **unauthenticated and unencrypted** — keep it bound to localhost, disable it when you're not using it, and use TLS or `DOCKER_HOST=ssh://...` for any remote daemon.
 - **Remote / TLS / SSH daemon:** skip the socket mount and pass `-e DOCKER_HOST=...` (plus the TLS vars below) — see [Talking to a remote daemon](#talking-to-a-remote-daemon).
 
 **Host filesystem access.** Inside a container, the file-path tools (`save_image_to_file`,
