@@ -138,6 +138,8 @@ def run_docker(
     - When DOCKER_HOST is `ssh://...`, the child's DOCKER_HOST is transparently rewritten to a
       per-call local TCP proxy (`_ssh_proxy.py`) that authenticates via paramiko, so the CLI uses
       the same SSH credentials as the docker-py-backed tools instead of the system `ssh` binary.
+      Any forwarded DOCKER_TLS_VERIFY/DOCKER_CERT_PATH are dropped in that case, since a native
+      ssh:// DOCKER_HOST ignores TLS and the rewritten tcp:// one must too.
     """
     binary = _resolve("docker")
     cmd = [binary, *args]
@@ -149,6 +151,11 @@ def run_docker(
         if env.get("DOCKER_HOST", "").startswith("ssh://"):
             proxy = stack.enter_context(ssh_proxy_for_docker_host(env["DOCKER_HOST"]))
             env["DOCKER_HOST"] = f"tcp://127.0.0.1:{proxy.port}"
+            # A native ssh:// DOCKER_HOST ignores TLS entirely; the rewritten tcp:// one would
+            # otherwise pick up any forwarded DOCKER_TLS_VERIFY/DOCKER_CERT_PATH and attempt a TLS
+            # handshake against this plaintext loopback proxy, breaking every CLI call.
+            env.pop("DOCKER_TLS_VERIFY", None)
+            env.pop("DOCKER_CERT_PATH", None)
         proc = subprocess.run(  # noqa: S603 — shell=False, argv is a list, binary is resolved via shutil.which
             cmd,
             shell=False,

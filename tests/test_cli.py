@@ -153,6 +153,48 @@ def test_run_docker_leaves_non_ssh_docker_host_untouched(monkeypatch):
     assert env["DOCKER_HOST"] == "tcp://example:2375"
 
 
+def test_run_docker_drops_forwarded_tls_env_when_rewriting_ssh_host(monkeypatch):
+    # A native ssh:// DOCKER_HOST ignores TLS entirely; if leftover DOCKER_TLS_VERIFY/
+    # DOCKER_CERT_PATH from the environment survived the rewrite to tcp://127.0.0.1:<port>, the
+    # CLI would attempt a TLS handshake against the plaintext local proxy and every call would fail.
+    monkeypatch.setenv("DOCKER_HOST", "ssh://bob@example.com")
+    monkeypatch.setenv("DOCKER_TLS_VERIFY", "1")
+    monkeypatch.setenv("DOCKER_CERT_PATH", "/certs")
+    fake_proxy = MagicMock()
+    fake_proxy.port = 54321
+
+    class FakeProxyCtx:
+        def __enter__(self):
+            return fake_proxy
+
+        def __exit__(self, *exc_info):
+            return False
+
+    with (
+        patch("docker_mcp.tools._cli.shutil.which", return_value="/usr/bin/docker"),
+        patch("docker_mcp.tools._cli.subprocess.run", return_value=_fake_completed()) as run,
+        patch("docker_mcp.tools._cli.ssh_proxy_for_docker_host", return_value=FakeProxyCtx()),
+    ):
+        run_docker(["ps", "-a"])
+    env = run.call_args.kwargs["env"]
+    assert "DOCKER_TLS_VERIFY" not in env
+    assert "DOCKER_CERT_PATH" not in env
+
+
+def test_run_docker_keeps_tls_env_for_non_ssh_docker_host(monkeypatch):
+    monkeypatch.setenv("DOCKER_HOST", "tcp://example:2376")
+    monkeypatch.setenv("DOCKER_TLS_VERIFY", "1")
+    monkeypatch.setenv("DOCKER_CERT_PATH", "/certs")
+    with (
+        patch("docker_mcp.tools._cli.shutil.which", return_value="/usr/bin/docker"),
+        patch("docker_mcp.tools._cli.subprocess.run", return_value=_fake_completed()) as run,
+    ):
+        run_docker(["ps", "-a"])
+    env = run.call_args.kwargs["env"]
+    assert env["DOCKER_TLS_VERIFY"] == "1"
+    assert env["DOCKER_CERT_PATH"] == "/certs"
+
+
 def test_run_docker_extra_env_overlays_allowlist(monkeypatch):
     monkeypatch.setenv("PATH", "/usr/bin")
     with (
