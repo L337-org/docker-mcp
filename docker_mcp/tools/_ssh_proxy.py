@@ -105,7 +105,7 @@ def parse_ssh_url(url: str) -> SshTarget:
     )
 
 
-def connect_ssh_client(docker_host: str) -> paramiko.SSHClient:
+def connect_ssh_client(docker_host: str, *, timeout: float | None = None) -> paramiko.SSHClient:
     """
     Build and connect a paramiko SSHClient for a DOCKER_HOST=ssh://... URL.
 
@@ -117,7 +117,16 @@ def connect_ssh_client(docker_host: str) -> paramiko.SSHClient:
     unresolved rather than passed through as `None` — paramiko's own default (22) only applies when
     the kwarg is absent, and an explicit `None` instead resolves to port 0, which always refuses.
 
-    args: docker_host: str - a DOCKER_HOST value starting with 'ssh://'
+    `timeout`, when given, bounds the raw socket connect *and* the banner/auth handshake phases
+    (paramiko tracks these as separate phases with separate, otherwise-unbounded defaults) so a
+    slow or filtered host can't hang past the caller's own deadline — see `run_docker`, whose
+    `timeout` argument only wraps `subprocess.run` and would otherwise leave this paramiko connect
+    (which runs beforehand, to set up the local proxy) unbounded.
+
+    args:
+        docker_host: str - a DOCKER_HOST value starting with 'ssh://'
+        timeout: float | None - seconds to bound the connect/banner/auth phases; None means
+                 paramiko's own (unbounded) defaults
     returns: paramiko.SSHClient - already connected; caller is responsible for closing it
     """
     target = parse_ssh_url(docker_host)
@@ -131,6 +140,10 @@ def connect_ssh_client(docker_host: str) -> paramiko.SSHClient:
         connect_kwargs["key_filename"] = target.key_filename
     if target.proxycommand:
         connect_kwargs["sock"] = paramiko.ProxyCommand(target.proxycommand)
+    if timeout is not None:
+        connect_kwargs["timeout"] = timeout
+        connect_kwargs["banner_timeout"] = timeout
+        connect_kwargs["auth_timeout"] = timeout
     client.connect(**connect_kwargs)
     return client
 
@@ -289,7 +302,7 @@ def _pump_duplex(conn: socket.socket, stream: BidirectionalStream) -> None:
 
 
 @contextlib.contextmanager
-def ssh_proxy_for_docker_host(docker_host: str) -> Iterator[SshDialStdioProxy]:
+def ssh_proxy_for_docker_host(docker_host: str, *, timeout: float | None = None) -> Iterator[SshDialStdioProxy]:
     """
     Connect to an ssh:// DOCKER_HOST via paramiko and run a per-call local TCP proxy for the
     `with` block's duration.
@@ -299,10 +312,13 @@ def ssh_proxy_for_docker_host(docker_host: str) -> Iterator[SshDialStdioProxy]:
     this same paramiko connection instead of shelling out to the system `ssh` client. Both the SSH
     connection and the local listener are guaranteed to be torn down on the way out, success or not.
 
-    args: docker_host: str - a DOCKER_HOST value starting with 'ssh://'
+    args:
+        docker_host: str - a DOCKER_HOST value starting with 'ssh://'
+        timeout: float | None - forwarded to `connect_ssh_client` to bound the connect/banner/auth
+                 phases; see that function's docstring
     returns: Iterator[SshDialStdioProxy] - yields the started proxy; read `proxy.port` for the URL
     """
-    ssh_client = connect_ssh_client(docker_host)
+    ssh_client = connect_ssh_client(docker_host, timeout=timeout)
     try:
         proxy = SshDialStdioProxy(paramiko_dial_stdio_factory(ssh_client))
         with proxy:

@@ -135,9 +135,33 @@ def test_run_docker_rewrites_ssh_docker_host_to_local_proxy(monkeypatch):
         patch("docker_mcp.tools._cli.ssh_proxy_for_docker_host", return_value=FakeProxyCtx()) as ssh_proxy,
     ):
         run_docker(["ps", "-a"])
-    ssh_proxy.assert_called_once_with("ssh://bob@example.com")
+    ssh_proxy.assert_called_once_with("ssh://bob@example.com", timeout=60.0)
     env = run.call_args.kwargs["env"]
     assert env["DOCKER_HOST"] == "tcp://127.0.0.1:54321"
+
+
+def test_run_docker_passes_its_own_timeout_to_ssh_proxy_setup(monkeypatch):
+    # The paramiko connect that stands up the proxy runs before subprocess.run's own timeout
+    # enforcement kicks in, so it must be bounded by this call's timeout too — otherwise a slow or
+    # unreachable ssh:// host could hang past the caller's deadline regardless of what's passed here.
+    monkeypatch.setenv("DOCKER_HOST", "ssh://bob@example.com")
+    fake_proxy = MagicMock()
+    fake_proxy.port = 54321
+
+    class FakeProxyCtx:
+        def __enter__(self):
+            return fake_proxy
+
+        def __exit__(self, *exc_info):
+            return False
+
+    with (
+        patch("docker_mcp.tools._cli.shutil.which", return_value="/usr/bin/docker"),
+        patch("docker_mcp.tools._cli.subprocess.run", return_value=_fake_completed()),
+        patch("docker_mcp.tools._cli.ssh_proxy_for_docker_host", return_value=FakeProxyCtx()) as ssh_proxy,
+    ):
+        run_docker(["ps", "-a"], timeout=5.0)
+    ssh_proxy.assert_called_once_with("ssh://bob@example.com", timeout=5.0)
 
 
 def test_run_docker_leaves_non_ssh_docker_host_untouched(monkeypatch):

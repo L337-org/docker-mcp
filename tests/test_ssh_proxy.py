@@ -133,6 +133,31 @@ def test_connect_ssh_client_passes_key_filename_and_proxycommand(tmp_path, monke
     proxy_cmd_cls.assert_called_once_with("ssh -W myhost:22 bastion")
 
 
+def test_connect_ssh_client_omits_timeout_kwargs_when_unset(monkeypatch):
+    monkeypatch.setattr("os.path.exists", lambda _path: False)
+    fake_client = MagicMock()
+    with patch("docker_mcp.tools._ssh_proxy.paramiko.SSHClient", return_value=fake_client):
+        connect_ssh_client("ssh://bob@example.com")
+    kwargs = fake_client.connect.call_args.kwargs
+    assert "timeout" not in kwargs
+    assert "banner_timeout" not in kwargs
+    assert "auth_timeout" not in kwargs
+
+
+def test_connect_ssh_client_bounds_connect_banner_and_auth_phases_when_timeout_given(monkeypatch):
+    # paramiko tracks the raw socket connect, the banner exchange, and authentication as separate
+    # phases with separate (otherwise unbounded) timeouts; all three must be set or a slow host
+    # could still hang past run_docker's own deadline in one of the un-bounded phases.
+    monkeypatch.setattr("os.path.exists", lambda _path: False)
+    fake_client = MagicMock()
+    with patch("docker_mcp.tools._ssh_proxy.paramiko.SSHClient", return_value=fake_client):
+        connect_ssh_client("ssh://bob@example.com", timeout=5.0)
+    kwargs = fake_client.connect.call_args.kwargs
+    assert kwargs["timeout"] == 5.0
+    assert kwargs["banner_timeout"] == 5.0
+    assert kwargs["auth_timeout"] == 5.0
+
+
 def test_paramiko_dial_stdio_factory_opens_session_and_execs_dial_stdio():
     fake_client = MagicMock()
     fake_transport = MagicMock()
@@ -299,9 +324,32 @@ def test_ssh_proxy_for_docker_host_connects_starts_and_tears_down():
             assert started["entered"] is True
             assert "exited" not in started
 
-    connect.assert_called_once_with("ssh://example.com")
+    connect.assert_called_once_with("ssh://example.com", timeout=None)
     assert started["exited"] is True
     fake_client.close.assert_called_once()
+
+
+def test_ssh_proxy_for_docker_host_forwards_timeout_to_connect():
+    fake_client = MagicMock()
+
+    class FakeProxy:
+        def __init__(self, channel_factory):
+            self.channel_factory = channel_factory
+            self.port = 12345
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc_info):
+            pass
+
+    with (
+        patch("docker_mcp.tools._ssh_proxy.connect_ssh_client", return_value=fake_client) as connect,
+        patch("docker_mcp.tools._ssh_proxy.SshDialStdioProxy", FakeProxy),
+    ):
+        with ssh_proxy_for_docker_host("ssh://example.com", timeout=5.0):
+            pass
+    connect.assert_called_once_with("ssh://example.com", timeout=5.0)
 
 
 def test_ssh_proxy_for_docker_host_closes_ssh_client_even_on_error():

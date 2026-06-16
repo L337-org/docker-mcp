@@ -139,7 +139,9 @@ def run_docker(
       per-call local TCP proxy (`_ssh_proxy.py`) that authenticates via paramiko, so the CLI uses
       the same SSH credentials as the docker-py-backed tools instead of the system `ssh` binary.
       Any forwarded DOCKER_TLS_VERIFY/DOCKER_CERT_PATH are dropped in that case, since a native
-      ssh:// DOCKER_HOST ignores TLS and the rewritten tcp:// one must too.
+      ssh:// DOCKER_HOST ignores TLS and the rewritten tcp:// one must too. The paramiko connect
+      itself (which runs before the subprocess, to stand up that proxy) is bounded by this same
+      `timeout`, so a slow/unreachable ssh:// host can't hang past the caller's own deadline.
     """
     binary = _resolve("docker")
     cmd = [binary, *args]
@@ -149,7 +151,10 @@ def run_docker(
     creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0
     with contextlib.ExitStack() as stack:
         if env.get("DOCKER_HOST", "").startswith("ssh://"):
-            proxy = stack.enter_context(ssh_proxy_for_docker_host(env["DOCKER_HOST"]))
+            # Bound the paramiko connect/banner/auth phases to this call's own timeout — they run
+            # before subprocess.run(timeout=timeout) below, so without this an unreachable or
+            # filtered ssh:// host could hang here indefinitely regardless of the caller's timeout.
+            proxy = stack.enter_context(ssh_proxy_for_docker_host(env["DOCKER_HOST"], timeout=timeout))
             env["DOCKER_HOST"] = f"tcp://127.0.0.1:{proxy.port}"
             # A native ssh:// DOCKER_HOST ignores TLS entirely; the rewritten tcp:// one would
             # otherwise pick up any forwarded DOCKER_TLS_VERIFY/DOCKER_CERT_PATH and attempt a TLS
