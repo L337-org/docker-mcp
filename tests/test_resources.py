@@ -9,8 +9,11 @@ from docker_mcp.tools.resources import (
     DOCKER_DOCS_BASE_URL,
     EXTERNAL_SECTIONS,
     SDK_SECTIONS,
+    get_container_logs_resource,
+    get_container_stats_resource,
     get_docs_section,
     get_tool_catalog,
+    list_container_resources,
     list_docs_sections,
 )
 
@@ -117,3 +120,59 @@ def test_get_docs_section_still_serves_enabled_sections_when_another_is_disabled
     ) as mock_get:
         assert get_docs_section("containers") == "<html>containers</html>"
     assert mock_get.call_args.args[0] == f"{DOCKER_DOCS_BASE_URL}/containers.html"
+
+
+# ---------- container observability resources (docker://containers, docker-logs://, docker-stats://) ----------
+
+
+def _container(name, short_id, status, image, exit_code=None):
+    c = MagicMock()
+    c.name = name
+    c.short_id = short_id
+    state = {"Status": status}
+    if exit_code is not None:
+        state["ExitCode"] = exit_code
+    c.attrs = {"State": state, "Config": {"Image": image}}
+    return c
+
+
+def test_list_container_resources_indexes_running_and_stopped():
+    running = _container("web", "abc123", "running", "nginx")
+    exited = _container("job", "def456", "exited", "alpine", exit_code=1)
+    with patch("docker_mcp.tools.resources._get_client") as mock_client:
+        mock_client.return_value.containers.list.return_value = [running, exited]
+        payload = json.loads(list_container_resources())
+    mock_client.return_value.containers.list.assert_called_once_with(all=True)
+    by_name = {c["name"]: c for c in payload["containers"]}
+    # Running container: both logs and stats URIs.
+    assert by_name["web"]["logs"] == "docker-logs://web"
+    assert by_name["web"]["stats"] == "docker-stats://web"
+    assert by_name["web"]["image"] == "nginx"
+    # Stopped container: logs URI but no stats URI, plus the exit code as a triage signal.
+    assert by_name["job"]["logs"] == "docker-logs://job"
+    assert by_name["job"]["stats"] is None
+    assert by_name["job"]["exit_code"] == 1
+
+
+def test_container_logs_resource_returns_tail():
+    with patch("docker_mcp.tools.resources._read_log_tail", return_value="line1\nline2") as mock_read:
+        assert get_container_logs_resource("web") == "line1\nline2"
+    mock_read.assert_called_once_with("web")
+
+
+def test_container_stats_resource_returns_json_summary():
+    summary = {"container": "web", "cpu_percent": 3.4, "mem_percent": 25.1}
+    with patch("docker_mcp.tools.resources._read_stats_summary", return_value=summary):
+        payload = json.loads(get_container_stats_resource("web"))
+    assert payload == summary
+
+
+def test_container_resources_refused_when_containers_domain_disabled(monkeypatch):
+    monkeypatch.setattr("docker_mcp.server.DISABLED_DOMAINS", frozenset({"containers"}))
+    for call in (
+        list_container_resources,
+        lambda: get_container_logs_resource("web"),
+        lambda: get_container_stats_resource("web"),
+    ):
+        with pytest.raises(ValueError, match="disabled via DOCKER_MCP_DISABLE"):
+            call()

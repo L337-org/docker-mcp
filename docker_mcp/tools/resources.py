@@ -5,6 +5,8 @@ import json
 import httpx
 
 from docker_mcp.server import is_domain_disabled, mcp, register_resource_domains, tool_catalog
+from docker_mcp.tools.client import _get_client
+from docker_mcp.tools.containers import _read_log_tail, _read_stats_summary
 
 DOCKER_DOCS_BASE_URL = "https://docker-py.readthedocs.io/en/stable"
 
@@ -157,6 +159,83 @@ def get_tool_catalog() -> str:
     returns: str - JSON with `switches`, per-domain counts, and a per-tool list
     """
     return json.dumps(tool_catalog(), indent=2)
+
+
+# Container observability resources. These mirror the container_logs / container_stats tools but as
+# read-only @mcp.resource endpoints a client can attach as context. Gated on the `containers` domain.
+_CONTAINERS_DOMAIN = "containers"
+
+
+def _require_containers_domain() -> None:
+    """Refuse a container resource read when the `containers` domain is disabled via DOCKER_MCP_DISABLE."""
+    if is_domain_disabled(_CONTAINERS_DOMAIN):
+        raise ValueError(
+            "Container observability resources are unavailable because the 'containers' domain is "
+            "disabled via DOCKER_MCP_DISABLE."
+        )
+
+
+@mcp.resource("docker://containers", mime_type="application/json")
+def list_container_resources() -> str:
+    """
+    Index every container with the resource URIs for reading its logs and live stats.
+
+    Lists all containers (running and stopped). Each entry carries a `logs` URI (readable in any
+    state — useful for diagnosing why a container exited) and, for running containers only, a `stats`
+    URI (a stopped container has no live cgroup to sample). Exited containers include their
+    `exit_code` as a triage signal.
+
+    returns: str - JSON object {"containers": [{id, name, image, status, exit_code?, logs, stats?}, ...]}
+    """
+    _require_containers_domain()
+    entries = []
+    for container in _get_client().containers.list(all=True):
+        state = container.attrs.get("State", {}) or {}
+        status = state.get("Status")
+        ref = container.name or container.short_id
+        entry: dict = {
+            "id": container.short_id,
+            "name": container.name,
+            "image": (container.attrs.get("Config", {}) or {}).get("Image"),
+            "status": status,
+            "logs": f"docker-logs://{ref}",
+            "stats": f"docker-stats://{ref}" if status == "running" else None,
+        }
+        if status == "exited":
+            entry["exit_code"] = state.get("ExitCode")
+        entries.append(entry)
+    return json.dumps({"containers": entries}, indent=2)
+
+
+@mcp.resource("docker-logs://{id_or_name}", mime_type="text/plain")
+def get_container_logs_resource(id_or_name: str) -> str:
+    """
+    Read a bounded tail of a container's combined stdout/stderr logs.
+
+    Works on running and stopped containers, so it can surface why a container exited. The read is
+    capped to a recent tail so it can't flood the agent's context.
+
+    args: id_or_name: str - The container id or name (from the docker://containers index)
+    returns: str - The decoded recent log tail
+    """
+    _require_containers_domain()
+    return _read_log_tail(id_or_name)
+
+
+@mcp.resource("docker-stats://{id_or_name}", mime_type="application/json")
+def get_container_stats_resource(id_or_name: str) -> str:
+    """
+    Read a computed resource-usage summary for a running container.
+
+    Returns a small summary (CPU %, memory used/limit/%, network and block I/O) derived from a single
+    stats snapshot. Raises if the container isn't running, since stats require a live cgroup.
+
+    args: id_or_name: str - The container id or name (from the docker://containers index)
+    returns: str - JSON {container, cpu_percent, mem_used_mb, mem_limit_mb, mem_percent,
+                   net_rx_mb, net_tx_mb, blk_read_mb, blk_write_mb}
+    """
+    _require_containers_domain()
+    return json.dumps(_read_stats_summary(id_or_name), indent=2)
 
 
 @mcp.resource("docker-docs://{section}", mime_type="text/html")

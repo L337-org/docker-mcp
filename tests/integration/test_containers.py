@@ -1,6 +1,7 @@
 # integration tests for container tools that need a real daemon (and to actually run a container).
 # run with: uv run pytest -m integration
 
+import json
 import uuid
 
 import pytest
@@ -10,6 +11,11 @@ from docker_mcp.tools.containers import (
     remove_container,
     run_container,
     wait_for_container_healthy,
+)
+from docker_mcp.tools.resources import (
+    get_container_logs_resource,
+    get_container_stats_resource,
+    list_container_resources,
 )
 
 
@@ -53,3 +59,21 @@ def test_run_container_stamps_provenance_and_managed_only_filters(healthy_contai
     target = next(c for c in matched if c["Name"].lstrip("/") == healthy_container)
     assert target["Config"]["Labels"]["docker-mcp-server.managed"] == "true"
     assert target["Config"]["Labels"]["docker-mcp-server.tool"] == "run_container"
+
+
+def test_container_observability_resources_against_real_container(healthy_container):
+    # The index lists the running container with both a logs and a stats URI.
+    index = json.loads(list_container_resources())
+    entry = next(c for c in index["containers"] if c["name"] == healthy_container)
+    assert entry["status"] == "running"
+    assert entry["logs"] == f"docker-logs://{healthy_container}"
+    assert entry["stats"] == f"docker-stats://{healthy_container}"
+
+    # Logs resource returns a string (the container may be quiet; just assert the type and no error).
+    assert isinstance(get_container_logs_resource(healthy_container), str)
+
+    # Stats resource returns the computed summary with the expected numeric keys.
+    stats = json.loads(get_container_stats_resource(healthy_container))
+    assert stats["container"] == healthy_container
+    for key in ("cpu_percent", "mem_used_mb", "mem_limit_mb", "mem_percent"):
+        assert isinstance(stats[key], (int, float))

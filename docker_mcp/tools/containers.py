@@ -416,7 +416,96 @@ def container_stats(id_or_name: str) -> dict:
     returns: dict - Decoded stats snapshot
     """
     container = _get_client().containers.get(id_or_name)
-    return cast(dict, container.stats(decode=True, stream=False))
+    # `decode` is only valid with stream=True; a one-shot stream=False read already returns a dict.
+    return cast(dict, container.stats(stream=False))
+
+
+# --- shared read helpers, also used by the docker-logs:// / docker-stats:// resources in resources.py ---
+
+# Default line cap for a one-shot log read so a resource read can't flood the agent's context.
+_LOG_TAIL_LINES = 200
+
+
+def _read_log_tail(id_or_name: str, tail: int = _LOG_TAIL_LINES) -> str:
+    """Return a bounded, non-streaming tail of a container's combined stdout/stderr logs."""
+    container = _get_client().containers.get(id_or_name)
+    output = container.logs(stdout=True, stderr=True, stream=False, timestamps=False, tail=tail)
+    if isinstance(output, bytes):
+        return output.decode("utf-8", errors="replace")
+    return str(output)
+
+
+def _div_mb(value: float) -> float:
+    """Bytes -> MiB."""
+    return value / (1024 * 1024)
+
+
+def _summarize_stats(name: str | None, snapshot: dict) -> dict:
+    """
+    Reduce a one-shot `container.stats` snapshot to a small human-readable summary.
+
+    CPU% is computed from the snapshot's own `cpu_stats`/`precpu_stats` delta (a single stream=False
+    read already carries both), matching how `docker stats` derives it. Every field is read
+    defensively because the stats shape varies across cgroup v1/v2 and platforms; anything missing
+    degrades to 0 rather than raising.
+    """
+    cpu = snapshot.get("cpu_stats", {}) or {}
+    precpu = snapshot.get("precpu_stats", {}) or {}
+    cpu_total = (cpu.get("cpu_usage", {}) or {}).get("total_usage", 0) or 0
+    precpu_total = (precpu.get("cpu_usage", {}) or {}).get("total_usage", 0) or 0
+    cpu_delta = cpu_total - precpu_total
+    system_delta = (cpu.get("system_cpu_usage", 0) or 0) - (precpu.get("system_cpu_usage", 0) or 0)
+    online = cpu.get("online_cpus") or len((cpu.get("cpu_usage", {}) or {}).get("percpu_usage") or []) or 1
+    cpu_percent = (cpu_delta / system_delta) * online * 100.0 if system_delta > 0 and cpu_delta > 0 else 0.0
+
+    mem = snapshot.get("memory_stats", {}) or {}
+    usage = mem.get("usage", 0) or 0
+    # Match `docker stats`: subtract reclaimable page cache (cgroup v2 inactive_file, v1 cache).
+    detail = mem.get("stats", {}) or {}
+    cache = detail.get("inactive_file", detail.get("cache", 0)) or 0
+    mem_used = max(usage - cache, 0)
+    mem_limit = mem.get("limit", 0) or 0
+    mem_percent = (mem_used / mem_limit * 100.0) if mem_limit > 0 else 0.0
+
+    nets = snapshot.get("networks", {}) or {}
+    net_rx = sum((n.get("rx_bytes", 0) or 0) for n in nets.values())
+    net_tx = sum((n.get("tx_bytes", 0) or 0) for n in nets.values())
+
+    blk = (snapshot.get("blkio_stats", {}) or {}).get("io_service_bytes_recursive") or []
+    blk_read = sum((e.get("value", 0) or 0) for e in blk if str(e.get("op", "")).lower() == "read")
+    blk_write = sum((e.get("value", 0) or 0) for e in blk if str(e.get("op", "")).lower() == "write")
+
+    return {
+        "container": name,
+        "cpu_percent": round(cpu_percent, 2),
+        "mem_used_mb": round(_div_mb(mem_used), 1),
+        "mem_limit_mb": round(_div_mb(mem_limit), 1),
+        "mem_percent": round(mem_percent, 1),
+        "net_rx_mb": round(_div_mb(net_rx), 2),
+        "net_tx_mb": round(_div_mb(net_tx), 2),
+        "blk_read_mb": round(_div_mb(blk_read), 2),
+        "blk_write_mb": round(_div_mb(blk_write), 2),
+    }
+
+
+def _read_stats_summary(id_or_name: str) -> dict:
+    """
+    Return a computed resource-usage summary for a running container.
+
+    Raises RuntimeError if the container isn't running — there is no live cgroup to sample on a
+    stopped container, so the `docker-stats://` resource surfaces a clean message instead of a raw
+    daemon error.
+    """
+    container = _get_client().containers.get(id_or_name)
+    container.reload()
+    status = (container.attrs.get("State", {}) or {}).get("Status")
+    if status != "running":
+        raise RuntimeError(
+            f"Container {id_or_name!r} is not running (status: {status or 'unknown'}); "
+            f"resource-usage stats require a running container."
+        )
+    snapshot = cast(dict, container.stats(stream=False))
+    return _summarize_stats(container.name, snapshot)
 
 
 @tool()

@@ -115,7 +115,7 @@ def mcp_example(name: str):
 
 ### MCP resources
 
-`docker_mcp/tools/resources.py` exposes `@mcp.resource(uri, mime_type=...)` endpoints (not tools) for read-only data: the Docker SDK for Python documentation under the `docker-docs://` URI scheme, plus `docker-mcp://tool-catalog` (the live tool/domain/category snapshot). `_SECTION_DOMAINS` maps each doc section to a domain so `DOCKER_MCP_DISABLE` hides a disabled domain's sections (registered with the server via `register_resource_domains`). Use the same docstring format as tools.
+`docker_mcp/tools/resources.py` exposes `@mcp.resource(uri, mime_type=...)` endpoints (not tools) for read-only data: the Docker SDK for Python documentation under the `docker-docs://` URI scheme, `docker-mcp://tool-catalog` (the live tool/domain/category snapshot), and the container-observability resources `docker://containers` / `docker-logs://{id_or_name}` / `docker-stats://{id_or_name}` (the last reuse `containers.py`'s private `_read_log_tail` / `_read_stats_summary` and refuse when the `containers` domain is disabled). `_SECTION_DOMAINS` maps each doc section to a domain so `DOCKER_MCP_DISABLE` hides a disabled domain's sections (registered with the server via `register_resource_domains`). Use the same docstring format as tools.
 
 ### MCP prompts
 
