@@ -5,7 +5,9 @@ description = "MCP server for managing Docker resources via the Docker SDK for P
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
-    "docker>=7.1.0",
+    # [ssh] pulls paramiko so `ssh://` DOCKER_HOST works through the pure-Python transport — no
+    # system `ssh` binary, so it works identically on the host and inside the container images.
+    "docker[ssh]>=7.1.0",
     "httpx>=0.28.1",
     "mcp>=1.27.1",
     # Pulled in transitively by docker, but we import requests.exceptions directly

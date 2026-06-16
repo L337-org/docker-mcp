@@ -317,6 +317,20 @@ def _connection_help(exc: BaseException) -> str:
     host = os.environ.get("DOCKER_HOST")
     if host:
         lines.append(f"  DOCKER_HOST is set to {host} — verify that endpoint is reachable.")
+    if host and host.startswith("ssh://"):
+        # ssh:// uses the pure-Python paramiko transport. Its failure modes are auth/host-key, not
+        # the socket-mount issues the rest of this function covers, so give targeted hints and stop.
+        lines.append(
+            "  This is an ssh:// endpoint (paramiko transport). Common causes: the SSH key isn't "
+            "loaded (run `ssh-add`, and forward SSH_AUTH_SOCK), or the host key isn't in "
+            "known_hosts — paramiko rejects unknown hosts. Add the host key only after verifying its "
+            "fingerprint out of band: connect once with `ssh <host>` and confirm the prompt, or "
+            "compare `ssh-keyscan <host> | ssh-keygen -lf -` against a trusted fingerprint before "
+            "trusting it (don't blind-append `ssh-keyscan` output — that trusts any key returned, "
+            "MITM included). In a container, mount your `~/.ssh` (key + known_hosts) read-only; no "
+            "`ssh` binary is needed."
+        )
+        return "\n".join(lines)
     if not in_container():
         lines.append("  Is Docker running, and is DOCKER_HOST set correctly?")
         return "\n".join(lines)

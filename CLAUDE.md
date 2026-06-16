@@ -6,6 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `docker-mcp` is a Python MCP server (requires Python >=3.14) managed with `uv` that exposes the Docker SDK for Python as MCP tools. The entry point is the `docker_mcp` package, run with `python -m docker_mcp` or via the installed console script. It is **published to PyPI as `docker-mcp-server`** (the `docker-mcp` name was already taken) and as a container image to GHCR (`ghcr.io/gavinlucas/docker-mcp-server`), mirrored to Docker Hub (`gavinlucas/docker-mcp-server`) when the opt-in `DOCKERHUB_*` release secrets are configured; the import package stays `docker_mcp` and the repo stays `…/docker-mcp`. Two console scripts are installed — `docker-mcp` and `docker-mcp-server` — both targeting `docker_mcp:main`.
 
+The `docker` dependency is pulled with its `[ssh]` extra (paramiko), so `DOCKER_HOST=ssh://…` works through a pure-Python transport — no system `ssh` binary, identical on the host and in the container images. docker-py auto-selects paramiko for `ssh://` when present, so there is no transport code to maintain (just the `ssh://` branch in `client._connection_help`). CLI-backed tools over `ssh://` are the exception — they shell out to `docker`, which uses the *system* `ssh` — and are an out-of-scope, best-effort path.
+
 ## Commands
 
 ```bash
