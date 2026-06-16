@@ -53,7 +53,7 @@ jobs:
           platforms: linux/amd64
           load: true
           push: false
-          tags: docker-mcp:${{ matrix.variant }}
+          tags: docker-mcp-server:${{ matrix.variant }}
           build-args: |
             INSTALL_CLI=${{ matrix.install_cli }}
             INSTALL_SCOUT=${{ matrix.install_scout }}
@@ -61,7 +61,7 @@ jobs:
 
       - name: Report image size
         run: |
-          size=$(docker image inspect "docker-mcp:${{ matrix.variant }}" --format '{{.Size}}')
+          size=$(docker image inspect "docker-mcp-server:${{ matrix.variant }}" --format '{{.Size}}')
           human=$(numfmt --to=iec --suffix=B "$size")
           {
             echo "### Image size — \`${{ matrix.variant }}\`"
@@ -90,7 +90,7 @@ jobs:
           context: .
           platforms: linux/amd64,linux/arm64
           push: false
-          tags: docker-mcp:full
+          tags: docker-mcp-server:full
           build-args: |
             INSTALL_CLI=1
             INSTALL_SCOUT=1

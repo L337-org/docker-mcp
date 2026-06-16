@@ -2,8 +2,8 @@ name: 'Publish container images'
 
 # Publishes the container images to GHCR on each GitHub Release. Kept in its own workflow (rather than
 # a release-gated job inside images.yaml) so it never shows up as a skipped check on pull requests.
-#   full     -> ghcr.io/gavinlucas/docker-mcp:latest    + :<version>
-#   no-scout -> ghcr.io/gavinlucas/docker-mcp:no-scout   + :<version>-no-scout
+#   full     -> ghcr.io/gavinlucas/docker-mcp-server:latest    + :<version>
+#   no-scout -> ghcr.io/gavinlucas/docker-mcp-server:no-scout   + :<version>-no-scout
 # where <version> is the release tag with any leading "v" stripped.
 
 permissions:
@@ -42,7 +42,7 @@ jobs:
         env:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
-          img=ghcr.io/gavinlucas/docker-mcp
+          img=ghcr.io/gavinlucas/docker-mcp-server
           version="${RELEASE_TAG#v}"
           if [ "${{ matrix.variant }}" = "full" ]; then
             tags="$img:latest,$img:$version"
