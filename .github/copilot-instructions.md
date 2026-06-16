@@ -6,7 +6,7 @@ This file provides guidance to GitHub Copilot when working with code in this rep
 
 `docker-mcp` is a Python MCP (Model Context Protocol) server that exposes the Docker SDK for Python — plus selected docker CLI features (Compose, Context, Buildx, Scout) and direct OCI-registry HTTPS access — as MCP tools. It requires Python >=3.14 and is managed with `uv`. It is published to PyPI as **`docker-mcp-server`** and as a container image to GHCR (`ghcr.io/gavinlucas/docker-mcp-server`), mirrored to Docker Hub (`gavinlucas/docker-mcp-server`) when the opt-in `DOCKERHUB_*` release secrets are configured (the import package stays `docker_mcp`, the repo stays `…/docker-mcp`); two console scripts — `docker-mcp` and `docker-mcp-server` — both target `docker_mcp:main`.
 
-The `docker` dep uses the `[ssh]` extra (paramiko), so `DOCKER_HOST=ssh://…` works via a pure-Python transport (no system `ssh` binary; works in the container images). docker-py auto-selects paramiko for `ssh://`, so there's no transport code — only the `ssh://` branch in `client._connection_help`. CLI-backed tools over `ssh://` need the system `ssh` client and are an out-of-scope best-effort path.
+The `docker` dep uses the `[ssh]` extra (paramiko), so `DOCKER_HOST=ssh://…` works via a pure-Python transport (no system `ssh` binary; works in the container images). docker-py auto-selects paramiko for `ssh://`, so there's no transport code — only the `ssh://` branch in `client._connection_help`. CLI-backed tools (Compose, Buildx, Context, Scout) shell out to `docker`, which would otherwise need the system `ssh` client — instead, `_cli.py:run_docker` detects `DOCKER_HOST=ssh://…` and routes the subprocess through a per-call local TCP proxy (`docker_mcp/tools/_ssh_proxy.py`) that opens its own paramiko connection and runs `docker system dial-stdio` over it, so the CLI authenticates the same way the docker-py-backed tools do, with no system `ssh` binary involved.
 
 ## Architecture
 
@@ -34,6 +34,7 @@ Each file maps to one Docker SDK domain or one CLI/registry feature area. Unders
 | File | Domain | Backed by |
 |------|--------|-----------|
 | `_cli.py` | Cross-platform subprocess helper (private) | — |
+| `_ssh_proxy.py` | Per-call paramiko proxy letting CLI-backed tools dial `ssh://` daemons without a system `ssh` binary (private) | — |
 | `_utils.py` | Shared helpers: `drop_none`, `join_bounded`, `stream_to_file`, `close_stream_quietly`, `MAX_PAYLOAD_BYTES`, plus the container guards `in_container` / `assert_host_writable` / `host_read_path` / `classify_host_kernel` (private) | — |
 | `_labels.py` | Provenance labels stamped on created resources: `with_provenance` / `managed_filter` / `provenance_labels` (private) | — |
 | `client.py` | `DockerClient` — connection, lifecycle, `login`/`logout`, `reconnect` | docker-py |

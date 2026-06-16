@@ -117,6 +117,42 @@ def test_run_docker_env_allowlist_drops_unrelated_vars(monkeypatch):
     assert "MY_SECRET" not in env
 
 
+def test_run_docker_rewrites_ssh_docker_host_to_local_proxy(monkeypatch):
+    monkeypatch.setenv("DOCKER_HOST", "ssh://bob@example.com")
+    fake_proxy = MagicMock()
+    fake_proxy.port = 54321
+
+    class FakeProxyCtx:
+        def __enter__(self):
+            return fake_proxy
+
+        def __exit__(self, *exc_info):
+            return False
+
+    with (
+        patch("docker_mcp.tools._cli.shutil.which", return_value="/usr/bin/docker"),
+        patch("docker_mcp.tools._cli.subprocess.run", return_value=_fake_completed()) as run,
+        patch("docker_mcp.tools._cli.ssh_proxy_for_docker_host", return_value=FakeProxyCtx()) as ssh_proxy,
+    ):
+        run_docker(["ps", "-a"])
+    ssh_proxy.assert_called_once_with("ssh://bob@example.com")
+    env = run.call_args.kwargs["env"]
+    assert env["DOCKER_HOST"] == "tcp://127.0.0.1:54321"
+
+
+def test_run_docker_leaves_non_ssh_docker_host_untouched(monkeypatch):
+    monkeypatch.setenv("DOCKER_HOST", "tcp://example:2375")
+    with (
+        patch("docker_mcp.tools._cli.shutil.which", return_value="/usr/bin/docker"),
+        patch("docker_mcp.tools._cli.subprocess.run", return_value=_fake_completed()) as run,
+        patch("docker_mcp.tools._cli.ssh_proxy_for_docker_host") as ssh_proxy,
+    ):
+        run_docker(["ps", "-a"])
+    ssh_proxy.assert_not_called()
+    env = run.call_args.kwargs["env"]
+    assert env["DOCKER_HOST"] == "tcp://example:2375"
+
+
 def test_run_docker_extra_env_overlays_allowlist(monkeypatch):
     monkeypatch.setenv("PATH", "/usr/bin")
     with (
