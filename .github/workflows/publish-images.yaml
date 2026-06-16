@@ -18,6 +18,14 @@ permissions:
 on:
   release:
     types: [published]
+  # Manual one-off publish (e.g. to mirror an already-released version to a registry that was added
+  # after that release). Runs from the default branch's workflow definition and pushes the same tags
+  # as a release would, to every configured registry.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Version to tag the images with, e.g. 1.5.0 (no leading "v")'
+        required: true
 
 jobs:
 
@@ -52,7 +60,8 @@ jobs:
       - name: Compute image tags
         id: meta
         env:
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          # release event supplies tag_name; workflow_dispatch supplies the `tag` input.
+          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
         run: |
           version="${RELEASE_TAG#v}"
           # GHCR always; mirror to Docker Hub only when the credentials are present (see header).
@@ -106,7 +115,7 @@ jobs:
           # image.source links the GHCR package to this repo (visibility + "connected repository").
           labels: |
             org.opencontainers.image.source=https://github.com/GavinLucas/docker-mcp
-            org.opencontainers.image.version=${{ github.event.release.tag_name }}
+            org.opencontainers.image.version=${{ github.event.release.tag_name || inputs.tag }}
           build-args: |
             INSTALL_CLI=${{ matrix.install_cli }}
             INSTALL_SCOUT=${{ matrix.install_scout }}
