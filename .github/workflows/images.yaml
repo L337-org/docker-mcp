@@ -1,8 +1,9 @@
 name: 'Build container images'
 
 # On PRs / pushes to main: builds the two published variants (full, no-scout) for amd64 and reports
-# their sizes, plus a cross-arch smoke build — nothing is pushed. Publishing to GHCR happens on a
-# GitHub Release, in the separate publish-images.yaml workflow. See README "Run as a container".
+# their sizes, plus a cross-arch smoke build — nothing is pushed. Publishing to GHCR (and the opt-in
+# Docker Hub mirror) happens on a GitHub Release, in the separate publish-images.yaml workflow. See
+# README "Run as a container".
 
 permissions:
   contents: read
