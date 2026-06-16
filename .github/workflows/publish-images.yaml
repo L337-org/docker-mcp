@@ -113,9 +113,10 @@ jobs:
             DISABLE_DOMAINS=${{ matrix.disable_domains }}
 
   dockerhub-description:
-    # Mirror the repo README onto the Docker Hub repository's description page (the point of the Hub
-    # mirror is discoverability). Runs once per release after the images are pushed, and is opt-in like
-    # the mirror: both steps are gated on the DOCKERHUB_* secrets, so nothing runs when they're unset.
+    # Sync DOCKERHUB.md (a slim, container-focused readme — the full README.md exceeds Hub's 25 KB cap)
+    # onto the Docker Hub repository's description page (the point of the Hub mirror is discoverability).
+    # Runs once per release after the images are pushed, and is opt-in like the mirror: both steps are
+    # gated on the DOCKERHUB_* secrets, so nothing runs when they're unset.
     name: Sync Docker Hub description
     runs-on: ubuntu-latest
     needs: [publish]

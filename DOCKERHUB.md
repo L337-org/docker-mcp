@@ -45,7 +45,7 @@ The image defaults `DOCKER_HOST` to `unix:///var/run/docker.sock`, so mounting y
 
 - **Linux:** `-v /var/run/docker.sock:/var/run/docker.sock` (rootless: `-v $XDG_RUNTIME_DIR/docker.sock:/var/run/docker.sock`).
 - **macOS (Docker Desktop):** usually `-v $HOME/.docker/run/docker.sock:/var/run/docker.sock`.
-- **Windows (Docker Desktop / WSL2):** prefer `-e DOCKER_HOST=tcp://host.docker.internal:2375` (enable the TCP endpoint in Docker Desktop). That endpoint is **unauthenticated and unencrypted** — keep it bound to localhost, disable it when you're not using it, and use TLS or `DOCKER_HOST=ssh://…` for any remote daemon.
+- **Windows (Docker Desktop / WSL2):** prefer `-e DOCKER_HOST=tcp://host.docker.internal:2375` (enable the TCP endpoint in Docker Desktop). That endpoint is **unauthenticated and unencrypted** — keep it bound to localhost, disable it when you're not using it, and use TLS or `DOCKER_HOST=ssh://...` for any remote daemon.
 - **Remote / TLS / SSH daemon:** skip the socket mount and pass `-e DOCKER_HOST=...` (plus the TLS vars).
 
 ## Host filesystem access
