@@ -15,7 +15,11 @@ def test_create_volume():
         result = create_volume(name="myvol", driver="local", labels={"app": "web"})
     assert result == {"Name": "myvol"}
     kwargs = mock_client.return_value.volumes.create.call_args.kwargs
-    assert kwargs == {"name": "myvol", "driver": "local", "labels": {"app": "web"}}
+    assert kwargs["name"] == "myvol"
+    assert kwargs["driver"] == "local"
+    # caller label preserved alongside the provenance stamp (on by default)
+    assert kwargs["labels"]["app"] == "web"
+    assert kwargs["labels"]["docker-mcp-server.managed"] == "true"
 
 
 def test_get_volume():

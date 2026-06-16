@@ -1,6 +1,7 @@
 # library of mcp tools relating to swarm secrets management
 
 from docker_mcp.server import tool
+from docker_mcp.tools._labels import with_provenance
 from docker_mcp.tools._utils import drop_none
 from docker_mcp.tools.client import _get_client
 
@@ -17,7 +18,11 @@ def create_secret(name: str, data: bytes, labels: dict | None = None, driver: di
         driver: dict - Optional secret driver configuration
     returns: dict - The created secret's attrs
     """
-    kwargs: dict = {"name": name, "data": data, **drop_none(labels=labels, driver=driver)}
+    kwargs: dict = {
+        "name": name,
+        "data": data,
+        **drop_none(labels=with_provenance(labels, "create_secret"), driver=driver),
+    }
     return _get_client().secrets.create(**kwargs).attrs
 
 

@@ -1,6 +1,7 @@
 # library of mcp tools relating to network management
 
 from docker_mcp.server import tool
+from docker_mcp.tools._labels import with_provenance
 from docker_mcp.tools._utils import drop_none
 from docker_mcp.tools.client import _get_client
 
@@ -44,7 +45,7 @@ def create_network(
             options=options,
             ipam=ipam,
             check_duplicate=check_duplicate,
-            labels=labels,
+            labels=with_provenance(labels, "create_network"),
             attachable=attachable,
             scope=scope,
             ingress=ingress,

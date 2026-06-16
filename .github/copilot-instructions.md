@@ -33,6 +33,7 @@ Each file maps to one Docker SDK domain or one CLI/registry feature area. Unders
 |------|--------|-----------|
 | `_cli.py` | Cross-platform subprocess helper (private) | — |
 | `_utils.py` | Shared helpers: `drop_none`, `join_bounded`, `stream_to_file`, `close_stream_quietly`, `MAX_PAYLOAD_BYTES`, plus the container guards `in_container` / `assert_host_writable` / `host_read_path` / `classify_host_kernel` (private) | — |
+| `_labels.py` | Provenance labels stamped on created resources: `with_provenance` / `managed_filter` / `provenance_labels` (private) | — |
 | `client.py` | `DockerClient` — connection, lifecycle, `login`/`logout`, `reconnect` | docker-py |
 | `containers.py` | Container lifecycle and management | docker-py |
 | `images.py` | Image pull, build, push, inspect, save/load | docker-py |
@@ -71,6 +72,10 @@ An additional distribution channel alongside the uvx-from-git install (unchanged
 - Tool functions are decorated with `@tool()` (imported from `docker_mcp.server`) and **must have a `TOOL_CATEGORIES` entry** in `docker_mcp/server.py`.
 - Line length limit: 120 characters.
 - Do not add comments that describe what the code does — only add comments for non-obvious constraints or workarounds.
+
+### Provenance labels
+
+Resources this server **creates** are stamped with `docker-mcp-server.*` provenance labels (`.managed=true`, `.version`, `.tool`, `.created`) so the agent/operator can later enumerate that footprint (`list_containers(managed_only=True)`, or `--filter label=docker-mcp-server.managed=true`). On by default; opt out with `DOCKER_MCP_NO_LABELS=1`. When adding a new create tool that accepts a `labels` dict, route it through `docker_mcp/tools/_labels.py:with_provenance(labels, "<tool_name>")` — it merges provenance without overwriting caller keys and returns `None` (drop it via `drop_none`) when stamping is disabled and the caller passed nothing. **Image builds are intentionally not stamped** (a build label changes the image digest).
 
 ### CLI shell-out policy
 

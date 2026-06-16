@@ -5,7 +5,12 @@ import uuid
 
 import pytest
 
-from docker_mcp.tools.containers import remove_container, run_container, wait_for_container_healthy
+from docker_mcp.tools.containers import (
+    list_containers,
+    remove_container,
+    run_container,
+    wait_for_container_healthy,
+)
 
 
 @pytest.fixture
@@ -37,3 +42,14 @@ def test_wait_for_container_healthy_real(healthy_container):
     assert result["healthy"] is True
     assert result["health"] == "healthy"
     assert result["timed_out"] is False
+
+
+def test_run_container_stamps_provenance_and_managed_only_filters(healthy_container):
+    # The container started by the fixture should carry the managed label by default,
+    # and `managed_only=True` should be able to find it.
+    matched = list_containers(all=True, managed_only=True)
+    names = {name.lstrip("/") for c in matched for name in [c["Name"]]}
+    assert healthy_container in names
+    target = next(c for c in matched if c["Name"].lstrip("/") == healthy_container)
+    assert target["Config"]["Labels"]["docker-mcp-server.managed"] == "true"
+    assert target["Config"]["Labels"]["docker-mcp-server.tool"] == "run_container"

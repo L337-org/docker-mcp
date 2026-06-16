@@ -15,7 +15,11 @@ def test_create_secret():
         result = create_secret("mysecret", b"shh", labels={"a": "b"})
     assert result == {"ID": "sec1"}
     kwargs = mock_client.return_value.secrets.create.call_args.kwargs
-    assert kwargs == {"name": "mysecret", "data": b"shh", "labels": {"a": "b"}}
+    assert kwargs["name"] == "mysecret"
+    assert kwargs["data"] == b"shh"
+    # caller label preserved alongside the provenance stamp (on by default)
+    assert kwargs["labels"]["a"] == "b"
+    assert kwargs["labels"]["docker-mcp-server.managed"] == "true"
 
 
 def test_get_secret():

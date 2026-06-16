@@ -134,6 +134,11 @@ def clean_environment(scope: str = "stopped") -> str:
             "6. Use `prune_volumes` ONLY after explicitly confirming with the user — volumes can hold "
             "irreplaceable data.\n"
         )
+    base += (
+        "If the goal is to clean up only what was created through this server (rather than every unused "
+        "resource), prefer `list_containers(managed_only=True)` — or filter on the "
+        "`docker-mcp-server.managed=true` label — to scope the inventory before removing anything.\n"
+    )
     base += "Finish with `df` again and report the before/after delta and total space reclaimed."
     return base
 

@@ -150,7 +150,7 @@ The server connects through `docker.from_env()`, so anything the standard Docker
 
 Once loaded, the agent gets MCP tools grouped by Docker domain. A few examples:
 
-- **Containers** — `run_container`, `list_containers`, `exec_in_container`, `container_logs`, `stop_container`, `commit_container`, `wait_for_container_healthy` (poll until a healthcheck passes), `export_container_to_file` / `get_container_archive_to_file` / `put_container_archive_from_file` (stream tar archives to/from a host path)
+- **Containers** — `run_container`, `list_containers` (`managed_only=True` to list only what this server created — see [Provenance labels](#provenance-labels)), `exec_in_container`, `container_logs`, `stop_container`, `commit_container`, `wait_for_container_healthy` (poll until a healthcheck passes), `export_container_to_file` / `get_container_archive_to_file` / `put_container_archive_from_file` (stream tar archives to/from a host path)
 - **Images** — `build_image`, `pull_image`, `push_image`, `tag_image`, `prune_images`, `save_image_to_file` / `load_image_from_file` (stream image tarballs to/from a host path)
 - **Networks / Volumes** — `create_network`, `connect_network`, `create_volume`, `prune_volumes`
 - **Swarm** — `init_swarm`, `get_swarm_join_tokens` (close the init → join loop), `rotate_swarm_join_token`, `create_service`, `scale_service`, `rollback_service` (re-apply the previous service spec), `list_nodes`, `remove_node`, `create_secret`, `create_config`
@@ -250,6 +250,10 @@ Three environment variables restrict which tools are registered when the server 
 Independently, every registered tool carries [MCP `ToolAnnotations`](https://modelcontextprotocol.io/) — `readOnlyHint` on queries and `destructiveHint` on destructive operations (plus `idempotentHint` on the prune family) — so a client like Claude Code can auto-allow safe reads and gate destructive calls. The classification lives in `TOOL_CATEGORIES` in `docker_mcp/server.py`. To see the full picture at runtime — every tool with its domain, category, and whether the active switches registered it — read the **`docker-mcp://tool-catalog`** MCP resource.
 
 For private registries, the HTTPS-backed `registry_*` tools fall back to **`DOCKER_MCP_REGISTRY_USERNAME`** / **`DOCKER_MCP_REGISTRY_PASSWORD`** from the server's environment when no explicit `username`/`password` arguments are passed (explicit arguments win; the env pair is only used when both arguments are unset). Setting credentials in the environment keeps them out of tool arguments, which many MCP clients log verbatim — the password may be a personal-access token.
+
+### Provenance labels
+
+Every Docker object the agent **creates** through this server — containers, networks, volumes, swarm services, configs, and secrets — is stamped with a small set of `docker-mcp-server.*` labels recording that this server made it (`docker-mcp-server.managed=true`), the server version, the originating tool, and a creation timestamp. This lets you (or a cleanup job) later enumerate exactly the footprint the agent created with a single `docker ... --filter label=docker-mcp-server.managed=true`; `list_containers(managed_only=True)` is the in-tool shortcut. The stamping is additive (a label you pass yourself always wins on a key collision) and uniquely namespaced, so it's safe by default; **`DOCKER_MCP_NO_LABELS=1`** turns it off entirely. Image builds are deliberately **not** stamped, because a build label changes the resulting image digest.
 
 ### Example: a read-only monitoring server
 

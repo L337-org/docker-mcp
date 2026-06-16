@@ -4,6 +4,7 @@ from collections.abc import Iterable
 from typing import Literal, cast
 
 from docker_mcp.server import tool
+from docker_mcp.tools._labels import with_provenance
 from docker_mcp.tools._utils import MAX_PAYLOAD_BYTES, drop_none, join_bounded
 from docker_mcp.tools.client import _get_client
 
@@ -19,7 +20,11 @@ def create_service(image: str, command: str | list | None = None, extra_kwargs: 
         extra_kwargs: dict - Additional ServiceCollection.create kwargs (name, env, mode, etc.)
     returns: dict - The created service's attrs
     """
-    kwargs = extra_kwargs or {}
+    kwargs = dict(extra_kwargs or {})
+    # Stamp the service-level `labels`; leave any caller `container_labels` untouched.
+    labels = with_provenance(kwargs.get("labels"), "create_service")
+    if labels is not None:
+        kwargs["labels"] = labels
     return _get_client().services.create(image, command=command, **kwargs).attrs
 
 

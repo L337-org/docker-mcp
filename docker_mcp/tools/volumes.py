@@ -1,6 +1,7 @@
 # library of mcp tools relating to volume management
 
 from docker_mcp.server import tool
+from docker_mcp.tools._labels import with_provenance
 from docker_mcp.tools._utils import drop_none
 from docker_mcp.tools.client import _get_client
 
@@ -22,7 +23,9 @@ def create_volume(
         labels: dict - Labels to set on the volume
     returns: dict - The created volume's attrs
     """
-    kwargs = drop_none(name=name, driver=driver, driver_opts=driver_opts, labels=labels)
+    kwargs = drop_none(
+        name=name, driver=driver, driver_opts=driver_opts, labels=with_provenance(labels, "create_volume")
+    )
     return _get_client().volumes.create(**kwargs).attrs
 
 

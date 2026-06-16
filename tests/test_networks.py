@@ -25,7 +25,9 @@ def test_create_network():
     args, kwargs = mock_client.return_value.networks.create.call_args
     assert args == ("mynet",)
     assert kwargs["driver"] == "bridge"
-    assert kwargs["labels"] == {"a": "b"}
+    # caller label preserved alongside the provenance stamp (on by default)
+    assert kwargs["labels"]["a"] == "b"
+    assert kwargs["labels"]["docker-mcp-server.managed"] == "true"
 
 
 def test_get_network():

@@ -70,6 +70,9 @@ jobs:
           done
           tags="${tags#,}"
           echo "tags=$tags" >> "$GITHUB_OUTPUT"
+          # Export the v-stripped version too, so the OCI image.version label matches the image tags
+          # (e.g. label 1.6.0, not the raw release tag v1.6.0).
+          echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "Publishing \`${{ matrix.variant }}\` as: $tags" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Set up QEMU
@@ -106,7 +109,7 @@ jobs:
           # image.source links the GHCR package to this repo (visibility + "connected repository").
           labels: |
             org.opencontainers.image.source=https://github.com/GavinLucas/docker-mcp
-            org.opencontainers.image.version=${{ github.event.release.tag_name }}
+            org.opencontainers.image.version=${{ steps.meta.outputs.version }}
           build-args: |
             INSTALL_CLI=${{ matrix.install_cli }}
             INSTALL_SCOUT=${{ matrix.install_scout }}
