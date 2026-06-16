@@ -7,6 +7,7 @@ import uuid
 import pytest
 
 from docker_mcp.tools.containers import (
+    container_stats,
     list_containers,
     remove_container,
     run_container,
@@ -77,3 +78,14 @@ def test_container_observability_resources_against_real_container(healthy_contai
     assert stats["container"] == healthy_container
     for key in ("cpu_percent", "mem_used_mb", "mem_limit_mb", "mem_percent"):
         assert isinstance(stats[key], (int, float))
+
+
+def test_container_stats_tool_against_real_container(healthy_container):
+    # Regression guard for the decode/stream bug: container_stats must not raise against a real
+    # daemon and must return the raw stats snapshot (the earlier decode=True+stream=False combo
+    # was rejected by the engine).
+    snapshot = container_stats(healthy_container)
+    assert isinstance(snapshot, dict)
+    # The raw snapshot carries the cgroup sections the summary is derived from.
+    assert "memory_stats" in snapshot
+    assert "cpu_stats" in snapshot
