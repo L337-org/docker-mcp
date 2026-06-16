@@ -4,7 +4,7 @@ from collections.abc import Iterable
 from typing import Literal, cast
 
 from docker_mcp.server import tool
-from docker_mcp.tools._labels import with_provenance
+from docker_mcp.tools._labels import managed_filter, with_provenance
 from docker_mcp.tools._utils import MAX_PAYLOAD_BYTES, drop_none, join_bounded
 from docker_mcp.tools.client import _get_client
 
@@ -42,13 +42,18 @@ def get_service(service_id: str, insert_defaults: bool | None = None) -> dict:
 
 
 @tool()
-def list_services(filters: dict | None = None) -> list:
+def list_services(filters: dict | None = None, managed_only: bool = False) -> list:
     """
     List swarm services.
 
-    args: filters: dict - Filter by attributes (id, name, label, mode)
+    args:
+        filters: dict - Filter by attributes (id, name, label, mode)
+        managed_only: bool - Only return services created by this MCP server (filters on the
+                             docker-mcp-server.managed label); combines with any `filters` given
     returns: list - A list of service attrs dicts
     """
+    if managed_only:
+        filters = managed_filter(filters)
     return [s.attrs for s in _get_client().services.list(**drop_none(filters=filters))]
 
 

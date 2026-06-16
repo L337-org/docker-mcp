@@ -18,6 +18,7 @@ from docker_mcp.tools.prompts import (
     lookup_docker_docs,
     migrate_container,
     migrate_from_docker_manifest,
+    prune_managed,
     plan_compose_stack,
     plan_multiarch_build,
     recommend_base_image,
@@ -83,6 +84,24 @@ def test_clean_environment_default_scope_skips_volumes():
 def test_clean_environment_all_scope_includes_volumes_with_warning():
     out = clean_environment("all")
     assert "prune_volumes" in out
+    assert "confirm" in out.lower()
+
+
+def test_prune_managed_scopes_every_step_to_the_managed_label():
+    out = prune_managed()
+    assert "docker-mcp-server.managed=true" in out
+    # Inventory across the managed-aware list tools before removing anything.
+    for tool in ("list_containers", "list_networks", "list_services"):
+        assert tool in out
+    assert "managed_only=True" in out
+    # Default skips volumes.
+    assert "prune_volumes" not in out
+
+
+def test_prune_managed_include_volumes_adds_volume_step_with_confirmation():
+    out = prune_managed(include_volumes=True)
+    assert "prune_volumes" in out
+    assert "docker-mcp-server.managed=true" in out
     assert "confirm" in out.lower()
 
 

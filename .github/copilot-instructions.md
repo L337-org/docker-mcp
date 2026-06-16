@@ -75,7 +75,7 @@ An additional distribution channel alongside the uvx-from-git install (unchanged
 
 ### Provenance labels
 
-Resources this server **creates** are stamped with `docker-mcp-server.*` provenance labels (`.managed=true`, `.version`, `.tool`, `.created`) so the agent/operator can later enumerate that footprint (`list_containers(managed_only=True)`, or `--filter label=docker-mcp-server.managed=true`). On by default; opt out with `DOCKER_MCP_NO_LABELS=1`. When adding a new create tool that accepts a `labels` dict, route it through `docker_mcp/tools/_labels.py:with_provenance(labels, "<tool_name>")` — it merges provenance without overwriting caller keys and returns `None` (drop it via `drop_none`) when stamping is disabled and the caller passed nothing. **Image builds are intentionally not stamped** (a build label changes the image digest).
+Resources this server **creates** are stamped with `docker-mcp-server.*` provenance labels (`.managed=true`, `.version`, `.tool`, `.created`) so the agent/operator can later enumerate that footprint (the `managed_only=True` arg on `list_containers` / `list_networks` / `list_volumes` / `list_services`, or `--filter label=docker-mcp-server.managed=true`; the `prune_managed` prompt removes only the managed footprint). On by default; opt out with `DOCKER_MCP_NO_LABELS=1`. When adding a new create tool that accepts a `labels` dict, route it through `docker_mcp/tools/_labels.py:with_provenance(labels, "<tool_name>")` — it merges provenance without overwriting caller keys and returns `None` (drop it via `drop_none`) when stamping is disabled and the caller passed nothing. **Image builds are intentionally not stamped** (a build label changes the image digest).
 
 ### CLI shell-out policy
 

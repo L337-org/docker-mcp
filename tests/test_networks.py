@@ -49,6 +49,15 @@ def test_list_networks():
     assert kwargs["filters"] == {"driver": "bridge"}
 
 
+def test_list_networks_managed_only_injects_label_filter():
+    with _patch() as mock_client:
+        mock_client.return_value.networks.list.return_value = []
+        list_networks(managed_only=True, filters={"driver": "bridge"})
+    kwargs = mock_client.return_value.networks.list.call_args.kwargs
+    assert kwargs["filters"]["driver"] == "bridge"
+    assert kwargs["filters"]["label"] == "docker-mcp-server.managed=true"
+
+
 def test_prune_networks():
     with _patch() as mock_client:
         mock_client.return_value.networks.prune.return_value = {"NetworksDeleted": ["net1"]}

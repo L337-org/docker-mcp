@@ -1,7 +1,7 @@
 # library of mcp tools relating to network management
 
 from docker_mcp.server import tool
-from docker_mcp.tools._labels import with_provenance
+from docker_mcp.tools._labels import managed_filter, with_provenance
 from docker_mcp.tools._utils import drop_none
 from docker_mcp.tools.client import _get_client
 
@@ -71,6 +71,7 @@ def list_networks(
     ids: list | None = None,
     filters: dict | None = None,
     greedy: bool = False,
+    managed_only: bool = False,
 ) -> list:
     """
     List networks.
@@ -80,8 +81,12 @@ def list_networks(
         ids: list - Filter by network ids
         filters: dict - Additional filters
         greedy: bool - Fetch extended details per network
+        managed_only: bool - Only return networks created by this MCP server (filters on the
+                             docker-mcp-server.managed label); combines with any `filters` given
     returns: list - A list of network attrs dicts
     """
+    if managed_only:
+        filters = managed_filter(filters)
     kwargs: dict = {"greedy": greedy, **drop_none(names=names, ids=ids, filters=filters)}
     return [n.attrs for n in _get_client().networks.list(**kwargs)]
 

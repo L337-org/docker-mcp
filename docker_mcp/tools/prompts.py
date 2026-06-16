@@ -143,6 +143,50 @@ def clean_environment(scope: str = "stopped") -> str:
     return base
 
 
+@prompt(description="Tear down only the resources this MCP server created, leaving everything else untouched.")
+def prune_managed(include_volumes: bool = False) -> str:
+    """
+    Generate a plan for removing only the resources stamped with this server's provenance label.
+
+    Scopes every step to the `docker-mcp-server.managed=true` label, so nothing the agent (or anyone
+    else) created outside this server is touched.
+
+    args: include_volumes: bool - Also remove managed volumes (data loss — defaults to False)
+    returns: str - A prompt instructing the agent to inventory and remove only managed resources
+    """
+    base = (
+        "Remove only the docker resources THIS server created — everything stamped with the "
+        "`docker-mcp-server.managed=true` label — and leave all other resources alone:\n"
+        "1. Inventory first, and show it before removing anything: `list_containers(all=True, "
+        "managed_only=True)`, `list_networks(managed_only=True)`, `list_services(managed_only=True)` "
+        "(services only on a swarm manager). Report what you found as a table; if it's empty, stop and "
+        "say so.\n"
+        "2. Remove managed containers. `prune_containers(filters={'label': "
+        "'docker-mcp-server.managed=true'})` clears the *stopped* ones; a still-*running* managed "
+        "container is left untouched by prune, so stop and remove those explicitly only after "
+        "confirming with the user (`stop_container` then `remove_container`).\n"
+        "3. Remove managed user-defined networks with `prune_networks(filters={'label': "
+        "'docker-mcp-server.managed=true'})`.\n"
+    )
+    if include_volumes:
+        base += (
+            "4. Remove managed volumes with `prune_volumes(filters={'label': "
+            "'docker-mcp-server.managed=true'})` — but ONLY after explicitly confirming with the user, "
+            "since a volume may hold irreplaceable data even if this server created it.\n"
+        )
+    else:
+        base += (
+            "4. Do NOT remove volumes (include_volumes was not set). Mention that managed volumes were "
+            "left in place and can be removed by re-running with include_volumes=True.\n"
+        )
+    base += (
+        "Note: managed swarm services would need `remove_service` per service from the step-1 inventory "
+        "(there is no service prune). Finish by re-running the step-1 inventory to confirm the managed "
+        "footprint is gone, and report what was removed."
+    )
+    return base
+
+
 @prompt(description="Inspect every docker resource that shares a label.")
 def inspect_stack(label: str) -> str:
     """

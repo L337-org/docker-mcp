@@ -1,7 +1,7 @@
 # library of mcp tools relating to volume management
 
 from docker_mcp.server import tool
-from docker_mcp.tools._labels import with_provenance
+from docker_mcp.tools._labels import managed_filter, with_provenance
 from docker_mcp.tools._utils import drop_none
 from docker_mcp.tools.client import _get_client
 
@@ -41,13 +41,18 @@ def get_volume(volume_id: str) -> dict:
 
 
 @tool()
-def list_volumes(filters: dict | None = None) -> list:
+def list_volumes(filters: dict | None = None, managed_only: bool = False) -> list:
     """
     List volumes.
 
-    args: filters: dict - Filter by attributes (e.g. dangling, name, label)
+    args:
+        filters: dict - Filter by attributes (e.g. dangling, name, label)
+        managed_only: bool - Only return volumes created by this MCP server (filters on the
+                             docker-mcp-server.managed label); combines with any `filters` given
     returns: list - A list of volume attrs dicts
     """
+    if managed_only:
+        filters = managed_filter(filters)
     return [v.attrs for v in _get_client().volumes.list(**drop_none(filters=filters))]
 
 

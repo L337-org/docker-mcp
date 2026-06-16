@@ -45,6 +45,15 @@ def test_list_volumes_with_filters():
     mock_client.return_value.volumes.list.assert_called_once_with(filters={"dangling": "true"})
 
 
+def test_list_volumes_managed_only_injects_label_filter():
+    with _patch() as mock_client:
+        mock_client.return_value.volumes.list.return_value = []
+        list_volumes(managed_only=True, filters={"dangling": "true"})
+    kwargs = mock_client.return_value.volumes.list.call_args.kwargs
+    assert kwargs["filters"]["dangling"] == "true"
+    assert kwargs["filters"]["label"] == "docker-mcp-server.managed=true"
+
+
 def test_prune_volumes():
     with _patch() as mock_client:
         mock_client.return_value.volumes.prune.return_value = {"SpaceReclaimed": 50}

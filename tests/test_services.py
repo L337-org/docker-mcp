@@ -65,6 +65,14 @@ def test_list_services():
         assert list_services() == [{"ID": "svc1"}]
 
 
+def test_list_services_managed_only_injects_label_filter():
+    with _patch() as mock_client:
+        mock_client.return_value.services.list.return_value = []
+        list_services(managed_only=True)
+    kwargs = mock_client.return_value.services.list.call_args.kwargs
+    assert kwargs["filters"]["label"] == "docker-mcp-server.managed=true"
+
+
 def test_update_service():
     service = MagicMock()
     with _patch() as mock_client:
