@@ -1,6 +1,6 @@
 [project]
-name = "docker-mcp"
-version = "1.4.0"
+name = "docker-mcp-server"
+version = "1.5.0"
 description = "MCP server for managing Docker resources via the Docker SDK for Python"
 readme = "README.md"
 requires-python = ">=3.14"
@@ -25,6 +25,7 @@ dependencies = [
 
 [project.scripts]
 docker-mcp = "docker_mcp:main"
+docker-mcp-server = "docker_mcp:main"
 
 [build-system]
 requires = ["hatchling"]

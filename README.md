@@ -12,7 +12,23 @@ Every documented domain of the Docker SDK is exposed: build and run containers, 
 
 ## Using the server
 
-Add an entry to your AI tool's MCP configuration (commonly `mcp.json` or the equivalent in your client). The snippet below runs the server straight from this repository — `uv` will fetch and cache the package on first use:
+The server is published to [PyPI](https://pypi.org/project/docker-mcp-server/) as **`docker-mcp-server`**. Add an entry to your AI tool's MCP configuration (commonly `mcp.json` or the equivalent in your client) pointing `uvx` at it — `uv` will fetch and cache the package on first use:
+
+```json
+{
+  "mcpServers": {
+    "docker-mcp": {
+      "command": "uvx",
+      "args": ["docker-mcp-server"],
+      "env": {}
+    }
+  }
+}
+```
+
+To pin a specific version, append `==<version>` to the package name (e.g. `docker-mcp-server==1.5.0`). If you'd rather install it onto your `PATH`, `pipx install docker-mcp-server` gives you the `docker-mcp-server` console script (a `docker-mcp` alias is also installed).
+
+**Installing from git instead.** To run an unreleased revision straight from this repository:
 
 ```json
 {
@@ -46,7 +62,7 @@ linux/arm64) are published to GHCR on each release; point your MCP client at `do
       "args": [
         "run", "--rm", "-i",
         "-v", "/var/run/docker.sock:/var/run/docker.sock",
-        "ghcr.io/gavinlucas/docker-mcp:latest"
+        "ghcr.io/gavinlucas/docker-mcp-server:latest"
       ],
       "env": {}
     }
@@ -57,8 +73,12 @@ linux/arm64) are published to GHCR on each release; point your MCP client at `do
 `-i` is required (the server speaks MCP over stdio); `--rm` cleans up when the client disconnects. To
 pin a version, replace `:latest` with a release tag (e.g. `:1.3.0`).
 
-**Image variants.** Two variants are published to `ghcr.io/gavinlucas/docker-mcp`, both built from one
-`Dockerfile`. The CLI-backed domains (Compose, Stack, Buildx, Scout, Context) shell out to the
+> **Image renamed.** As of 1.5.0 the image is published to `ghcr.io/gavinlucas/docker-mcp-server`
+> (matching the PyPI name). The old `ghcr.io/gavinlucas/docker-mcp` image is frozen at 1.4.0 and no
+> longer updated — point new pulls at `…/docker-mcp-server`.
+
+**Image variants.** Two variants are published to `ghcr.io/gavinlucas/docker-mcp-server`, both built
+from one `Dockerfile`. The CLI-backed domains (Compose, Stack, Buildx, Scout, Context) shell out to the
 `docker` CLI and its plugins.
 
 | Variant | Tags | Approx. size | Includes |
@@ -75,10 +95,10 @@ ever need to change the disabled set (note it replaces, not appends).
 **Building it yourself.** All variants build from the repo's `Dockerfile` via build args:
 
 ```bash
-docker build -t docker-mcp:full .                                           # full (default)
+docker build -t docker-mcp-server:full .                                    # full (default)
 docker build --build-arg INSTALL_SCOUT=0 --build-arg DISABLE_DOMAINS=scout \
-  -t docker-mcp:no-scout .                                                  # no-scout
-docker build --build-arg INSTALL_CLI=0 -t docker-mcp:lite .                 # lite (SDK-only, ~165 MB)
+  -t docker-mcp-server:no-scout .                                           # no-scout
+docker build --build-arg INSTALL_CLI=0 -t docker-mcp-server:lite .          # lite (SDK-only, ~165 MB)
 ```
 
 The `lite` image (docker-py SDK tools only — Compose/Buildx/Scout/Context degrade to "plugin
