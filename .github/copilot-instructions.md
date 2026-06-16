@@ -4,7 +4,7 @@ This file provides guidance to GitHub Copilot when working with code in this rep
 
 ## Project
 
-`docker-mcp` is a Python MCP (Model Context Protocol) server that exposes the Docker SDK for Python — plus selected docker CLI features (Compose, Context, Buildx, Scout) and direct OCI-registry HTTPS access — as MCP tools. It requires Python >=3.14 and is managed with `uv`. It is published to PyPI as **`docker-mcp-server`** and as a container image to GHCR (`ghcr.io/gavinlucas/docker-mcp-server`) and Docker Hub (`gavinlucas/docker-mcp-server`) (the import package stays `docker_mcp`, the repo stays `…/docker-mcp`); two console scripts — `docker-mcp` and `docker-mcp-server` — both target `docker_mcp:main`.
+`docker-mcp` is a Python MCP (Model Context Protocol) server that exposes the Docker SDK for Python — plus selected docker CLI features (Compose, Context, Buildx, Scout) and direct OCI-registry HTTPS access — as MCP tools. It requires Python >=3.14 and is managed with `uv`. It is published to PyPI as **`docker-mcp-server`** and as a container image to GHCR (`ghcr.io/gavinlucas/docker-mcp-server`), mirrored to Docker Hub (`gavinlucas/docker-mcp-server`) when the opt-in `DOCKERHUB_*` release secrets are configured (the import package stays `docker_mcp`, the repo stays `…/docker-mcp`); two console scripts — `docker-mcp` and `docker-mcp-server` — both target `docker_mcp:main`.
 
 ## Architecture
 

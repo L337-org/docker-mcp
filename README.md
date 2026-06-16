@@ -52,9 +52,9 @@ To pin a specific revision, append `@<tag-or-commit>` to the git URL.
 
 Running the server as a container removes the Python / uv / git prerequisites entirely — the only
 thing the host needs is Docker, which you already have. Prebuilt multi-arch images (linux/amd64 +
-linux/arm64) are published on each release to **GHCR** (`ghcr.io/gavinlucas/docker-mcp-server`) and
-mirrored to **Docker Hub** (`gavinlucas/docker-mcp-server`) — the two are identical, so use whichever
-you prefer. Point your MCP client at `docker run`:
+linux/arm64) are published to **GHCR** (`ghcr.io/gavinlucas/docker-mcp-server`) on each release, and
+official releases are also mirrored to **Docker Hub** (`gavinlucas/docker-mcp-server`) — the two are
+identical, so use whichever you prefer. Point your MCP client at `docker run`:
 
 ```json
 {
@@ -80,9 +80,10 @@ swap the image for `gavinlucas/docker-mcp-server:latest` (or `docker.io/gavinluc
 > (matching the PyPI name). The old `ghcr.io/gavinlucas/docker-mcp` image is frozen at 1.4.0 and no
 > longer updated — point new pulls at `…/docker-mcp-server`.
 
-**Image variants.** Two variants are published to each registry (`ghcr.io/gavinlucas/docker-mcp-server`
-and `gavinlucas/docker-mcp-server` on Docker Hub), both built from one `Dockerfile`. The CLI-backed
-domains (Compose, Stack, Buildx, Scout, Context) shell out to the `docker` CLI and its plugins.
+**Image variants.** Two variants are published to GHCR (`ghcr.io/gavinlucas/docker-mcp-server`), and
+mirrored to Docker Hub (`gavinlucas/docker-mcp-server`) for official releases, both built from one
+`Dockerfile`. The CLI-backed domains (Compose, Stack, Buildx, Scout, Context) shell out to the
+`docker` CLI and its plugins.
 
 | Variant | Tags | Approx. size | Includes |
 |---------|------|-------------|----------|

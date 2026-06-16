@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-`docker-mcp` is a Python MCP server (requires Python >=3.14) managed with `uv` that exposes the Docker SDK for Python as MCP tools. The entry point is the `docker_mcp` package, run with `python -m docker_mcp` or via the installed console script. It is **published to PyPI as `docker-mcp-server`** (the `docker-mcp` name was already taken) and as a container image to GHCR (`ghcr.io/gavinlucas/docker-mcp-server`) and Docker Hub (`gavinlucas/docker-mcp-server`); the import package stays `docker_mcp` and the repo stays `…/docker-mcp`. Two console scripts are installed — `docker-mcp` and `docker-mcp-server` — both targeting `docker_mcp:main`.
+`docker-mcp` is a Python MCP server (requires Python >=3.14) managed with `uv` that exposes the Docker SDK for Python as MCP tools. The entry point is the `docker_mcp` package, run with `python -m docker_mcp` or via the installed console script. It is **published to PyPI as `docker-mcp-server`** (the `docker-mcp` name was already taken) and as a container image to GHCR (`ghcr.io/gavinlucas/docker-mcp-server`), mirrored to Docker Hub (`gavinlucas/docker-mcp-server`) when the opt-in `DOCKERHUB_*` release secrets are configured; the import package stays `docker_mcp` and the repo stays `…/docker-mcp`. Two console scripts are installed — `docker-mcp` and `docker-mcp-server` — both targeting `docker_mcp:main`.
 
 ## Commands
 
