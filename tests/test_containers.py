@@ -7,6 +7,9 @@ import requests.exceptions
 from docker.errors import DockerException
 
 from docker_mcp.tools.containers import (
+    _read_log_tail,
+    _read_stats_summary,
+    _summarize_stats,
     commit_container,
     container_diff,
     container_logs,
@@ -250,7 +253,8 @@ def test_container_stats():
     with _patch() as mock_client:
         mock_client.return_value.containers.get.return_value = container
         assert container_stats("web") == {"cpu": 1}
-    container.stats.assert_called_once_with(decode=True, stream=False)
+    # `decode` is only valid with stream=True; a one-shot stream=False read already returns a dict.
+    container.stats.assert_called_once_with(stream=False)
 
 
 def test_container_top():
@@ -556,3 +560,66 @@ def test_wait_for_container_healthy_sleep_bounded_by_timeout():
 def test_wait_for_container_healthy_rejects_nonpositive_poll_interval():
     with pytest.raises(ValueError, match="poll_interval"):
         wait_for_container_healthy("web", poll_interval=0)
+
+
+# ---------- shared resource helpers: log tail + computed stats summary ----------
+
+
+def test_read_log_tail_decodes_and_bounds_the_read():
+    container = MagicMock()
+    container.logs.return_value = b"hello\nworld\n"
+    with _patch() as mock_client:
+        mock_client.return_value.containers.get.return_value = container
+        assert _read_log_tail("web") == "hello\nworld\n"
+    kwargs = container.logs.call_args.kwargs
+    assert kwargs["stream"] is False
+    assert kwargs["tail"] == 200  # bounded by default so a resource read can't flood context
+
+
+def test_read_stats_summary_raises_when_not_running():
+    container = MagicMock()
+    container.attrs = {"State": {"Status": "exited"}}
+    with _patch() as mock_client:
+        mock_client.return_value.containers.get.return_value = container
+        with pytest.raises(RuntimeError, match="not running"):
+            _read_stats_summary("job")
+
+
+def test_summarize_stats_computes_cpu_mem_net_blk():
+    mb = 1024 * 1024
+    snapshot = {
+        "cpu_stats": {
+            "cpu_usage": {"total_usage": 200, "percpu_usage": [1, 1]},
+            "system_cpu_usage": 2000,
+            "online_cpus": 2,
+        },
+        "precpu_stats": {"cpu_usage": {"total_usage": 100}, "system_cpu_usage": 1000},
+        "memory_stats": {"usage": 200 * mb, "limit": 500 * mb, "stats": {"inactive_file": 50 * mb}},
+        "networks": {"eth0": {"rx_bytes": 10 * mb, "tx_bytes": 2 * mb}},
+        "blkio_stats": {
+            "io_service_bytes_recursive": [
+                {"op": "Read", "value": 8 * mb},
+                {"op": "Write", "value": 4 * mb},
+            ]
+        },
+    }
+    summary = _summarize_stats("web", snapshot)
+    assert summary["container"] == "web"
+    # cpu_delta=100, system_delta=1000, 2 cpus -> (100/1000)*2*100 = 20.0
+    assert summary["cpu_percent"] == 20.0
+    # usage 200MB minus 50MB reclaimable cache -> 150MB used of 500MB -> 30%
+    assert summary["mem_used_mb"] == 150.0
+    assert summary["mem_limit_mb"] == 500.0
+    assert summary["mem_percent"] == 30.0
+    assert summary["net_rx_mb"] == 10.0
+    assert summary["net_tx_mb"] == 2.0
+    assert summary["blk_read_mb"] == 8.0
+    assert summary["blk_write_mb"] == 4.0
+
+
+def test_summarize_stats_degrades_to_zero_on_empty_snapshot():
+    # A stats shape missing the usual keys (cgroup quirks) must not raise.
+    summary = _summarize_stats("web", {})
+    assert summary["cpu_percent"] == 0.0
+    assert summary["mem_percent"] == 0.0
+    assert summary["blk_read_mb"] == 0.0
