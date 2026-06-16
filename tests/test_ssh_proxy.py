@@ -174,6 +174,8 @@ def _echo_socketpair_factory(made: list) -> Callable[[], socket.socket]:
                     remote_end.sendall(data)
             except OSError:
                 return
+            finally:
+                remote_end.close()
 
         threading.Thread(target=echo, daemon=True).start()
         return local_end
