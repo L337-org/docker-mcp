@@ -22,7 +22,7 @@ dependencies = [
     # 49.x where wheels exist. Capped here (not in tool.uv.constraint-dependencies,
     # which uvx ignores) so the cap ships in the package metadata. Lift when x86_64
     # macOS wheels return upstream.
-    "cryptography<49; platform_system == 'Darwin' and platform_machine == 'x86_64'",
+    "cryptography<50; platform_system == 'Darwin' and platform_machine == 'x86_64'",
 ]
 
 [project.scripts]
