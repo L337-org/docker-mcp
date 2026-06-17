@@ -28,6 +28,9 @@ logger = logging.getLogger(__name__)
 _RECV_BUFFER_SIZE = 32_768
 _ACCEPT_POLL_SECONDS = 0.5
 _JOIN_TIMEOUT_SECONDS = 5.0
+# Upper bound on the SSH handshake (connect/banner/auth) regardless of a caller's larger operation
+# timeout: an unreachable or packet-filtered host must fail fast, not hang for a build-sized timeout.
+_CONNECT_TIMEOUT_CAP_SECONDS = 30.0
 
 
 class BidirectionalStream(Protocol):
@@ -121,12 +124,17 @@ def connect_ssh_client(docker_host: str, *, timeout: float | None = None) -> par
     (paramiko tracks these as separate phases with separate, otherwise-unbounded defaults) so a
     slow or filtered host can't hang past the caller's own deadline — see `run_docker`, whose
     `timeout` argument only wraps `subprocess.run` and would otherwise leave this paramiko connect
-    (which runs beforehand, to set up the local proxy) unbounded.
+    (which runs beforehand, to set up the local proxy) unbounded. The bound is itself capped at
+    `_CONNECT_TIMEOUT_CAP_SECONDS` so a large operation timeout (e.g. an 1800s build) still fails an
+    unreachable host fast rather than hanging for the whole operation budget.
+
+    A connection failure (auth, unknown host key, unreachable host) is re-raised as a `RuntimeError`
+    with actionable guidance rather than a bare paramiko/socket exception.
 
     args:
         docker_host: str - a DOCKER_HOST value starting with 'ssh://'
-        timeout: float | None - seconds to bound the connect/banner/auth phases; None means
-                 paramiko's own (unbounded) defaults
+        timeout: float | None - seconds to bound the connect/banner/auth phases (capped at
+                 _CONNECT_TIMEOUT_CAP_SECONDS); None means paramiko's own (unbounded) defaults
     returns: paramiko.SSHClient - already connected; caller is responsible for closing it
     """
     target = parse_ssh_url(docker_host)
@@ -141,10 +149,20 @@ def connect_ssh_client(docker_host: str, *, timeout: float | None = None) -> par
     if target.proxycommand:
         connect_kwargs["sock"] = paramiko.ProxyCommand(target.proxycommand)
     if timeout is not None:
-        connect_kwargs["timeout"] = timeout
-        connect_kwargs["banner_timeout"] = timeout
-        connect_kwargs["auth_timeout"] = timeout
-    client.connect(**connect_kwargs)
+        bounded = min(timeout, _CONNECT_TIMEOUT_CAP_SECONDS)
+        connect_kwargs["timeout"] = bounded
+        connect_kwargs["banner_timeout"] = bounded
+        connect_kwargs["auth_timeout"] = bounded
+    try:
+        client.connect(**connect_kwargs)
+    except (paramiko.SSHException, OSError) as exc:
+        client.close()
+        raise RuntimeError(
+            f"Could not establish the SSH connection to {docker_host!r} for the docker CLI: {exc}. "
+            f"Check that your key is loaded (run `ssh-add`, and forward SSH_AUTH_SOCK), that the host "
+            f"key is in ~/.ssh/known_hosts (paramiko rejects unknown hosts — connect once with `ssh` "
+            f"after verifying its fingerprint), and that the host is reachable."
+        ) from exc
     return client
 
 

@@ -4,6 +4,7 @@ import threading
 from collections.abc import Callable
 from unittest.mock import MagicMock, patch
 
+import paramiko
 import pytest
 
 from docker_mcp.tools._ssh_proxy import (
@@ -156,6 +157,31 @@ def test_connect_ssh_client_bounds_connect_banner_and_auth_phases_when_timeout_g
     assert kwargs["timeout"] == 5.0
     assert kwargs["banner_timeout"] == 5.0
     assert kwargs["auth_timeout"] == 5.0
+
+
+def test_connect_ssh_client_caps_a_large_timeout(monkeypatch):
+    # A long operation timeout (e.g. an 1800s build) must not let an unreachable host hang for that
+    # long: the handshake bound is capped at _CONNECT_TIMEOUT_CAP_SECONDS (30s).
+    monkeypatch.setattr("os.path.exists", lambda _path: False)
+    fake_client = MagicMock()
+    with patch("docker_mcp.tools._ssh_proxy.paramiko.SSHClient", return_value=fake_client):
+        connect_ssh_client("ssh://bob@example.com", timeout=1800.0)
+    kwargs = fake_client.connect.call_args.kwargs
+    assert kwargs["timeout"] == 30.0
+    assert kwargs["banner_timeout"] == 30.0
+    assert kwargs["auth_timeout"] == 30.0
+
+
+def test_connect_ssh_client_wraps_connection_failure_with_guidance(monkeypatch):
+    # A bare paramiko/socket error is cryptic; the agent should get an actionable message instead.
+    monkeypatch.setattr("os.path.exists", lambda _path: False)
+    fake_client = MagicMock()
+    fake_client.connect.side_effect = paramiko.AuthenticationException("no auth methods")
+    with patch("docker_mcp.tools._ssh_proxy.paramiko.SSHClient", return_value=fake_client):
+        with pytest.raises(RuntimeError, match="Could not establish the SSH connection"):
+            connect_ssh_client("ssh://bob@example.com")
+    # The half-open client is closed rather than leaked on the failure path.
+    fake_client.close.assert_called_once()
 
 
 def test_paramiko_dial_stdio_factory_opens_session_and_execs_dial_stdio():

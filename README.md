@@ -154,6 +154,8 @@ The server connects through `docker.from_env()`, so anything the standard Docker
 
 CLI-backed tools (Compose, Buildx, Context, Scout) shell out to the `docker` CLI, which would otherwise use the *system* `ssh` binary over an `ssh://` endpoint. Instead, `run_docker()` detects `DOCKER_HOST=ssh://...` and transparently starts a per-call local TCP proxy (`docker_mcp/tools/_ssh_proxy.py`) that opens the same paramiko connection docker-py would, runs `docker system dial-stdio` over it, and points the CLI subprocess at `tcp://127.0.0.1:<ephemeral port>` for the duration of that one call. So the CLI-backed tools authenticate with the exact same credentials and host-key policy as the docker-py-backed tools above — **no system `ssh` binary for the direct connection**, identical on the host install and inside the container images. The one exception is a `ProxyCommand` in `~/.ssh/config` (bastion/jump-host setups): paramiko runs that command as-given, and it's commonly `ssh -W %h:%p ...`, so a jump-host hop still shells out to the system `ssh` client even though the direct connection does not.
 
+That ephemeral `127.0.0.1` listener bridges to the remote (root-equivalent) daemon with your SSH credentials for the duration of a single CLI call, so any process sharing the same loopback could reach it during that brief window. The exposure is narrow — localhost-only and torn down when the call returns — and inside a container it's narrower still, reachable only by processes within that container's network namespace. The daemon remains the trust boundary either way (see [Security considerations](#security-considerations)).
+
 ### What the agent can do
 
 Once loaded, the agent gets MCP tools grouped by Docker domain. A few examples:
