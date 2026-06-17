@@ -275,7 +275,8 @@ def test_proxy_handles_concurrent_connections():
             results[i] = sock.recv(4096)
             sock.close()
 
-        threads = [threading.Thread(target=client, args=(i,)) for i in range(8)]
+        # daemon=True so a regression that hangs a client thread can't wedge the suite at shutdown.
+        threads = [threading.Thread(target=client, args=(i,), daemon=True) for i in range(8)]
         for t in threads:
             t.start()
         for t in threads:
