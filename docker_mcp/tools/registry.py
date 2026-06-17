@@ -275,7 +275,8 @@ def _get_with_retry_policy(
     auth: tuple[str, str] | None = None,
 ) -> httpx.Response:
     """
-    Single GET that applies the project's transient-failure retry policy.
+    GET that applies the project's transient-failure retry policy, retrying in a single loop so a
+    5xx blip after a 429 retry (or vice versa) is still absorbed rather than bubbling up.
 
     - On a transient 5xx (502/503/504): retry up to `_TRANSIENT_MAX_RETRIES` times with a short
       backoff (honoring `Retry-After` when present, capped at the threshold). If it still fails,
@@ -285,28 +286,28 @@ def _get_with_retry_policy(
     - On HTTP 429 with no Retry-After, or a longer delay, or a second 429: raise.
     - Other status codes are returned as-is for the caller to handle.
     """
-    resp = client.get(url, headers=headers, params=params, auth=auth)
-    attempts = 0
-    while resp.status_code in _TRANSIENT_STATUS and attempts < _TRANSIENT_MAX_RETRIES:
-        retry_after = _parse_retry_after(resp.headers.get("Retry-After"))
-        delay = (
-            min(retry_after, _RATE_LIMIT_RETRY_THRESHOLD_SECONDS)
-            if retry_after is not None
-            else _TRANSIENT_BACKOFF_SECONDS
-        )
-        time.sleep(delay)
-        attempts += 1
+    transient_attempts = 0
+    retried_429 = False
+    while True:
         resp = client.get(url, headers=headers, params=params, auth=auth)
-    if resp.status_code != 429:
+        if resp.status_code in _TRANSIENT_STATUS and transient_attempts < _TRANSIENT_MAX_RETRIES:
+            transient_attempts += 1
+            retry_after = _parse_retry_after(resp.headers.get("Retry-After"))
+            delay = (
+                min(retry_after, _RATE_LIMIT_RETRY_THRESHOLD_SECONDS)
+                if retry_after is not None
+                else _TRANSIENT_BACKOFF_SECONDS
+            )
+            time.sleep(delay)
+            continue
+        if resp.status_code == 429:
+            retry_after = _parse_retry_after(resp.headers.get("Retry-After"))
+            if retried_429 or retry_after is None or retry_after > _RATE_LIMIT_RETRY_THRESHOLD_SECONDS:
+                _raise_rate_limited(resp, url)
+            retried_429 = True
+            time.sleep(retry_after)
+            continue
         return resp
-    retry_after = _parse_retry_after(resp.headers.get("Retry-After"))
-    if retry_after is None or retry_after > _RATE_LIMIT_RETRY_THRESHOLD_SECONDS:
-        _raise_rate_limited(resp, url)
-    time.sleep(retry_after)
-    resp = client.get(url, headers=headers, params=params, auth=auth)
-    if resp.status_code == 429:
-        _raise_rate_limited(resp, url)
-    return resp
 
 
 def _registry_get(
@@ -318,7 +319,8 @@ def _registry_get(
     accept: str | None = None,
     timeout: float,
 ) -> httpx.Response:
-    """GET https://<registry>/<path>, transparently handling a Bearer 401 challenge and 429 rate limits."""
+    """GET https://<registry>/<path>, transparently handling a Bearer 401 challenge, 429 rate
+    limits, and transient 5xx retries (see `_get_with_retry_policy`)."""
     url = f"https://{registry}{path}"
     headers: dict[str, str] = {"User-Agent": _USER_AGENT}
     if accept:

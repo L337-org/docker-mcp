@@ -553,6 +553,25 @@ def test_transient_retry_uses_default_backoff_when_no_retry_after():
     mock_sleep.assert_called_once_with(_TRANSIENT_BACKOFF_SECONDS)
 
 
+def test_429_retry_then_transient_5xx_is_still_absorbed():
+    """A 5xx blip on the GET that follows a 429 retry must be absorbed, not bubbled up."""
+    calls: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(1)
+        if len(calls) == 1:
+            return httpx.Response(429, headers={"Retry-After": "0"})
+        if len(calls) == 2:
+            return httpx.Response(502, headers={"Retry-After": "0"})
+        return httpx.Response(200, json={"tags": ["v1"]})
+
+    with _mock_client(handler):
+        result = registry_list_tags("alpine")
+
+    assert result["tags"] == ["v1"]
+    assert len(calls) == 3
+
+
 def test_bearer_token_fetch_retries_on_transient_5xx():
     """The token endpoint (auth.docker.io) is exactly where the CI 502 hit — it must retry too."""
     auth_calls: list[int] = []
