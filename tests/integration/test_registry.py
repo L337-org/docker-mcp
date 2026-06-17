@@ -32,8 +32,24 @@ def _skip_if_no_hub_network():
     yield
 
 
+def _call_or_skip(fn, *args, **kwargs):
+    """
+    Run a registry/Hub call, skipping (not failing) on a sustained upstream 5xx.
+
+    The tool already retries a transient blip internally (see _get_with_retry_policy); only a
+    sustained outage reaches here. These tests validate our parsing, not Docker Hub's uptime, so
+    a 502/503/504 from docker.io is an upstream problem, not a regression in this code.
+    """
+    try:
+        return fn(*args, **kwargs)
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code in (502, 503, 504):
+            pytest.skip(f"Docker Hub returned a sustained {exc.response.status_code}; skipping: {exc}")
+        raise
+
+
 def test_registry_list_tags_alpine_public():
-    result = registry_list_tags("alpine", limit=20)
+    result = _call_or_skip(registry_list_tags, "alpine", limit=20)
     assert result["registry"] == "registry-1.docker.io"
     assert result["name"] == "library/alpine"
     assert result["tags"], "expected at least one tag for library/alpine"
@@ -41,14 +57,14 @@ def test_registry_list_tags_alpine_public():
 
 
 def test_registry_inspect_manifest_alpine_latest():
-    result = registry_inspect_manifest("alpine", reference="latest")
+    result = _call_or_skip(registry_inspect_manifest, "alpine", reference="latest")
     assert result["digest"].startswith("sha256:")
     assert result["media_type"]
     assert isinstance(result["manifest"], dict)
 
 
 def test_hub_list_tags_alpine_returns_metadata():
-    result = hub_list_tags("alpine", limit=10)
+    result = _call_or_skip(hub_list_tags, "alpine", limit=10)
     assert result["name"] == "library/alpine"
     assert result["tags"]
     entry = result["tags"][0]
@@ -58,14 +74,14 @@ def test_hub_list_tags_alpine_returns_metadata():
 
 
 def test_hub_repo_info_alpine_has_pull_count():
-    info = hub_repo_info("alpine")
+    info = _call_or_skip(hub_repo_info, "alpine")
     assert info.get("name") == "alpine"
     assert info.get("user") == "library"
     assert isinstance(info.get("pull_count"), int)
 
 
 def test_registry_get_config_alpine_amd64():
-    result = registry_get_config("alpine", reference="latest", platform="linux/amd64")
+    result = _call_or_skip(registry_get_config, "alpine", reference="latest", platform="linux/amd64")
     assert result["config_digest"].startswith("sha256:")
     # alpine publishes a multi-platform index, so a platform should have been selected.
     assert result["platform"] == "linux/amd64"
@@ -77,7 +93,7 @@ def test_registry_get_config_alpine_amd64():
 
 
 def test_hub_rate_limit_anonymous_returns_budget():
-    result = hub_rate_limit()
+    result = _call_or_skip(hub_rate_limit)
     assert result["authenticated"] is False
     # Anonymous Hub pulls are metered, so we expect a numeric budget (unless Docker changes policy,
     # in which case "unlimited" would be True — accept either rather than asserting a brittle number).

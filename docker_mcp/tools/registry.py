@@ -47,6 +47,14 @@ def _env_credentials(username: str | None, password: str | None) -> tuple[str | 
 # so an agent / human can decide whether to back off rather than blocking inside a tool.
 _RATE_LIMIT_RETRY_THRESHOLD_SECONDS = 10.0
 
+# Transient server-side statuses: the request was well-formed but the registry / auth
+# endpoint hiccuped (Docker Hub's auth.docker.io intermittently 502s under load). These
+# are worth a brief, bounded retry rather than failing the tool call outright — a single
+# upstream blip should not surface as a hard error.
+_TRANSIENT_STATUS = frozenset({502, 503, 504})
+_TRANSIENT_MAX_RETRIES = 2
+_TRANSIENT_BACKOFF_SECONDS = 0.5
+
 # Errors emitted by email.utils.parsedate_to_datetime for non-date input. Bound to a
 # module-level tuple so ruff format leaves the `except` form alone — PEP 758 makes the
 # parentheses optional on Python 3.14, but we keep them for clarity to review bots.
@@ -194,7 +202,7 @@ def _get_bearer_token(
     if "scope" in challenge:
         params["scope"] = challenge["scope"]
     auth = (username, password) if username and password else None
-    resp = client.get(realm, params=params, auth=auth, headers={"User-Agent": _USER_AGENT})
+    resp = _get_with_retry_policy(client, realm, headers={"User-Agent": _USER_AGENT}, params=params, auth=auth)
     resp.raise_for_status()
     body = resp.json()
     token = body.get("token") or body.get("access_token")
@@ -258,28 +266,44 @@ def _raise_rate_limited(resp: httpx.Response, url: str) -> NoReturn:
     raise RuntimeError(f"Registry rate-limited (HTTP 429) for {url}{suffix}.{guidance}")
 
 
-def _get_with_429_policy(
+def _get_with_retry_policy(
     client: httpx.Client,
     url: str,
     *,
     headers: dict[str, str],
     params: dict[str, str] | None = None,
+    auth: tuple[str, str] | None = None,
 ) -> httpx.Response:
     """
-    Single GET that applies the project's 429 retry policy.
+    Single GET that applies the project's transient-failure retry policy.
 
+    - On a transient 5xx (502/503/504): retry up to `_TRANSIENT_MAX_RETRIES` times with a short
+      backoff (honoring `Retry-After` when present, capped at the threshold). If it still fails,
+      the last response is returned for the caller's `raise_for_status` to surface — a sustained
+      outage is not swallowed, only a blip is absorbed.
     - On HTTP 429 with `Retry-After <= 10s`: sleep + retry once.
     - On HTTP 429 with no Retry-After, or a longer delay, or a second 429: raise.
     - Other status codes are returned as-is for the caller to handle.
     """
-    resp = client.get(url, headers=headers, params=params)
+    resp = client.get(url, headers=headers, params=params, auth=auth)
+    attempts = 0
+    while resp.status_code in _TRANSIENT_STATUS and attempts < _TRANSIENT_MAX_RETRIES:
+        retry_after = _parse_retry_after(resp.headers.get("Retry-After"))
+        delay = (
+            min(retry_after, _RATE_LIMIT_RETRY_THRESHOLD_SECONDS)
+            if retry_after is not None
+            else _TRANSIENT_BACKOFF_SECONDS
+        )
+        time.sleep(delay)
+        attempts += 1
+        resp = client.get(url, headers=headers, params=params, auth=auth)
     if resp.status_code != 429:
         return resp
     retry_after = _parse_retry_after(resp.headers.get("Retry-After"))
     if retry_after is None or retry_after > _RATE_LIMIT_RETRY_THRESHOLD_SECONDS:
         _raise_rate_limited(resp, url)
     time.sleep(retry_after)
-    resp = client.get(url, headers=headers, params=params)
+    resp = client.get(url, headers=headers, params=params, auth=auth)
     if resp.status_code == 429:
         _raise_rate_limited(resp, url)
     return resp
@@ -300,14 +324,14 @@ def _registry_get(
     if accept:
         headers["Accept"] = accept
     with httpx.Client(timeout=timeout, follow_redirects=True) as client:
-        resp = _get_with_429_policy(client, url, headers=headers)
+        resp = _get_with_retry_policy(client, url, headers=headers)
         if resp.status_code == 401:
             challenge = _parse_bearer_challenge(resp.headers.get("WWW-Authenticate", ""))
             if not challenge:
                 resp.raise_for_status()
             token = _get_bearer_token(client, challenge, username=username, password=password, registry=registry)
             headers["Authorization"] = f"Bearer {token}"
-            resp = _get_with_429_policy(client, url, headers=headers)
+            resp = _get_with_retry_policy(client, url, headers=headers)
         resp.raise_for_status()
         return resp
 
@@ -604,7 +628,7 @@ def hub_list_tags(repository: str, limit: int = 100) -> dict:
     pages = 0
     with httpx.Client(timeout=_DEFAULT_TIMEOUT, follow_redirects=True) as client:
         while url and pages < _MAX_TAG_PAGES:
-            resp = _get_with_429_policy(client, url, headers={"User-Agent": _USER_AGENT})
+            resp = _get_with_retry_policy(client, url, headers={"User-Agent": _USER_AGENT})
             resp.raise_for_status()
             body = resp.json()
             for entry in body.get("results", []) or []:
@@ -641,7 +665,7 @@ def hub_repo_info(repository: str) -> dict:
     repo = _hub_normalize(repository)
     url = f"{_HUB_API_BASE}/repositories/{repo}/"
     with httpx.Client(timeout=_DEFAULT_TIMEOUT, follow_redirects=True) as client:
-        resp = _get_with_429_policy(client, url, headers={"User-Agent": _USER_AGENT})
+        resp = _get_with_retry_policy(client, url, headers={"User-Agent": _USER_AGENT})
     resp.raise_for_status()
     return resp.json()
 

@@ -499,6 +499,90 @@ def test_hub_repo_info_applies_429_policy():
             hub_repo_info("alpine")
 
 
+# ---------- transient 5xx retry policy ----------
+
+
+def test_registry_list_tags_retries_on_transient_502():
+    calls: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(1)
+        if len(calls) == 1:
+            # Docker Hub's auth/registry endpoints intermittently 502 under load.
+            return httpx.Response(502, headers={"Retry-After": "0"})
+        return httpx.Response(200, json={"tags": ["v1", "v2"]})
+
+    with _mock_client(handler):
+        result = registry_list_tags("alpine")
+
+    assert result["tags"] == ["v1", "v2"]
+    assert len(calls) == 2
+
+
+def test_registry_list_tags_gives_up_after_transient_5xx_retries():
+    calls: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(1)
+        return httpx.Response(503, headers={"Retry-After": "0"})
+
+    with _mock_client(handler):
+        # A sustained outage is surfaced (not swallowed) via the caller's raise_for_status.
+        with pytest.raises(httpx.HTTPStatusError):
+            registry_list_tags("alpine")
+
+    # Initial attempt + _TRANSIENT_MAX_RETRIES (2) = 3 total GETs.
+    assert len(calls) == 3
+
+
+def test_transient_retry_uses_default_backoff_when_no_retry_after():
+    calls: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(1)
+        if len(calls) == 1:
+            return httpx.Response(504)  # no Retry-After header
+        return httpx.Response(200, json={"tags": ["v1"]})
+
+    with _mock_client(handler), patch("docker_mcp.tools.registry.time.sleep") as mock_sleep:
+        result = registry_list_tags("alpine")
+
+    from docker_mcp.tools.registry import _TRANSIENT_BACKOFF_SECONDS
+
+    assert result["tags"] == ["v1"]
+    mock_sleep.assert_called_once_with(_TRANSIENT_BACKOFF_SECONDS)
+
+
+def test_bearer_token_fetch_retries_on_transient_5xx():
+    """The token endpoint (auth.docker.io) is exactly where the CI 502 hit — it must retry too."""
+    auth_calls: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "auth.example.com":
+            auth_calls.append(1)
+            if len(auth_calls) == 1:
+                return httpx.Response(502, headers={"Retry-After": "0"})
+            return httpx.Response(200, json={"token": "fake-token"})
+        if "Authorization" not in request.headers:
+            return httpx.Response(
+                401,
+                headers={
+                    "WWW-Authenticate": 'Bearer realm="https://auth.example.com/token",'
+                    'service="reg.example.com",'
+                    'scope="repository:foo/bar:pull"'
+                },
+            )
+        assert request.headers["Authorization"] == "Bearer fake-token"
+        return httpx.Response(200, json={"name": "foo/bar", "tags": ["v1"]})
+
+    with _mock_client(handler):
+        result = registry_list_tags("reg.example.com/foo/bar")
+
+    assert result["tags"] == ["v1"]
+    # The token endpoint was retried after its transient 502, not failed.
+    assert len(auth_calls) == 2
+
+
 def test_parse_retry_after_seconds():
     from docker_mcp.tools.registry import _parse_retry_after
 
