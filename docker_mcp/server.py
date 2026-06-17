@@ -352,10 +352,21 @@ def _annotations_for(name: str, category: ToolCategory) -> ToolAnnotations:
     )
 
 
-# JSON Schema keywords whose value is a {name: subschema} map — their keys are caller-supplied
-# names (a property literally named "title", a $def called "title"), NOT schema keywords, so we
-# must recurse into the values without ever treating those keys as a title annotation to drop.
-_SCHEMA_NAME_MAPS = frozenset({"properties", "$defs", "definitions", "patternProperties", "dependentSchemas"})
+# JSON Schema keywords whose value is a {name: subschema-or-other} map — their keys are caller-supplied
+# names (a property literally named "title", a $def called "title"), NOT schema keywords, so we must
+# recurse into the values without ever treating those keys as a title annotation to drop. Covers the
+# full set across draft-07 / 2019-09 / 2020-12 so a future pydantic emitting any of them stays safe.
+_SCHEMA_NAME_MAPS = frozenset(
+    {
+        "properties",
+        "$defs",
+        "definitions",
+        "patternProperties",
+        "dependentSchemas",
+        "dependencies",
+        "dependentRequired",
+    }
+)
 
 
 def _strip_schema_titles(node: Any) -> None:
@@ -405,9 +416,16 @@ def tool(**kwargs: Any) -> Callable[[Callable], Callable]:
             return func
         decorated = mcp.tool(annotations=_annotations_for(name, category), **kwargs)(func)
         # Drop pydantic's information-free `title` annotations from the advertised input schema.
-        registered_tool = mcp._tool_manager.get_tool(kwargs.get("name") or name)
-        if registered_tool is not None:
-            _strip_schema_titles(registered_tool.parameters)
+        # This reaches into FastMCP internals (`_tool_manager.get_tool(...).parameters`); guard it so
+        # a future FastMCP refactor degrades to "titles not stripped" (a test catches that) rather
+        # than crashing the server at import time.
+        try:
+            registered_tool = mcp._tool_manager.get_tool(kwargs.get("name") or name)
+        except AttributeError, KeyError:
+            registered_tool = None
+        parameters = registered_tool.parameters if registered_tool is not None else None
+        if isinstance(parameters, dict):
+            _strip_schema_titles(parameters)
         return decorated
 
     return decorator

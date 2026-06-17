@@ -326,7 +326,7 @@ def container_logs(
         stdout - Include stdout
         stderr - Include stderr
         timestamps - Include timestamps
-        tail: int | "all" - Number of lines from the end, or the literal "all"
+        tail - Number of lines from the end, or the literal "all"
         since - Only return logs created after this unix timestamp
         until - Only return logs created before this unix timestamp
     returns: str - Decoded log output
@@ -693,7 +693,7 @@ def wait_container(
     args:
         id_or_name - The container id or name
         timeout - Maximum seconds to wait before raising (default 600; None waits forever)
-        condition: "not-running" | "next-exit" | "removed" - State to wait for
+        condition - State to wait for: "not-running" (default), "next-exit", or "removed"
     returns: dict - The wait result with StatusCode and Error keys
     """
     container = _get_client().containers.get(id_or_name)

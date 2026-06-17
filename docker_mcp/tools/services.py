@@ -125,7 +125,7 @@ def service_logs(
         stderr - Include stderr
         since - Show logs since this Unix timestamp
         timestamps - Include timestamps
-        tail: int | "all" - Number of lines from the end, or the literal "all"
+        tail - Number of lines from the end, or the literal "all"
         max_bytes - Abort with ValueError if the buffered logs exceed this many bytes (default 32 MiB)
     returns: str - Decoded log output
     """
