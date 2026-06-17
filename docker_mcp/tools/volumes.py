@@ -17,10 +17,10 @@ def create_volume(
     Create a volume.
 
     args:
-        name: str - Volume name (auto-generated if omitted)
-        driver: str - Volume driver name
-        driver_opts: dict - Driver-specific options
-        labels: dict - Labels to set on the volume
+        name - Volume name (auto-generated if omitted)
+        driver - Volume driver name
+        driver_opts - Driver-specific options
+        labels - Labels to set on the volume
     returns: dict - The created volume's attrs
     """
     kwargs = drop_none(
@@ -34,7 +34,7 @@ def get_volume(volume_id: str) -> dict:
     """
     Get a volume by name.
 
-    args: volume_id: str - The volume name
+    args: volume_id - The volume name
     returns: dict - The volume's attrs
     """
     return _get_client().volumes.get(volume_id).attrs
@@ -46,8 +46,8 @@ def list_volumes(filters: dict | None = None, managed_only: bool = False) -> lis
     List volumes.
 
     args:
-        filters: dict - Filter by attributes (e.g. dangling, name, label)
-        managed_only: bool - Only return volumes created by this MCP server (filters on the
+        filters - Filter by attributes (e.g. dangling, name, label)
+        managed_only - Only return volumes created by this MCP server (filters on the
                              docker-mcp-server.managed label); combines with any `filters` given
     returns: list - A list of volume attrs dicts
     """
@@ -61,7 +61,7 @@ def prune_volumes(filters: dict | None = None) -> dict:
     """
     Remove unused volumes.
 
-    args: filters: dict - Filters to apply
+    args: filters - Filters to apply
     returns: dict - Information on deleted volumes and reclaimed space
     """
     return _get_client().volumes.prune(filters=filters)
@@ -73,8 +73,8 @@ def remove_volume(volume_id: str, force: bool = False) -> bool:
     Remove a volume.
 
     args:
-        volume_id: str - The volume name
-        force: bool - Force removal
+        volume_id - The volume name
+        force - Force removal
     returns: bool - True after removal
     """
     _get_client().volumes.get(volume_id).remove(force=force)

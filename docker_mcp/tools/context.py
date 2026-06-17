@@ -15,10 +15,9 @@ def context_ls() -> list:
     """
     List Docker CLI contexts known to the host running this MCP server.
 
-    Contexts are a CLI concept (stored under the user's docker config directory) and let one
-    docker CLI target multiple daemons. This MCP server itself uses whatever DOCKER_HOST /
-    current-context resolves to at startup, so changing contexts only affects future
-    subprocess-based tools, not the long-lived docker-py client used by the SDK-backed tools.
+    Contexts are a CLI concept (stored in the docker config dir) letting one CLI target multiple
+    daemons. This server uses whatever DOCKER_HOST / current-context resolved to at startup, so
+    changing contexts only affects future subprocess-based tools, not the docker-py SDK client.
 
     returns: list - One dict per context with at least name, description, dockerEndpoint, and current
     """
@@ -32,7 +31,7 @@ def context_inspect(name: str) -> dict:
     """
     Return the full configuration for a single Docker context.
 
-    args: name: str - Context name (use the `Name` field from `context_ls`)
+    args: name - Context name (use the `Name` field from `context_ls`)
     returns: dict - The parsed `docker context inspect` entry for that context
     """
     result = run_docker(["context", "inspect", safe_positional(name, "context name")])
@@ -60,13 +59,13 @@ def context_create(
     Create a new Docker CLI context pointing at a daemon endpoint.
 
     args:
-        name: str - Name for the new context (must not already exist)
-        docker_host: str - Daemon URL, e.g. "tcp://10.0.0.5:2376" or "unix:///var/run/docker.sock"
-        description: str - Optional human description shown in `context ls`
-        tls_ca: str - Path on the local host to the CA cert (for TLS daemons)
-        tls_cert: str - Path on the local host to the client cert
-        tls_key: str - Path on the local host to the client key
-        skip_tls_verify: bool - Disable TLS verification (insecure; for testing only)
+        name - Name for the new context (must not already exist)
+        docker_host - Daemon URL, e.g. "tcp://10.0.0.5:2376" or "unix:///var/run/docker.sock"
+        description - Optional human description shown in `context ls`
+        tls_ca - Path on the local host to the CA cert (for TLS daemons)
+        tls_cert - Path on the local host to the client cert
+        tls_key - Path on the local host to the client key
+        skip_tls_verify - Disable TLS verification (insecure; for testing only)
     returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
     """
     docker_spec_parts = [f"host={docker_host}"]
@@ -89,11 +88,11 @@ def context_use(name: str) -> dict:
     """
     Set the active Docker context for the CLI on the host running this MCP server.
 
-    Note: this does not retarget the long-lived docker-py client; SDK-backed tools
-    continue to use whatever endpoint they connected to at startup. To retarget those,
-    restart the MCP server with a different DOCKER_HOST / DOCKER_CONTEXT environment.
+    Note: this does not retarget the long-lived docker-py client — SDK-backed tools keep using the
+    endpoint they connected to at startup. To retarget those, restart the server with a different
+    DOCKER_HOST / DOCKER_CONTEXT.
 
-    args: name: str - Existing context name to set as default
+    args: name - Existing context name to set as default
     returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
     """
     return run_docker(["context", "use", safe_positional(name, "context name")]).to_dict()
@@ -105,8 +104,8 @@ def context_rm(name: str, force: bool = False) -> dict:
     Remove a Docker CLI context.
 
     args:
-        name: str - Context name to remove
-        force: bool - Force removal even if the context is the current one
+        name - Context name to remove
+        force - Force removal even if the context is the current one
     returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
     """
     args = ["context", "rm", safe_positional(name, "context name")]

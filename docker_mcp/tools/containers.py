@@ -56,28 +56,28 @@ def run_container(
     Run a container from an image.
 
     args:
-        image: str - The image to run
-        command: str | list - The command to run in the container
-        name: str - Name to assign to the container
-        detach: bool - Run in the background and return container info
-        environment: dict | list - Environment variables to set
-        ports: dict - Port mappings, e.g. {'2222/tcp': 3333}
-        volumes: dict | list - Volumes to mount
-        network: str - Name of the network to attach
-        hostname: str - Optional hostname for the container
-        user: str - Username or UID to run as
-        working_dir: str - Working directory inside the container
-        entrypoint: str | list - Entrypoint to override the image default
-        restart_policy: RestartPolicy - Restart policy, e.g. {'Name': 'on-failure', 'MaximumRetryCount': 3}
-        labels: dict | list - Labels to set on the container
-        remove: bool - Remove the container when it exits (only with detach=False)
-        auto_remove: bool - Enable auto-removal of the container on daemon side
-        privileged: bool - Give extended privileges to the container
-        tty: bool - Allocate a pseudo-TTY
-        stdin_open: bool - Keep STDIN open
-        mem_limit: int | str - Memory limit
-        cpu_count: int - Number of CPUs
-        extra_kwargs: dict - Additional keyword arguments forwarded to ContainerCollection.run
+        image - The image to run
+        command - The command to run in the container
+        name - Name to assign to the container
+        detach - Run in the background and return container info
+        environment - Environment variables to set
+        ports - Port mappings, e.g. {'2222/tcp': 3333}
+        volumes - Volumes to mount
+        network - Name of the network to attach
+        hostname - Optional hostname for the container
+        user - Username or UID to run as
+        working_dir - Working directory inside the container
+        entrypoint - Entrypoint to override the image default
+        restart_policy - Restart policy, e.g. {'Name': 'on-failure', 'MaximumRetryCount': 3}
+        labels - Labels to set on the container
+        remove - Remove the container when it exits (only with detach=False)
+        auto_remove - Enable auto-removal of the container on daemon side
+        privileged - Give extended privileges to the container
+        tty - Allocate a pseudo-TTY
+        stdin_open - Keep STDIN open
+        mem_limit - Memory limit
+        cpu_count - Number of CPUs
+        extra_kwargs - Additional keyword arguments forwarded to ContainerCollection.run
     returns: dict | str - Container attrs when detach=True, otherwise stdout/stderr as a string
     """
     kwargs: dict = {
@@ -124,9 +124,9 @@ def create_container(image: str, command: str | list | None = None, extra_kwargs
     Create a container without starting it.
 
     args:
-        image: str - The image to use
-        command: str | list - The command to run when started
-        extra_kwargs: dict - Additional keyword arguments forwarded to ContainerCollection.create
+        image - The image to use
+        command - The command to run when started
+        extra_kwargs - Additional keyword arguments forwarded to ContainerCollection.create
     returns: dict - The created container's attrs
     """
     kwargs = dict(extra_kwargs or {})
@@ -142,7 +142,7 @@ def get_container(id_or_name: str) -> dict:
     """
     Get a container by id or name.
 
-    args: id_or_name: str - The container id or name
+    args: id_or_name - The container id or name
     returns: dict - The container's attrs
     """
     return _get_client().containers.get(id_or_name).attrs
@@ -163,14 +163,14 @@ def list_containers(
     List containers.
 
     args:
-        all: bool - Show all containers, including stopped ones
-        since: str - Only show containers created after this id or name
-        before: str - Only show containers created before this id or name
-        limit: int - Maximum number of results
-        filters: dict - Filter by attributes (e.g. status, label)
-        sparse: bool - Skip inspect calls and return less detail
-        ignore_removed: bool - Ignore containers removed during listing
-        managed_only: bool - Only return containers created by this MCP server (filters on the
+        all - Show all containers, including stopped ones
+        since - Only show containers created after this id or name
+        before - Only show containers created before this id or name
+        limit - Maximum number of results
+        filters - Filter by attributes (e.g. status, label)
+        sparse - Skip inspect calls and return less detail
+        ignore_removed - Ignore containers removed during listing
+        managed_only - Only return containers created by this MCP server (filters on the
                              docker-mcp-server.managed label); combines with any `filters` given
     returns: list - A list of container attrs dicts
     """
@@ -190,7 +190,7 @@ def prune_containers(filters: dict | None = None) -> dict:
     """
     Remove stopped containers.
 
-    args: filters: dict - Filters to apply to the prune operation
+    args: filters - Filters to apply to the prune operation
     returns: dict - Information on deleted containers and reclaimed space
     """
     return _get_client().containers.prune(filters=filters)
@@ -201,7 +201,7 @@ def start_container(id_or_name: str) -> dict:
     """
     Start a container.
 
-    args: id_or_name: str - The container id or name
+    args: id_or_name - The container id or name
     returns: dict - The container's attrs after start
     """
     container = _get_client().containers.get(id_or_name)
@@ -216,8 +216,8 @@ def stop_container(id_or_name: str, timeout: int = 10) -> dict:
     Stop a container.
 
     args:
-        id_or_name: str - The container id or name
-        timeout: int - Seconds to wait before forcing termination
+        id_or_name - The container id or name
+        timeout - Seconds to wait before forcing termination
     returns: dict - The container's attrs after stop
     """
     container = _get_client().containers.get(id_or_name)
@@ -233,8 +233,8 @@ def restart_container(id_or_name: str, timeout: int = 10) -> dict:
     Restart a container.
 
     args:
-        id_or_name: str - The container id or name
-        timeout: int - Seconds to wait before forcing restart
+        id_or_name - The container id or name
+        timeout - Seconds to wait before forcing restart
     returns: dict - The container's attrs after restart
     """
     container = _get_client().containers.get(id_or_name)
@@ -250,8 +250,8 @@ def kill_container(id_or_name: str, signal: str | None = None) -> dict:
     Send a signal to a container.
 
     args:
-        id_or_name: str - The container id or name
-        signal: str - Signal to send (defaults to SIGKILL)
+        id_or_name - The container id or name
+        signal - Signal to send (defaults to SIGKILL)
     returns: dict - The container's attrs after kill
     """
     container = _get_client().containers.get(id_or_name)
@@ -266,7 +266,7 @@ def pause_container(id_or_name: str) -> dict:
     """
     Pause all processes in a container.
 
-    args: id_or_name: str - The container id or name
+    args: id_or_name - The container id or name
     returns: dict - The container's attrs after pause
     """
     container = _get_client().containers.get(id_or_name)
@@ -281,7 +281,7 @@ def unpause_container(id_or_name: str) -> dict:
     """
     Resume all processes in a paused container.
 
-    args: id_or_name: str - The container id or name
+    args: id_or_name - The container id or name
     returns: dict - The container's attrs after unpause
     """
     container = _get_client().containers.get(id_or_name)
@@ -296,10 +296,10 @@ def remove_container(id_or_name: str, v: bool = False, link: bool = False, force
     Remove a container.
 
     args:
-        id_or_name: str - The container id or name
-        v: bool - Also remove anonymous volumes
-        link: bool - Remove the specified link
-        force: bool - Force remove a running container
+        id_or_name - The container id or name
+        v - Also remove anonymous volumes
+        link - Remove the specified link
+        force - Force remove a running container
     returns: bool - True after removal completes
     """
     container = _get_client().containers.get(id_or_name)
@@ -322,13 +322,13 @@ def container_logs(
     Get the logs of a container.
 
     args:
-        id_or_name: str - The container id or name
-        stdout: bool - Include stdout
-        stderr: bool - Include stderr
-        timestamps: bool - Include timestamps
+        id_or_name - The container id or name
+        stdout - Include stdout
+        stderr - Include stderr
+        timestamps - Include timestamps
         tail: int | "all" - Number of lines from the end, or the literal "all"
-        since: float - Only return logs created after this unix timestamp
-        until: float - Only return logs created before this unix timestamp
+        since - Only return logs created after this unix timestamp
+        until - Only return logs created before this unix timestamp
     returns: str - Decoded log output
     """
     container = _get_client().containers.get(id_or_name)
@@ -359,25 +359,22 @@ def follow_container_logs(
     """
     Tail a container's log stream, bounded by `limit_lines`, `timeout_seconds`, or container exit.
 
-    The call returns when `limit_lines` lines have been collected, `timeout_seconds` elapses, or the
-    container exits, whichever comes first. Wraps the streaming logs API of the `docker` module so
-    the agent can watch live output without blocking forever. `limit_lines` bounds memory;
-    `timeout_seconds` bounds wall-clock time, which matters for a quiet but long-lived container
-    that would otherwise never emit the line that lets the call return.
+    Returns when `limit_lines` lines are collected, `timeout_seconds` elapses, or the container exits,
+    whichever comes first — so the agent can watch live output without blocking forever (`limit_lines`
+    bounds memory, `timeout_seconds` bounds wall-clock for a quiet but long-lived container).
 
-    Caveat for `ssh://` daemons: docker-py cannot cancel an SSH stream, so the `timeout_seconds`
-    watchdog can't interrupt a fully silent container there — use `container_logs` (a one-shot,
-    non-streaming read) against an SSH daemon if you need a hard time bound.
+    Caveat for `ssh://` daemons: docker-py can't cancel an SSH stream, so the `timeout_seconds`
+    watchdog can't interrupt a fully silent container — use `container_logs` (one-shot, non-streaming)
+    there if you need a hard time bound.
 
     args:
-        id_or_name: str - The container id or name
-        limit_lines: int - Maximum number of lines to collect before returning (default 200)
-        stdout: bool - Include stdout
-        stderr: bool - Include stderr
-        timestamps: bool - Include timestamps
-        since: float - Only return logs created after this unix timestamp
-        timeout_seconds: float - Maximum wall-clock seconds to follow before returning what was
-                                 collected so far (defaults to 30)
+        id_or_name - The container id or name
+        limit_lines - Max lines to collect before returning (default 200)
+        stdout - Include stdout
+        stderr - Include stderr
+        timestamps - Include timestamps
+        since - Only return logs created after this unix timestamp
+        timeout_seconds - Max wall-clock seconds to follow before returning what was collected (default 30)
     returns: str - Decoded log output containing up to `limit_lines` lines
     """
     container = _get_client().containers.get(id_or_name)
@@ -412,7 +409,7 @@ def container_stats(id_or_name: str) -> dict:
     """
     Get a single resource usage stats snapshot for a container.
 
-    args: id_or_name: str - The container id or name
+    args: id_or_name - The container id or name
     returns: dict - Decoded stats snapshot
     """
     container = _get_client().containers.get(id_or_name)
@@ -514,8 +511,8 @@ def container_top(id_or_name: str, ps_args: str | None = None) -> dict:
     Show the running processes inside a container.
 
     args:
-        id_or_name: str - The container id or name
-        ps_args: str - Arguments to pass to ps inside the container
+        id_or_name - The container id or name
+        ps_args - Arguments to pass to ps inside the container
     returns: dict - Output of the top command
     """
     container = _get_client().containers.get(id_or_name)
@@ -540,27 +537,23 @@ def exec_in_container(
     """
     Run a command inside a running container.
 
-    Security: when any element of `cmd` is derived from agent-controlled input,
-    use an exec-form argv list that does not invoke a shell — e.g. ["python", "-V"]
-    or ["ls", path]. A string `cmd`, or a list like ["sh", "-c", template] that
-    invokes a shell, will interpret shell metacharacters in the untrusted parts
-    and can run unintended commands.
+    Security: when any element of `cmd` is agent-controlled, use an exec-form argv list that does not
+    invoke a shell (e.g. `["python", "-V"]`, `["ls", path]`). A string `cmd`, or a shell form like
+    `["sh", "-c", template]`, interprets shell metacharacters in the untrusted parts.
 
     args:
-        id_or_name: str - The container id or name
-        cmd: str | list - The command to execute (prefer an exec-form argv list
-                          that does not invoke a shell when any element is
-                          agent-controlled)
-        stdout: bool - Attach to stdout
-        stderr: bool - Attach to stderr
-        stdin: bool - Attach to stdin
-        tty: bool - Allocate a pseudo-TTY
-        privileged: bool - Run with extended privileges
-        user: str - User to run the command as
-        detach: bool - Detach from the exec
-        environment: dict | list - Environment variables
-        workdir: str - Working directory inside the container
-        demux: bool - Return stdout and stderr separately
+        id_or_name - The container id or name
+        cmd - Command to execute (prefer exec-form argv, no shell, when any element is agent-controlled)
+        stdout - Attach to stdout
+        stderr - Attach to stderr
+        stdin - Attach to stdin
+        tty - Allocate a pseudo-TTY
+        privileged - Run with extended privileges
+        user - User to run the command as
+        detach - Detach from the exec
+        environment - Environment variables
+        workdir - Working directory inside the container
+        demux - Return stdout and stderr separately
     returns: dict - Mapping with exit_code and output keys
     """
     container = _get_client().containers.get(id_or_name)
@@ -600,14 +593,14 @@ def commit_container(
     Commit a container to an image.
 
     args:
-        id_or_name: str - The container id or name
-        repository: str - Repository for the new image
-        tag: str - Tag for the new image
-        message: str - Commit message
-        author: str - Author of the commit
-        pause: bool - Pause container during commit
-        changes: str | list - Dockerfile instructions to apply
-        conf: dict - Configuration overrides
+        id_or_name - The container id or name
+        repository - Repository for the new image
+        tag - Tag for the new image
+        message - Commit message
+        author - Author of the commit
+        pause - Pause container during commit
+        changes - Dockerfile instructions to apply
+        conf - Configuration overrides
     returns: dict - The new image's attrs
     """
     container = _get_client().containers.get(id_or_name)
@@ -628,7 +621,7 @@ def container_diff(id_or_name: str) -> list:
     """
     Inspect changes on a container's filesystem.
 
-    args: id_or_name: str - The container id or name
+    args: id_or_name - The container id or name
     returns: list - Filesystem changes since the image was created
     """
     container = _get_client().containers.get(id_or_name)
@@ -641,8 +634,8 @@ def rename_container(id_or_name: str, name: str) -> dict:
     Rename a container.
 
     args:
-        id_or_name: str - The container id or name
-        name: str - The new name
+        id_or_name - The container id or name
+        name - The new name
     returns: dict - The container's attrs after rename
     """
     container = _get_client().containers.get(id_or_name)
@@ -657,9 +650,9 @@ def resize_container(id_or_name: str, height: int, width: int) -> bool:
     Resize the tty session of a container.
 
     args:
-        id_or_name: str - The container id or name
-        height: int - New tty height in characters
-        width: int - New tty width in characters
+        id_or_name - The container id or name
+        height - New tty height in characters
+        width - New tty width in characters
     returns: bool - True after the resize completes
     """
     container = _get_client().containers.get(id_or_name)
@@ -673,8 +666,8 @@ def update_container(id_or_name: str, updates: dict) -> dict:
     Update resource limits on a running container.
 
     args:
-        id_or_name: str - The container id or name
-        updates: dict - Resource fields to update (cpu_shares, mem_limit, restart_policy, etc.)
+        id_or_name - The container id or name
+        updates - Resource fields to update (cpu_shares, mem_limit, restart_policy, etc.)
     returns: dict - The container's attrs after the update
     """
     container = _get_client().containers.get(id_or_name)
@@ -698,8 +691,8 @@ def wait_container(
     restore the old unbounded behavior — only do so if you are sure the wait will complete.
 
     args:
-        id_or_name: str - The container id or name
-        timeout: int | None - Maximum seconds to wait before raising (default 600; None waits forever)
+        id_or_name - The container id or name
+        timeout - Maximum seconds to wait before raising (default 600; None waits forever)
         condition: "not-running" | "next-exit" | "removed" - State to wait for
     returns: dict - The wait result with StatusCode and Error keys
     """
@@ -737,25 +730,22 @@ def wait_for_container_healthy(
     """
     Poll a container until its healthcheck reports `healthy` (or it stops, or the timeout elapses).
 
-    Complements `wait_container`, which waits for a container to *exit*: this waits for a running
-    container to become *healthy*. It re-inspects every `poll_interval` seconds and never blocks
-    longer than `timeout` (no exception on timeout — the result carries `timed_out: true`).
+    Complements `wait_container` (which waits for *exit*): this waits for a running container to become
+    *healthy*. Re-inspects every `poll_interval`s, never blocks past `timeout` (no exception on timeout —
+    the result carries `timed_out: true`).
 
-    Health comes from the container's HEALTHCHECK. If the image/container defines none there is no
-    health state to wait for, so once the container is `running` the tool returns promptly with
-    `health: null` and `healthy: false` (false meaning "not confirmed healthy", not "unhealthy" —
-    check the `health` field to tell them apart). A container that exits before becoming healthy
-    returns with its terminal `status` and `healthy: false`.
+    Health comes from the container's HEALTHCHECK. With none defined, once the container is `running`
+    the tool returns promptly with `health: null` and `healthy: false` (false = "not confirmed healthy",
+    not "unhealthy" — check `health` to tell them apart). A container that exits before becoming healthy
+    returns its terminal `status` and `healthy: false`.
 
     args:
-        id_or_name: str - The container id or name
-        timeout: float - Maximum seconds to wait before returning timed_out (default 120)
-        poll_interval: float - Seconds between health re-inspections (default 2; must be > 0). The
-                              wait between polls is also capped by the time left, so a large
-                              poll_interval can't push the total wait past `timeout`.
-    returns: dict - {"container": str, "healthy": bool, "health": str|None, "status": str|None,
-                     "waited_seconds": float, "timed_out": bool}; `health` is one of
-                     "starting"/"healthy"/"unhealthy" or null when no healthcheck is defined.
+        id_or_name - The container id or name
+        timeout - Max seconds to wait before returning timed_out (default 120)
+        poll_interval - Seconds between re-inspections (default 2, > 0); also capped by the time left,
+                              so a large value can't push the total wait past `timeout`
+    returns: dict - {"container", "healthy", "health", "status", "waited_seconds", "timed_out"};
+                     `health` is "starting"/"healthy"/"unhealthy" or null when no healthcheck is defined.
     """
     if poll_interval <= 0:
         raise ValueError(f"poll_interval must be > 0, got {poll_interval}.")
@@ -795,8 +785,8 @@ def export_container(id_or_name: str, max_bytes: int = MAX_PAYLOAD_BYTES) -> byt
     path; the in-band bytes here are capped (default 32 MiB) because MCP base64-encodes them.
 
     args:
-        id_or_name: str - The container id or name
-        max_bytes: int - Abort with ValueError if the export exceeds this many bytes (defaults to 32 MiB)
+        id_or_name - The container id or name
+        max_bytes - Abort with ValueError if the export exceeds this many bytes (defaults to 32 MiB)
     returns: bytes - The tar archive contents
     """
     container = _get_client().containers.get(id_or_name)
@@ -812,9 +802,9 @@ def export_container_to_file(id_or_name: str, dest_path: str, overwrite: bool = 
     written by the server's user; `~` is expanded and an existing file is refused unless `overwrite=True`.
 
     args:
-        id_or_name: str - The container id or name
-        dest_path: str - Destination path on the server host for the tarball
-        overwrite: bool - Replace dest_path if it already exists (default False)
+        id_or_name - The container id or name
+        dest_path - Destination path on the server host for the tarball
+        overwrite - Replace dest_path if it already exists (default False)
     returns: dict - {"path": <resolved path>, "bytes_written": int}
     """
     container = _get_client().containers.get(id_or_name)
@@ -831,9 +821,9 @@ def get_container_archive(id_or_name: str, path: str, max_bytes: int = MAX_PAYLO
     bytes here are capped (default 32 MiB) because MCP base64-encodes them.
 
     args:
-        id_or_name: str - The container id or name
-        path: str - Path inside the container
-        max_bytes: int - Abort with ValueError if the archive exceeds this many bytes (defaults to 32 MiB)
+        id_or_name - The container id or name
+        path - Path inside the container
+        max_bytes - Abort with ValueError if the archive exceeds this many bytes (defaults to 32 MiB)
     returns: dict - Mapping with archive (bytes) and stat (dict) keys
     """
     container = _get_client().containers.get(id_or_name)
@@ -850,10 +840,10 @@ def get_container_archive_to_file(id_or_name: str, path: str, dest_path: str, ov
     expanded and an existing file is refused unless `overwrite=True`.
 
     args:
-        id_or_name: str - The container id or name
-        path: str - Path inside the container
-        dest_path: str - Destination path on the server host for the tarball
-        overwrite: bool - Replace dest_path if it already exists (default False)
+        id_or_name - The container id or name
+        path - Path inside the container
+        dest_path - Destination path on the server host for the tarball
+        overwrite - Replace dest_path if it already exists (default False)
     returns: dict - {"path": <resolved path>, "bytes_written": int, "stat": dict}
     """
     container = _get_client().containers.get(id_or_name)
@@ -871,9 +861,9 @@ def put_container_archive(id_or_name: str, path: str, data: bytes) -> bool:
     from disk instead of carrying the (base64-encoded) bytes through the MCP protocol.
 
     args:
-        id_or_name: str - The container id or name
-        path: str - Destination path inside the container
-        data: bytes - Tar archive bytes
+        id_or_name - The container id or name
+        path - Destination path inside the container
+        data - Tar archive bytes
     returns: bool - True if the upload succeeded
     """
     container = _get_client().containers.get(id_or_name)
@@ -889,9 +879,9 @@ def put_container_archive_from_file(id_or_name: str, path: str, file_path: str) 
     to pass in band via `put_container_archive`. `file_path` is read by the server's user; `~` is expanded.
 
     args:
-        id_or_name: str - The container id or name
-        path: str - Destination path inside the container (must already exist)
-        file_path: str - Path on the server host to the tar archive to upload
+        id_or_name - The container id or name
+        path - Destination path inside the container (must already exist)
+        file_path - Path on the server host to the tar archive to upload
     returns: bool - True if the upload succeeded
     """
     container = _get_client().containers.get(id_or_name)

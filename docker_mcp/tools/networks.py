@@ -24,17 +24,17 @@ def create_network(
     Create a network.
 
     args:
-        name: str - The name of the network
-        driver: str - Driver name (e.g. bridge, overlay)
-        options: dict - Driver-specific options
-        ipam: dict - IPAM configuration as a dict
-        check_duplicate: bool - Reject creation if a duplicate name exists
-        internal: bool - Restrict external access
-        labels: dict - Labels to set on the network
-        enable_ipv6: bool - Enable IPv6 networking
-        attachable: bool - Allow standalone containers to attach (swarm)
-        scope: str - Network scope (local, global, swarm)
-        ingress: bool - Make this an ingress network for swarm routing-mesh
+        name - The name of the network
+        driver - Driver name (e.g. bridge, overlay)
+        options - Driver-specific options
+        ipam - IPAM configuration as a dict
+        check_duplicate - Reject creation if a duplicate name exists
+        internal - Restrict external access
+        labels - Labels to set on the network
+        enable_ipv6 - Enable IPv6 networking
+        attachable - Allow standalone containers to attach (swarm)
+        scope - Network scope (local, global, swarm)
+        ingress - Make this an ingress network for swarm routing-mesh
     returns: dict - The created network's attrs
     """
     kwargs: dict = {
@@ -59,7 +59,7 @@ def get_network(network_id: str) -> dict:
     """
     Get a network by id or name.
 
-    args: network_id: str - The network id or name
+    args: network_id - The network id or name
     returns: dict - The network's attrs
     """
     return _get_client().networks.get(network_id).attrs
@@ -77,11 +77,11 @@ def list_networks(
     List networks.
 
     args:
-        names: list - Filter by network names
-        ids: list - Filter by network ids
-        filters: dict - Additional filters
-        greedy: bool - Fetch extended details per network
-        managed_only: bool - Only return networks created by this MCP server (filters on the
+        names - Filter by network names
+        ids - Filter by network ids
+        filters - Additional filters
+        greedy - Fetch extended details per network
+        managed_only - Only return networks created by this MCP server (filters on the
                              docker-mcp-server.managed label); combines with any `filters` given
     returns: list - A list of network attrs dicts
     """
@@ -96,7 +96,7 @@ def prune_networks(filters: dict | None = None) -> dict:
     """
     Remove unused networks.
 
-    args: filters: dict - Filters to apply
+    args: filters - Filters to apply
     returns: dict - Information on deleted networks
     """
     return _get_client().networks.prune(filters=filters)
@@ -107,7 +107,7 @@ def remove_network(network_id: str) -> bool:
     """
     Remove a network.
 
-    args: network_id: str - The network id or name
+    args: network_id - The network id or name
     returns: bool - True after removal
     """
     _get_client().networks.get(network_id).remove()
@@ -129,14 +129,14 @@ def connect_network(
     Connect a container to a network.
 
     args:
-        network_id: str - The network id or name
-        container: str - The container id or name
-        aliases: list - Endpoint aliases for the container in this network
-        links: list - Links to other containers
-        ipv4_address: str - IPv4 address to assign
-        ipv6_address: str - IPv6 address to assign
-        link_local_ips: list - Link-local addresses
-        driver_opt: dict - Network driver options
+        network_id - The network id or name
+        container - The container id or name
+        aliases - Endpoint aliases for the container in this network
+        links - Links to other containers
+        ipv4_address - IPv4 address to assign
+        ipv6_address - IPv6 address to assign
+        link_local_ips - Link-local addresses
+        driver_opt - Network driver options
     returns: bool - True after the container is connected
     """
     network = _get_client().networks.get(network_id)
@@ -158,9 +158,9 @@ def disconnect_network(network_id: str, container: str, force: bool = False) -> 
     Disconnect a container from a network.
 
     args:
-        network_id: str - The network id or name
-        container: str - The container id or name
-        force: bool - Force disconnect
+        network_id - The network id or name
+        container - The container id or name
+        force - Force disconnect
     returns: bool - True after the container is disconnected
     """
     network = _get_client().networks.get(network_id)

@@ -151,19 +151,17 @@ def login(
     """
     Authenticate with a Docker registry.
 
-    Security: the password is sent as a tool argument, which many MCP clients log
-    verbatim. Prefer running `docker login` once on the host running this MCP
-    server so the `docker` module can reuse the credentials cached in that host's
-    Docker config (typically `~/.docker/config.json`), and avoid calling this
-    tool from an agent loop.
+    Security: the password is sent as a tool argument, which many MCP clients log verbatim. Prefer
+    running `docker login` once on the host so the `docker` module reuses the credentials cached in
+    `~/.docker/config.json`, and avoid calling this tool from an agent loop.
 
     args:
-        username: str - Registry username
-        password: str - Registry password or token
-        email: str - Registry account email
-        registry: str - URL to the registry (defaults to Docker Hub)
-        reauth: bool - Force re-authentication even if valid credentials exist
-        dockercfg_path: str - Path to a custom dockercfg file
+        username - Registry username
+        password - Registry password or token
+        email - Registry account email
+        registry - URL to the registry (defaults to Docker Hub)
+        reauth - Force re-authentication even if valid credentials exist
+        dockercfg_path - Path to a custom dockercfg file
     returns: dict - The server response from the login request
     """
     return _get_client().login(
@@ -181,21 +179,16 @@ def logout(registry: str | None = None) -> dict:
     """
     Clear cached registry credentials from this server's in-memory Docker client.
 
-    docker-py and the Docker Engine have no true logout: `login` validates against the registry (the
-    daemon's `/auth` endpoint is stateless) and caches the credentials in-process on the shared
-    client. This tool drops that in-memory cache so a credential supplied via `login` no longer
-    lingers in the server's memory. It does NOT contact the daemon and does NOT touch the host's
-    `~/.docker/config.json`.
+    docker-py / the Engine have no true logout: `login` validates against the registry (the daemon's
+    `/auth` is stateless) and caches credentials in-process. This drops that in-memory cache; it does
+    NOT contact the daemon or touch the host's `~/.docker/config.json`. With no `registry`, clears
+    every cached credential; pass one to clear just that entry (key must match `login`; Docker Hub is
+    cached under "docker.io"). `close`/`reconnect` also clear it by discarding the client.
 
-    With no `registry`, every cached credential is cleared. Pass a `registry` to clear just that
-    entry — the key must match what was passed to `login` (the Docker Hub default is cached under
-    "docker.io"). `close` / `reconnect` also clear the cache, by discarding the client entirely.
+    Reaches into a private docker-py attribute (`api._auth_configs`); degrades to clearing nothing if
+    that internal shape changes.
 
-    Note: this reaches into a private docker-py attribute (`api._auth_configs`); it is written
-    defensively and degrades to clearing nothing if that internal shape changes in a future
-    docker-py release.
-
-    args: registry: str | None - Registry key to clear, or None to clear every cached credential
+    args: registry - Registry key to clear, or None to clear every cached credential
     returns: dict - {"cleared": [<registry keys removed>]}
     """
     api = _get_client().api
@@ -225,23 +218,19 @@ def events(
     """
     Stream real-time events from the Docker server, bounded by `limit` events or `timeout_seconds`.
 
-    The call returns when `limit` events have been collected or `timeout_seconds` elapses, whichever
-    comes first. Both bounds matter: `limit` caps how many events accumulate in memory, while
-    `timeout_seconds` caps how long the call blocks. Without the time bound a quiet daemon (fewer
-    than `limit` events, no `until`) would block the tool call indefinitely, since the event stream
-    only yields when an event actually occurs.
+    Returns when `limit` events are collected or `timeout_seconds` elapses, whichever comes first
+    (`limit` caps memory; `timeout_seconds` caps how long the call blocks — without it a quiet daemon
+    would block indefinitely, since the stream only yields on an actual event).
 
-    Caveat for `ssh://` daemons: docker-py cannot cancel an SSH stream, so the `timeout_seconds`
-    watchdog can't interrupt a fully idle stream there — bound the call with `until` / `limit` (or a
-    non-SSH endpoint) if you need a hard time limit against an SSH daemon.
+    Caveat for `ssh://` daemons: docker-py can't cancel an SSH stream, so the `timeout_seconds`
+    watchdog can't interrupt a fully idle stream — bound with `until`/`limit` (or a non-SSH endpoint).
 
     args:
-        since: str - Show events created since this timestamp
-        until: str - Show events created until this timestamp
-        filters: dict - Filters to apply to the event stream
-        limit: int - Maximum number of events to return (defaults to 100)
-        timeout_seconds: float - Maximum wall-clock seconds to wait before returning what was
-                                 collected so far (defaults to 30)
+        since - Show events created since this timestamp
+        until - Show events created until this timestamp
+        filters - Filters to apply to the event stream
+        limit - Max events to return (default 100)
+        timeout_seconds - Max wall-clock seconds before returning what was collected (default 30)
     returns: list - A list of decoded event dicts (length <= limit)
     """
     stream = _get_client().events(since=since, until=until, filters=filters, decode=True)
@@ -286,7 +275,7 @@ def reconnect(docker_host: str | None = None) -> dict:
     leaves the working one in place. Security: retargeting moves a root-equivalent trust boundary
     and `docker_host` is logged like any argument — see README "Security considerations".
 
-    args: docker_host: str | None - Daemon URL to connect to, or None to rebuild from the environment
+    args: docker_host - Daemon URL to connect to, or None to rebuild from the environment
     returns: dict - The new daemon's version info (same shape as `version`), confirming connectivity
     """
     global _client

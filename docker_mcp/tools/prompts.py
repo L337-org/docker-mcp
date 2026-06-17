@@ -8,7 +8,7 @@ def lookup_docker_docs(section: str) -> str:
     """
     Ask the agent to consult the Docker SDK for Python documentation for a specific section.
 
-    args: section: str - SDK section name (e.g. "containers", "images", "swarm")
+    args: section - SDK section name (e.g. "containers", "images", "swarm")
     returns: str - A prompt instructing the agent to read the docker-docs resource and summarize the API
     """
     return (
@@ -24,8 +24,8 @@ def verify_docker_method(method: str, section: str) -> str:
     """
     Ask the agent to verify a method of the `docker` module against the live SDK docs.
 
-    args: method: str - The method name to verify (e.g. "containers.run")
-    args: section: str - The SDK section to check (e.g. "containers")
+    args: method - The method name to verify (e.g. "containers.run")
+    args: section - The SDK section to check (e.g. "containers")
     returns: str - A prompt instructing the agent to confirm the method's signature from the docs
     """
     return (
@@ -42,8 +42,8 @@ def deploy_container(image: str, name: str) -> str:
     """
     Generate a step-by-step plan for deploying a container with supporting resources.
 
-    args: image: str - The image reference to deploy (e.g. "nginx:1.27")
-    args: name: str - The container name to assign
+    args: image - The image reference to deploy (e.g. "nginx:1.27")
+    args: name - The container name to assign
     returns: str - A prompt instructing the agent to walk through deployment using the MCP tools
     """
     return (
@@ -64,7 +64,7 @@ def troubleshoot_container(container: str) -> str:
     """
     Generate a diagnostic plan for an unhealthy or failing container.
 
-    args: container: str - Container name or ID to investigate
+    args: container - Container name or ID to investigate
     returns: str - A prompt instructing the agent to gather logs, inspect state, and propose a fix
     """
     return (
@@ -92,7 +92,7 @@ def monitor_container_fleet(top: int = 5) -> str:
     It leans on the observability resources: `docker://containers` to enumerate, then `docker-stats://`
     and `docker-logs://` per container.
 
-    args: top: int - How many heaviest containers to drill into with logs (default 5)
+    args: top - How many heaviest containers to drill into with logs (default 5)
     returns: str - A prompt instructing the agent to enumerate, sample stats, and rank by pressure
     """
     return (
@@ -128,7 +128,7 @@ def triage_incident(window_minutes: int = 30) -> str:
     The on-call entry point: start from what just changed (`events`) and the current fleet state
     (`docker://containers`), narrow to the likely culprit, then hand off to `troubleshoot_container`.
 
-    args: window_minutes: int - How far back to pull the daemon event log (default 30)
+    args: window_minutes - How far back to pull the daemon event log (default 30)
     returns: str - A prompt instructing the agent to correlate recent events with current state
     """
     return (
@@ -162,8 +162,8 @@ def migrate_container(container: str, new_image: str) -> str:
     """
     Generate a plan for swapping a container's image without losing its configuration.
 
-    args: container: str - Existing container name or ID
-    args: new_image: str - The new image reference to deploy
+    args: container - Existing container name or ID
+    args: new_image - The new image reference to deploy
     returns: str - A prompt instructing the agent to perform a safe migration
     """
     return (
@@ -190,7 +190,7 @@ def clean_environment(scope: str = "stopped") -> str:
     """
     Generate a plan for safely pruning unused docker resources.
 
-    args: scope: str - "stopped" (default) for containers + dangling images, or "all" to also prune networks and volumes
+    args: scope - "stopped" (default) for containers + dangling images, or "all" to also prune networks and volumes
     returns: str - A prompt instructing the agent to inventory and prune unused resources
     """
     base = (
@@ -227,7 +227,7 @@ def prune_managed(include_volumes: bool = False) -> str:
     Scopes every step to the `docker-mcp-server.managed=true` label, so nothing the agent (or anyone
     else) created outside this server is touched.
 
-    args: include_volumes: bool - Also remove managed volumes (data loss — defaults to False)
+    args: include_volumes - Also remove managed volumes (data loss — defaults to False)
     returns: str - A prompt instructing the agent to inventory and remove only managed resources
     """
     base = (
@@ -269,7 +269,7 @@ def inspect_stack(label: str) -> str:
     """
     Generate a plan for inspecting all resources tagged with a given label.
 
-    args: label: str - Label key or key=value pair to filter on (e.g. "com.example.app=web")
+    args: label - Label key or key=value pair to filter on (e.g. "com.example.app=web")
     returns: str - A prompt instructing the agent to enumerate containers, networks, and volumes by label
     """
     return (
@@ -287,7 +287,7 @@ def plan_compose_stack(description: str) -> str:
     """
     Generate a plan for translating an informal app description into docker resources.
 
-    args: description: str - Free-form description of the app to deploy (e.g. "wordpress + mysql with a shared volume")
+    args: description - Free-form description of the app to deploy (e.g. "wordpress + mysql with a shared volume")
     returns: str - A prompt instructing the agent to design and deploy the stack with MCP tools
     """
     return (
@@ -309,8 +309,8 @@ def deploy_compose_project(project_dir: str, project_name: str | None = None) ->
     """
     Generate a plan for bringing up a compose project safely.
 
-    args: project_dir: str - Filesystem path to the directory containing the compose file
-    args: project_name: str - Optional compose project name override (defaults to the dir name)
+    args: project_dir - Filesystem path to the directory containing the compose file
+    args: project_name - Optional compose project name override (defaults to the dir name)
     returns: str - A prompt instructing the agent to validate, deploy, and verify the project
     """
     name_clause = f" with project name `{project_name}`" if project_name else ""
@@ -336,8 +336,8 @@ def troubleshoot_compose_project(project_dir: str, project_name: str | None = No
     """
     Generate a diagnostic plan for a compose project that isn't behaving.
 
-    args: project_dir: str - Filesystem path to the directory containing the compose file
-    args: project_name: str - Optional compose project name override
+    args: project_dir - Filesystem path to the directory containing the compose file
+    args: project_name - Optional compose project name override
     returns: str - A prompt instructing the agent to gather state and identify the root cause
     """
     project_name_arg = f', project_name="{project_name}"' if project_name else ""
@@ -413,7 +413,7 @@ def find_latest_image_tag(image: str) -> str:
     """
     Generate a plan for picking the right tag of an image from a registry.
 
-    args: image: str - Image reference, e.g. "alpine", "ghcr.io/org/repo"
+    args: image - Image reference, e.g. "alpine", "ghcr.io/org/repo"
     returns: str - A prompt instructing the agent to query the registry and recommend a tag
     """
     return (
@@ -441,9 +441,9 @@ def plan_multiarch_build(image: str, platforms: str = "linux/amd64,linux/arm64",
     """
     Generate a plan for building and pushing a multi-platform image with buildx.
 
-    args: image: str - Target image reference, e.g. "ghcr.io/org/app:v1"
-    args: platforms: str - Comma-separated platform list (default "linux/amd64,linux/arm64")
-    args: context: str - Build context path (default ".")
+    args: image - Target image reference, e.g. "ghcr.io/org/app:v1"
+    args: platforms - Comma-separated platform list (default "linux/amd64,linux/arm64")
+    args: context - Build context path (default ".")
     returns: str - A prompt instructing the agent to plan, build, and verify a multi-arch image
     """
     platforms_list = ", ".join(f'"{p.strip()}"' for p in platforms.split(",") if p.strip())
@@ -469,7 +469,7 @@ def audit_image_cves(image: str) -> str:
     """
     Generate a plan for walking through Scout's CVE reporting for an image.
 
-    args: image: str - Image reference to scan
+    args: image - Image reference to scan
     returns: str - A prompt instructing the agent to scan, prioritize, and report
     """
     return (
@@ -495,8 +495,8 @@ def compare_image_versions(old_image: str, new_image: str) -> str:
     """
     Generate a plan for comparing two image references via Scout.
 
-    args: old_image: str - The baseline image reference
-    args: new_image: str - The candidate image reference
+    args: old_image - The baseline image reference
+    args: new_image - The candidate image reference
     returns: str - A prompt instructing the agent to compare and report
     """
     return (
@@ -519,7 +519,7 @@ def recommend_base_image(image: str) -> str:
     """
     Generate a plan for picking a better base image using Scout.
 
-    args: image: str - Image reference whose base should be reviewed
+    args: image - Image reference whose base should be reviewed
     returns: str - A prompt instructing the agent to fetch and present recommendations
     """
     return (
@@ -549,7 +549,7 @@ def inspect_multiarch_manifest(image: str) -> str:
     and lacks support for OCI image indexes and attestations. `buildx_imagetools_inspect` is
     the path forward.
 
-    args: image: str - Image reference (tag or digest), e.g. "alpine:3.19"
+    args: image - Image reference (tag or digest), e.g. "alpine:3.19"
     returns: str - A prompt instructing the agent to inspect and interpret the manifest
     """
     return (
@@ -576,8 +576,8 @@ def create_multiarch_manifest(target_tag: str, source_tags: str) -> str:
     Use this when reaching for `docker manifest create` + `docker manifest push` —
     `buildx_imagetools_create` does both in one step and handles OCI image indexes.
 
-    args: target_tag: str - The new combined tag, e.g. "org/app:v1"
-    args: source_tags: str - Comma-separated source tags (each must already be pushed),
+    args: target_tag - The new combined tag, e.g. "org/app:v1"
+    args: source_tags - Comma-separated source tags (each must already be pushed),
                              e.g. "org/app:v1-amd64,org/app:v1-arm64"
     returns: str - A prompt instructing the agent to create and verify the manifest list
     """
@@ -633,7 +633,7 @@ def review_dockerfile(dockerfile_path: str) -> str:
     """
     Generate a plan for reviewing a Dockerfile against Docker's reference and best practices.
 
-    args: dockerfile_path: str - Filesystem path to the Dockerfile to review
+    args: dockerfile_path - Filesystem path to the Dockerfile to review
     returns: str - A prompt instructing the agent to read the Dockerfile and the authoritative docs, then critique it
     """
     return (
@@ -697,8 +697,8 @@ def debug_container_networking(source: str, target: str) -> str:
     Generate a plan for diagnosing container-to-container connectivity.
 
     args:
-        source: str - The container that cannot connect (name or ID)
-        target: str - The container it is trying to reach (name or ID)
+        source - The container that cannot connect (name or ID)
+        target - The container it is trying to reach (name or ID)
     returns: str - A prompt instructing the agent to compare networks and test connectivity
     """
     return (
@@ -759,8 +759,8 @@ def backup_volume(volume: str, dest_path: str) -> str:
     Generate a plan for backing up a named volume using a throwaway container.
 
     args:
-        volume: str - The named volume to back up
-        dest_path: str - Host path (on the server) to write the tar archive to
+        volume - The named volume to back up
+        dest_path - Host path (on the server) to write the tar archive to
     returns: str - A prompt instructing the agent to tar the volume out via a helper container
     """
     return (
@@ -792,8 +792,8 @@ def restore_volume(volume: str, source_path: str) -> str:
     Generate a plan for restoring a named volume from a tar archive using a throwaway container.
 
     args:
-        volume: str - The named volume to restore into
-        source_path: str - Host path (on the server) to read the tar archive from
+        volume - The named volume to restore into
+        source_path - Host path (on the server) to read the tar archive from
     returns: str - A prompt instructing the agent to untar an archive into a volume via a helper container
     """
     return (
@@ -826,8 +826,8 @@ def deploy_swarm_stack(stack_name: str, compose_file: str) -> str:
     Generate a plan for deploying a Compose file to a swarm as a stack and confirming it converged.
 
     args:
-        stack_name: str - The stack name to create or update
-        compose_file: str - Path to the Compose file to deploy
+        stack_name - The stack name to create or update
+        compose_file - Path to the Compose file to deploy
     returns: str - A prompt instructing the agent to validate, deploy, and verify the stack
     """
     return (

@@ -165,15 +165,21 @@ def mcp_example(name: str):
     """
     Say hello to someone by name.
 
-    args: name: str - The name to say hello to
+    args: name - The name to say hello to
     returns: str - The greeting
     """
     return f"Hello, {name}!"
 ```
 
 - One-line summary sentence, then a blank line
-- `args:` section lists each parameter as `name: type - description`
+- `args:` section lists each parameter as `name - description`. Do **not** repeat the parameter's
+  type — the type annotation already lands in the tool's `inputSchema`, which the client sees
+  alongside the description, so a `name: type - ...` form just duplicates it as prose tokens. (The
+  `returns:` line keeps its type, since the return shape is not in the input schema.)
 - `returns:` line documents the return type and what it contains
+- Keep descriptions terse: state every functional fact (defaults, accepted formats/values, return
+  keys, important caveats) but cut redundancy and verbose phrasing. The docstring is the entire
+  tool `description` the client pays tokens for on every session.
 
 ### MCP resources
 

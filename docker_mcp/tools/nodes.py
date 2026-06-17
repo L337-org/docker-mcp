@@ -10,7 +10,7 @@ def get_node(id_or_name: str) -> dict:
     """
     Get a swarm node by id or name.
 
-    args: id_or_name: str - The node id or name
+    args: id_or_name - The node id or name
     returns: dict - The node's attrs
     """
     return _get_client().nodes.get(id_or_name).attrs
@@ -21,7 +21,7 @@ def list_nodes(filters: dict | None = None) -> list:
     """
     List swarm nodes.
 
-    args: filters: dict - Filter by attributes (id, name, membership, role)
+    args: filters - Filter by attributes (id, name, membership, role)
     returns: list - A list of node attrs dicts
     """
     return [n.attrs for n in _get_client().nodes.list(**drop_none(filters=filters))]
@@ -33,8 +33,8 @@ def update_node(id_or_name: str, node_spec: dict) -> bool:
     Update a node's spec (availability, name, role, labels).
 
     args:
-        id_or_name: str - The node id or name
-        node_spec: dict - The new node spec
+        id_or_name - The node id or name
+        node_spec - The new node spec
     returns: bool - True after the update
     """
     node = _get_client().nodes.get(id_or_name)
@@ -48,15 +48,11 @@ def remove_node(node_id: str, force: bool = False) -> bool:
     Remove a node from the swarm.
 
     A node should normally be drained (`update_node` with Availability "drain") and have left the
-    swarm before removal. Removing an active or reachable node requires `force=True`; prefer draining
-    first so its tasks reschedule cleanly.
-
-    Resolves the node via `nodes.get` (which accepts an id or a name, like `get_node` / `update_node`)
-    and removes it through the high-level `Node.remove(force=...)`.
+    swarm first, so its tasks reschedule cleanly. Removing an active/reachable node requires `force=True`.
 
     args:
-        node_id: str - The node id or name to remove
-        force: bool - Force removal of an active/reachable node
+        node_id - The node id or name to remove
+        force - Force removal of an active/reachable node
     returns: bool - True after the node is removed
     """
     _get_client().nodes.get(node_id).remove(force=force)

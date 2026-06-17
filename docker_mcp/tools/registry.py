@@ -359,23 +359,16 @@ def registry_list_tags(
     """
     List tags for an image in an OCI v2 registry without pulling.
 
-    Works against Docker Hub, GHCR, ECR public/private, GAR, and any other OCI-compliant
-    registry. Anonymous if no credentials are passed.
-
-    Note: this tool talks directly to the registry over HTTPS and does NOT read the local
-    Docker credential store (`~/.docker/config.json`). For private registries, prefer setting
-    DOCKER_MCP_REGISTRY_USERNAME / DOCKER_MCP_REGISTRY_PASSWORD in the server's environment —
-    that keeps credentials out of tool arguments, which many MCP clients log verbatim. Explicit
-    `username`/`password` arguments override the environment; if you must pass them, prefer a
-    per-invocation token with the minimum required scope rather than a long-lived password.
+    Works against Docker Hub, GHCR, ECR, GAR, and any OCI-compliant registry; anonymous if no
+    credentials are passed. Talks directly to the registry over HTTPS and does NOT read
+    `~/.docker/config.json` — for private registries prefer the DOCKER_MCP_REGISTRY_USERNAME /
+    DOCKER_MCP_REGISTRY_PASSWORD env vars (keeps secrets out of tool args, which clients often log).
 
     args:
-        image: str - Image reference, e.g. "alpine", "library/alpine", "ghcr.io/org/repo".
-                     Any trailing `:tag` or `@digest` is stripped before listing.
-        username: str - Optional registry username (overrides DOCKER_MCP_REGISTRY_USERNAME)
-        password: str - Optional registry password or token (overrides DOCKER_MCP_REGISTRY_PASSWORD)
-        limit: int - Maximum number of tags to return (default 1000; must be >= 1). The OCI
-                     pagination loop is also capped at 50 pages to keep the call bounded.
+        image - Image ref, e.g. "alpine", "ghcr.io/org/repo"; any `:tag`/`@digest` is stripped
+        username - Optional registry username (overrides DOCKER_MCP_REGISTRY_USERNAME)
+        password - Optional registry password/token (overrides DOCKER_MCP_REGISTRY_PASSWORD)
+        limit - Max tags to return (default 1000, >= 1); pagination capped at 50 pages
     returns: dict - {"name": <repo>, "registry": <host>, "tags": [..], "truncated": bool}
     """
     if limit < 1:
@@ -421,19 +414,15 @@ def registry_inspect_manifest(
     """
     Fetch the manifest for an image reference without pulling.
 
-    The returned manifest may be either a single-platform image manifest or a multi-platform
-    manifest list / OCI image index, depending on what the registry serves for that tag.
+    May return a single-platform image manifest or a multi-platform manifest list / OCI image
+    index, depending on what the registry serves for that tag.
 
     args:
-        image: str - Image reference, e.g. "alpine", "ghcr.io/org/repo". Any trailing
-                     `:tag` or `@digest` is stripped — pass the tag/digest as `reference`.
-        reference: str - Tag or digest (default "latest")
-        username: str - Optional registry username (overrides DOCKER_MCP_REGISTRY_USERNAME;
-                        this tool does NOT read `~/.docker/config.json`)
-        password: str - Optional registry password or token (overrides DOCKER_MCP_REGISTRY_PASSWORD)
-    returns: dict - {"name": <repo>, "registry": <host>, "reference": <ref>,
-                     "media_type": <Content-Type>, "digest": <Docker-Content-Digest>,
-                     "manifest": <decoded JSON body>}
+        image - Image ref, e.g. "ghcr.io/org/repo"; `:tag`/`@digest` is stripped — pass via `reference`
+        reference - Tag or digest (default "latest")
+        username - Optional registry username (overrides DOCKER_MCP_REGISTRY_USERNAME; no `~/.docker/config.json`)
+        password - Optional registry password/token (overrides DOCKER_MCP_REGISTRY_PASSWORD)
+    returns: dict - {"name", "registry", "reference", "media_type", "digest", "manifest": <JSON body>}
     """
     username, password = _env_credentials(username, password)
     registry, repo = _parse_image_ref(image)
@@ -464,24 +453,22 @@ def registry_get_config(
     password: str | None = None,
 ) -> dict:
     """
-    Fetch and parse an image's config blob from a registry without pulling the image.
+    Fetch and parse an image's config blob from a registry without pulling.
 
-    This answers "what's actually inside this image?" — the config blob holds the env vars,
-    entrypoint/cmd, working dir, exposed ports, user, labels, and the layer history that
-    `registry_inspect_manifest` only points at (via the manifest's `config.digest`). It resolves the
-    config in up to three hops: fetch the manifest; if it's a multi-platform index, select the
-    `platform` entry and fetch that platform's manifest; then fetch and parse the config blob.
+    Answers "what's inside this image?" — env vars, entrypoint/cmd, workdir, exposed ports, user,
+    labels, layer history (what `registry_inspect_manifest` only points at via `config.digest`).
+    Resolves in up to three hops: manifest -> (if multi-platform) the `platform` entry's manifest
+    -> the config blob.
 
     args:
-        image: str - Image reference, e.g. "alpine", "ghcr.io/org/repo". Any trailing `:tag`/`@digest`
-                     is stripped — pass the tag/digest as `reference`.
-        reference: str - Tag or digest (default "latest")
-        platform: str - Platform to select from a multi-platform image, "os/arch[/variant]"
+        image - Image ref, e.g. "ghcr.io/org/repo"; `:tag`/`@digest` is stripped — pass via `reference`
+        reference - Tag or digest (default "latest")
+        platform - Platform to select from a multi-platform image, "os/arch[/variant]"
                         (default "linux/amd64"); ignored for single-platform images
-        username: str - Optional registry username (overrides DOCKER_MCP_REGISTRY_USERNAME)
-        password: str - Optional registry password or token (overrides DOCKER_MCP_REGISTRY_PASSWORD)
-    returns: dict - {"name", "registry", "reference", "platform", "config_digest", "config": <parsed>}
-                    where `platform` is the selected platform (None if the image is single-platform)
+        username - Optional registry username (overrides DOCKER_MCP_REGISTRY_USERNAME)
+        password - Optional registry password/token (overrides DOCKER_MCP_REGISTRY_PASSWORD)
+    returns: dict - {"name", "registry", "reference", "platform", "config_digest", "config": <parsed>};
+                    `platform` is the selected platform (None if single-platform)
     """
     username, password = _env_credentials(username, password)
     registry, repo = _parse_image_ref(image)
@@ -604,20 +591,14 @@ def hub_list_tags(repository: str, limit: int = 100) -> dict:
     """
     List tags on a Docker Hub repository with Hub-specific metadata.
 
-    Unlike `registry_list_tags`, this hits the Hub UI API (hub.docker.com) which returns
-    richer per-tag data — last pushed date, image sizes per platform, digest. Use this
-    when you need that metadata; use `registry_list_tags` for parity across non-Hub
-    registries.
-
-    Public Hub repositories only — this tool sends no authentication and does NOT read
-    `~/.docker/config.json` or `docker login` credentials. Private Hub repositories will
-    return a 404 / 401 from the Hub API. (For private images, use `registry_list_tags`
-    against `registry-1.docker.io` with explicit credentials.)
+    Hits the Hub UI API (hub.docker.com) for richer per-tag data than `registry_list_tags` —
+    last pushed date, per-platform sizes, digest. Public repos only: sends no auth and does NOT
+    read `~/.docker/config.json`; private repos return 404/401 (use `registry_list_tags` against
+    registry-1.docker.io with credentials).
 
     args:
-        repository: str - Hub repository, e.g. "library/alpine" or "myorg/myimage"
-        limit: int - Maximum number of tags to return (default 100; must be >= 1).
-                     Pagination is also capped at 50 pages to keep the call bounded.
+        repository - Hub repository, e.g. "library/alpine" or "myorg/myimage"
+        limit - Max tags to return (default 100, >= 1); pagination capped at 50 pages
     returns: dict - {"name": <repo>, "tags": [{name, full_size, last_updated, digest, images}, ...],
                      "truncated": bool}
     """
@@ -657,10 +638,10 @@ def hub_repo_info(repository: str) -> dict:
     """
     Fetch Docker Hub metadata for a repository.
 
-    Public Hub repositories only — sends no authentication and does NOT read the local
-    Docker credential store. Private repositories will return 404 / 401.
+    Public repos only: sends no auth and does NOT read the local Docker credential store;
+    private repos return 404/401.
 
-    args: repository: str - Hub repository, e.g. "library/alpine" or "myorg/myimage"
+    args: repository - Hub repository, e.g. "library/alpine" or "myorg/myimage"
     returns: dict - The Hub /v2/repositories/<repo>/ response (description, star_count,
                     pull_count, last_updated, is_private, etc.)
     """
@@ -682,20 +663,16 @@ def hub_rate_limit(username: str | None = None, password: str | None = None) -> 
     """
     Report the caller's remaining Docker Hub pull-rate-limit budget.
 
-    Docker Hub meters image pulls per IP (anonymous) or per account (authenticated). This checks the
-    budget by sending a HEAD to the `ratelimitpreview/test` manifest on `registry-1.docker.io` and
-    reading the `RateLimit-Limit` / `RateLimit-Remaining` headers — a HEAD is not counted as a pull,
-    so the check itself doesn't consume budget. Call it before a large `compose_pull` / `pull_image`
-    to avoid hitting the cap mid-deploy.
-
-    Credentials raise the limit (and switch metering from per-IP to per-account); like the other
-    registry tools, it falls back to DOCKER_MCP_REGISTRY_USERNAME / DOCKER_MCP_REGISTRY_PASSWORD and
-    does NOT read `~/.docker/config.json`. Accounts/plans with no pull limit return no RateLimit
-    headers — reported here as `"unlimited": true`.
+    Sends a HEAD to the `ratelimitpreview/test` manifest (a HEAD isn't metered as a pull, so the
+    check costs no budget) and reads the RateLimit-Limit / RateLimit-Remaining headers. Call it
+    before a large `compose_pull` / `pull_image` to avoid hitting the cap mid-deploy. Credentials
+    raise the limit and switch metering from per-IP to per-account; falls back to
+    DOCKER_MCP_REGISTRY_USERNAME / DOCKER_MCP_REGISTRY_PASSWORD, does NOT read `~/.docker/config.json`.
+    Plans with no limit return no headers — reported as `"unlimited": true`.
 
     args:
-        username: str - Optional Hub username (overrides DOCKER_MCP_REGISTRY_USERNAME)
-        password: str - Optional Hub password or token (overrides DOCKER_MCP_REGISTRY_PASSWORD)
+        username - Optional Hub username (overrides DOCKER_MCP_REGISTRY_USERNAME)
+        password - Optional Hub password/token (overrides DOCKER_MCP_REGISTRY_PASSWORD)
     returns: dict - {"authenticated", "limit", "remaining", "window_seconds", "unlimited"}
     """
     username, password = _env_credentials(username, password)

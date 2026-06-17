@@ -23,17 +23,17 @@ def init_swarm(
     Initialize a new swarm on this Engine.
 
     args:
-        advertise_addr: str - Externally reachable address advertised to other nodes
-        listen_addr: str - Listen address used for inter-manager communication
-        force_new_cluster: bool - Force a new cluster from current state
-        default_addr_pool: list - IP address pools for swarm overlay networks
-        subnet_size: int - Subnet size for the IP pool
-        data_path_addr: str - Address to use for data path traffic
-        data_path_port: int - Port number for data path traffic
-        name: str - Name of the swarm
-        labels: dict - User-defined key/value metadata
-        autolock_managers: bool - Encrypt manager keys at rest
-        log_driver: dict - Default log driver configuration
+        advertise_addr - Externally reachable address advertised to other nodes
+        listen_addr - Listen address used for inter-manager communication
+        force_new_cluster - Force a new cluster from current state
+        default_addr_pool - IP address pools for swarm overlay networks
+        subnet_size - Subnet size for the IP pool
+        data_path_addr - Address to use for data path traffic
+        data_path_port - Port number for data path traffic
+        name - Name of the swarm
+        labels - User-defined key/value metadata
+        autolock_managers - Encrypt manager keys at rest
+        log_driver - Default log driver configuration
     returns: str - The node id of the newly created swarm manager
     """
     kwargs: dict = {
@@ -66,11 +66,11 @@ def join_swarm(
     Join an existing swarm.
 
     args:
-        remote_addrs: list - Addresses of swarm managers to connect to
-        join_token: str - The swarm join token
-        listen_addr: str - Listen address for inter-manager communication
-        advertise_addr: str - Advertised address
-        data_path_addr: str - Data path address
+        remote_addrs - Addresses of swarm managers to connect to
+        join_token - The swarm join token
+        listen_addr - Listen address for inter-manager communication
+        advertise_addr - Advertised address
+        data_path_addr - Data path address
     returns: bool - True after the engine joins the swarm
     """
     kwargs: dict = {
@@ -87,7 +87,7 @@ def leave_swarm(force: bool = False) -> bool:
     """
     Leave the current swarm.
 
-    args: force: bool - Force leave even if the node is a manager
+    args: force - Force leave even if the node is a manager
     returns: bool - True after leaving the swarm
     """
     return _get_client().swarm.leave(force=force)
@@ -103,9 +103,9 @@ def update_swarm(
     Update the swarm configuration.
 
     args:
-        rotate_worker_token: bool - Rotate the worker join token
-        rotate_manager_token: bool - Rotate the manager join token
-        rotate_manager_unlock_key: bool - Rotate the manager unlock key
+        rotate_worker_token - Rotate the worker join token
+        rotate_manager_token - Rotate the manager join token
+        rotate_manager_unlock_key - Rotate the manager unlock key
     returns: bool - True after the update completes
     """
     return _get_client().swarm.update(
@@ -132,7 +132,7 @@ def unlock_swarm(key: str) -> bool:
     """
     Unlock a locked swarm.
 
-    args: key: str - The unlock key
+    args: key - The unlock key
     returns: bool - True after the swarm is unlocked
     """
     return _get_client().swarm.unlock(key)
@@ -182,8 +182,8 @@ def rotate_swarm_join_token(rotate_worker: bool = False, rotate_manager: bool = 
     the caller gets the new value in one step.
 
     args:
-        rotate_worker: bool - Rotate the worker join token
-        rotate_manager: bool - Rotate the manager join token
+        rotate_worker - Rotate the worker join token
+        rotate_manager - Rotate the manager join token
     returns: dict - {"Worker": <worker join token>, "Manager": <manager join token>} after rotation
     """
     if not (rotate_worker or rotate_manager):

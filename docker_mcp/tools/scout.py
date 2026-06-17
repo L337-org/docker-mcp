@@ -44,18 +44,17 @@ def scout_cves(
     """
     List vulnerabilities (CVEs) in an image via Docker Scout.
 
-    Anonymous scans work for public images, but Hub policy enforcement and richer
-    recommendations require `docker login` on the host running this MCP server.
+    Anonymous scans work for public images; Hub policy enforcement and richer recommendations need
+    `docker login` on the host running this MCP server.
 
     args:
-        image: str - Image reference (a tag or a digest)
-        only_fixed: bool - Only report CVEs with a fixed version available
-        only_severity: list[str] - Filter to these severities. Accepted values:
-                                   "critical", "high", "medium", "low", "unspecified"
-        ignore_base: bool - Exclude CVEs introduced by the base image
-        format: str - Output format: "json" (default; parsed into the return dict),
+        image - Image reference (a tag or a digest)
+        only_fixed - Only report CVEs with a fixed version available
+        only_severity - Filter to severities: "critical", "high", "medium", "low", "unspecified"
+        ignore_base - Exclude CVEs introduced by the base image
+        format - Output format: "json" (default; parsed into the return dict),
                       "sarif", "spdx", "list", "markdown", or "text"
-        platform: str - Platform of the image to analyze, e.g. "linux/amd64"
+        platform - Platform of the image to analyze, e.g. "linux/amd64"
     returns: dict - {"format": <format>, "result": <parsed-json-or-raw-text>,
                      "raw": <CliResult dict>}
     """
@@ -79,9 +78,9 @@ def scout_quickview(image: str, format: str = "json", platform: str | None = Non
     Render a compact summary of an image's CVE posture.
 
     args:
-        image: str - Image reference
-        format: str - Output format: "json" (default) or "text"
-        platform: str - Platform of the image to analyze, e.g. "linux/amd64"
+        image - Image reference
+        format - Output format: "json" (default) or "text"
+        platform - Platform of the image to analyze, e.g. "linux/amd64"
     returns: dict - {"format": <format>, "result": <parsed-json-or-raw-text>,
                      "raw": <CliResult dict>}
     """
@@ -105,17 +104,16 @@ def scout_recommendations(
     """
     Suggest base-image upgrades for an image.
 
-    Recommendations are computed against Docker Scout's catalog and generally require
-    `docker login` on the host running this MCP server to return useful results for
-    private or rarely-scanned base images.
+    Computed against Docker Scout's catalog; generally needs `docker login` on the host running this
+    MCP server to return useful results for private or rarely-scanned base images.
 
     args:
-        image: str - Image reference
-        only_refresh: bool - Only show "refresh" recommendations (same major/minor)
-        only_update: bool - Only show "update" recommendations (newer minor/major)
-        tag: str - Restrict to suggestions matching this tag pattern
-        format: str - Output format: "json" (default) or "text"
-        platform: str - Platform of the image to analyze
+        image - Image reference
+        only_refresh - Only show "refresh" recommendations (same major/minor)
+        only_update - Only show "update" recommendations (newer minor/major)
+        tag - Restrict to suggestions matching this tag pattern
+        format - Output format: "json" (default) or "text"
+        platform - Platform of the image to analyze
     returns: dict - {"format": <format>, "result": <parsed-json-or-raw-text>,
                      "raw": <CliResult dict>}
     """
@@ -151,15 +149,14 @@ def scout_compare(
     the comparison target.
 
     args:
-        image: str - The new / candidate image reference
-        to: str - Compare against this image reference, directory, or archive
-        to_env: str - Compare against an image associated with this Scout environment
-        to_latest: bool - Compare against the latest scan of `image`
-        only_severity: list[str] - Filter to these severities
-                                   ("critical", "high", "medium", "low", "unspecified")
-        ignore_unchanged: bool - Exclude unchanged packages from the diff
-        format: str - Output format: "json" (default), "markdown", or "text"
-        platform: str - Platform of the image to analyze
+        image - The new / candidate image reference
+        to - Compare against this image reference, directory, or archive
+        to_env - Compare against an image associated with this Scout environment
+        to_latest - Compare against the latest scan of `image`
+        only_severity - Filter to severities ("critical", "high", "medium", "low", "unspecified")
+        ignore_unchanged - Exclude unchanged packages from the diff
+        format - Output format: "json" (default), "markdown", or "text"
+        platform - Platform of the image to analyze
     returns: dict - {"format": <format>, "result": <parsed-json-or-raw-text>,
                      "raw": <CliResult dict>}
     """
@@ -193,22 +190,18 @@ def scout_sbom(
     """
     Generate a Software Bill of Materials (SBOM) for an image.
 
-    SBOMs can be large; the captured stdout is subject to the standard MAX_CLI_OUTPUT_BYTES
-    cap and may be flagged as truncated for very large images. If that's a concern, run
-    `docker scout sbom -o file.json …` on the host directly and load the file separately.
+    SBOMs can be large; captured stdout is subject to MAX_CLI_OUTPUT_BYTES and may be truncated for
+    big images. If that's a concern, run `docker scout sbom -o file.json …` on the host and load the
+    file separately.
 
     args:
-        image: str - Image reference
-        format: str - SBOM format. Accepted values (per `docker scout sbom --format`):
-                      - "spdx" (the default for this tool) — SPDX JSON
-                      - "cyclonedx" — CycloneDX JSON
-                      - "json" — Scout's native SBOM JSON (the CLI's own default)
-                      - "list" — a plain-text list of packages, no schema
-        platform: str - Platform of the image to analyze
-    returns: dict - {"format": <format>, "result": <…>, "raw": <CliResult dict>}.
-                    `result` is a parsed dict when `format` is one of "spdx", "cyclonedx",
-                    or "json" (all JSON serializations) and the stdout parses cleanly;
-                    when `format="list"` or the JSON fails to parse, `result` is the raw text.
+        image - Image reference
+        format - SBOM format: "spdx" (default, SPDX JSON), "cyclonedx" (CycloneDX JSON),
+                      "json" (Scout's native JSON), "list" (plain-text package list)
+        platform - Platform of the image to analyze
+    returns: dict - {"format", "result", "raw": <CliResult dict>}. `result` is a parsed dict when
+                    `format` is "spdx"/"cyclonedx"/"json" and stdout parses cleanly; for "list" or a
+                    parse failure it's the raw text.
     """
     args: list[str] = ["sbom", "--format", format]
     if platform is not None:
