@@ -32,26 +32,26 @@ def build_image(
     Build an image from a Dockerfile.
 
     args:
-        path: str - Path to the build context directory
-        tag: str - Tag to apply to the built image
-        quiet: bool - Suppress build output
-        nocache: bool - Do not use the build cache
-        rm: bool - Remove intermediate containers
-        pull: bool - Always pull a newer version of the base image
-        forcerm: bool - Always remove intermediate containers, even on failure
-        dockerfile: str - Name of the Dockerfile within the build context
-        buildargs: dict - Build-time variables
-        container_limits: dict - Resource limits for the build container
-        shmsize: int - Size of /dev/shm in bytes
-        labels: dict - Labels to apply to the image
-        cache_from: list - Images used as cache sources
-        target: str - Target build stage to stop at
-        network_mode: str - Network mode for the run instructions during build
-        squash: bool - Squash newly built layers into a single layer
-        extra_hosts: dict - Extra hosts to add to /etc/hosts during build
-        platform: str - Platform in the format os/arch
-        isolation: str - Isolation technology
-        use_config_proxy: bool - Use proxy values from the local config
+        path - Path to the build context directory
+        tag - Tag to apply to the built image
+        quiet - Suppress build output
+        nocache - Do not use the build cache
+        rm - Remove intermediate containers
+        pull - Always pull a newer version of the base image
+        forcerm - Always remove intermediate containers, even on failure
+        dockerfile - Name of the Dockerfile within the build context
+        buildargs - Build-time variables
+        container_limits - Resource limits for the build container
+        shmsize - Size of /dev/shm in bytes
+        labels - Labels to apply to the image
+        cache_from - Images used as cache sources
+        target - Target build stage to stop at
+        network_mode - Network mode for the run instructions during build
+        squash - Squash newly built layers into a single layer
+        extra_hosts - Extra hosts to add to /etc/hosts during build
+        platform - Platform in the format os/arch
+        isolation - Isolation technology
+        use_config_proxy - Use proxy values from the local config
     returns: dict - The built image's attrs
     """
     kwargs: dict = {
@@ -87,7 +87,7 @@ def get_image(name: str) -> dict:
     """
     Get an image by name or id.
 
-    args: name: str - The image name or id
+    args: name - The image name or id
     returns: dict - The image's attrs
     """
     return _get_client().images.get(name).attrs
@@ -98,15 +98,13 @@ def get_registry_data(name: str, auth_config: dict | None = None) -> dict:
     """
     Get registry data for an image without pulling it.
 
-    Security: `auth_config` carries registry credentials and many MCP clients log
-    tool arguments verbatim. Prefer authenticating on the host running this MCP
-    server with `docker login` so the `docker` module can reuse credentials cached
-    in that host's Docker config (typically `~/.docker/config.json`), and leave
-    `auth_config` unset.
+    Security: `auth_config` carries registry credentials, which many MCP clients log verbatim. Prefer
+    `docker login` on the host so the `docker` module reuses credentials cached in
+    `~/.docker/config.json`, and leave `auth_config` unset.
 
     args:
-        name: str - Image reference
-        auth_config: dict - Optional registry authentication config
+        name - Image reference
+        auth_config - Optional registry authentication config
     returns: dict - Registry data attrs
     """
     return _get_client().images.get_registry_data(name, auth_config=auth_config).attrs
@@ -118,9 +116,9 @@ def list_images(name: str | None = None, all: bool = False, filters: dict | None
     List images on the server.
 
     args:
-        name: str - Only show images of this repository
-        all: bool - Show intermediate image layers
-        filters: dict - Filter by attributes (label, dangling, before, since, etc.)
+        name - Only show images of this repository
+        all - Show intermediate image layers
+        filters - Filter by attributes (label, dangling, before, since, etc.)
     returns: list - A list of image attrs dicts
     """
     return [i.attrs for i in _get_client().images.list(name=name, all=all, filters=filters)]
@@ -134,10 +132,10 @@ def pull_image(
     Pull an image of the given name.
 
     args:
-        repository: str - The image repository
-        tag: str - The image tag (ignored when all_tags=True)
-        all_tags: bool - Pull all tags from the repository
-        platform: str - Platform in os/arch format
+        repository - The image repository
+        tag - The image tag (ignored when all_tags=True)
+        all_tags - Pull all tags from the repository
+        platform - Platform in os/arch format
     returns: dict | list - Pulled image attrs (or a list of attrs if all_tags=True)
     """
     result = _get_client().images.pull(repository, tag=tag, all_tags=all_tags, platform=platform)
@@ -151,16 +149,14 @@ def push_image(repository: str, tag: str | None = None, auth_config: dict | None
     """
     Push an image or repository to a registry.
 
-    Security: `auth_config` carries registry credentials and many MCP clients log
-    tool arguments verbatim. Prefer authenticating on the host running this MCP
-    server with `docker login` so the `docker` module can reuse credentials cached
-    in that host's Docker config (typically `~/.docker/config.json`), and leave
-    `auth_config` unset.
+    Security: `auth_config` carries registry credentials, which many MCP clients log verbatim. Prefer
+    `docker login` on the host so the `docker` module reuses credentials cached in
+    `~/.docker/config.json`, and leave `auth_config` unset.
 
     args:
-        repository: str - The image repository
-        tag: str - The tag to push
-        auth_config: dict - Optional registry authentication config
+        repository - The image repository
+        tag - The tag to push
+        auth_config - Optional registry authentication config
     returns: str - Push output as a string
     """
     output = _get_client().images.push(repository, tag=tag, stream=False, auth_config=auth_config, decode=False)
@@ -175,9 +171,9 @@ def remove_image(image: str, force: bool = False, noprune: bool = False) -> bool
     Remove an image.
 
     args:
-        image: str - The image name or id
-        force: bool - Force removal
-        noprune: bool - Do not delete untagged parents
+        image - The image name or id
+        force - Force removal
+        noprune - Do not delete untagged parents
     returns: bool - True after removal completes
     """
     _get_client().images.remove(image=image, force=force, noprune=noprune)
@@ -190,8 +186,8 @@ def search_images(term: str, limit: int | None = None) -> list:
     Search Docker Hub for images.
 
     args:
-        term: str - Search term
-        limit: int - Maximum number of results
+        term - Search term
+        limit - Maximum number of results
     returns: list - Search results
     """
     return _get_client().images.search(term=term, limit=limit)
@@ -202,7 +198,7 @@ def prune_images(filters: dict | None = None) -> dict:
     """
     Remove unused images.
 
-    args: filters: dict - Filters to apply (e.g. dangling, until, label)
+    args: filters - Filters to apply (e.g. dangling, until, label)
     returns: dict - Information on deleted images and reclaimed space
     """
     return _get_client().images.prune(filters=filters)
@@ -216,7 +212,7 @@ def load_image(data: bytes) -> list:
     For a tarball already on the host running this server, prefer `load_image_from_file` — it streams
     from disk instead of carrying the (base64-encoded) bytes through the MCP protocol.
 
-    args: data: bytes - Tarball contents
+    args: data - Tarball contents
     returns: list - A list of loaded image attrs dicts
     """
     return [i.attrs for i in _get_client().images.load(data)]
@@ -230,7 +226,7 @@ def load_image_from_file(file_path: str) -> list:
     Streams the file straight to the daemon, so it handles arbitrarily large images that would be
     impractical to pass in band via `load_image`. The path is read by the server's user; `~` is expanded.
 
-    args: file_path: str - Path to a tarball produced by `docker save` / `save_image_to_file`
+    args: file_path - Path to a tarball produced by `docker save` / `save_image_to_file`
     returns: list - A list of loaded image attrs dicts
     """
     path = host_read_path(file_path)
@@ -247,9 +243,9 @@ def save_image(name: str, named: bool = False, max_bytes: int = MAX_PAYLOAD_BYTE
     in-band bytes here are capped (default 32 MiB) because MCP base64-encodes them into the agent's context.
 
     args:
-        name: str - Image name or id
-        named: bool - Whether to keep the image name when saving
-        max_bytes: int - Abort with ValueError if the tarball exceeds this many bytes (defaults to 32 MiB)
+        name - Image name or id
+        named - Whether to keep the image name when saving
+        max_bytes - Abort with ValueError if the tarball exceeds this many bytes (defaults to 32 MiB)
     returns: bytes - The tarball contents
     """
     image = _get_client().images.get(name)
@@ -265,10 +261,10 @@ def save_image_to_file(name: str, dest_path: str, named: bool = False, overwrite
     is written by the server's user; `~` is expanded and an existing file is refused unless `overwrite=True`.
 
     args:
-        name: str - Image name or id
-        dest_path: str - Destination path on the server host for the tarball
-        named: bool - Whether to keep the image name when saving
-        overwrite: bool - Replace dest_path if it already exists (default False)
+        name - Image name or id
+        dest_path - Destination path on the server host for the tarball
+        named - Whether to keep the image name when saving
+        overwrite - Replace dest_path if it already exists (default False)
     returns: dict - {"path": <resolved path>, "bytes_written": int}
     """
     image = _get_client().images.get(name)
@@ -282,10 +278,10 @@ def tag_image(name: str, repository: str, tag: str | None = None, force: bool = 
     Tag an image into a repository.
 
     args:
-        name: str - The source image name or id
-        repository: str - Target repository name
-        tag: str - Optional tag for the new image
-        force: bool - Force the tag
+        name - The source image name or id
+        repository - Target repository name
+        tag - Optional tag for the new image
+        force - Force the tag
     returns: bool - True if the image was tagged
     """
     image = _get_client().images.get(name)
@@ -297,7 +293,7 @@ def image_history(name: str) -> list:
     """
     Show the history of an image.
 
-    args: name: str - The image name or id
+    args: name - The image name or id
     returns: list - History entries for each layer
     """
     return _get_client().images.get(name).history()

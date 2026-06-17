@@ -15,9 +15,9 @@ def create_service(image: str, command: str | list | None = None, extra_kwargs: 
     Create a swarm service.
 
     args:
-        image: str - The image for the service
-        command: str | list - The command to run in service tasks
-        extra_kwargs: dict - Additional ServiceCollection.create kwargs (name, env, mode, etc.)
+        image - The image for the service
+        command - The command to run in service tasks
+        extra_kwargs - Additional ServiceCollection.create kwargs (name, env, mode, etc.)
     returns: dict - The created service's attrs
     """
     kwargs = dict(extra_kwargs or {})
@@ -34,8 +34,8 @@ def get_service(service_id: str, insert_defaults: bool | None = None) -> dict:
     Get a swarm service by id or name.
 
     args:
-        service_id: str - The service id or name
-        insert_defaults: bool - Merge default values into the output
+        service_id - The service id or name
+        insert_defaults - Merge default values into the output
     returns: dict - The service's attrs
     """
     return _get_client().services.get(service_id, insert_defaults=insert_defaults).attrs
@@ -47,8 +47,8 @@ def list_services(filters: dict | None = None, managed_only: bool = False) -> li
     List swarm services.
 
     args:
-        filters: dict - Filter by attributes (id, name, label, mode)
-        managed_only: bool - Only return services created by this MCP server (filters on the
+        filters - Filter by attributes (id, name, label, mode)
+        managed_only - Only return services created by this MCP server (filters on the
                              docker-mcp-server.managed label); combines with any `filters` given
     returns: list - A list of service attrs dicts
     """
@@ -63,8 +63,8 @@ def update_service(service_id: str, updates: dict) -> bool:
     Update a swarm service's configuration.
 
     args:
-        service_id: str - The service id or name
-        updates: dict - Fields to update on the service
+        service_id - The service id or name
+        updates - Fields to update on the service
     returns: bool - True after the update
     """
     service = _get_client().services.get(service_id)
@@ -77,7 +77,7 @@ def remove_service(service_id: str) -> bool:
     """
     Stop and remove a swarm service.
 
-    args: service_id: str - The service id or name
+    args: service_id - The service id or name
     returns: bool - True after the service is removed
     """
     _get_client().services.get(service_id).remove()
@@ -90,8 +90,8 @@ def service_tasks(service_id: str, filters: dict | None = None) -> list:
     List the tasks of a swarm service.
 
     args:
-        service_id: str - The service id or name
-        filters: dict - Filter by id, name, node, label, desired-state
+        service_id - The service id or name
+        filters - Filter by id, name, node, label, desired-state
     returns: list - A list of task dicts
     """
     service = _get_client().services.get(service_id)
@@ -112,22 +112,21 @@ def service_logs(
     """
     Get a bounded snapshot of a swarm service's logs (never follows).
 
-    `follow` is intentionally not exposed: this tool joins the whole stream into one string before
-    returning, so following would block forever and grow the buffer without limit. Collection is
-    capped at `max_bytes` (raising ValueError if exceeded) so a noisy service can't OOM the server.
-    The default `tail="all"` returns the entire buffer, which can be very large on long-running
-    services and may exceed the agent's context — pass an integer (e.g. `tail=500`) or use `since`
-    to constrain output.
+    `follow` is intentionally not exposed: the stream is joined into one string before returning, so
+    following would block forever and grow unbounded. Collection is capped at `max_bytes` (ValueError
+    if exceeded) so a noisy service can't OOM the server. The default `tail="all"` returns the whole
+    buffer, which can be huge on long-running services and exceed the agent's context — pass an
+    integer (e.g. `tail=500`) or use `since` to constrain output.
 
     args:
-        service_id: str - The service id or name
-        details: bool - Show extra details
-        stdout: bool - Include stdout
-        stderr: bool - Include stderr
-        since: int - Show logs since this Unix timestamp
-        timestamps: bool - Include timestamps
-        tail: int | "all" - Number of lines from the end, or the literal "all"
-        max_bytes: int - Abort with ValueError if the buffered logs exceed this many bytes (default 32 MiB)
+        service_id - The service id or name
+        details - Show extra details
+        stdout - Include stdout
+        stderr - Include stderr
+        since - Show logs since this Unix timestamp
+        timestamps - Include timestamps
+        tail - Number of lines from the end, or the literal "all"
+        max_bytes - Abort with ValueError if the buffered logs exceed this many bytes (default 32 MiB)
     returns: str - Decoded log output
     """
     service = _get_client().services.get(service_id)
@@ -155,8 +154,8 @@ def scale_service(service_id: str, replicas: int) -> bool:
     Scale a swarm service to a number of replicas.
 
     args:
-        service_id: str - The service id or name
-        replicas: int - The desired number of replicas
+        service_id - The service id or name
+        replicas - The desired number of replicas
     returns: bool - True after scaling
     """
     return _get_client().services.get(service_id).scale(replicas)
@@ -167,7 +166,7 @@ def force_update_service(service_id: str) -> bool:
     """
     Force update a swarm service even if its config has not changed.
 
-    args: service_id: str - The service id or name
+    args: service_id - The service id or name
     returns: bool - True after the force update
     """
     _get_client().services.get(service_id).force_update()
@@ -185,7 +184,7 @@ def rollback_service(service_id: str) -> dict:
     so this reads the current version and previous spec via the low-level APIClient and submits them
     with `update_service`.
 
-    args: service_id: str - The service id or name
+    args: service_id - The service id or name
     returns: dict - The daemon response (a dict with a "Warnings" key)
     """
     api = _get_client().api

@@ -68,21 +68,20 @@ def compose_up(
     """
     Bring up a Docker Compose project, detached.
 
-    Always runs with `-d` (detached) so it cannot block the MCP server. Use `compose_ps`
-    to confirm services are running, or `wait=True` to block until they're healthy.
+    Always runs detached (`-d`) so it can't block the server. Use `compose_ps` to confirm
+    services are running, or `wait=True` to block until they're healthy.
 
     args:
-        project_dir: str - Working directory containing the compose file (defaults to the
-                           server's cwd). Paths are passed verbatim — no shell expansion.
-        files: list[str] - Explicit compose file paths (repeatable; equivalent to `-f`)
-        project_name: str - Compose project name override
-        profiles: list[str] - Profiles to activate
-        services: list[str] - Specific services to bring up (default: all)
-        build: bool - Build images before starting
-        pull: str - Pull strategy: "always", "missing", "never", or "policy" (compose default)
-        remove_orphans: bool - Remove containers for services not in the compose file
-        wait: bool - Block until services are healthy (adds `--wait`)
-        timeout_seconds: float - Subprocess timeout (default 600s)
+        project_dir - Dir with the compose file (default: server cwd; paths verbatim, no shell expansion)
+        files - Explicit compose file paths (repeatable, `-f`)
+        project_name - Compose project name override
+        profiles - Profiles to activate
+        services - Specific services to bring up (default: all)
+        build - Build images before starting
+        pull - Pull strategy: "always", "missing", "never", or "policy" (compose default)
+        remove_orphans - Remove containers for services not in the compose file
+        wait - Block until services are healthy (adds `--wait`)
+        timeout_seconds - Subprocess timeout (default 600s)
     returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
     """
     args = [*_global_args(files, project_name, profiles), "up", "-d"]
@@ -113,13 +112,13 @@ def compose_down(
     Stop and remove containers, networks (and optionally volumes) for a compose project.
 
     args:
-        project_dir: str - Working directory containing the compose file
-        files: list[str] - Explicit compose file paths
-        project_name: str - Compose project name override
-        profiles: list[str] - Profiles to consider
-        volumes: bool - Also remove named volumes declared by the project (destructive)
-        remove_orphans: bool - Remove containers not declared in the compose file
-        timeout_seconds: float - Subprocess timeout (default 300s)
+        project_dir - Dir with the compose file (default: server cwd)
+        files - Explicit compose file paths (repeatable, `-f`)
+        project_name - Compose project name override
+        profiles - Profiles to consider
+        volumes - Also remove named volumes declared by the project (destructive)
+        remove_orphans - Remove containers not declared in the compose file
+        timeout_seconds - Subprocess timeout (default 300s)
     returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
     """
     args = [*_global_args(files, project_name, profiles), "down"]
@@ -142,11 +141,11 @@ def compose_ps(
     List containers in a compose project, parsed from `--format json`.
 
     args:
-        project_dir: str - Working directory containing the compose file
-        files: list[str] - Explicit compose file paths
-        project_name: str - Compose project name override
-        services: list[str] - Restrict output to these services
-        all: bool - Include stopped containers as well
+        project_dir - Dir with the compose file (default: server cwd)
+        files - Explicit compose file paths (repeatable, `-f`)
+        project_name - Compose project name override
+        services - Restrict output to these services
+        all - Include stopped containers as well
     returns: dict - {"services": list[dict], "raw": <CliResult dict>}; on non-zero exit
                     `services` is an empty list and the caller should inspect `raw.stderr`.
     """
@@ -186,15 +185,14 @@ def compose_logs(
     Fetch a bounded slice of logs from a compose project (never follows).
 
     args:
-        project_dir: str - Working directory containing the compose file
-        files: list[str] - Explicit compose file paths
-        project_name: str - Compose project name override
-        services: list[str] - Restrict to these services (default: all)
-        tail: int - Number of lines per container (default 200; pass 0 for "all", though
-                    captured output is still capped at MAX_CLI_OUTPUT_BYTES)
-        since: str - Show logs since this timestamp/duration (e.g. "10m", "2024-01-01T00:00:00")
-        until: str - Show logs before this timestamp/duration
-        timestamps: bool - Include per-line timestamps
+        project_dir - Dir with the compose file (default: server cwd)
+        files - Explicit compose file paths (repeatable, `-f`)
+        project_name - Compose project name override
+        services - Restrict to these services (default: all)
+        tail - Lines per container (default 200; 0 = all, still capped at MAX_CLI_OUTPUT_BYTES)
+        since - Show logs since this timestamp/duration (e.g. "10m", "2024-01-01T00:00:00")
+        until - Show logs before this timestamp/duration
+        timestamps - Include per-line timestamps
     returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
     """
     args = [*_global_args(files, project_name, None), "logs", "--no-color", "--no-log-prefix"]
@@ -226,12 +224,12 @@ def compose_config(
     Render the canonical compose configuration after merges, profiles, and variable substitution.
 
     args:
-        project_dir: str - Working directory containing the compose file
-        files: list[str] - Explicit compose file paths
-        project_name: str - Compose project name override
-        profiles: list[str] - Profiles to activate before rendering
-        services_only: bool - List service names only (`--services`)
-        format: str - "yaml" (default) or "json"
+        project_dir - Dir with the compose file (default: server cwd)
+        files - Explicit compose file paths (repeatable, `-f`)
+        project_name - Compose project name override
+        profiles - Profiles to activate before rendering
+        services_only - List service names only (`--services`)
+        format - "yaml" (default) or "json"
     returns: dict - {"config": str|dict|None, "raw": <CliResult dict>};
                     `config` is a parsed dict when format="json" and parsing succeeds,
                     otherwise the rendered text from stdout.
@@ -267,13 +265,13 @@ def compose_build(
     Build images for a compose project.
 
     args:
-        project_dir: str - Working directory containing the compose file
-        files: list[str] - Explicit compose file paths
-        project_name: str - Compose project name override
-        services: list[str] - Specific services to build (default: all)
-        pull: bool - Always attempt to pull a newer base image
-        no_cache: bool - Do not use cache when building
-        timeout_seconds: float - Subprocess timeout (default 1800s)
+        project_dir - Dir with the compose file (default: server cwd)
+        files - Explicit compose file paths (repeatable, `-f`)
+        project_name - Compose project name override
+        services - Specific services to build (default: all)
+        pull - Always attempt to pull a newer base image
+        no_cache - Do not use cache when building
+        timeout_seconds - Subprocess timeout (default 1800s)
     returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
     """
     args = [*_global_args(files, project_name, None), "build"]
@@ -299,12 +297,12 @@ def compose_pull(
     Pull images declared by a compose project.
 
     args:
-        project_dir: str - Working directory containing the compose file
-        files: list[str] - Explicit compose file paths
-        project_name: str - Compose project name override
-        services: list[str] - Specific services to pull (default: all)
-        ignore_pull_failures: bool - Continue past individual pull failures
-        timeout_seconds: float - Subprocess timeout (default 1800s)
+        project_dir - Dir with the compose file (default: server cwd)
+        files - Explicit compose file paths (repeatable, `-f`)
+        project_name - Compose project name override
+        services - Specific services to pull (default: all)
+        ignore_pull_failures - Continue past individual pull failures
+        timeout_seconds - Subprocess timeout (default 1800s)
     returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
     """
     args = [*_global_args(files, project_name, None), "pull"]
@@ -328,12 +326,12 @@ def compose_restart(
     Restart services in a compose project.
 
     args:
-        project_dir: str - Working directory containing the compose file
-        files: list[str] - Explicit compose file paths
-        project_name: str - Compose project name override
-        services: list[str] - Specific services to restart (default: all)
-        stop_timeout_seconds: int - Grace period before SIGKILL (passed as `--timeout`)
-        timeout_seconds: float - Subprocess timeout (default 300s)
+        project_dir - Dir with the compose file (default: server cwd)
+        files - Explicit compose file paths (repeatable, `-f`)
+        project_name - Compose project name override
+        services - Specific services to restart (default: all)
+        stop_timeout_seconds - Grace period before SIGKILL (passed as `--timeout`)
+        timeout_seconds - Subprocess timeout (default 300s)
     returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
     """
     args = [*_global_args(files, project_name, None), "restart"]
@@ -356,16 +354,15 @@ def compose_stop(
     """
     Stop services in a compose project without removing their containers.
 
-    Unlike `compose_down`, the containers, networks, and volumes survive — use `compose_start`
-    to bring the same containers back.
+    Unlike `compose_down`, containers/networks/volumes survive — use `compose_start` to bring them back.
 
     args:
-        project_dir: str - Working directory containing the compose file
-        files: list[str] - Explicit compose file paths
-        project_name: str - Compose project name override
-        services: list[str] - Specific services to stop (default: all)
-        stop_timeout_seconds: int - Grace period before SIGKILL (passed as `--timeout`)
-        timeout_seconds: float - Subprocess timeout (default 300s)
+        project_dir - Dir with the compose file (default: server cwd)
+        files - Explicit compose file paths (repeatable, `-f`)
+        project_name - Compose project name override
+        services - Specific services to stop (default: all)
+        stop_timeout_seconds - Grace period before SIGKILL (passed as `--timeout`)
+        timeout_seconds - Subprocess timeout (default 300s)
     returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
     """
     args = [*_global_args(files, project_name, None), "stop"]
@@ -387,15 +384,15 @@ def compose_start(
     """
     Start existing (stopped) containers of a compose project.
 
-    The counterpart to `compose_stop` — starts the containers that already exist for the project
-    without recreating them. Use `compose_up` to (re)create containers from the compose file.
+    Counterpart to `compose_stop`: starts existing containers without recreating them. Use
+    `compose_up` to (re)create containers from the compose file.
 
     args:
-        project_dir: str - Working directory containing the compose file
-        files: list[str] - Explicit compose file paths
-        project_name: str - Compose project name override
-        services: list[str] - Specific services to start (default: all)
-        timeout_seconds: float - Subprocess timeout (default 600s)
+        project_dir - Dir with the compose file (default: server cwd)
+        files - Explicit compose file paths (repeatable, `-f`)
+        project_name - Compose project name override
+        services - Specific services to start (default: all)
+        timeout_seconds - Subprocess timeout (default 600s)
     returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
     """
     args = [*_global_args(files, project_name, None), "start"]
@@ -423,24 +420,22 @@ def compose_run(
     """
     Run a one-off command against a compose service.
 
-    Always passes `-T` to disable the pseudo-TTY (no terminal is attached when running
-    under MCP). Defaults to detached with `--rm` so the call returns promptly.
+    Always passes `-T` (no TTY under MCP). Defaults to detached with `--rm` so the call returns promptly.
 
     args:
-        service: str - Service name from the compose file
-        command: list[str] - Command and args to run inside the container (exec-form;
-                             no shell unless you explicitly invoke one)
-        project_dir: str - Working directory containing the compose file
-        files: list[str] - Explicit compose file paths
-        project_name: str - Compose project name override
-        detach: bool - Run detached (default True)
-        rm: bool - Remove the container after the run (default True)
-        no_deps: bool - Don't start linked services
-        workdir: str - Working directory inside the container
-        user: str - User to run as inside the container (uid or name)
-        env: dict - Environment variables to set inside the container
-        name: str - Optional container name
-        timeout_seconds: float - Subprocess timeout (default 600s)
+        service - Service name from the compose file
+        command - Command + args to run (exec-form; no shell unless you invoke one)
+        project_dir - Dir with the compose file (default: server cwd)
+        files - Explicit compose file paths (repeatable, `-f`)
+        project_name - Compose project name override
+        detach - Run detached (default True)
+        rm - Remove the container after the run (default True)
+        no_deps - Don't start linked services
+        workdir - Working directory inside the container
+        user - User to run as inside the container (uid or name)
+        env - Environment variables to set inside the container
+        name - Optional container name
+        timeout_seconds - Subprocess timeout (default 600s)
     returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
     """
     args = [*_global_args(files, project_name, None), "run", "-T"]
@@ -480,21 +475,20 @@ def compose_exec(
     """
     Run a command inside an already-running compose service container.
 
-    Always passes `-T` to disable the pseudo-TTY. The agent should pass an exec-form
-    argv list (e.g. `["python", "-V"]`) — a `["sh", "-c", "..."]` form will interpret
-    shell metacharacters in any untrusted substring.
+    Always passes `-T` (no TTY). Pass an exec-form argv (e.g. `["python", "-V"]`); a
+    `["sh", "-c", "..."]` form interprets shell metacharacters in untrusted substrings.
 
     args:
-        service: str - Service name from the compose file
-        command: list[str] - Argv to execute inside the container
-        project_dir: str - Working directory containing the compose file
-        files: list[str] - Explicit compose file paths
-        project_name: str - Compose project name override
-        index: int - Container index when the service has multiple replicas (default 1)
-        workdir: str - Working directory inside the container
-        user: str - User to run as inside the container (uid or name)
-        env: dict - Environment variables to set for the exec session
-        timeout_seconds: float - Subprocess timeout (default 60s)
+        service - Service name from the compose file
+        command - Argv to execute inside the container
+        project_dir - Dir with the compose file (default: server cwd)
+        files - Explicit compose file paths (repeatable, `-f`)
+        project_name - Compose project name override
+        index - Container index when the service has multiple replicas (default 1)
+        workdir - Working directory inside the container
+        user - User to run as inside the container (uid or name)
+        env - Environment variables to set for the exec session
+        timeout_seconds - Subprocess timeout (default 60s)
     returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
     """
     args = [*_global_args(files, project_name, None), "exec", "-T"]
@@ -522,10 +516,10 @@ def compose_images(
     List the images used by a compose project's services, parsed from `--format json`.
 
     args:
-        project_dir: str - Working directory containing the compose file
-        files: list[str] - Explicit compose file paths
-        project_name: str - Compose project name override
-        services: list[str] - Restrict to these services (default: all)
+        project_dir - Dir with the compose file (default: server cwd)
+        files - Explicit compose file paths (repeatable, `-f`)
+        project_name - Compose project name override
+        services - Restrict to these services (default: all)
     returns: list - One dict per container image (service, container, repository, tag, id, size)
     """
     args = [*_global_args(files, project_name, None), "images", "--format", "json"]
@@ -554,17 +548,17 @@ def compose_port(
     """
     Resolve the host binding for a service's container port.
 
-    Prints which host address/port a service's private port is published on (the compose equivalent
-    of `docker port`). `published` is None when the port isn't published.
+    The compose equivalent of `docker port`: which host address/port a service's private port is
+    published on. `published` is None when the port isn't published.
 
     args:
-        service: str - Service name from the compose file
-        private_port: int - The container-internal port to look up
-        protocol: str - "tcp" (default) or "udp"
-        index: int - Container index when the service has multiple replicas (default 1)
-        project_dir: str - Working directory containing the compose file
-        files: list[str] - Explicit compose file paths
-        project_name: str - Compose project name override
+        service - Service name from the compose file
+        private_port - The container-internal port to look up
+        protocol - "tcp" (default) or "udp"
+        index - Container index when the service has multiple replicas (default 1)
+        project_dir - Dir with the compose file (default: server cwd)
+        files - Explicit compose file paths (repeatable, `-f`)
+        project_name - Compose project name override
     returns: dict - {"service", "private_port", "protocol", "published": "host:port"|None,
                      "host": str|None, "port": int|None, "bindings": list[str]}.
                      `published`/`host`/`port` describe the first binding; `bindings` lists every
@@ -605,16 +599,16 @@ def compose_wait(
     """
     Block until the named service containers stop, then return their exit codes.
 
-    Intended for services expected to finish (batch / one-shot jobs). For a long-running service that
-    never exits this blocks until `timeout_seconds`, at which point the subprocess is killed and a
-    TimeoutExpired error surfaces — so always bound it sensibly. The exit codes are on stdout.
+    For one-shot / batch services. A long-running service that never exits blocks until
+    `timeout_seconds`, then the subprocess is killed (TimeoutExpired) — bound it sensibly.
+    Exit codes are on stdout.
 
     args:
-        services: list[str] - One or more services to wait on. At least one is required.
-        project_dir: str - Working directory containing the compose file
-        files: list[str] - Explicit compose file paths
-        project_name: str - Compose project name override
-        timeout_seconds: float - Subprocess timeout (default 300s)
+        services - One or more services to wait on. At least one is required.
+        project_dir - Dir with the compose file (default: server cwd)
+        files - Explicit compose file paths (repeatable, `-f`)
+        project_name - Compose project name override
+        timeout_seconds - Subprocess timeout (default 300s)
     returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
     """
     if not services:
@@ -637,10 +631,10 @@ def compose_top(
     Output is the `ps`-style process table per service (not JSON); read it from `stdout`.
 
     args:
-        services: list[str] - Restrict to these services (default: all)
-        project_dir: str - Working directory containing the compose file
-        files: list[str] - Explicit compose file paths
-        project_name: str - Compose project name override
+        services - Restrict to these services (default: all)
+        project_dir - Dir with the compose file (default: server cwd)
+        files - Explicit compose file paths (repeatable, `-f`)
+        project_name - Compose project name override
     returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
     """
     args = [*_global_args(files, project_name, None), "top"]
@@ -663,20 +657,19 @@ def compose_cp(
     """
     Copy files/folders between a service container and the server host's filesystem.
 
-    Exactly one of `source`/`dest` is a `SERVICE:PATH` reference; the other is a path on the host
-    running this MCP server. Host paths are read/written as the server's user (the same host-filesystem
-    exposure as the file-path archive tools — see SECURITY.md). Copying to stdout (`dest="-"`) is not
-    supported here; use the container-archive tools for binary streaming.
+    Exactly one of `source`/`dest` is `SERVICE:PATH`; the other is a path on the host running this MCP
+    server, read/written as the server's user (same host exposure as the file-path archive tools — see
+    SECURITY.md). Copying to stdout (`dest="-"`) is unsupported; use the container-archive tools.
 
     args:
-        source: str - `SERVICE:SRC_PATH` or a host path
-        dest: str - `SERVICE:DEST_PATH` or a host path (not "-")
-        index: int - Container index when the service has multiple replicas (default 1)
-        all_containers: bool - Copy to/from all containers of the service (`--all`)
-        project_dir: str - Working directory containing the compose file
-        files: list[str] - Explicit compose file paths
-        project_name: str - Compose project name override
-        timeout_seconds: float - Subprocess timeout (default 300s)
+        source - `SERVICE:SRC_PATH` or a host path
+        dest - `SERVICE:DEST_PATH` or a host path (not "-")
+        index - Container index when the service has multiple replicas (default 1)
+        all_containers - Copy to/from all containers of the service (`--all`)
+        project_dir - Dir with the compose file (default: server cwd)
+        files - Explicit compose file paths (repeatable, `-f`)
+        project_name - Compose project name override
+        timeout_seconds - Subprocess timeout (default 300s)
     returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
     """
     args = [*_global_args(files, project_name, None), "cp"]
@@ -702,12 +695,12 @@ def compose_kill(
     Send a signal to a compose project's containers (default SIGKILL).
 
     args:
-        services: list[str] - Restrict to these services (default: all)
-        signal: str - Signal to send (default "SIGKILL"; e.g. "SIGTERM", "SIGHUP")
-        remove_orphans: bool - Also remove containers for services not in the compose file
-        project_dir: str - Working directory containing the compose file
-        files: list[str] - Explicit compose file paths
-        project_name: str - Compose project name override
+        services - Restrict to these services (default: all)
+        signal - Signal to send (default "SIGKILL"; e.g. "SIGTERM", "SIGHUP")
+        remove_orphans - Also remove containers for services not in the compose file
+        project_dir - Dir with the compose file (default: server cwd)
+        files - Explicit compose file paths (repeatable, `-f`)
+        project_name - Compose project name override
     returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
     """
     args = [*_global_args(files, project_name, None), "kill"]
@@ -731,10 +724,10 @@ def compose_pause(
     Pause the containers of a compose project (freezes their processes).
 
     args:
-        services: list[str] - Restrict to these services (default: all)
-        project_dir: str - Working directory containing the compose file
-        files: list[str] - Explicit compose file paths
-        project_name: str - Compose project name override
+        services - Restrict to these services (default: all)
+        project_dir - Dir with the compose file (default: server cwd)
+        files - Explicit compose file paths (repeatable, `-f`)
+        project_name - Compose project name override
     returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
     """
     args = [*_global_args(files, project_name, None), "pause"]
@@ -754,10 +747,10 @@ def compose_unpause(
     Unpause the containers of a compose project (resumes paused processes).
 
     args:
-        services: list[str] - Restrict to these services (default: all)
-        project_dir: str - Working directory containing the compose file
-        files: list[str] - Explicit compose file paths
-        project_name: str - Compose project name override
+        services - Restrict to these services (default: all)
+        project_dir - Dir with the compose file (default: server cwd)
+        files - Explicit compose file paths (repeatable, `-f`)
+        project_name - Compose project name override
     returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
     """
     args = [*_global_args(files, project_name, None), "unpause"]
@@ -771,7 +764,7 @@ def compose_ls(all: bool = False) -> list:
     """
     List compose projects known to the daemon (across all directories).
 
-    args: all: bool - Include stopped projects
+    args: all - Include stopped projects
     returns: list - One dict per project (parsed from `--format json`)
     """
     args = ["compose", "ls", "--format", "json"]

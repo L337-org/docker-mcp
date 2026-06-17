@@ -58,20 +58,18 @@ def stack_deploy(
     Deploy (or update) a stack to the swarm from one or more Compose files.
 
     Requires the target daemon to be a swarm manager. Re-running with the same `stack_name` updates
-    the stack in place. Defaults to `detach=True` so the call returns once the specs are submitted
-    rather than blocking on convergence; set `detach=False` to wait for the rollout (give it a
-    generous `timeout_seconds`).
+    the stack in place. Defaults to `detach=True` (returns once specs are submitted, not on
+    convergence); set `detach=False` to wait for the rollout (give it a generous `timeout_seconds`).
 
     args:
-        stack_name: str - Name of the stack to create or update
-        compose_files: list[str] - One or more Compose file paths (later files override earlier ones;
-                                   passed as repeated `-c`). At least one is required.
-        with_registry_auth: bool - Send registry credentials to swarm agents (needed for private images)
-        prune: bool - Remove services no longer defined in the Compose file
-        resolve_image: str - Image-digest resolution: "always" (default), "changed", or "never"
-        detach: bool - Return immediately after submitting specs (True) vs wait for convergence (False)
-        cwd: str - Working directory for resolving relative Compose paths (defaults to the server's cwd)
-        timeout_seconds: float - Subprocess timeout (default 1800s)
+        stack_name - Name of the stack to create or update
+        compose_files - One or more Compose file paths (repeated `-c`; later override earlier). At least one required.
+        with_registry_auth - Send registry credentials to swarm agents (needed for private images)
+        prune - Remove services no longer defined in the Compose file
+        resolve_image - Image-digest resolution: "always" (default), "changed", or "never"
+        detach - Return immediately after submitting specs (True) vs wait for convergence (False)
+        cwd - Working directory for resolving relative Compose paths (defaults to the server's cwd)
+        timeout_seconds - Subprocess timeout (default 1800s)
     returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
     """
     if not compose_files:
@@ -112,9 +110,9 @@ def stack_ps(stack_name: str, no_trunc: bool = False, filters: list[str] | None 
     List the tasks of a stack, parsed from `--format '{{json .}}'`.
 
     args:
-        stack_name: str - The stack to list tasks for
-        no_trunc: bool - Do not truncate task IDs / errors in the output
-        filters: list[str] - Repeatable `--filter` expressions, e.g. ["desired-state=running"]
+        stack_name - The stack to list tasks for
+        no_trunc - Do not truncate task IDs / errors in the output
+        filters - Repeatable `--filter` expressions, e.g. ["desired-state=running"]
     returns: list - One dict per task (id, name, node, image, desired/current state, error)
     """
     args = ["stack", "ps", "--format", _JSON_FORMAT]
@@ -134,8 +132,8 @@ def stack_services(stack_name: str, filters: list[str] | None = None) -> list:
     List the services of a stack, parsed from `--format '{{json .}}'`.
 
     args:
-        stack_name: str - The stack to list services for
-        filters: list[str] - Repeatable `--filter` expressions, e.g. ["name=web"]
+        stack_name - The stack to list services for
+        filters - Repeatable `--filter` expressions, e.g. ["name=web"]
     returns: list - One dict per service (id, name, mode, replicas, image, ports)
     """
     args = ["stack", "services", "--format", _JSON_FORMAT]
@@ -156,9 +154,9 @@ def stack_rm(stack_names: list[str], detach: bool = True, timeout_seconds: float
     `detach=True` so the call returns once removal is requested rather than waiting for teardown.
 
     args:
-        stack_names: list[str] - One or more stack names to remove. At least one is required.
-        detach: bool - Return immediately (True) vs wait for the stack(s) to be fully removed (False)
-        timeout_seconds: float - Subprocess timeout (default 300s)
+        stack_names - One or more stack names to remove. At least one is required.
+        detach - Return immediately (True) vs wait for the stack(s) to be fully removed (False)
+        timeout_seconds - Subprocess timeout (default 300s)
     returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
     """
     if not stack_names:

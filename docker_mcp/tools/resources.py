@@ -215,7 +215,7 @@ def get_container_logs_resource(id_or_name: str) -> str:
     Works on running and stopped containers, so it can surface why a container exited. The read is
     capped to a recent tail so it can't flood the agent's context.
 
-    args: id_or_name: str - The container id or name (from the docker://containers index)
+    args: id_or_name - The container id or name (from the docker://containers index)
     returns: str - The decoded recent log tail
     """
     _require_containers_domain()
@@ -230,7 +230,7 @@ def get_container_stats_resource(id_or_name: str) -> str:
     Returns a small summary (CPU %, memory used/limit/%, network and block I/O) derived from a single
     stats snapshot. Raises if the container isn't running, since stats require a live cgroup.
 
-    args: id_or_name: str - The container id or name (from the docker://containers index)
+    args: id_or_name - The container id or name (from the docker://containers index)
     returns: str - JSON {container, cpu_percent, mem_used_mb, mem_limit_mb, mem_percent,
                    net_rx_mb, net_tx_mb, blk_read_mb, blk_write_mb}
     """
@@ -243,7 +243,7 @@ def get_docs_section(section: str) -> str:
     """
     Fetch the documentation page for a section.
 
-    args: section: str - Section name from `docker-docs://contents`
+    args: section - Section name from `docker-docs://contents`
     returns: str - The HTML (or rendered Markdown) content of the documentation page
     """
     if not _section_enabled(section):

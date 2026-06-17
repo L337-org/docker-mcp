@@ -65,38 +65,33 @@ def buildx_build(
     `--progress=plain` so output is captured rather than redrawn on a TTY.
 
     args:
-        context: str - Build context: a filesystem path or a Git/HTTP URL. Passed verbatim
-                       to docker; no shell expansion of `~` or globs. The `-` form (tarball
-                       on stdin) is NOT supported — this tool doesn't forward stdin to the
-                       subprocess, so `-` would block on the MCP server's own stdin. Pre-pack
-                       a tarball and serve it via an HTTP URL if you need that workflow.
-        tags: list[str] - Image references to apply (`-t`, repeatable)
-        platforms: list[str] - Target platforms, e.g. ["linux/amd64", "linux/arm64"]
-        file: str - Dockerfile path (relative to context unless absolute)
-        build_args: dict - Build-time variables (each becomes `--build-arg KEY=VALUE`)
-        build_contexts: dict - Additional named build contexts (e.g. {"deps": "./vendor"})
-        labels: dict - Image labels (each becomes `--label KEY=VALUE`)
-        annotations: list[str] - OCI manifest annotations (passed verbatim, repeatable)
-        target: str - Target build stage to stop at
-        push: bool - Push the result to the registry (mutually exclusive with `load`)
-        load: bool - Load the result into the local image store (single-platform builds only)
-        output: list[str] - Custom `--output` specs (e.g. ["type=tar,dest=out.tar"])
-        no_cache: bool - Do not use cache when building
-        no_cache_filter: list[str] - Stage names to exclude from caching
-        pull: bool - Always attempt to pull a newer version of each base image
-        cache_from: list[str] - Cache import specs, e.g. ["type=registry,ref=user/img:cache"]
-        cache_to: list[str] - Cache export specs
-        builder: str - Override the active builder
-        sbom: str - Shorthand for `--attest=type=sbom`; pass "true" or a config string
-        provenance: str - Shorthand for `--attest=type=provenance`; pass "true", "false", or a config string
-        attest: list[str] - Custom attestation specs (repeatable)
-        secret: list[str] - Secret specs (e.g. ["id=npmrc,src=/home/user/.npmrc"] or
-                            ["id=npmrc,env=NPM_TOKEN"]). Neither this tool nor the docker CLI
-                            expands `~` in `src=…`; use an absolute path or pre-expand via
-                            `pathlib.Path("~/.npmrc").expanduser()` before passing the spec.
-        ssh: list[str] - SSH agent socket / key specs (e.g. ["default"], which uses
-                         $SSH_AUTH_SOCK from the environment)
-        timeout_seconds: float - Subprocess timeout (default 1800s)
+        context - Build context: a filesystem path or Git/HTTP URL (verbatim; no `~`/glob expansion).
+                       The `-` stdin-tarball form is NOT supported (stdin isn't forwarded — it'd block
+                       on the server's own stdin); serve a pre-packed tarball over HTTP instead.
+        tags - Image references to apply (`-t`, repeatable)
+        platforms - Target platforms, e.g. ["linux/amd64", "linux/arm64"]
+        file - Dockerfile path (relative to context unless absolute)
+        build_args - Build-time variables (each becomes `--build-arg KEY=VALUE`)
+        build_contexts - Additional named build contexts (e.g. {"deps": "./vendor"})
+        labels - Image labels (each becomes `--label KEY=VALUE`)
+        annotations - OCI manifest annotations (passed verbatim, repeatable)
+        target - Target build stage to stop at
+        push - Push the result to the registry (mutually exclusive with `load`)
+        load - Load the result into the local image store (single-platform builds only)
+        output - Custom `--output` specs (e.g. ["type=tar,dest=out.tar"])
+        no_cache - Do not use cache when building
+        no_cache_filter - Stage names to exclude from caching
+        pull - Always attempt to pull a newer version of each base image
+        cache_from - Cache import specs, e.g. ["type=registry,ref=user/img:cache"]
+        cache_to - Cache export specs
+        builder - Override the active builder
+        sbom - Shorthand for `--attest=type=sbom`; pass "true" or a config string
+        provenance - Shorthand for `--attest=type=provenance`; pass "true", "false", or a config string
+        attest - Custom attestation specs (repeatable)
+        secret - Secret specs (e.g. ["id=npmrc,src=/home/user/.npmrc"] or ["id=npmrc,env=NPM_TOKEN"]).
+                            `~` in `src=` is NOT expanded (by this tool or the CLI) — use an absolute path.
+        ssh - SSH agent socket/key specs (e.g. ["default"], using $SSH_AUTH_SOCK)
+        timeout_seconds - Subprocess timeout (default 1800s)
     returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
     """
     if context == "-":
@@ -181,16 +176,16 @@ def buildx_bake(
     Build multiple targets defined in a bake file (HCL, JSON, or compose).
 
     args:
-        targets: list[str] - Bake targets to build (default: the `default` group)
-        files: list[str] - Bake file paths (`-f`, repeatable)
-        set_overrides: list[str] - Per-target overrides, e.g. ["app.platform=linux/amd64"]
-        push: bool - Push results to the registry
-        load: bool - Load results into the local image store
-        no_cache: bool - Do not use cache when building
-        pull: bool - Always pull a newer base image
-        builder: str - Override the active builder
-        cwd: str - Working directory containing the bake file (defaults to the server's cwd)
-        timeout_seconds: float - Subprocess timeout (default 1800s)
+        targets - Bake targets to build (default: the `default` group)
+        files - Bake file paths (`-f`, repeatable)
+        set_overrides - Per-target overrides, e.g. ["app.platform=linux/amd64"]
+        push - Push results to the registry
+        load - Load results into the local image store
+        no_cache - Do not use cache when building
+        pull - Always pull a newer base image
+        builder - Override the active builder
+        cwd - Working directory containing the bake file (defaults to the server's cwd)
+        timeout_seconds - Subprocess timeout (default 1800s)
     returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
     """
     args: list[str] = ["bake", "--progress=plain"]
@@ -229,11 +224,11 @@ def buildx_imagetools_inspect(
     single-platform manifests and multi-platform manifest lists / OCI indexes.
 
     args:
-        image: str - Image reference, e.g. "alpine:3.19" or "ghcr.io/org/repo@sha256:..."
-        raw: bool - Return the raw manifest bytes (a JSON document) instead of the
+        image - Image reference, e.g. "alpine:3.19" or "ghcr.io/org/repo@sha256:..."
+        raw - Return the raw manifest bytes (a JSON document) instead of the
                     human-rendered tree
-        format: str - Go template format string (mutually exclusive with `raw`)
-        builder: str - Override the active builder
+        format - Go template format string (mutually exclusive with `raw`)
+        builder - Override the active builder
     returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}.
                     When `raw=True` or `format="{{json .}}"`, `stdout` is a JSON document
                     the caller can parse.
@@ -270,20 +265,19 @@ def buildx_imagetools_create(
     """
     Create a manifest list / OCI image index from existing per-platform tags.
 
-    Replaces `docker manifest create` + `docker manifest push` — `imagetools create`
-    builds the index and pushes it in one operation. The source tags must already be
-    pushed to the registry; this command only stitches them together.
+    Replaces `docker manifest create` + `docker manifest push` — builds the index and pushes it in
+    one operation. Source tags must already be pushed; this only stitches them together.
 
     args:
-        target: str - Tag for the new manifest list (`-t`)
-        sources: list[str] - Source image references to combine
-        append: bool - Append to the existing manifest at `target` rather than replacing
-        dry_run: bool - Print the resulting manifest without pushing
-        annotations: list[str] - OCI annotations (repeatable; passed verbatim)
-        platforms: list[str] - Filter source platforms when combining
-        files: list[str] - Read source descriptors from files instead of refs
-        builder: str - Override the active builder
-        timeout_seconds: float - Subprocess timeout (default 600s)
+        target - Tag for the new manifest list (`-t`)
+        sources - Source image references to combine
+        append - Append to the existing manifest at `target` rather than replacing
+        dry_run - Print the resulting manifest without pushing
+        annotations - OCI annotations (repeatable; passed verbatim)
+        platforms - Filter source platforms when combining
+        files - Read source descriptors from files instead of refs
+        builder - Override the active builder
+        timeout_seconds - Subprocess timeout (default 600s)
     returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
     """
     if not sources and not files:
@@ -329,7 +323,7 @@ def buildx_history_ls(builder: str | None = None) -> list:
     versions have no `history` subcommand and this raises with the CLI's "unknown command" error).
 
     args:
-        builder: str - Builder instance to read history from (defaults to the active builder)
+        builder - Builder instance to read history from (defaults to the active builder)
     returns: list - One dict per build record (ref, name, status, total/completed/cached steps, times)
     """
     args = ["history", "ls", "--format", "{{json .}}"]
@@ -349,12 +343,12 @@ def buildx_history_inspect(ref: str = "", builder: str | None = None) -> dict:
     debugging a failed or slow build found via `buildx_history_ls`. Requires buildx >= v0.13.
 
     args:
-        ref: str - Build record ref. Pass the `ref` field from `buildx_history_ls` directly — it
+        ref - Build record ref. Pass the `ref` field from `buildx_history_ls` directly — it
                    reports a qualified "<builder>/<node>/<id>", but `history inspect` only accepts the
                    bare id, so this reduces it to the id and (unless `builder` is given) targets the
                    builder named in the ref. Empty/omitted inspects the most recent build; the `^N`
                    syntax (e.g. "^0" = latest) is also valid.
-        builder: str - Builder instance the build ran on (defaults to the one in `ref`, else active)
+        builder - Builder instance the build ran on (defaults to the one in `ref`, else active)
     returns: dict - The parsed build record (or {"raw": <stdout>} if the output isn't a JSON object)
     """
     # `buildx history ls` emits ref as "<builder>/<node>/<id>", but `history inspect` only finds the
@@ -386,8 +380,8 @@ def buildx_inspect(name: str | None = None, bootstrap: bool = False) -> dict:
     Inspect a builder instance.
 
     args:
-        name: str - Builder name (defaults to the active builder)
-        bootstrap: bool - Boot the builder if it isn't already running
+        name - Builder name (defaults to the active builder)
+        bootstrap - Boot the builder if it isn't already running
     returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}.
                     stdout is human-readable; parse with the agent or call buildx_ls for JSON.
     """
@@ -409,7 +403,7 @@ def buildx_du(builder: str | None = None) -> list:
     record before parsing. For an exhaustive accounting on a busy builder, run
     `docker buildx du --format '{{json .}}'` on the host directly.
 
-    args: builder: str - Override the active builder
+    args: builder - Override the active builder
     returns: list - One dict per cache record (parsed from `--format '{{json .}}'`)
     """
     args: list[str] = ["du", "--format", "{{json .}}"]
@@ -438,14 +432,14 @@ def buildx_prune(
     available under MCP. Pair with `buildx_du` first to inventory what would be removed.
 
     args:
-        all: bool - Include internal/frontend images
-        filter: dict - Filter values (e.g. {"until": "24h", "type": "exec.cachemount"})
-        keep_storage: str - DEPRECATED; older buildx flag. Use `reserved_space` instead.
-        reserved_space: str - Amount of disk to always keep (e.g. "10GB")
-        max_used_space: str - Maximum disk space the cache may use (e.g. "20GB")
-        min_free_space: str - Target amount of free disk after pruning (e.g. "5GB")
-        builder: str - Override the active builder
-        timeout_seconds: float - Subprocess timeout (default 600s)
+        all - Include internal/frontend images
+        filter - Filter values (e.g. {"until": "24h", "type": "exec.cachemount"})
+        keep_storage - DEPRECATED; older buildx flag. Use `reserved_space` instead.
+        reserved_space - Amount of disk to always keep (e.g. "10GB")
+        max_used_space - Maximum disk space the cache may use (e.g. "20GB")
+        min_free_space - Target amount of free disk after pruning (e.g. "5GB")
+        builder - Override the active builder
+        timeout_seconds - Subprocess timeout (default 600s)
     returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
     """
     args: list[str] = ["prune", "--force"]
@@ -482,15 +476,15 @@ def buildx_create(
     Create a new builder instance.
 
     args:
-        name: str - Name for the new builder (defaults to a generated name)
-        driver: str - BuildKit driver (e.g. "docker-container", "kubernetes", "remote")
-        driver_opts: dict - Driver-specific options (each becomes `--driver-opt KEY=VALUE`)
-        use: bool - Set the new builder as the current one
-        bootstrap: bool - Boot the builder immediately
-        platforms: list[str] - Platforms the builder advertises
-        config: str - Path to a buildkitd config file
-        node_name: str - Node name within the builder (for multi-node builders)
-        append: bool - Append a node to an existing builder named `name`
+        name - Name for the new builder (defaults to a generated name)
+        driver - BuildKit driver (e.g. "docker-container", "kubernetes", "remote")
+        driver_opts - Driver-specific options (each becomes `--driver-opt KEY=VALUE`)
+        use - Set the new builder as the current one
+        bootstrap - Boot the builder immediately
+        platforms - Platforms the builder advertises
+        config - Path to a buildkitd config file
+        node_name - Node name within the builder (for multi-node builders)
+        append - Append a node to an existing builder named `name`
     returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
     """
     args: list[str] = ["create"]
@@ -521,9 +515,9 @@ def buildx_use(name: str, default: bool = False, global_default: bool = False) -
     Switch the current builder.
 
     args:
-        name: str - Builder name to activate
-        default: bool - Set as default for this context
-        global_default: bool - Set as default across all contexts
+        name - Builder name to activate
+        default - Set as default for this context
+        global_default - Set as default across all contexts
     returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
     """
     args: list[str] = ["use"]
@@ -547,11 +541,11 @@ def buildx_rm(
     Remove a builder instance.
 
     args:
-        name: str - Builder name to remove (mutually exclusive with `all_inactive`)
-        all_inactive: bool - Remove every inactive builder
-        keep_state: bool - Keep the BuildKit state volume
-        keep_daemon: bool - Keep the BuildKit daemon process running
-        force: bool - Force removal even if the builder is in use
+        name - Builder name to remove (mutually exclusive with `all_inactive`)
+        all_inactive - Remove every inactive builder
+        keep_state - Keep the BuildKit state volume
+        keep_daemon - Keep the BuildKit daemon process running
+        force - Force removal even if the builder is in use
     returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
     """
     if not name and not all_inactive:

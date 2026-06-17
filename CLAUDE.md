@@ -53,6 +53,8 @@ from docker_mcp.server import mcp      # resource modules
 
 `server.py` also owns the central **`TOOL_CATEGORIES`** map (every tool name → `READ_ONLY` / `MUTATING` / `DESTRUCTIVE`). The `@tool()` decorator uses it to (a) attach `ToolAnnotations` (`readOnlyHint` / `destructiveHint`, plus `idempotentHint` for the prune family) and (b) skip registration entirely under the read-only env switches `DOCKER_MCP_READONLY` (only read-only tools) and `DOCKER_MCP_NO_DESTRUCTIVE` (everything except destructive). Every registered tool must have a `TOOL_CATEGORIES` entry — `tests/test_server.py` fails if the map and the registered set drift.
 
+After registering each tool the decorator also calls `_strip_schema_titles` on the tool's advertised `inputSchema` to delete pydantic's information-free `title` annotations (the title-cased field name on every property/`$def`, plus the top-level `<tool>Arguments` title) — across the tool surface that was ~10% of the advertised schema tokens for zero information. It's display-only: call-time validation runs off the tool's separate `fn_metadata`, so the strip never changes behavior. `tests/test_server.py` asserts no registered tool advertises a `title` annotation. This is the first, client-independent half of a deliberate footprint-reduction effort; the conditional `tools/list_changed` half is sketched in `docs/dynamic-tool-loading.md`.
+
 The decorator also records each tool's **domain** — the leaf of its defining module (`docker_mcp.tools.containers` → `containers`) — so the orthogonal `DOCKER_MCP_DISABLE=<domains>` switch can drop a whole feature area (e.g. `swarm,plugins`) from the registered surface regardless of category. A tool registers only if its category survives the read-only switches *and* its domain is not disabled. `DOCKER_MCP_DISABLE` reaches beyond tools: the `prompt(domain=...)` helper skips a disabled domain's prompts, and `resources.py` hides a disabled domain's doc sections — so disabling e.g. `scout` drops its tools, its prompts, and its `docker-docs://scout` sections together. The full picture (every tool's domain/category, plus the `prompts` list and `disabled_doc_sections`) is exposed via `tool_catalog()` and the `docker-mcp://tool-catalog` resource, so the classification is auditable at runtime, not just in the source map.
 
 ### Tools package (`docker_mcp/tools/`)
@@ -163,15 +165,21 @@ def mcp_example(name: str):
     """
     Say hello to someone by name.
 
-    args: name: str - The name to say hello to
+    args: name - The name to say hello to
     returns: str - The greeting
     """
     return f"Hello, {name}!"
 ```
 
 - One-line summary sentence, then a blank line
-- `args:` section lists each parameter as `name: type - description`
+- `args:` section lists each parameter as `name - description`. Do **not** repeat the parameter's
+  type — the type annotation already lands in the tool's `inputSchema`, which the client sees
+  alongside the description, so a `name: type - ...` form just duplicates it as prose tokens. (The
+  `returns:` line keeps its type, since the return shape is not in the input schema.)
 - `returns:` line documents the return type and what it contains
+- Keep descriptions terse: state every functional fact (defaults, accepted formats/values, return
+  keys, important caveats) but cut redundancy and verbose phrasing. The docstring is the entire
+  tool `description` the client pays tokens for on every session.
 
 ### MCP resources
 

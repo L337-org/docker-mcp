@@ -12,10 +12,10 @@ def create_secret(name: str, data: bytes, labels: dict | None = None, driver: di
     Create a swarm secret.
 
     args:
-        name: str - The name of the secret
-        data: bytes - The secret payload
-        labels: dict - Labels to apply
-        driver: dict - Optional secret driver configuration
+        name - The name of the secret
+        data - The secret payload
+        labels - Labels to apply
+        driver - Optional secret driver configuration
     returns: dict - The created secret's attrs
     """
     kwargs: dict = {
@@ -31,7 +31,7 @@ def get_secret(secret_id: str) -> dict:
     """
     Get a swarm secret by id.
 
-    args: secret_id: str - The secret id
+    args: secret_id - The secret id
     returns: dict - The secret's attrs
     """
     return _get_client().secrets.get(secret_id).attrs
@@ -42,7 +42,7 @@ def list_secrets(filters: dict | None = None) -> list:
     """
     List swarm secrets.
 
-    args: filters: dict - Filter by attributes (e.g. id, name, label)
+    args: filters - Filter by attributes (e.g. id, name, label)
     returns: list - A list of secret attrs dicts
     """
     return [s.attrs for s in _get_client().secrets.list(**drop_none(filters=filters))]
@@ -53,7 +53,7 @@ def remove_secret(secret_id: str) -> bool:
     """
     Remove a swarm secret.
 
-    args: secret_id: str - The secret id
+    args: secret_id - The secret id
     returns: bool - True after removal
     """
     _get_client().secrets.get(secret_id).remove()

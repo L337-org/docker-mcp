@@ -4,6 +4,7 @@ import sys
 import docker_mcp  # noqa: F401 — imported for its side effect of registering every tool
 from docker_mcp.server import (
     TOOL_CATEGORIES,
+    _SCHEMA_NAME_MAPS,
     ToolCategory,
     _annotations_for,
     _domain_enabled,
@@ -13,6 +14,7 @@ from docker_mcp.server import (
     _prompt_registry,
     _seen_tool_names,
     _should_register,
+    _strip_schema_titles,
     _tool_registry,
     mcp,
     tool_catalog,
@@ -266,6 +268,49 @@ def test_run_container_restart_policy_schema_is_typed():
     rp = schema["$defs"]["RestartPolicy"]["properties"]
     assert set(rp) == {"Name", "MaximumRetryCount"}
     assert set(rp["Name"]["enum"]) == {"no", "always", "on-failure", "unless-stopped"}
+
+
+def _has_title_anywhere(node) -> bool:
+    # Mirror _strip_schema_titles' traversal: a `title` *key* inside a name-map (e.g. a property
+    # literally named "title") is a name, not an annotation, and must not count as a leftover.
+    if isinstance(node, dict):
+        if "title" in node:
+            return True
+        for key, value in node.items():
+            if key in _SCHEMA_NAME_MAPS and isinstance(value, dict):
+                if any(_has_title_anywhere(sub) for sub in value.values()):
+                    return True
+            elif _has_title_anywhere(value):
+                return True
+        return False
+    if isinstance(node, list):
+        return any(_has_title_anywhere(item) for item in node)
+    return False
+
+
+def test_no_registered_tool_schema_carries_title_annotations():
+    # pydantic stamps an information-free `title` on every property/$def and the top-level schema;
+    # the decorator strips them (~10% of the advertised tool surface). Assert none survive.
+    offenders = [name for name, t in _registered_tools().items() if _has_title_anywhere(t.parameters)]
+    assert not offenders, f"tools still advertising `title` annotations: {offenders}"
+
+
+def test_strip_schema_titles_preserves_a_param_named_title():
+    # Defensive: a parameter (or $def) literally named "title" is a name, not an annotation —
+    # its schema's own title is dropped, but the property key itself is preserved.
+    schema = {
+        "title": "DropMe",
+        "type": "object",
+        "properties": {
+            "title": {"title": "Drop This Too", "type": "string"},
+            "count": {"title": "Count", "type": "integer"},
+        },
+    }
+    _strip_schema_titles(schema)
+    assert "title" not in schema  # top-level annotation gone
+    assert set(schema["properties"]) == {"title", "count"}  # the param NAMED title survives
+    assert "title" not in schema["properties"]["title"]  # its own annotation is gone
+    assert schema["properties"]["title"]["type"] == "string"  # type preserved
 
 
 # ---------- prompt + doc-resource disabling (DOCKER_MCP_DISABLE covers more than tools) ----------

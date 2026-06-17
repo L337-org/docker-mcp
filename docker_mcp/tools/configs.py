@@ -12,10 +12,10 @@ def create_config(name: str, data: bytes, labels: dict | None = None, templating
     Create a swarm config.
 
     args:
-        name: str - The name of the config
-        data: bytes - The config payload
-        labels: dict - Labels to apply
-        templating: dict - Templating driver configuration
+        name - The name of the config
+        data - The config payload
+        labels - Labels to apply
+        templating - Templating driver configuration
     returns: dict - The created config's attrs
     """
     kwargs: dict = {
@@ -31,7 +31,7 @@ def get_config(config_id: str) -> dict:
     """
     Get a swarm config by id.
 
-    args: config_id: str - The config id
+    args: config_id - The config id
     returns: dict - The config's attrs
     """
     return _get_client().configs.get(config_id).attrs
@@ -42,7 +42,7 @@ def list_configs(filters: dict | None = None) -> list:
     """
     List swarm configs.
 
-    args: filters: dict - Filter by attributes (e.g. id, name, label)
+    args: filters - Filter by attributes (e.g. id, name, label)
     returns: list - A list of config attrs dicts
     """
     return [c.attrs for c in _get_client().configs.list(**drop_none(filters=filters))]
@@ -53,7 +53,7 @@ def remove_config(config_id: str) -> bool:
     """
     Remove a swarm config.
 
-    args: config_id: str - The config id
+    args: config_id - The config id
     returns: bool - True after removal
     """
     _get_client().configs.get(config_id).remove()
