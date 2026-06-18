@@ -16,9 +16,10 @@ from urllib.parse import urlparse
 import httpx
 
 from docker_mcp.server import tool
+from docker_mcp.tools._utils import package_version
 
 _DEFAULT_TIMEOUT = 30.0
-_USER_AGENT = "docker-mcp/0.1"
+_USER_AGENT = f"docker-mcp-server/{package_version()}"
 _HUB_API_BASE = "https://hub.docker.com/v2"
 _DEFAULT_REGISTRY = "registry-1.docker.io"
 _MAX_TAG_PAGES = 50  # cap on registry/Hub pagination follow-through

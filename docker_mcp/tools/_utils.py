@@ -3,6 +3,8 @@
 import os
 import tempfile
 from collections.abc import Iterable
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _pkg_version
 from pathlib import Path
 from typing import Any
 
@@ -52,6 +54,14 @@ _PSEUDO_FSTYPES = frozenset(
 def env_flag(name: str) -> bool:
     """True if the named environment variable is set to a truthy value (1/true/yes/on)."""
     return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def package_version() -> str:
+    """Installed docker-mcp-server version, or '0+unknown' from a source checkout without dist metadata."""
+    try:
+        return _pkg_version("docker-mcp-server")
+    except PackageNotFoundError:
+        return "0+unknown"
 
 
 def in_container() -> bool:
@@ -131,7 +141,7 @@ def _unmapped_path_message(path: Path, *, for_write: bool) -> str:
         verb, consequence = "read from", "no such path is visible inside the container"
     parent = path.parent
     return (
-        f"Cannot {verb} {path}: {consequence}. This docker-mcp server is running in a container, so "
+        f"Cannot {verb} {path}: {consequence}. This docker-mcp-server is running in a container, so "
         f"host paths must be bind-mounted in. Add a mount for the directory to the `docker run` args "
         f"in your MCP client config — e.g. `-v {parent}:{parent}` (using the same path inside and out "
         f"keeps host and container paths identical) — then retry. Small payloads can use the in-band "

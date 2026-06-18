@@ -14,7 +14,7 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 
-mcp = FastMCP("docker-mcp")
+mcp = FastMCP("docker-mcp-server")
 
 
 class ToolCategory(Enum):

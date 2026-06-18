@@ -5,6 +5,7 @@ import json
 import httpx
 
 from docker_mcp.server import is_domain_disabled, mcp, register_resource_domains, tool_catalog
+from docker_mcp.tools._utils import package_version
 from docker_mcp.tools.client import _get_client
 from docker_mcp.tools.containers import _read_log_tail, _read_stats_summary
 
@@ -12,7 +13,7 @@ DOCKER_DOCS_BASE_URL = "https://docker-py.readthedocs.io/en/stable"
 
 # Bounded wait for a docs fetch — a stalled readthedocs connection must not hang the resource read.
 _DOCS_TIMEOUT = 30.0
-_USER_AGENT = "docker-mcp/0.1"
+_USER_AGENT = f"docker-mcp-server/{package_version()}"
 
 # Sections served from the docker-py SDK documentation. Each maps to
 # DOCKER_DOCS_BASE_URL/<section>.html for backwards compatibility.

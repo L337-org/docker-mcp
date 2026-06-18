@@ -67,7 +67,7 @@ def guard_not_self(container: Container) -> None:
     if env_flag(_SELF_TERMINATE_OVERRIDE_ENV):
         return
     raise RuntimeError(
-        f"Refusing to operate on the docker-mcp server's own container ({container.short_id} "
+        f"Refusing to operate on the docker-mcp-server's own container ({container.short_id} "
         f"{container.name}) — this would terminate the MCP session mid-call. Set "
         f"{_SELF_TERMINATE_OVERRIDE_ENV}=1 to override, or run the action from the host shell "
         f"(e.g. `docker rm -f`), which bypasses this server entirely."
@@ -302,7 +302,7 @@ def reconnect(docker_host: str | None = None) -> dict:
 
 def _connection_help(exc: BaseException) -> str:
     """OS-aware guidance, emitted when the startup ping fails, for getting the daemon reachable."""
-    lines = [f"docker-mcp: cannot reach the Docker daemon ({exc})."]
+    lines = [f"docker-mcp-server: cannot reach the Docker daemon ({exc})."]
     host = os.environ.get("DOCKER_HOST")
     if host:
         lines.append(f"  DOCKER_HOST is set to {host} — verify that endpoint is reachable.")
@@ -362,7 +362,7 @@ def _connection_summary(client: docker.DockerClient) -> str:
             if _self_container_id
             else "; self-termination guard inactive (could not identify own container)"
         )
-    return f"docker-mcp: connected to Docker daemon — {os_name}{suffix}{note}."
+    return f"docker-mcp-server: connected to Docker daemon — {os_name}{suffix}{note}."
 
 
 def startup_preflight() -> None:
