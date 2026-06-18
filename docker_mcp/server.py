@@ -403,16 +403,17 @@ def build_instructions(registered_domains: set[str] | None = None) -> str:
     caveats = []
     if present & {"containers", "images"}:
         caveats.append(
-            "`*_to_file` variants (export/save/get_container_archive) write to the host disk — prefer them "
-            "over the streaming variant when persisting output."
+            "`*_to_file` tools (`export_container_to_file`, `save_image_to_file`, "
+            "`get_container_archive_to_file`) write to the host disk — prefer them over the streaming "
+            "variant when persisting output."
         )
     if present & {"containers", "networks", "volumes", "services"}:
         caveats.append("`list_*(managed_only=True)` returns only resources this server created (provenance-labeled).")
     cli_present = [d for d in _CLI_DOMAINS if d in present]
     if cli_present:
         caveats.append(
-            f"CLI-backed domains ({', '.join(cli_present)}) may be absent if the docker CLI/plugin isn't "
-            "installed; those calls degrade rather than crash."
+            f"CLI-backed domains ({', '.join(cli_present)}) shell out to the docker CLI/plugins; those "
+            "calls raise if the CLI or a required plugin isn't installed."
         )
     if present & set(_SWARM_DOMAINS):
         caveats.append("Swarm-family tools require a swarm manager node.")
