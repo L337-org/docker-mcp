@@ -28,6 +28,8 @@ from docker_mcp.server import mcp       # resource modules only
 
 `server.py` also owns **`TOOL_CATEGORIES`**, the central map classifying every tool as `READ_ONLY` / `MUTATING` / `DESTRUCTIVE`. The `@tool()` decorator uses it to attach MCP `ToolAnnotations` and to skip registration under the env switches `DOCKER_MCP_SERVER_READONLY` (register only read-only tools) and `DOCKER_MCP_SERVER_NO_DESTRUCTIVE` (register everything except destructive). It also records each tool's **domain** (its defining module's leaf, e.g. `containers`) so the orthogonal `DOCKER_MCP_SERVER_DISABLE=<domains>` switch can drop whole feature areas — including that domain's **prompts** (via the `prompt(domain=...)` helper) and its **doc-resource sections** (via `_SECTION_DOMAINS` in `resources.py`), not just its tools; the live snapshot is the `docker-mcp://tool-catalog` resource (`server.tool_catalog()`). **Every new tool needs a `TOOL_CATEGORIES` entry** — `tests/test_server.py` fails the build if the map drifts from the registered set. All server tunables are namespaced `DOCKER_MCP_SERVER_*`; read them through `docker_mcp/_env.py` (`read_env` / `env_flag`), which still honors the pre-rename `DOCKER_MCP_*` spellings as deprecated aliases and warns once to stderr.
 
+`server.py` also builds the FastMCP **`instructions`** string — pre-loaded into a client's context with the server name and tool names, *before* any per-tool schema, so for a lazy-loading client (e.g. Claude Code, which fetches tool schemas on demand) it's the main always-in-context surface. It's written as a **router** (per-domain keyword one-liners + a few tool-selection caveats), not docs, and does not enumerate tools (that's `docker-mcp://tool-catalog`). `build_instructions()` renders it from `_DOMAIN_BLURBS`, emitting a domain's line **only when that domain has a registered tool**, so `DOCKER_MCP_SERVER_DISABLE` / `_READONLY` / `_NO_DESTRUCTIVE` are honored via the one registration flag. `finalize_instructions()` (called from `docker_mcp/__init__.py` after all tools import) writes it through to `mcp._mcp_server.instructions` (FastMCP's `instructions` is a read-only property read at `run()` time, so a late write propagates; the reach-in is guarded). **A new tool domain needs a `_DOMAIN_BLURBS` entry** or the router silently omits it.
+
 ### Tools package (`docker_mcp/tools/`)
 Each file maps to one Docker SDK domain or one CLI/registry feature area. Underscore-prefixed modules are private helpers excluded from the star-import.
 
@@ -72,7 +74,7 @@ An additional distribution channel alongside the uvx-from-git install (unchanged
 ## Conventions
 
 - New Docker functionality goes in the matching `docker_mcp/tools/<domain>.py` — do not create new tool files without a corresponding entry in `docker_mcp/tools/__init__.py` and a matching test file.
-- Tool functions are decorated with `@tool()` (imported from `docker_mcp.server`) and **must have a `TOOL_CATEGORIES` entry** in `docker_mcp/server.py`.
+- Tool functions are decorated with `@tool()` (imported from `docker_mcp.server`) and **must have a `TOOL_CATEGORIES` entry** in `docker_mcp/server.py`. A new tool module is a new domain — also add a `_DOMAIN_BLURBS` entry so the `instructions` router advertises it.
 - Line length limit: 120 characters.
 - Do not add comments that describe what the code does — only add comments for non-obvious constraints or workarounds.
 

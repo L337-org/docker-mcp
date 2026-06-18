@@ -7,6 +7,7 @@ from docker_mcp.server import (
     _SCHEMA_NAME_MAPS,
     ToolCategory,
     _annotations_for,
+    build_instructions,
     _domain_enabled,
     _domain_for,
     _parse_domains,
@@ -262,6 +263,92 @@ def test_canonical_disable_wins_over_deprecated_alias_end_to_end():
     # When both spellings are set, the canonical DOCKER_MCP_SERVER_DISABLE takes precedence.
     names = _registered_names(["DOCKER_MCP_SERVER_DISABLE=swarm", "DOCKER_MCP_DISABLE=compose"])
     assert names == set(TOOL_CATEGORIES) - _names_by_domain("swarm")
+
+
+# ---------- instructions router stays in sync with the registered surface ----------
+
+
+def test_instructions_emit_a_line_only_for_present_domains():
+    text = build_instructions(registered_domains={"containers", "images"})
+    assert "- containers —" in text
+    assert "- images —" in text
+    # A domain that didn't register must not be advertised — the whole point of building it dynamically.
+    assert "- swarm —" not in text
+    assert "- compose —" not in text
+
+
+def test_instructions_drop_cli_and_swarm_caveats_when_those_domains_are_absent():
+    # No CLI-backed or swarm domains present -> neither caveat should appear, and the CLI caveat must not
+    # name a domain that isn't registered.
+    text = build_instructions(registered_domains={"containers", "networks"})
+    assert "CLI-backed domains" not in text
+    assert "swarm manager node" not in text
+    # The CLI caveat lists only the CLI domains that survived.
+    text = build_instructions(registered_domains={"compose", "buildx"})
+    assert "CLI-backed domains (compose, buildx)" in text
+    assert "scout" not in text
+
+
+def test_instructions_default_to_the_live_registered_surface():
+    # No argument -> reads _tool_registry; with everything registered, every domain blurb appears.
+    text = build_instructions()
+    present = {rec.domain for rec in _tool_registry.values() if rec.registered}
+    for domain in present:
+        assert f"- {domain} —" in text
+
+
+def _live_instructions(env_vars: list[str]) -> str:
+    """Import the package in a child process with the given env and return the server's `instructions`
+    string the client would actually receive (built by finalize_instructions() at import)."""
+    code = "import docker_mcp; print(docker_mcp.mcp.instructions)"
+    result = subprocess.run(  # noqa: S603 — fixed argv, sys.executable, no shell; trusted test input
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        env=_env_with(env_vars),
+        check=True,
+    )
+    return result.stdout
+
+
+def _router_domain_lines(instructions: str) -> set[str]:
+    """The domains listed in the router's 'Domains' block. Scoped to that block so the caveat bullets —
+    which also start with '- ' and contain an em-dash (e.g. the `*_to_file` line) — aren't mistaken for
+    domain lines."""
+    lines = instructions.splitlines()
+    start = lines.index("Domains (and the words that find them):") + 1
+    domains = set()
+    for line in lines[start:]:
+        if not line.strip():
+            break
+        domains.add(line[2:].split(" — ", 1)[0])
+    return domains
+
+
+def test_live_instructions_exclude_a_disabled_domain_end_to_end():
+    # finalize_instructions() runs at package import, so a disabled domain must be gone from the string
+    # the client actually receives — not just from the registered tool set.
+    text = _live_instructions(["DOCKER_MCP_SERVER_DISABLE=swarm,services,nodes,secrets,configs"])
+    assert "- swarm —" not in text
+    assert "- services —" not in text
+    assert "Swarm-family tools require" not in text
+    assert "- containers —" in text  # untouched domains survive
+
+
+def test_router_domain_lines_track_registered_domains_under_every_switch():
+    # The invariant that makes the router safe for lazy-loading clients: it advertises a domain iff that
+    # domain actually has a registered tool — under READONLY and NO_DESTRUCTIVE too, not just DISABLE.
+    # (No domain loses *all* its tools to the category switches today — every domain keeps a read-only and
+    # a non-destructive tool — so this proves the router doesn't wrongly drop a still-present domain.)
+    for env in (
+        [],
+        ["DOCKER_MCP_SERVER_READONLY=1"],
+        ["DOCKER_MCP_SERVER_NO_DESTRUCTIVE=1"],
+        ["DOCKER_MCP_SERVER_DISABLE=swarm,scout"],
+        ["DOCKER_MCP_SERVER_READONLY=1", "DOCKER_MCP_SERVER_DISABLE=registry"],
+    ):
+        expected = {_tool_registry[name].domain for name in _registered_names(env)}
+        assert _router_domain_lines(_live_instructions(env)) == expected, env
 
 
 # ---------- typed parameter schemas ----------

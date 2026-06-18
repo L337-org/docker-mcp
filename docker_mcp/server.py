@@ -342,6 +342,110 @@ def tool_catalog() -> dict[str, Any]:
     }
 
 
+# One-line router blurb per tool domain (the module leaf), keyed in display order. The server's
+# `instructions` string — pre-loaded into a client's context alongside the server name and tool names,
+# *before* any per-tool schema — is built from these. For a lazy-loading client (e.g. Claude Code) that
+# fetches tool schemas on demand, `instructions` is the main surface we control that's always in context,
+# so it acts as a router: it maps user vocabulary onto the domain keyword a tool search will hit. It does
+# not enumerate tools (that's the live `docker-mcp://tool-catalog` resource) — it's a map, not a manual.
+# A domain's line is emitted only when that domain has a *registered* tool, so DOCKER_MCP_SERVER_DISABLE
+# and the read-only switches never leave the router advertising a domain the client can't actually call.
+_DOMAIN_BLURBS: dict[str, str] = {
+    "containers": "run/create/start/stop/restart/kill/remove, logs, stats, top, exec, diff, commit, archive/cp, "
+    "wait, rename",
+    "images": "pull/push/build/tag/remove/save/load/history, search",
+    "networks": "create/connect/disconnect/inspect/remove",
+    "volumes": "create/list/inspect/remove",
+    "compose": "Docker Compose v2 (up/down/ps/logs/build/run/exec/...); CLI-backed",
+    "stack": "Compose-on-Swarm (deploy/ls/ps/rm/services); CLI-backed",
+    "swarm": "swarm init/join/leave/unlock, join-tokens; manager node only",
+    "services": "Swarm services (create/scale/update/rollback/logs/tasks); manager node only",
+    "nodes": "Swarm nodes (list/inspect/update/remove); manager node only",
+    "secrets": "Swarm secrets; manager node only",
+    "configs": "Swarm configs; manager node only",
+    "buildx": "multi-arch builds, imagetools (supersedes `docker manifest`), build history; CLI-backed",
+    "scout": "CVE scan, SBOM, base-image recommendations; CLI-backed",
+    "context": "docker CLI contexts; CLI-backed",
+    "registry": "OCI registries + Docker Hub over HTTPS; no daemon needed",
+    "plugins": "plugin lifecycle (install/enable/disable/configure/upgrade/remove)",
+    "client": "ping, version, info, df (disk usage), events, login, logout",
+}
+
+# CLI- and swarm-tied caveats are only worth emitting when the relevant domains actually registered.
+_CLI_DOMAINS = ("compose", "stack", "buildx", "scout", "context")
+_SWARM_DOMAINS = ("swarm", "services", "nodes", "secrets", "configs")
+
+
+def build_instructions(registered_domains: set[str] | None = None) -> str:
+    """
+    Render the server `instructions` router from the domains that actually registered tools.
+
+    Pass `registered_domains` to render for an arbitrary set (tests); by default it reads the live
+    `_tool_registry`, so the switches (DOCKER_MCP_SERVER_DISABLE / _READONLY / _NO_DESTRUCTIVE) are
+    reflected — a domain with no registered tool contributes no line, so the router never points the
+    client at tools that aren't there.
+    """
+    present = (
+        registered_domains
+        if registered_domains is not None
+        else {r.domain for r in _tool_registry.values() if r.registered}
+    )
+
+    lines = [
+        "docker-mcp-server — manage Docker through the docker-py SDK and the docker CLI.",
+        "",
+        "Tools load on demand: search by a domain keyword below to pull a tool's full schema before calling it.",
+        "",
+        "Domains (and the words that find them):",
+    ]
+    lines += [f"- {domain} — {blurb}" for domain, blurb in _DOMAIN_BLURBS.items() if domain in present]
+
+    caveats = []
+    if present & {"containers", "images"}:
+        caveats.append(
+            "`*_to_file` variants (export/save/get_container_archive) write to the host disk — prefer them "
+            "over the streaming variant when persisting output."
+        )
+    if present & {"containers", "networks", "volumes", "services"}:
+        caveats.append("`list_*(managed_only=True)` returns only resources this server created (provenance-labeled).")
+    cli_present = [d for d in _CLI_DOMAINS if d in present]
+    if cli_present:
+        caveats.append(
+            f"CLI-backed domains ({', '.join(cli_present)}) may be absent if the docker CLI/plugin isn't "
+            "installed; those calls degrade rather than crash."
+        )
+    if present & set(_SWARM_DOMAINS):
+        caveats.append("Swarm-family tools require a swarm manager node.")
+    if caveats:
+        lines += ["", "Picking the right tool:"]
+        lines += [f"- {c}" for c in caveats]
+
+    lines += [
+        "",
+        "The registered surface changes with env switches; read the `docker-mcp://tool-catalog` resource for "
+        "the live tool/domain/category list and which switches are active. Docs are under "
+        "`docker-docs://contents`. For multi-step jobs (deploy, troubleshoot, prune, audit, migrate, "
+        "multi-arch build, volume backup/restore) prefer the matching MCP prompt.",
+    ]
+    return "\n".join(lines)
+
+
+def finalize_instructions() -> None:
+    """
+    Set the server's `instructions` from the actually-registered surface — called once after every tool
+    module has imported (docker_mcp/__init__.py), so the switch-dependent registration is already known.
+
+    FastMCP.instructions is a read-only property backed by the low-level server's `instructions`, which is
+    read at run() time (create_initialization_options), so writing it through here after registration
+    propagates to the MCP initialize handshake. Reaching into `_mcp_server` is guarded the same way as the
+    schema-title strip below: a FastMCP refactor degrades to "instructions stay unset" rather than raising.
+    """
+    try:
+        mcp._mcp_server.instructions = build_instructions()
+    except AttributeError:
+        pass
+
+
 def _annotations_for(name: str, category: ToolCategory) -> ToolAnnotations:
     """Build the ToolAnnotations a client uses to auto-allow reads and gate destructive calls."""
     return ToolAnnotations(
