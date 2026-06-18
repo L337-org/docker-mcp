@@ -473,28 +473,53 @@ _SCHEMA_NAME_MAPS = frozenset(
 )
 
 
-def _strip_schema_titles(node: Any) -> None:
+def _slim_schema(node: Any) -> None:
     """
-    Recursively delete `title` annotations from a JSON Schema, in place.
+    Recursively slim a JSON Schema in place, dropping annotations the client already has (or that
+    only restate a default). All three transforms are display-only — call-time validation runs off
+    the tool's separate `fn_metadata`, so none changes behavior — and were measured to be
+    information-free, together ~18% of the advertised schema tokens:
 
-    pydantic stamps a `title` on every property and `$def` (the title-cased field name, e.g.
-    `cache_from` -> "Cache From"), plus a top-level `<tool>Arguments` title. These carry no
-    information the client doesn't already have from the property name, yet across 161 tools they
-    were ~10% of the entire advertised tool surface. The schema dict is display-only (call-time
-    validation runs off the tool's separate `fn_metadata`), so stripping it is purely cosmetic
-    token savings with no behavioral effect.
+    - **`title`** (~10%): pydantic stamps one on every property/`$def` (the title-cased field name,
+      e.g. `cache_from` -> "Cache From") plus a top-level `<tool>Arguments` title — it duplicates the
+      property name.
+    - **nullable `anyOf`** (~7%): an `X | None` param emits `anyOf: [<X>, {"type": "null"}]`; the null
+      branch is redundant with the field's optionality (absence from `required` + its `default`), so
+      drop it — hoisting the sole remaining branch, or keeping a multi-branch `anyOf` minus the null.
+      Gated on a sibling `default` so a (hypothetical) required nullable with no default is never
+      collapsed to look non-nullable.
+    - **`additionalProperties: true`** (~1%): the JSON Schema default — an explicit `true` says nothing
+      an omitted key wouldn't. A *schema-valued* `additionalProperties` (e.g. `dict[str, str]`) is
+      meaningful and kept.
+
+    `tests/test_server.py` asserts none of the three survive on any registered tool.
     """
     if isinstance(node, dict):
         node.pop("title", None)
+        any_of = node.get("anyOf")
+        if isinstance(any_of, list) and {"type": "null"} in any_of and "default" in node:
+            non_null = [sub for sub in any_of if sub != {"type": "null"}]
+            if len(non_null) == 1:
+                # Sole remaining branch: hoist its keys onto this node (setdefault never clobbers an
+                # existing sibling like `default`), then drop the now-empty anyOf.
+                node.pop("anyOf")
+                for key, value in non_null[0].items():
+                    node.setdefault(key, value)
+            else:
+                node["anyOf"] = non_null
+        # After the anyOf hoist, so a hoisted `additionalProperties: true` (the null branch of a
+        # `dict[str, Any] | None` param lives in anyOf[0]) is also caught.
+        if node.get("additionalProperties") is True:
+            node.pop("additionalProperties")
         for key, value in node.items():
             if key in _SCHEMA_NAME_MAPS and isinstance(value, dict):
                 for subschema in value.values():
-                    _strip_schema_titles(subschema)
+                    _slim_schema(subschema)
             else:
-                _strip_schema_titles(value)
+                _slim_schema(value)
     elif isinstance(node, list):
         for item in node:
-            _strip_schema_titles(item)
+            _slim_schema(item)
 
 
 def tool(**kwargs: Any) -> Callable[[Callable], Callable]:
@@ -519,17 +544,17 @@ def tool(**kwargs: Any) -> Callable[[Callable], Callable]:
         if not registered:
             return func
         decorated = mcp.tool(annotations=_annotations_for(name, category), **kwargs)(func)
-        # Drop pydantic's information-free `title` annotations from the advertised input schema.
-        # This reaches into FastMCP internals (`_tool_manager.get_tool(...).parameters`); guard it so
-        # a future FastMCP refactor degrades to "titles not stripped" (a test catches that) rather
-        # than crashing the server at import time.
+        # Slim the advertised input schema (drop information-free titles, nullable-anyOf null branches,
+        # and redundant `additionalProperties: true`). This reaches into FastMCP internals
+        # (`_tool_manager.get_tool(...).parameters`); guard it so a future FastMCP refactor degrades to
+        # "schema not slimmed" (a test catches that) rather than crashing the server at import time.
         try:
             registered_tool = mcp._tool_manager.get_tool(kwargs.get("name") or name)
         except AttributeError, KeyError:
             registered_tool = None
         parameters = registered_tool.parameters if registered_tool is not None else None
         if isinstance(parameters, dict):
-            _strip_schema_titles(parameters)
+            _slim_schema(parameters)
         return decorated
 
     return decorator

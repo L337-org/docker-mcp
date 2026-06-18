@@ -14,7 +14,7 @@ from docker_mcp.server import (
     _prompt_registry,
     _seen_tool_names,
     _should_register,
-    _strip_schema_titles,
+    _slim_schema,
     _tool_registry,
     mcp,
     tool_catalog,
@@ -364,32 +364,49 @@ def test_run_container_restart_policy_schema_is_typed():
     assert set(rp["Name"]["enum"]) == {"no", "always", "on-failure", "unless-stopped"}
 
 
-def _has_title_anywhere(node) -> bool:
-    # Mirror _strip_schema_titles' traversal: a `title` *key* inside a name-map (e.g. a property
-    # literally named "title") is a name, not an annotation, and must not count as a leftover.
+def _key_anywhere(node, target: str, *, match=lambda v: True) -> bool:
+    # Mirror _slim_schema's traversal: a schema keyword used as a *property name* inside a name-map
+    # (e.g. a param literally named "title"/"anyOf") is a name, not an annotation, so don't count it.
     if isinstance(node, dict):
-        if "title" in node:
+        if target in node and match(node[target]):
             return True
         for key, value in node.items():
             if key in _SCHEMA_NAME_MAPS and isinstance(value, dict):
-                if any(_has_title_anywhere(sub) for sub in value.values()):
+                if any(_key_anywhere(sub, target, match=match) for sub in value.values()):
                     return True
-            elif _has_title_anywhere(value):
+            elif _key_anywhere(value, target, match=match):
                 return True
         return False
     if isinstance(node, list):
-        return any(_has_title_anywhere(item) for item in node)
+        return any(_key_anywhere(item, target, match=match) for item in node)
     return False
 
 
 def test_no_registered_tool_schema_carries_title_annotations():
     # pydantic stamps an information-free `title` on every property/$def and the top-level schema;
-    # the decorator strips them (~10% of the advertised tool surface). Assert none survive.
-    offenders = [name for name, t in _registered_tools().items() if _has_title_anywhere(t.parameters)]
+    # _slim_schema drops them (~10% of the advertised tool surface). Assert none survive.
+    offenders = [name for name, t in _registered_tools().items() if _key_anywhere(t.parameters, "title")]
     assert not offenders, f"tools still advertising `title` annotations: {offenders}"
 
 
-def test_strip_schema_titles_preserves_a_param_named_title():
+def test_no_registered_tool_schema_carries_nullable_anyof_or_redundant_additional_properties():
+    # _slim_schema drops the `{"type": "null"}` branch of nullable anyOf and the default-valued
+    # `additionalProperties: true`. Assert neither pattern survives on any registered tool.
+    null_offenders = [
+        name
+        for name, t in _registered_tools().items()
+        if _key_anywhere(t.parameters, "anyOf", match=lambda v: {"type": "null"} in v)
+    ]
+    assert not null_offenders, f"tools still advertising nullable anyOf: {null_offenders}"
+    ap_offenders = [
+        name
+        for name, t in _registered_tools().items()
+        if _key_anywhere(t.parameters, "additionalProperties", match=lambda v: v is True)
+    ]
+    assert not ap_offenders, f"tools still advertising `additionalProperties: true`: {ap_offenders}"
+
+
+def test_slim_schema_preserves_a_param_named_title():
     # Defensive: a parameter (or $def) literally named "title" is a name, not an annotation —
     # its schema's own title is dropped, but the property key itself is preserved.
     schema = {
@@ -400,11 +417,52 @@ def test_strip_schema_titles_preserves_a_param_named_title():
             "count": {"title": "Count", "type": "integer"},
         },
     }
-    _strip_schema_titles(schema)
+    _slim_schema(schema)
     assert "title" not in schema  # top-level annotation gone
     assert set(schema["properties"]) == {"title", "count"}  # the param NAMED title survives
     assert "title" not in schema["properties"]["title"]  # its own annotation is gone
     assert schema["properties"]["title"]["type"] == "string"  # type preserved
+
+
+def test_slim_schema_collapses_nullable_anyof_hoisting_the_non_null_branch():
+    schema = {
+        "type": "object",
+        "properties": {
+            "name": {"anyOf": [{"type": "string"}, {"type": "null"}], "default": None},
+            "tags": {
+                "anyOf": [{"type": "object", "additionalProperties": True}, {"type": "null"}],
+                "default": None,
+            },
+        },
+    }
+    _slim_schema(schema)
+    name = schema["properties"]["name"]
+    assert "anyOf" not in name and name["type"] == "string" and name["default"] is None
+    tags = schema["properties"]["tags"]
+    # Hoisted object branch keeps its type; its redundant additionalProperties:true is dropped too.
+    assert "anyOf" not in tags and tags["type"] == "object" and "additionalProperties" not in tags
+
+
+def test_slim_schema_keeps_multi_branch_anyof_minus_null():
+    # int | str | None -> drop only the null branch, keep the two real branches.
+    schema = {"anyOf": [{"type": "integer"}, {"type": "string"}, {"type": "null"}], "default": None}
+    _slim_schema(schema)
+    assert schema["anyOf"] == [{"type": "integer"}, {"type": "string"}]
+
+
+def test_slim_schema_keeps_nullable_anyof_without_a_default():
+    # The default-gate: a nullable union with no `default` is left intact (could be a required
+    # nullable field, where dropping null would misrepresent it as non-nullable).
+    schema = {"anyOf": [{"type": "string"}, {"type": "null"}]}
+    _slim_schema(schema)
+    assert schema["anyOf"] == [{"type": "string"}, {"type": "null"}]
+
+
+def test_slim_schema_keeps_schema_valued_additional_properties():
+    # Only `additionalProperties: true` is redundant; a schema value (dict[str, str]) is meaningful.
+    schema = {"type": "object", "additionalProperties": {"type": "string"}}
+    _slim_schema(schema)
+    assert schema["additionalProperties"] == {"type": "string"}
 
 
 # ---------- prompt + doc-resource disabling (DOCKER_MCP_SERVER_DISABLE covers more than tools) ----------
