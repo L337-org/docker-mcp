@@ -647,34 +647,51 @@ def test_parse_retry_after_invalid_returns_none():
 
 
 def test_env_credentials_explicit_args_win(monkeypatch):
-    monkeypatch.setenv("DOCKER_MCP_REGISTRY_USERNAME", "envuser")
-    monkeypatch.setenv("DOCKER_MCP_REGISTRY_PASSWORD", "envpass")
+    monkeypatch.setenv("DOCKER_MCP_SERVER_REGISTRY_USERNAME", "envuser")
+    monkeypatch.setenv("DOCKER_MCP_SERVER_REGISTRY_PASSWORD", "envpass")
     assert _env_credentials("arguser", "argpass") == ("arguser", "argpass")
 
 
 def test_env_credentials_partial_args_do_not_mix_with_env(monkeypatch):
     # A username argument with no password must not silently pick up the env password.
-    monkeypatch.setenv("DOCKER_MCP_REGISTRY_USERNAME", "envuser")
-    monkeypatch.setenv("DOCKER_MCP_REGISTRY_PASSWORD", "envpass")
+    monkeypatch.setenv("DOCKER_MCP_SERVER_REGISTRY_USERNAME", "envuser")
+    monkeypatch.setenv("DOCKER_MCP_SERVER_REGISTRY_PASSWORD", "envpass")
     assert _env_credentials("arguser", None) == ("arguser", None)
     assert _env_credentials(None, "argpass") == (None, "argpass")
 
 
 def test_env_credentials_fall_back_to_env_when_both_unset(monkeypatch):
-    monkeypatch.setenv("DOCKER_MCP_REGISTRY_USERNAME", "envuser")
-    monkeypatch.setenv("DOCKER_MCP_REGISTRY_PASSWORD", "envpass")
+    monkeypatch.setenv("DOCKER_MCP_SERVER_REGISTRY_USERNAME", "envuser")
+    monkeypatch.setenv("DOCKER_MCP_SERVER_REGISTRY_PASSWORD", "envpass")
     assert _env_credentials(None, None) == ("envuser", "envpass")
 
 
 def test_env_credentials_default_anonymous(monkeypatch):
-    monkeypatch.delenv("DOCKER_MCP_REGISTRY_USERNAME", raising=False)
-    monkeypatch.delenv("DOCKER_MCP_REGISTRY_PASSWORD", raising=False)
+    monkeypatch.delenv("DOCKER_MCP_SERVER_REGISTRY_USERNAME", raising=False)
+    monkeypatch.delenv("DOCKER_MCP_SERVER_REGISTRY_PASSWORD", raising=False)
     assert _env_credentials(None, None) == (None, None)
 
 
+def test_env_credentials_honor_deprecated_aliases(monkeypatch):
+    # The pre-rename DOCKER_MCP_REGISTRY_* spellings still resolve as deprecated aliases.
+    monkeypatch.delenv("DOCKER_MCP_SERVER_REGISTRY_USERNAME", raising=False)
+    monkeypatch.delenv("DOCKER_MCP_SERVER_REGISTRY_PASSWORD", raising=False)
+    monkeypatch.setenv("DOCKER_MCP_REGISTRY_USERNAME", "legacyuser")
+    monkeypatch.setenv("DOCKER_MCP_REGISTRY_PASSWORD", "legacypass")
+    assert _env_credentials(None, None) == ("legacyuser", "legacypass")
+
+
+def test_env_credentials_canonical_wins_over_deprecated_alias(monkeypatch):
+    monkeypatch.setenv("DOCKER_MCP_SERVER_REGISTRY_USERNAME", "newuser")
+    monkeypatch.setenv("DOCKER_MCP_REGISTRY_USERNAME", "legacyuser")
+    monkeypatch.delenv("DOCKER_MCP_SERVER_REGISTRY_PASSWORD", raising=False)
+    monkeypatch.delenv("DOCKER_MCP_REGISTRY_PASSWORD", raising=False)
+    assert _env_credentials(None, None) == ("newuser", None)
+
+
 def test_registry_list_tags_uses_env_credentials_for_token_auth(monkeypatch):
-    monkeypatch.setenv("DOCKER_MCP_REGISTRY_USERNAME", "envuser")
-    monkeypatch.setenv("DOCKER_MCP_REGISTRY_PASSWORD", "envpass")
+    monkeypatch.setenv("DOCKER_MCP_SERVER_REGISTRY_USERNAME", "envuser")
+    monkeypatch.setenv("DOCKER_MCP_SERVER_REGISTRY_PASSWORD", "envpass")
     saw_auth = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -698,8 +715,8 @@ def test_registry_list_tags_uses_env_credentials_for_token_auth(monkeypatch):
 def test_registry_inspect_manifest_uses_env_credentials_for_token_auth(monkeypatch):
     # Same env-fallback flow as registry_list_tags, but through the manifest endpoint — both tools
     # share _env_credentials + _registry_get, and both must keep credentials out of tool arguments.
-    monkeypatch.setenv("DOCKER_MCP_REGISTRY_USERNAME", "envuser")
-    monkeypatch.setenv("DOCKER_MCP_REGISTRY_PASSWORD", "envpass")
+    monkeypatch.setenv("DOCKER_MCP_SERVER_REGISTRY_USERNAME", "envuser")
+    monkeypatch.setenv("DOCKER_MCP_SERVER_REGISTRY_PASSWORD", "envpass")
     saw_auth = {}
 
     def handler(request: httpx.Request) -> httpx.Response:

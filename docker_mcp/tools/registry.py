@@ -7,7 +7,6 @@
 import datetime
 import email.utils
 import ipaddress
-import os
 import re
 import time
 from typing import Any, NoReturn
@@ -16,7 +15,7 @@ from urllib.parse import urlparse
 import httpx
 
 from docker_mcp.server import tool
-from docker_mcp.tools._utils import package_version
+from docker_mcp.tools._utils import package_version, read_env
 
 _DEFAULT_TIMEOUT = 30.0
 _USER_AGENT = f"docker-mcp-server/{package_version()}"
@@ -27,19 +26,20 @@ _MAX_TAG_PAGES = 50  # cap on registry/Hub pagination follow-through
 
 def _env_credentials(username: str | None, password: str | None) -> tuple[str | None, str | None]:
     """
-    Fall back to DOCKER_MCP_REGISTRY_USERNAME / DOCKER_MCP_REGISTRY_PASSWORD when no explicit
-    credentials are passed.
+    Fall back to DOCKER_MCP_SERVER_REGISTRY_USERNAME / DOCKER_MCP_SERVER_REGISTRY_PASSWORD when no
+    explicit credentials are passed.
 
     Setting credentials in the server's environment keeps them out of tool arguments, which many
     MCP clients log verbatim. The password may be a personal-access token. Explicit arguments win
     over the environment; the env pair is only used when *both* arguments are unset, so a caller
-    can't accidentally mix an argument username with an environment password.
+    can't accidentally mix an argument username with an environment password. The DOCKER_MCP_*
+    spellings remain honored as deprecated aliases.
     """
     if username is not None or password is not None:
         return username, password
     return (
-        os.environ.get("DOCKER_MCP_REGISTRY_USERNAME"),
-        os.environ.get("DOCKER_MCP_REGISTRY_PASSWORD"),
+        read_env("DOCKER_MCP_SERVER_REGISTRY_USERNAME", "DOCKER_MCP_REGISTRY_USERNAME"),
+        read_env("DOCKER_MCP_SERVER_REGISTRY_PASSWORD", "DOCKER_MCP_REGISTRY_PASSWORD"),
     )
 
 
@@ -362,13 +362,13 @@ def registry_list_tags(
 
     Works against Docker Hub, GHCR, ECR, GAR, and any OCI-compliant registry; anonymous if no
     credentials are passed. Talks directly to the registry over HTTPS and does NOT read
-    `~/.docker/config.json` — for private registries prefer the DOCKER_MCP_REGISTRY_USERNAME /
-    DOCKER_MCP_REGISTRY_PASSWORD env vars (keeps secrets out of tool args, which clients often log).
+    `~/.docker/config.json` — for private registries prefer the DOCKER_MCP_SERVER_REGISTRY_USERNAME /
+    DOCKER_MCP_SERVER_REGISTRY_PASSWORD env vars (keeps secrets out of tool args, which clients often log).
 
     args:
         image - Image ref, e.g. "alpine", "ghcr.io/org/repo"; any `:tag`/`@digest` is stripped
-        username - Optional registry username (overrides DOCKER_MCP_REGISTRY_USERNAME)
-        password - Optional registry password/token (overrides DOCKER_MCP_REGISTRY_PASSWORD)
+        username - Optional registry username (overrides DOCKER_MCP_SERVER_REGISTRY_USERNAME)
+        password - Optional registry password/token (overrides DOCKER_MCP_SERVER_REGISTRY_PASSWORD)
         limit - Max tags to return (default 1000, >= 1); pagination capped at 50 pages
     returns: dict - {"name": <repo>, "registry": <host>, "tags": [..], "truncated": bool}
     """
@@ -421,8 +421,8 @@ def registry_inspect_manifest(
     args:
         image - Image ref, e.g. "ghcr.io/org/repo"; `:tag`/`@digest` is stripped — pass via `reference`
         reference - Tag or digest (default "latest")
-        username - Optional registry username (overrides DOCKER_MCP_REGISTRY_USERNAME; no `~/.docker/config.json`)
-        password - Optional registry password/token (overrides DOCKER_MCP_REGISTRY_PASSWORD)
+        username - Optional registry username (overrides DOCKER_MCP_SERVER_REGISTRY_USERNAME; no config.json)
+        password - Optional registry password/token (overrides DOCKER_MCP_SERVER_REGISTRY_PASSWORD)
     returns: dict - {"name", "registry", "reference", "media_type", "digest", "manifest": <JSON body>}
     """
     username, password = _env_credentials(username, password)
@@ -466,8 +466,8 @@ def registry_get_config(
         reference - Tag or digest (default "latest")
         platform - Platform to select from a multi-platform image, "os/arch[/variant]"
                         (default "linux/amd64"); ignored for single-platform images
-        username - Optional registry username (overrides DOCKER_MCP_REGISTRY_USERNAME)
-        password - Optional registry password/token (overrides DOCKER_MCP_REGISTRY_PASSWORD)
+        username - Optional registry username (overrides DOCKER_MCP_SERVER_REGISTRY_USERNAME)
+        password - Optional registry password/token (overrides DOCKER_MCP_SERVER_REGISTRY_PASSWORD)
     returns: dict - {"name", "registry", "reference", "platform", "config_digest", "config": <parsed>};
                     `platform` is the selected platform (None if single-platform)
     """
@@ -668,12 +668,12 @@ def hub_rate_limit(username: str | None = None, password: str | None = None) -> 
     check costs no budget) and reads the RateLimit-Limit / RateLimit-Remaining headers. Call it
     before a large `compose_pull` / `pull_image` to avoid hitting the cap mid-deploy. Credentials
     raise the limit and switch metering from per-IP to per-account; falls back to
-    DOCKER_MCP_REGISTRY_USERNAME / DOCKER_MCP_REGISTRY_PASSWORD, does NOT read `~/.docker/config.json`.
+    DOCKER_MCP_SERVER_REGISTRY_USERNAME / DOCKER_MCP_SERVER_REGISTRY_PASSWORD, does NOT read `~/.docker/config.json`.
     Plans with no limit return no headers — reported as `"unlimited": true`.
 
     args:
-        username - Optional Hub username (overrides DOCKER_MCP_REGISTRY_USERNAME)
-        password - Optional Hub password/token (overrides DOCKER_MCP_REGISTRY_PASSWORD)
+        username - Optional Hub username (overrides DOCKER_MCP_SERVER_REGISTRY_USERNAME)
+        password - Optional Hub password/token (overrides DOCKER_MCP_SERVER_REGISTRY_PASSWORD)
     returns: dict - {"authenticated", "limit", "remaining", "window_seconds", "unlimited"}
     """
     username, password = _env_credentials(username, password)

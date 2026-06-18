@@ -8,6 +8,9 @@ from importlib.metadata import version as _pkg_version
 from pathlib import Path
 from typing import Any
 
+# Alias-aware env lookups, re-exported so tool modules can keep importing them from _utils.
+from docker_mcp._env import env_flag, read_env  # noqa: F401
+
 # Default cap (32 MiB) for tools that buffer a daemon-side byte stream *in band* and return it
 # through the MCP protocol (where it is base64-encoded into the agent's context). Anything larger
 # is impractical in band — use the `*_to_file` / `*_from_file` tool variants, which stream to/from
@@ -17,7 +20,8 @@ MAX_PAYLOAD_BYTES = 33_554_432
 # Set in our published container images so the in-container guards engage even if /.dockerenv is
 # ever absent (e.g. an unusual runtime). On the host (uvx) install neither signal is present, so
 # every guard below is a no-op and the existing behaviour is unchanged.
-IN_CONTAINER_ENV = "DOCKER_MCP_IN_CONTAINER"
+IN_CONTAINER_ENV = "DOCKER_MCP_SERVER_IN_CONTAINER"
+_LEGACY_IN_CONTAINER_ENV = "DOCKER_MCP_IN_CONTAINER"  # deprecated alias, still honored
 
 # /proc/self/mountinfo fstypes that never represent a host bind mount: the container's own overlay
 # root and the assorted pseudo / in-memory filesystems. A path whose nearest mount is one of these
@@ -51,11 +55,6 @@ _PSEUDO_FSTYPES = frozenset(
 )
 
 
-def env_flag(name: str) -> bool:
-    """True if the named environment variable is set to a truthy value (1/true/yes/on)."""
-    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
-
-
 def package_version() -> str:
     """Installed docker-mcp-server version, or '0+unknown' from a source checkout without dist metadata."""
     try:
@@ -69,10 +68,10 @@ def in_container() -> bool:
     True when this server is running inside a container.
 
     Docker writes `/.dockerenv` into every container, and our published images additionally set
-    `DOCKER_MCP_IN_CONTAINER=1`. Either signal flips on the in-container filesystem and
+    `DOCKER_MCP_SERVER_IN_CONTAINER=1`. Either signal flips on the in-container filesystem and
     self-termination guards; on the host install neither is present so those guards are inert.
     """
-    return env_flag(IN_CONTAINER_ENV) or Path("/.dockerenv").exists()
+    return env_flag(IN_CONTAINER_ENV, _LEGACY_IN_CONTAINER_ENV) or Path("/.dockerenv").exists()
 
 
 def _unescape_mountinfo_field(field: str) -> str:

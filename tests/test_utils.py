@@ -237,17 +237,27 @@ def test_env_flag_unset_is_false(monkeypatch):
 
 
 def test_in_container_true_via_env(monkeypatch):
+    monkeypatch.setenv("DOCKER_MCP_SERVER_IN_CONTAINER", "1")
+    assert in_container() is True
+
+
+def test_in_container_true_via_deprecated_env_alias(monkeypatch):
+    # The pre-rename DOCKER_MCP_IN_CONTAINER spelling still flips the guard on.
+    monkeypatch.delenv("DOCKER_MCP_SERVER_IN_CONTAINER", raising=False)
     monkeypatch.setenv("DOCKER_MCP_IN_CONTAINER", "1")
+    monkeypatch.setattr(_utils.Path, "exists", lambda self: False)
     assert in_container() is True
 
 
 def test_in_container_true_via_dockerenv(monkeypatch):
+    monkeypatch.delenv("DOCKER_MCP_SERVER_IN_CONTAINER", raising=False)
     monkeypatch.delenv("DOCKER_MCP_IN_CONTAINER", raising=False)
     monkeypatch.setattr(_utils.Path, "exists", lambda self: str(self) == "/.dockerenv")
     assert in_container() is True
 
 
 def test_in_container_false_when_no_signal(monkeypatch):
+    monkeypatch.delenv("DOCKER_MCP_SERVER_IN_CONTAINER", raising=False)
     monkeypatch.delenv("DOCKER_MCP_IN_CONTAINER", raising=False)
     monkeypatch.setattr(_utils.Path, "exists", lambda self: False)
     assert in_container() is False

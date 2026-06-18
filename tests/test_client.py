@@ -257,6 +257,14 @@ def test_guard_not_self_blocks_own_container(monkeypatch):
 
 def test_guard_not_self_override_env_bypasses(monkeypatch):
     monkeypatch.setattr(client_module, "_self_container_id", "self-full-id")
+    monkeypatch.setenv("DOCKER_MCP_SERVER_ALLOW_SELF_TERMINATE", "1")
+    assert client_module.guard_not_self(_fake_container("self-full-id")) is None
+
+
+def test_guard_not_self_override_via_deprecated_alias(monkeypatch):
+    # The pre-rename DOCKER_MCP_ALLOW_SELF_TERMINATE spelling still bypasses the guard.
+    monkeypatch.setattr(client_module, "_self_container_id", "self-full-id")
+    monkeypatch.delenv("DOCKER_MCP_SERVER_ALLOW_SELF_TERMINATE", raising=False)
     monkeypatch.setenv("DOCKER_MCP_ALLOW_SELF_TERMINATE", "1")
     assert client_module.guard_not_self(_fake_container("self-full-id")) is None
 

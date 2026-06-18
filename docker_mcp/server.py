@@ -5,7 +5,6 @@
 # tool, (b) the two env switches that decide what gets registered, and (c) the ToolAnnotations
 # attached to each registered tool. `mcp` is still exported for `@mcp.prompt` / `@mcp.resource`.
 
-import os
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
@@ -13,6 +12,8 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
+
+from docker_mcp._env import env_flag, read_env
 
 mcp = FastMCP("docker-mcp-server")
 
@@ -215,30 +216,28 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
 _IDEMPOTENT_TOOLS = frozenset({"prune_containers", "prune_images", "prune_networks", "prune_volumes", "buildx_prune"})
 
 
-def _is_truthy(value: str | None) -> bool:
-    return (value or "").strip().lower() in {"1", "true", "yes", "on"}
-
-
 # Read-only env switches, evaluated once at import (registration time):
-#   DOCKER_MCP_READONLY       — register only READ_ONLY tools (a true read-only server).
-#   DOCKER_MCP_NO_DESTRUCTIVE — register everything except DESTRUCTIVE tools (a "no data loss" mode).
-# READONLY is the stricter of the two and wins when both are set.
-READONLY = _is_truthy(os.environ.get("DOCKER_MCP_READONLY"))
-NO_DESTRUCTIVE = _is_truthy(os.environ.get("DOCKER_MCP_NO_DESTRUCTIVE"))
+#   DOCKER_MCP_SERVER_READONLY       — register only READ_ONLY tools (a true read-only server).
+#   DOCKER_MCP_SERVER_NO_DESTRUCTIVE — register everything except DESTRUCTIVE tools (a "no data loss" mode).
+# READONLY is the stricter of the two and wins when both are set. The DOCKER_MCP_* spellings remain
+# honored as deprecated aliases (see docker_mcp._env).
+READONLY = env_flag("DOCKER_MCP_SERVER_READONLY", "DOCKER_MCP_READONLY")
+NO_DESTRUCTIVE = env_flag("DOCKER_MCP_SERVER_NO_DESTRUCTIVE", "DOCKER_MCP_NO_DESTRUCTIVE")
 
 
 def _parse_domains(value: str | None) -> frozenset[str]:
-    """Parse the comma-separated DOCKER_MCP_DISABLE list into a normalized set of domain names."""
+    """Parse the comma-separated DOCKER_MCP_SERVER_DISABLE list into a normalized set of domain names."""
     return frozenset(part.strip().lower() for part in (value or "").split(",") if part.strip())
 
 
 # Domain switch, orthogonal to the category switches above:
-#   DOCKER_MCP_DISABLE=swarm,plugins — skip every tool whose domain is listed, regardless of category.
+#   DOCKER_MCP_SERVER_DISABLE=swarm,plugins — skip every tool whose domain is listed, regardless of category.
 # A tool's domain is its defining module under docker_mcp.tools (e.g. containers, compose, scout), so a
 # user who never touches swarm can drop the whole swarm/services/nodes/configs/secrets surface from the
 # tool list the client has to reason about. This filters *registration*, not classification — disabled
-# tools still appear in the tool-catalog resource so the choice is auditable.
-DISABLED_DOMAINS = _parse_domains(os.environ.get("DOCKER_MCP_DISABLE"))
+# tools still appear in the tool-catalog resource so the choice is auditable. The DOCKER_MCP_DISABLE
+# spelling remains honored as a deprecated alias (see docker_mcp._env).
+DISABLED_DOMAINS = _parse_domains(read_env("DOCKER_MCP_SERVER_DISABLE", "DOCKER_MCP_DISABLE"))
 
 
 @dataclass(frozen=True)
@@ -267,7 +266,7 @@ class PromptRecord:
     registered: bool
 
 
-# Prompts processed by `@prompt()` this run (registered or skipped by DOCKER_MCP_DISABLE), plus the
+# Prompts processed by `@prompt()` this run (registered or skipped by DOCKER_MCP_SERVER_DISABLE), plus the
 # doc-resource section -> domain map that resources.py registers at import. Both let tool_catalog()
 # report the prompts and doc sections a domain switch hides, so the non-tool surface is auditable too.
 _prompt_registry: dict[str, PromptRecord] = {}
@@ -280,7 +279,7 @@ def register_resource_domains(section_to_domain: dict[str, str]) -> None:
 
 
 def is_domain_disabled(domain: str | None) -> bool:
-    """True if a (non-None) domain is currently dropped by DOCKER_MCP_DISABLE. Reads the live set, so
+    """True if a (non-None) domain is currently dropped by DOCKER_MCP_SERVER_DISABLE. Reads the live set, so
     it reflects test monkeypatching of DISABLED_DOMAINS (unlike the import-time tool/prompt gating)."""
     return domain is not None and domain in DISABLED_DOMAINS
 
@@ -300,7 +299,7 @@ def _should_register(category: ToolCategory, *, readonly: bool, no_destructive: 
 
 
 def _domain_enabled(domain: str, disabled: frozenset[str]) -> bool:
-    """Decide whether a tool's domain survives the DOCKER_MCP_DISABLE switch."""
+    """Decide whether a tool's domain survives the DOCKER_MCP_SERVER_DISABLE switch."""
     return domain not in disabled
 
 
@@ -322,18 +321,18 @@ def tool_catalog() -> dict[str, Any]:
     ]
     return {
         "switches": {
-            "DOCKER_MCP_READONLY": READONLY,
-            "DOCKER_MCP_NO_DESTRUCTIVE": NO_DESTRUCTIVE,
-            "DOCKER_MCP_DISABLE": sorted(DISABLED_DOMAINS),
+            "DOCKER_MCP_SERVER_READONLY": READONLY,
+            "DOCKER_MCP_SERVER_NO_DESTRUCTIVE": NO_DESTRUCTIVE,
+            "DOCKER_MCP_SERVER_DISABLE": sorted(DISABLED_DOMAINS),
         },
-        # Disabled domains that match no known tool — usually a typo in DOCKER_MCP_DISABLE.
+        # Disabled domains that match no known tool — usually a typo in DOCKER_MCP_SERVER_DISABLE.
         "unknown_disabled_domains": sorted(DISABLED_DOMAINS - set(domains)),
         "domains": domain_summary,
         "tools": [
             {"name": r.name, "domain": r.domain, "category": r.category.value, "registered": r.registered}
             for r in records
         ],
-        # The non-tool surface DOCKER_MCP_DISABLE also affects: prompts tied to a disabled domain are
+        # The non-tool surface DOCKER_MCP_SERVER_DISABLE also affects: prompts tied to a disabled domain are
         # skipped, and doc-resource sections for a disabled domain are hidden from docker-docs://contents.
         "prompts": [
             {"name": r.name, "domain": r.domain, "registered": r.registered}
@@ -399,7 +398,7 @@ def tool(**kwargs: Any) -> Callable[[Callable], Callable]:
 
     The tool's category comes from TOOL_CATEGORIES (defaulting to MUTATING, the safe assumption, for
     anything unclassified) and its domain from the defining module. We skip registration when a
-    read-only env switch forbids the category or DOCKER_MCP_DISABLE drops the domain, and otherwise
+    read-only env switch forbids the category or DOCKER_MCP_SERVER_DISABLE drops the domain, and otherwise
     attach the matching ToolAnnotations.
     """
 
@@ -433,7 +432,7 @@ def tool(**kwargs: Any) -> Callable[[Callable], Callable]:
 
 def prompt(description: str, *, domain: str | None = None) -> Callable[[Callable], Callable]:
     """
-    Register an `@mcp.prompt`, honoring DOCKER_MCP_DISABLE — the `@prompt()` every prompt module uses.
+    Register an `@mcp.prompt`, honoring DOCKER_MCP_SERVER_DISABLE — the `@prompt()` every prompt module uses.
 
     A prompt tied to a feature area (`domain`) is skipped when that domain is disabled, so a server that
     drops e.g. `scout` doesn't keep prompts that steer the agent toward tools that are no longer

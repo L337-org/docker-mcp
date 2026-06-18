@@ -81,11 +81,11 @@ def test_get_docs_section_rejects_unknown_section():
 def test_get_tool_catalog_returns_json_covering_every_tool():
     payload = json.loads(get_tool_catalog())
     assert {t["name"] for t in payload["tools"]} == set(TOOL_CATEGORIES)
-    assert "DOCKER_MCP_DISABLE" in payload["switches"]
+    assert "DOCKER_MCP_SERVER_DISABLE" in payload["switches"]
     assert payload["domains"]  # per-domain summary is populated
 
 
-# ---------- DOCKER_MCP_DISABLE also hides a disabled domain's doc sections ----------
+# ---------- DOCKER_MCP_SERVER_DISABLE also hides a disabled domain's doc sections ----------
 # `_section_enabled` reads the live `server.DISABLED_DOMAINS` (via `is_domain_disabled`), so unlike the
 # import-time tool/prompt gating these can be exercised in-process by monkeypatching that set.
 
@@ -107,9 +107,9 @@ def test_list_docs_sections_disabled_is_empty_by_default():
 
 def test_get_docs_section_refuses_a_disabled_section(monkeypatch):
     monkeypatch.setattr("docker_mcp.server.DISABLED_DOMAINS", frozenset({"scout"}))
-    with pytest.raises(ValueError, match="disabled via DOCKER_MCP_DISABLE"):
+    with pytest.raises(ValueError, match="disabled via DOCKER_MCP_SERVER_DISABLE"):
         get_docs_section("scout")
-    with pytest.raises(ValueError, match="disabled via DOCKER_MCP_DISABLE"):
+    with pytest.raises(ValueError, match="disabled via DOCKER_MCP_SERVER_DISABLE"):
         get_docs_section("scout-cli")
 
 
@@ -174,5 +174,5 @@ def test_container_resources_refused_when_containers_domain_disabled(monkeypatch
         lambda: get_container_logs_resource("web"),
         lambda: get_container_stats_resource("web"),
     ):
-        with pytest.raises(ValueError, match="disabled via DOCKER_MCP_DISABLE"):
+        with pytest.raises(ValueError, match="disabled via DOCKER_MCP_SERVER_DISABLE"):
             call()

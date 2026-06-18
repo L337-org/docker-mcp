@@ -58,7 +58,7 @@ EXTERNAL_SECTIONS: dict[str, str] = {
 }
 
 
-# Maps each doc section to the tool domain it documents, so DOCKER_MCP_DISABLE also hides the docs for
+# Maps each doc section to the tool domain it documents, so DOCKER_MCP_SERVER_DISABLE also hides the docs for
 # a disabled feature area (e.g. disabling `scout` hides the `scout` / `scout-cli` sections). Sections
 # with no entry here — general references like `index`, `client`, `dockerfile`, `engine-security` — are
 # always available. Registered with the server so tool_catalog() can report the hidden sections.
@@ -93,7 +93,7 @@ register_resource_domains(_SECTION_DOMAINS)
 
 
 def _section_enabled(section: str) -> bool:
-    """A doc section is available unless the domain it documents is dropped by DOCKER_MCP_DISABLE."""
+    """A doc section is available unless the domain it documents is dropped by DOCKER_MCP_SERVER_DISABLE."""
     return not is_domain_disabled(_SECTION_DOMAINS.get(section))
 
 
@@ -118,7 +118,7 @@ def list_docs_sections() -> str:
     returns: str - JSON describing each section's source URL and how to read it
     """
     all_sections: list[str] = [*SDK_SECTIONS, *EXTERNAL_SECTIONS.keys()]
-    # Hide sections whose domain is disabled via DOCKER_MCP_DISABLE, mirroring how disabled tools and
+    # Hide sections whose domain is disabled via DOCKER_MCP_SERVER_DISABLE, mirroring how disabled tools and
     # prompts drop out — the agent isn't pointed at docs for a feature area this server doesn't expose.
     section_names = [s for s in all_sections if _section_enabled(s)]
     disabled_sections = [s for s in all_sections if not _section_enabled(s)]
@@ -139,7 +139,7 @@ def list_docs_sections() -> str:
                 "remaining sections (see `section_urls`) cover docker CLI features (compose, "
                 "context) and registry HTTP APIs (OCI distribution spec, Docker Hub) that "
                 "this server exposes outside the SDK. `disabled_sections` lists sections hidden "
-                "because their domain is dropped via DOCKER_MCP_DISABLE."
+                "because their domain is dropped via DOCKER_MCP_SERVER_DISABLE."
             ),
         },
         indent=2,
@@ -153,7 +153,7 @@ def get_tool_catalog() -> str:
     active env switches actually registered it.
 
     Read this to see the blast radius of a tool before calling it (READ_ONLY / MUTATING /
-    DESTRUCTIVE) and to confirm which whole domains the operator disabled via DOCKER_MCP_DISABLE
+    DESTRUCTIVE) and to confirm which whole domains the operator disabled via DOCKER_MCP_SERVER_DISABLE
     (or the read-only switches) — a tool absent from the live tool list but present here as
     `registered: false` was filtered out by configuration, not missing by mistake.
 
@@ -168,11 +168,11 @@ _CONTAINERS_DOMAIN = "containers"
 
 
 def _require_containers_domain() -> None:
-    """Refuse a container resource read when the `containers` domain is disabled via DOCKER_MCP_DISABLE."""
+    """Refuse a container resource read when the `containers` domain is disabled via DOCKER_MCP_SERVER_DISABLE."""
     if is_domain_disabled(_CONTAINERS_DOMAIN):
         raise ValueError(
             "Container observability resources are unavailable because the 'containers' domain is "
-            "disabled via DOCKER_MCP_DISABLE."
+            "disabled via DOCKER_MCP_SERVER_DISABLE."
         )
 
 
@@ -250,7 +250,7 @@ def get_docs_section(section: str) -> str:
     if not _section_enabled(section):
         raise ValueError(
             f"Documentation section '{section}' is unavailable because its domain is disabled via "
-            f"DOCKER_MCP_DISABLE. Read docker-docs://contents for the sections this server exposes."
+            f"DOCKER_MCP_SERVER_DISABLE. Read docker-docs://contents for the sections this server exposes."
         )
     url = _section_url(section)
     resp = httpx.get(url, timeout=_DOCS_TIMEOUT, follow_redirects=True, headers={"User-Agent": _USER_AGENT})

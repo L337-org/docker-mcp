@@ -9,7 +9,7 @@
 # only *add* keys (a caller-supplied label always wins on collision), and the affected resources
 # carry labels as pure metadata with no effect on content or digests. (Image builds are the one
 # place a label changes the digest, so they are deliberately NOT in this set.) On by default; set
-# DOCKER_MCP_NO_LABELS=1 to suppress it entirely.
+# DOCKER_MCP_SERVER_NO_LABELS=1 to suppress it entirely.
 
 from datetime import UTC, datetime
 from importlib.metadata import PackageNotFoundError
@@ -23,8 +23,9 @@ from docker_mcp.tools._utils import env_flag
 # link. Clear of Docker's reserved namespaces (com.docker.*, io.docker.*, org.dockerproject.*).
 LABEL_PREFIX = "docker-mcp-server"
 
-# Opt-out switch (stamping is on by default).
-DISABLE_ENV = "DOCKER_MCP_NO_LABELS"
+# Opt-out switch (stamping is on by default). DOCKER_MCP_NO_LABELS remains honored as a deprecated alias.
+DISABLE_ENV = "DOCKER_MCP_SERVER_NO_LABELS"
+_LEGACY_DISABLE_ENV = "DOCKER_MCP_NO_LABELS"
 
 # The key callers filter on; the rest are forensic.
 MANAGED_LABEL = f"{LABEL_PREFIX}.managed"
@@ -45,7 +46,7 @@ def provenance_labels(created_by: str) -> dict[str, str]:
 
     `created_by` is the @tool name (e.g. "run_container") recorded in the `.tool` label.
     """
-    if env_flag(DISABLE_ENV):
+    if env_flag(DISABLE_ENV, _LEGACY_DISABLE_ENV):
         return {}
     return {
         MANAGED_LABEL: "true",
