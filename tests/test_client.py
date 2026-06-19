@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+import sys
 import threading
 import types
 from typing import Any
@@ -485,11 +486,18 @@ def test_resolve_default_base_url_probes_when_context_has_no_host():
         assert client_module._resolve_default_base_url() == "unix:///run/user/1000/docker.sock"
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="socket probe is POSIX-only; Windows uses npipe via from_env()")
 def test_probe_default_socket_returns_first_existing(monkeypatch):
     monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
     # Only /var/run/docker.sock "exists"; the home-dir candidates ahead of it do not.
     monkeypatch.setattr(client_module.Path, "is_socket", lambda self: str(self) == "/var/run/docker.sock")
     assert client_module._probe_default_socket() == "unix:///var/run/docker.sock"
+
+
+def test_probe_default_socket_none_on_windows(monkeypatch):
+    # The probe short-circuits on Windows — the npipe default is handled by docker.from_env().
+    monkeypatch.setattr(client_module.sys, "platform", "win32")
+    assert client_module._probe_default_socket() is None
 
 
 def test_probe_default_socket_none_when_nothing_exists(monkeypatch):
