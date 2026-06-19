@@ -1,7 +1,8 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.gavinlucas/docker-mcp-server",
-  "description": "Manage Docker through the Docker SDK for Python and the docker CLI: containers, images, networks, volumes, Compose, Swarm, Buildx, Scout, and OCI registries, exposed as MCP tools.",
+  "title": "Docker MCP Server",
+  "description": "Manage Docker (containers, images, Compose, Swarm, registries) via the Docker SDK and CLI.",
   "repository": {
     "url": "https://github.com/GavinLucas/docker-mcp",
     "source": "github"

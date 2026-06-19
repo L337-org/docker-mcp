@@ -101,12 +101,19 @@ jobs:
 
       - name: Publish server.json
         run: |
-          set -euo pipefail
+          set -uo pipefail
           # Retry to absorb propagation lag of the artifacts the registry verifies (PyPI description,
           # GHCR image label, the .mcpb asset) when this races the sibling release workflows.
           for i in $(seq 1 10); do
-            if ./mcp-publisher publish; then
-              echo "Published to the MCP Registry."; exit 0
+            if out="$(./mcp-publisher publish 2>&1)"; then
+              echo "$out"; echo "Published to the MCP Registry."; exit 0
+            fi
+            echo "$out"
+            # A validation rejection (HTTP 422) is deterministic — a server.json field is invalid, so
+            # retrying just burns the budget. Fail fast and point at the real fix.
+            if printf '%s\n' "$out" | grep -qiE 'validation failed|unprocessable'; then
+              echo "::error::MCP Registry rejected server.json (validation error) — fix server.json; a retry won't help."
+              exit 1
             fi
             echo "::notice::publish attempt $i/10 failed — artifacts may still be propagating; waiting 30s"
             sleep 30
