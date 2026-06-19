@@ -2,6 +2,8 @@
 
 # docker-mcp-server
 
+<!-- mcp-name: io.github.gavinlucas/docker-mcp-server -->
+
 An [MCP](https://modelcontextprotocol.io) server that lets AI agents manage Docker — containers, images, networks, volumes, swarm services, secrets, configs, nodes, plugins, **Compose projects, CLI contexts, and OCI registries** — by wrapping the official [Docker SDK for Python](https://docker-py.readthedocs.io/en/stable/) and selectively shelling out to the `docker` CLI for features the SDK doesn't expose.
 
 Every documented domain of the Docker SDK is exposed: build and run containers, pull and push images, manage networks and volumes, drive a swarm, install plugins, and more — all with first-class argument validation through MCP. Compose v2 and Docker contexts are wrapped via the docker CLI; OCI v2 registries and Docker Hub are queried directly over HTTPS (no daemon required).

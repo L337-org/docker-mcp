@@ -107,9 +107,12 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           # image.source links the GHCR package to this repo (visibility + "connected repository").
+          # io.modelcontextprotocol.server.name is the MCP Registry's OCI ownership marker — it must
+          # match `name` in server.json so the registry can verify we own this image (see publish-registry.yaml).
           labels: |
             org.opencontainers.image.source=https://github.com/GavinLucas/docker-mcp
             org.opencontainers.image.version=${{ steps.meta.outputs.version }}
+            io.modelcontextprotocol.server.name=io.github.gavinlucas/docker-mcp-server
           build-args: |
             INSTALL_CLI=${{ matrix.install_cli }}
             INSTALL_SCOUT=${{ matrix.install_scout }}
