@@ -3,6 +3,7 @@
 !/.python-version
 !/.gitignore
 !/.dockerignore
+!/.mcpbignore
 !/.github/
 !/.cursor/
 !/.vscode/
