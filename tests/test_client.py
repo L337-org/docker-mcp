@@ -1,3 +1,7 @@
+import hashlib
+import json
+import os
+import sys
 import threading
 import types
 from typing import Any
@@ -147,7 +151,7 @@ def test_events_returns_on_timeout_when_stream_is_quiet():
 
 def test_get_client_wraps_daemon_unreachable():
     client_module._client = None
-    with patch("docker_mcp.tools.client.docker.from_env", side_effect=DockerException("connection refused")):
+    with patch("docker_mcp.tools.client._build_default_client", side_effect=DockerException("connection refused")):
         with pytest.raises(RuntimeError, match="Cannot reach the Docker daemon"):
             _get_client()
     client_module._client = None
@@ -181,13 +185,13 @@ def test_reconnect_with_explicit_host_swaps_and_closes_old():
     client_module._client = None
 
 
-def test_reconnect_without_host_rebuilds_from_env():
+def test_reconnect_without_host_rebuilds_from_default():
     new_client = MagicMock()
     new_client.version.return_value = {"Version": "26.0.0"}
     client_module._client = None
-    with patch("docker_mcp.tools.client.docker.from_env", return_value=new_client) as from_env:
+    with patch("docker_mcp.tools.client._build_default_client", return_value=new_client) as build:
         result = reconnect()
-    from_env.assert_called_once_with()
+    build.assert_called_once_with()
     assert result == {"Version": "26.0.0"}
     assert client_module._client is new_client
     client_module._client = None
@@ -373,3 +377,164 @@ def test_connection_help_non_ssh_endpoint_keeps_socket_guidance(monkeypatch):
 def test_paramiko_is_available_for_ssh_transport():
     # The docker[ssh] extra must keep paramiko installed so ssh:// works via the pure-Python transport.
     import paramiko  # noqa: F401
+
+
+# --- default-daemon resolution when DOCKER_HOST is unset -------------------------------------------
+# docker-py's from_env() ignores Docker CLI contexts and falls back to the classic unix socket, which
+# Docker Desktop 4.13+ no longer creates by default. _resolve_default_base_url() closes that gap by
+# following the active context (like the docker CLI) and then probing known socket locations.
+
+
+def test_scrub_unresolved_env_removes_placeholders(monkeypatch):
+    # An MCP host that leaves an optional config field blank can pass the literal placeholder.
+    monkeypatch.setenv("DOCKER_HOST", "${user_config.docker_host}")
+    monkeypatch.setenv("DOCKER_MCP_SERVER_DISABLE", "${user_config.disable_domains}")
+    client_module._scrub_unresolved_env()
+    assert "DOCKER_HOST" not in os.environ
+    assert "DOCKER_MCP_SERVER_DISABLE" not in os.environ
+
+
+def test_scrub_unresolved_env_keeps_real_values(monkeypatch):
+    monkeypatch.setenv("DOCKER_HOST", "tcp://10.0.0.5:2375")
+    monkeypatch.setenv("DOCKER_MCP_SERVER_READONLY", "true")
+    client_module._scrub_unresolved_env()
+    assert os.environ["DOCKER_HOST"] == "tcp://10.0.0.5:2375"
+    assert os.environ["DOCKER_MCP_SERVER_READONLY"] == "true"
+
+
+def test_scrub_unresolved_env_keeps_partial_template(monkeypatch):
+    # Only a whole-value ${...} token is scrubbed; a value that merely contains braces is left alone.
+    monkeypatch.setenv("SOME_VAR", "before ${x} after")
+    client_module._scrub_unresolved_env()
+    assert os.environ["SOME_VAR"] == "before ${x} after"
+
+
+def test_startup_preflight_scrubs_unresolved_docker_host(monkeypatch):
+    monkeypatch.setenv("DOCKER_HOST", "${user_config.docker_host}")
+    monkeypatch.setattr(client_module, "in_container", lambda: False)
+    mock_client = MagicMock()
+    mock_client.ping.return_value = True
+    mock_client.info.return_value = {"OperatingSystem": "Ubuntu 22.04", "SecurityOptions": []}
+    monkeypatch.setattr(client_module, "_get_client", lambda: mock_client)
+    client_module.startup_preflight()
+    assert "DOCKER_HOST" not in os.environ  # cleared before the daemon connection is attempted
+
+
+def test_active_context_name_prefers_env(monkeypatch):
+    monkeypatch.setenv("DOCKER_CONTEXT", "colima")
+    assert client_module._active_context_name() == "colima"
+
+
+def test_active_context_name_reads_current_context(monkeypatch, tmp_path):
+    monkeypatch.delenv("DOCKER_CONTEXT", raising=False)
+    monkeypatch.setenv("DOCKER_CONFIG", str(tmp_path))
+    (tmp_path / "config.json").write_text(json.dumps({"currentContext": "desktop-linux"}), encoding="utf-8")
+    assert client_module._active_context_name() == "desktop-linux"
+
+
+def test_active_context_name_none_when_no_config(monkeypatch, tmp_path):
+    monkeypatch.delenv("DOCKER_CONTEXT", raising=False)
+    monkeypatch.setenv("DOCKER_CONFIG", str(tmp_path))  # empty dir, no config.json
+    assert client_module._active_context_name() is None
+
+
+def test_context_host_reads_meta_json(monkeypatch, tmp_path):
+    monkeypatch.setenv("DOCKER_CONFIG", str(tmp_path))
+    name = "desktop-linux"
+    digest = hashlib.sha256(name.encode("utf-8")).hexdigest()
+    meta_dir = tmp_path / "contexts" / "meta" / digest
+    meta_dir.mkdir(parents=True)
+    host = "unix:///Users/gavin/.docker/run/docker.sock"
+    (meta_dir / "meta.json").write_text(
+        json.dumps({"Name": name, "Endpoints": {"docker": {"Host": host}}}), encoding="utf-8"
+    )
+    assert client_module._context_host(name) == host
+
+
+def test_context_host_none_when_meta_missing(monkeypatch, tmp_path):
+    monkeypatch.setenv("DOCKER_CONFIG", str(tmp_path))
+    assert client_module._context_host("nonexistent") is None
+
+
+def test_resolve_default_base_url_follows_context():
+    with (
+        patch("docker_mcp.tools.client._active_context_name", return_value="desktop-linux"),
+        patch("docker_mcp.tools.client._context_host", return_value="unix:///home/u/.docker/run/docker.sock") as ch,
+        patch("docker_mcp.tools.client._probe_default_socket") as probe,
+    ):
+        assert client_module._resolve_default_base_url() == "unix:///home/u/.docker/run/docker.sock"
+    ch.assert_called_once_with("desktop-linux")
+    probe.assert_not_called()  # a resolved context short-circuits the probe
+
+
+def test_resolve_default_base_url_skips_default_context_and_probes():
+    with (
+        patch("docker_mcp.tools.client._active_context_name", return_value="default"),
+        patch("docker_mcp.tools.client._context_host") as ch,
+        patch("docker_mcp.tools.client._probe_default_socket", return_value="unix:///var/run/docker.sock"),
+    ):
+        assert client_module._resolve_default_base_url() == "unix:///var/run/docker.sock"
+    ch.assert_not_called()  # the "default" context means the classic socket — no meta.json to read
+
+
+def test_resolve_default_base_url_probes_when_context_has_no_host():
+    with (
+        patch("docker_mcp.tools.client._active_context_name", return_value="broken"),
+        patch("docker_mcp.tools.client._context_host", return_value=None),
+        patch("docker_mcp.tools.client._probe_default_socket", return_value="unix:///run/user/1000/docker.sock"),
+    ):
+        assert client_module._resolve_default_base_url() == "unix:///run/user/1000/docker.sock"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="socket probe is POSIX-only; Windows uses npipe via from_env()")
+def test_probe_default_socket_returns_first_existing(monkeypatch):
+    monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
+    # Only /var/run/docker.sock "exists"; the home-dir candidates ahead of it do not.
+    monkeypatch.setattr(client_module.Path, "is_socket", lambda self: str(self) == "/var/run/docker.sock")
+    assert client_module._probe_default_socket() == "unix:///var/run/docker.sock"
+
+
+def test_probe_default_socket_none_on_windows(monkeypatch):
+    # The probe short-circuits on Windows — the npipe default is handled by docker.from_env().
+    monkeypatch.setattr(client_module.sys, "platform", "win32")
+    assert client_module._probe_default_socket() is None
+
+
+def test_probe_default_socket_none_when_nothing_exists(monkeypatch):
+    monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
+    monkeypatch.setattr(client_module.Path, "is_socket", lambda _self: False)
+    assert client_module._probe_default_socket() is None
+
+
+def test_build_default_client_honors_docker_host(monkeypatch):
+    monkeypatch.setenv("DOCKER_HOST", "tcp://10.0.0.5:2375")
+    sentinel = MagicMock()
+    with (
+        patch("docker_mcp.tools.client.docker.from_env", return_value=sentinel) as from_env,
+        patch("docker_mcp.tools.client.docker.DockerClient") as ctor,
+    ):
+        assert client_module._build_default_client() is sentinel
+    from_env.assert_called_once_with()  # DOCKER_HOST goes through from_env (which applies its TLS env)
+    ctor.assert_not_called()
+
+
+def test_build_default_client_uses_resolved_base_url(monkeypatch):
+    monkeypatch.delenv("DOCKER_HOST", raising=False)
+    sentinel = MagicMock()
+    with (
+        patch("docker_mcp.tools.client._resolve_default_base_url", return_value="unix:///x/docker.sock"),
+        patch("docker_mcp.tools.client.docker.DockerClient", return_value=sentinel) as ctor,
+    ):
+        assert client_module._build_default_client() is sentinel
+    ctor.assert_called_once_with(base_url="unix:///x/docker.sock")
+
+
+def test_build_default_client_falls_back_to_from_env(monkeypatch):
+    monkeypatch.delenv("DOCKER_HOST", raising=False)
+    sentinel = MagicMock()
+    with (
+        patch("docker_mcp.tools.client._resolve_default_base_url", return_value=None),
+        patch("docker_mcp.tools.client.docker.from_env", return_value=sentinel) as from_env,
+    ):
+        assert client_module._build_default_client() is sentinel
+    from_env.assert_called_once_with()
