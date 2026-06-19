@@ -3,7 +3,22 @@ name = "docker-mcp-server"
 version = "1.8.0"
 description = "MCP server for managing Docker resources via the Docker SDK for Python"
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.14"
+authors = [{ name = "Gavin Lucas" }]
+keywords = ["docker", "mcp", "model-context-protocol", "containers", "compose", "swarm", "devops"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: System :: Systems Administration",
+    "Topic :: Software Development :: Libraries",
+    "Environment :: Console",
+    "Operating System :: OS Independent",
+]
 dependencies = [
     # [ssh] pulls paramiko so `ssh://` DOCKER_HOST works through the pure-Python transport — no
     # system `ssh` binary, so it works identically on the host and inside the container images.
@@ -28,6 +43,11 @@ dependencies = [
 [project.scripts]
 docker-mcp = "docker_mcp:main"
 docker-mcp-server = "docker_mcp:main"
+
+[project.urls]
+Homepage = "https://github.com/GavinLucas/docker-mcp"
+Repository = "https://github.com/GavinLucas/docker-mcp"
+Issues = "https://github.com/GavinLucas/docker-mcp/issues"
 
 [build-system]
 requires = ["hatchling"]
