@@ -1,3 +1,5 @@
+<img src="https://raw.githubusercontent.com/GavinLucas/docker-mcp/main/assets/icon.png" align="left" width="72" height="72" alt="">
+
 # docker-mcp-server
 
 An [MCP](https://modelcontextprotocol.io) server that lets AI agents manage Docker — containers, images, networks, volumes, swarm services, secrets, configs, nodes, plugins, **Compose projects, CLI contexts, and OCI registries** — by wrapping the official [Docker SDK for Python](https://docker-py.readthedocs.io/en/stable/) and selectively shelling out to the `docker` CLI for features the SDK doesn't expose.
@@ -47,6 +49,19 @@ To pin a specific version, append `==<version>` to the package name (e.g. `docke
 ```
 
 To pin a specific revision, append `@<tag-or-commit>` to the git URL.
+
+### Install as a Desktop Extension (.mcpb)
+
+For [Claude Desktop](https://claude.com/download), a one-click bundle is attached to each
+[GitHub Release](https://github.com/GavinLucas/docker-mcp/releases) as
+`docker-mcp-server-<version>.mcpb` (with a matching `.sha256`). Download it and drag it into
+**Settings → Extensions**, or use **Settings → Extensions → Advanced settings → Install extension…**
+and pick the file. The install dialog surfaces fields for `DOCKER_HOST` and the read-only /
+no-destructive / disabled-domain switches, so no manual JSON editing is needed.
+
+It's a [`uv`-type bundle](https://github.com/modelcontextprotocol/mcpb): Claude Desktop's managed
+`uv` resolves the dependencies and runs the server, so the only host prerequisite is Docker itself —
+no separate Python, `uv`, or `git`. Leave `DOCKER_HOST` blank to use your default Docker context.
 
 ### Run as a container
 
@@ -326,6 +341,12 @@ Connecting this server to an AI agent grants it the same level of access as a lo
 - **CLI shell-out attack surface.** Compose, Context, Buildx, and Scout tools spawn `docker` subprocesses on the host running this MCP server. Every invocation passes arguments as a list (no shell, no metacharacter interpretation), resolves the binary via `shutil.which`, and runs against a scrubbed environment (DOCKER_HOST and related vars only). Positional values (image refs, service / context / builder names, build contexts) are additionally rejected if they start with `-`, so an argument can't be smuggled in as a CLI flag (e.g. a service named `--output=…`); the one deliberate exception is the trailing command in `compose_exec` / `compose_run`, which is meant to be an arbitrary argv. Filesystem paths supplied to `compose_*` (project_dir, files) are read by the docker CLI on the server host — passing an unfamiliar path can expose any compose file the server's user can read.
 - **Docker Context retargeting.** When `DOCKER_HOST` is unset, the server's *initial* SDK connection follows your active Docker context (`DOCKER_CONTEXT` / `currentContext`) — the same daemon your `docker` CLI targets — so if that context points at a remote or production daemon, the agent connects there too. Set `DOCKER_HOST` (or select a scoped context) before starting the server to pin the target deliberately. After startup, `context_use` only changes the CLI default for subsequent CLI-backed tools; SDK-backed tools (`list_containers`, `pull_image`, etc.) keep using whatever daemon the docker-py client connected to when it was first created (lazily, on the first SDK-backed tool call). Restart the server with a different `DOCKER_HOST` / `DOCKER_CONTEXT`, or call `reconnect` (see below), to retarget those. `context_create(skip_tls_verify=True)` disables TLS verification for a context; use only against trusted local daemons.
 - **`reconnect` retargets the trust boundary at runtime.** `reconnect(docker_host=...)` rebuilds the shared SDK client and points it at a different daemon without a server restart — which moves the root-equivalent trust boundary to whatever endpoint is passed. Only allow it against daemons the agent is authorized to control. The `docker_host` argument is logged like any tool call, and an `ssh://` target authenticates via the server host's SSH agent / `known_hosts`. The new endpoint is validated before the previous client is replaced, so a bad target leaves the working client in place.
+
+## Privacy Policy
+
+docker-mcp-server collects no data, sends no telemetry, and has no author-operated backend. It runs
+locally and talks only to the Docker daemon and container registries **you** point it at, as part of
+the operations you request. The full statement is in [PRIVACY.md](https://github.com/GavinLucas/docker-mcp/blob/main/PRIVACY.md).
 
 ## Contributing
 

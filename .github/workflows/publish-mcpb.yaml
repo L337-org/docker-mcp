@@ -1,0 +1,60 @@
+name: 'Publish MCPB bundle'
+
+# Packs the Claude Desktop Extension (.mcpb) on each GitHub Release and attaches it — plus its
+# SHA-256 — to the release assets, alongside the source tarballs. Kept in its own workflow (like
+# publish-pypi.yaml / publish-images.yaml) so it never shows as a skipped check on pull requests.
+#
+# The bundle is a `uv`-type extension (manifest.json: server.type = "uv"): it ships the package
+# source + pyproject.toml, and the host's managed uv resolves dependencies and runs `mcpb_run.py`
+# at install time — so the user needs no Python / uv / git prerequisite. The manifest version is
+# rewritten from the release tag before packing so it can never drift from pyproject.toml.
+#
+# Node and the `gh` CLI are preinstalled on GitHub-hosted ubuntu runners, so no extra setup action
+# is needed; the mcpb CLI is run via `npx @anthropic-ai/mcpb`.
+
+permissions:
+  contents: read
+
+on:
+  release:
+    types: [published]
+
+jobs:
+
+  publish:
+    name: Pack and attach .mcpb
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # upload the .mcpb as a release asset
+    steps:
+      - name: Check out source repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - name: Pack the bundle
+        id: pack
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          # Single source of truth for the version is the release tag; stamp it into the manifest so
+          # the committed default (whatever it was) can't drift from the release being published.
+          tmp="$(mktemp)"
+          jq --arg v "$version" '.version = $v' manifest.json > "$tmp" && mv "$tmp" manifest.json
+          mkdir -p dist
+          out="dist/docker-mcp-server-${version}.mcpb"
+          npx -y @anthropic-ai/mcpb pack . "$out"
+          sha256sum "$out" | tee "$out.sha256"
+          echo "file=$out" >> "$GITHUB_OUTPUT"
+          echo "Packed \`$out\`" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          gh release upload "$RELEASE_TAG" \
+            "${{ steps.pack.outputs.file }}" \
+            "${{ steps.pack.outputs.file }}.sha256" \
+            --clobber

@@ -1,0 +1,70 @@
+{
+  "manifest_version": "0.4",
+  "name": "docker-mcp-server",
+  "display_name": "Docker MCP Server",
+  "version": "1.8.0",
+  "description": "Manage Docker through the Docker SDK for Python and the docker CLI: containers, images, networks, volumes, Compose, Swarm, Buildx, Scout, and OCI registries, exposed as MCP tools.",
+  "long_description": "Exposes the Docker SDK for Python and the docker CLI (Compose, Buildx, Scout, Context, Stack) as MCP tools so an agent can manage local or remote Docker daemons. Connects over the local socket, a TCP endpoint, or `ssh://` (pure-Python paramiko transport, no system ssh binary). Read-only / no-destructive / disabled-domain switches are exposed below so you can register a restricted tool surface. The server runs entirely on your machine and sends no telemetry — see the Privacy Policy.",
+  "author": {
+    "name": "Gavin Lucas",
+    "url": "https://github.com/GavinLucas"
+  },
+  "homepage": "https://github.com/GavinLucas/docker-mcp",
+  "documentation": "https://github.com/GavinLucas/docker-mcp#readme",
+  "support": "https://github.com/GavinLucas/docker-mcp/issues",
+  "license": "MIT",
+  "icon": "assets/icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/GavinLucas/docker-mcp"
+  },
+  "keywords": ["docker", "containers", "compose", "swarm", "buildx", "scout", "devops", "mcp"],
+  "privacy_policies": ["https://github.com/GavinLucas/docker-mcp/blob/main/PRIVACY.md"],
+  "server": {
+    "type": "uv",
+    "entry_point": "mcpb_run.py",
+    "mcp_config": {
+      "command": "uv",
+      "args": ["run", "--directory", "${__dirname}", "mcpb_run.py"],
+      "env": {
+        "DOCKER_HOST": "${user_config.docker_host}",
+        "DOCKER_MCP_SERVER_READONLY": "${user_config.read_only}",
+        "DOCKER_MCP_SERVER_NO_DESTRUCTIVE": "${user_config.no_destructive}",
+        "DOCKER_MCP_SERVER_DISABLE": "${user_config.disable_domains}"
+      }
+    }
+  },
+  "user_config": {
+    "docker_host": {
+      "type": "string",
+      "title": "DOCKER_HOST",
+      "description": "Docker daemon to connect to, e.g. unix:///var/run/docker.sock or ssh://user@host. Leave blank to use your default Docker context / socket.",
+      "required": false
+    },
+    "read_only": {
+      "type": "boolean",
+      "title": "Read-only mode",
+      "description": "Register only read-only tools — no create, modify, or delete.",
+      "default": false
+    },
+    "no_destructive": {
+      "type": "boolean",
+      "title": "Disable destructive tools",
+      "description": "Register everything except destructive tools (remove / prune / kill).",
+      "default": false
+    },
+    "disable_domains": {
+      "type": "string",
+      "title": "Disabled domains",
+      "description": "Comma-separated tool domains to drop, e.g. swarm,plugins,scout.",
+      "required": false
+    }
+  },
+  "compatibility": {
+    "platforms": ["darwin", "win32", "linux"],
+    "runtimes": {
+      "python": ">=3.14"
+    }
+  },
+  "tools_generated": true
+}

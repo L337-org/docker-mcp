@@ -1,0 +1,36 @@
+# Files excluded from the .mcpb bundle (uv-type: ships source + pyproject.toml, host resolves deps).
+# Keep: docker_mcp/, pyproject.toml, uv.lock, README.md, LICENSE, manifest.json, mcpb_run.py, assets/
+
+# A uv-type bundle must NOT carry a prebuilt env or vendored deps — the host resolves them.
+.venv/
+server/lib/
+server/venv/
+
+# Tests, tooling, CI, and dev metadata add nothing at runtime.
+tests/
+.github/
+.idea/
+.vscode/
+.pytest_cache/
+.ruff_cache/
+.pre-commit-config.yaml
+.coverage
+codecov.yml
+
+# Other distribution channels' artifacts and configs.
+dist/
+Dockerfile
+.dockerignore
+DOCKERHUB.md
+
+# Agent / project docs not needed inside the bundle.
+CLAUDE.md
+SECURITY.md
+
+# Caches and VCS.
+__pycache__/
+**/__pycache__/
+*.pyc
+.git/
+.gitignore
+.python-version
