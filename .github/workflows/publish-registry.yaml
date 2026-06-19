@@ -14,9 +14,12 @@ name: 'Publish to MCP Registry'
 # release's artifacts. Authentication is GitHub OIDC (no stored secret) — the id-token permission
 # lets mcp-publisher prove the io.github.GavinLucas namespace from the workflow's OIDC token.
 #
-# Because the sibling publish workflows run in parallel on the same release event, this one races
-# them; the download and publish steps retry to absorb registry/PyPI/GHCR propagation lag. If it still
-# loses the race, re-run it by hand (workflow_dispatch) once the release's other assets are present.
+# This runs in parallel with the sibling publish workflows on the same release event, so it races
+# them — notably the slow multi-arch image build whose label the registry verifies. The publish step
+# therefore retries on a *propagation* failure (a verified artifact "does not exist" yet) for long
+# enough to outlast that build, and fails fast only on a *deterministic* rejection (an invalid
+# server.json field, or a namespace-permission error) where retrying can't help. If it still loses
+# the race, re-run it by hand (workflow_dispatch) once the release's other assets are present.
 
 permissions:
   contents: read
@@ -102,21 +105,29 @@ jobs:
       - name: Publish server.json
         run: |
           set -uo pipefail
-          # Retry to absorb propagation lag of the artifacts the registry verifies (PyPI description,
-          # GHCR image label, the .mcpb asset) when this races the sibling release workflows.
-          for i in $(seq 1 10); do
+          # The artifacts the registry verifies (PyPI description, GHCR image label, .mcpb) are still
+          # being published by the sibling workflows when this starts — the multi-arch image build is
+          # the slowest — so retry long enough (20 x 60s = 20 min) to outlast it. Two failure classes,
+          # checked propagation-first because the registry's "image does not exist" 400 ALSO contains
+          # the words "validation failed":
+          #   * propagation ("does not exist" / 404 / 429 / 5xx) -> keep waiting
+          #   * deterministic (bad server.json field / namespace permission) -> fail fast, retry can't help
+          attempts=20
+          for i in $(seq 1 "$attempts"); do
             if out="$(./mcp-publisher publish 2>&1)"; then
               echo "$out"; echo "Published to the MCP Registry."; exit 0
             fi
             echo "$out"
-            # A validation rejection (HTTP 422) is deterministic — a server.json field is invalid, so
-            # retrying just burns the budget. Fail fast and point at the real fix.
-            if printf '%s\n' "$out" | grep -qiE 'validation failed|unprocessable'; then
-              echo "::error::MCP Registry rejected server.json (validation error) — fix server.json; a retry won't help."
+            if printf '%s\n' "$out" | grep -qiE 'does not exist|not found|no such|status (404|429|5[0-9][0-9])'; then
+              echo "::notice::a verified artifact isn't live yet (attempt $i/$attempts) — waiting 60s for propagation"
+              sleep 60; continue
+            fi
+            if printf '%s\n' "$out" | grep -qiE 'status 4[0-9][0-9]|unprocessable|expected length|forbidden|permission'; then
+              echo "::error::MCP Registry rejected the publish (not propagation) — fix server.json / namespace; a retry won't help."
               exit 1
             fi
-            echo "::notice::publish attempt $i/10 failed — artifacts may still be propagating; waiting 30s"
-            sleep 30
+            echo "::notice::publish attempt $i/$attempts failed; waiting 60s"
+            sleep 60
           done
-          echo "::error::MCP Registry publish failed after retries (re-run once all release assets are live)."
+          echo "::error::MCP Registry publish failed after retries — re-run via workflow_dispatch once all release assets are live."
           exit 1
