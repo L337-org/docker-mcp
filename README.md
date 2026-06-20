@@ -10,6 +10,8 @@ Every documented domain of the Docker SDK is exposed: build and run containers, 
 
 ## Requirements
 
+N.B. If you're using the containerised MCP server or MCPB bundle, the Python and uv requirements are taken care of for you.
+
 - A running Docker daemon reachable from the host that runs the server (the standard `DOCKER_HOST` / unix socket conventions apply)
 - [Python ≥ 3.14](https://www.python.org/downloads/)
 - [uv](https://docs.astral.sh/uv/) for dependency management
@@ -471,4 +473,4 @@ CI runs both `pytest` and `ruff` on every push and pull request via `.github/wor
 
 ### Reporting issues
 
-Bug reports and feature requests have templates under [`.github/ISSUE_TEMPLATE/`](.github/ISSUE_TEMPLATE/). Please use them when filing on GitHub.
+Bug reports and feature requests have templates that you can choose when you [`create an issue`](https://github.com/GavinLucas/docker-mcp/issues/new/choose). Please select the correct issue type and follow the template.
