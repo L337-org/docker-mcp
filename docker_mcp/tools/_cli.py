@@ -15,6 +15,7 @@ import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+from docker_mcp._hosts import is_multi as _is_multi, resolve as _resolve_host
 from docker_mcp.tools._ssh_proxy import ssh_proxy_for_docker_host
 
 DEFAULT_TIMEOUT_SECONDS = 60.0
@@ -116,6 +117,36 @@ def _decode(blob: bytes | None) -> tuple[str, bool]:
     return blob.decode("utf-8", errors="replace"), truncated
 
 
+def _apply_host_env(env: dict[str, str], host: str | None) -> None:
+    """
+    Point the child `docker` CLI at the selected host by overriding DOCKER_HOST + per-host TLS in `env`.
+
+    Inert for the legacy single host (DOCKER_MCP_SERVER_HOSTS unset), which keeps inheriting the ambient
+    DOCKER_HOST / DOCKER_CONTEXT exactly as before. For an explicitly-configured host we pin DOCKER_HOST
+    to its resolved URL (so the CLI and the docker-py SDK provably target the same daemon for a label),
+    drop DOCKER_CONTEXT, and apply the per-host cert dir — else fall through to the global
+    DOCKER_CERT_PATH/DOCKER_TLS_VERIFY, else plaintext. The ssh:// proxy rewrite below keys off the
+    resulting DOCKER_HOST, so an ssh:// host is handled there.
+    """
+    resolved = _resolve_host(host)
+    if not _is_multi() and not (os.environ.get("DOCKER_MCP_SERVER_HOSTS") or "").strip():
+        return  # legacy single host: inherit the ambient docker env (unchanged behavior)
+    # Explicit host: pin to this host's endpoint and never inherit the ambient DOCKER_HOST / DOCKER_CONTEXT
+    # (DOCKER_HOST is ignored when DOCKER_MCP_SERVER_HOSTS is set). A host that resolved to the platform
+    # default (url=None) drops them so the CLI finds its own default socket/npipe.
+    env.pop("DOCKER_CONTEXT", None)
+    if resolved.url is None:
+        env.pop("DOCKER_HOST", None)
+    else:
+        env["DOCKER_HOST"] = resolved.url
+    if resolved.cert_dir:
+        env["DOCKER_CERT_PATH"] = resolved.cert_dir
+        env["DOCKER_TLS_VERIFY"] = "1"
+    elif not (os.environ.get("DOCKER_TLS_VERIFY") or "").strip():
+        env.pop("DOCKER_CERT_PATH", None)
+        env.pop("DOCKER_TLS_VERIFY", None)
+
+
 def run_docker(
     args: list[str],
     *,
@@ -123,6 +154,7 @@ def run_docker(
     timeout: float = DEFAULT_TIMEOUT_SECONDS,
     stdin: bytes | None = None,
     extra_env: dict[str, str] | None = None,
+    host: str | None = None,
 ) -> CliResult:
     """
     Run `docker <args...>` with safe, cross-platform defaults.
@@ -135,6 +167,9 @@ def run_docker(
     - On Windows, `CREATE_NO_WINDOW` suppresses console pop-ups when the MCP server is run from a GUI host.
     - Environment is restricted to the allow-list in `_BASE_ENV_KEYS` (+ Windows extras),
       with optional `extra_env` overlay for subcommand-specific knobs.
+    - `host` selects which configured host to target: for an explicitly-configured host its resolved
+      DOCKER_HOST + per-host TLS are injected (`_apply_host_env`); the legacy single host inherits the
+      ambient docker env unchanged.
     - When DOCKER_HOST is `ssh://...`, the child's DOCKER_HOST is transparently rewritten to a
       per-call local TCP proxy (`_ssh_proxy.py`) that authenticates via paramiko, so the CLI uses
       the same SSH credentials as the docker-py-backed tools instead of the system `ssh` binary.
@@ -148,6 +183,7 @@ def run_docker(
     env = _safe_env()
     if extra_env:
         env.update(extra_env)
+    _apply_host_env(env, host)
     creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0
     with contextlib.ExitStack() as stack:
         if env.get("DOCKER_HOST", "").startswith("ssh://"):

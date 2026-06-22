@@ -4,7 +4,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+import docker_mcp._hosts as _hosts_mod
 import docker_mcp.tools._cli as cli_module
+from docker_mcp._hosts import Host, parse_registry
 from docker_mcp.tools._cli import (
     MAX_CLI_OUTPUT_BYTES,
     CliResult,
@@ -435,3 +437,58 @@ def test_parse_json_or_ndjson_truncated_ndjson_without_drop_raises_descriptively
     body = '{"Name":"a"}\n{"Name":"c","Sta'
     with pytest.raises(RuntimeError, match="Could not parse compose ls output as JSON.*line 2"):
         parse_json_or_ndjson(body, truncated=False, what="compose ls output")
+
+
+# ---------- _apply_host_env: per-host DOCKER_HOST / TLS injection ----------
+
+
+def test_apply_host_env_inert_for_legacy_single_host(monkeypatch):
+    # DOCKER_MCP_SERVER_HOSTS unset + single host -> inherit the ambient docker env unchanged.
+    monkeypatch.delenv("DOCKER_MCP_SERVER_HOSTS", raising=False)
+    monkeypatch.setattr(_hosts_mod, "_registry", parse_registry(None))
+    env = {"DOCKER_HOST": "ssh://ambient", "DOCKER_CONTEXT": "ctx"}
+    cli_module._apply_host_env(env, None)
+    assert env == {"DOCKER_HOST": "ssh://ambient", "DOCKER_CONTEXT": "ctx"}
+
+
+def test_apply_host_env_injects_resolved_url_and_drops_context(monkeypatch):
+    monkeypatch.setattr(_hosts_mod, "_registry", parse_registry("local=unix:///local.sock, prod=tcp://prod:2376"))
+    env = {"DOCKER_HOST": "ssh://ambient", "DOCKER_CONTEXT": "ctx"}
+    cli_module._apply_host_env(env, "prod")
+    assert env["DOCKER_HOST"] == "tcp://prod:2376"
+    assert "DOCKER_CONTEXT" not in env
+
+
+def test_apply_host_env_sets_per_host_tls(monkeypatch, tmp_path):
+    certs = tmp_path / "certs"
+    certs.mkdir()
+    for filename in ("ca.pem", "cert.pem", "key.pem"):
+        (certs / filename).write_text("x", encoding="utf-8")
+    monkeypatch.setattr(
+        _hosts_mod, "_registry", parse_registry(f"local=unix:///local.sock, prod=tcp://prod:2376(tls={certs})")
+    )
+    env: dict[str, str] = {}
+    cli_module._apply_host_env(env, "prod")
+    assert env["DOCKER_HOST"] == "tcp://prod:2376"
+    assert env["DOCKER_CERT_PATH"] == str(certs)
+    assert env["DOCKER_TLS_VERIFY"] == "1"
+
+
+def test_apply_host_env_strips_inherited_tls_for_plaintext_host(monkeypatch):
+    monkeypatch.delenv("DOCKER_TLS_VERIFY", raising=False)
+    monkeypatch.setattr(_hosts_mod, "_registry", parse_registry("local=unix:///local.sock, prod=tcp://prod:2376"))
+    env = {"DOCKER_CERT_PATH": "/stale", "DOCKER_TLS_VERIFY": "1"}  # inherited from the allow-list
+    cli_module._apply_host_env(env, "prod")
+    assert "DOCKER_CERT_PATH" not in env
+    assert "DOCKER_TLS_VERIFY" not in env
+
+
+def test_apply_host_env_platform_default_strips_ambient(monkeypatch):
+    # An explicit host resolving to url=None must drop the ambient DOCKER_HOST/DOCKER_CONTEXT so the
+    # child CLI uses the platform default rather than being retargeted by ambient settings.
+    monkeypatch.delenv("DOCKER_TLS_VERIFY", raising=False)
+    monkeypatch.setattr(_hosts_mod, "_registry", {"box": Host("box", None), "prod": Host("prod", "tcp://prod:2376")})
+    env = {"DOCKER_HOST": "tcp://ambient", "DOCKER_CONTEXT": "ctx"}
+    cli_module._apply_host_env(env, "box")
+    assert "DOCKER_HOST" not in env
+    assert "DOCKER_CONTEXT" not in env
