@@ -11,7 +11,7 @@ from docker.errors import DockerException
 from docker.models.containers import Container
 
 from docker_mcp._env import scrub_unresolved_env
-from docker_mcp._hosts import resolve_auto
+from docker_mcp._hosts import default as _default_host, registry as _host_registry, resolve_auto
 from docker_mcp.server import tool
 from docker_mcp.tools._utils import classify_host_kernel, close_stream_quietly, env_flag, in_container
 
@@ -152,6 +152,31 @@ def df() -> dict:
     returns: dict - Data usage information for images, containers and volumes
     """
     return _get_client().df()
+
+
+@tool()
+def list_hosts() -> list[dict]:
+    """
+    List the Docker hosts configured via DOCKER_MCP_SERVER_HOSTS.
+
+    With a single host (or the var unset) this is the one resolved daemon; with several it is the set the
+    `host` argument selects from. The `default` entry is the one used when `host` is omitted.
+
+    returns: list[dict] - one per host: name; url (resolved daemon URL, null = docker-py platform
+        default); read_only; tls (whether a per-host cert dir is configured); default (the omitted-host fallback)
+    """
+    hosts = _host_registry()
+    default_label = _default_host().label if hosts else None
+    return [
+        {
+            "name": host.label,
+            "url": host.url,
+            "read_only": host.read_only,
+            "tls": host.cert_dir is not None,
+            "default": host.label == default_label,
+        }
+        for host in hosts.values()
+    ]
 
 
 @tool()
