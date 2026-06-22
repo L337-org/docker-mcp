@@ -1,9 +1,6 @@
 # library of mcp tools relating to client management
 
-import hashlib
-import json
 import os
-import re
 import sys
 import threading
 from pathlib import Path
@@ -13,6 +10,8 @@ import requests.exceptions
 from docker.errors import DockerException
 from docker.models.containers import Container
 
+from docker_mcp._env import scrub_unresolved_env
+from docker_mcp._hosts import resolve_auto
 from docker_mcp.server import tool
 from docker_mcp.tools._utils import classify_host_kernel, close_stream_quietly, env_flag, in_container
 
@@ -88,103 +87,15 @@ def _close_client_quietly(client: docker.DockerClient) -> None:
         pass
 
 
-# A value left as a single unresolved `${...}` substitution token (see _scrub_unresolved_env).
-_UNRESOLVED_TEMPLATE = re.compile(r"\$\{[^}]*\}")
-
-
-def _scrub_unresolved_env() -> None:
-    """
-    Drop env vars whose value is an unresolved `${...}` substitution template.
-
-    Some MCP hosts substitute a placeholder into the server's environment for every declared config
-    key but, when an optional field is left blank, pass the *literal* placeholder rather than omitting
-    the var — e.g. Claude Desktop loading a .mcpb desktop extension sets `DOCKER_HOST` to the string
-    `${user_config.docker_host}`. Left in place that breaks both docker-py and the CLI shell-out path
-    (which forwards DOCKER_HOST to `docker`); clearing it lets default-daemon resolution take over.
-    Scoped to whole-value `${...}` tokens, which are never a usable value for any program.
-    """
-    for key, value in list(os.environ.items()):
-        if _UNRESOLVED_TEMPLATE.fullmatch(value.strip()):
-            del os.environ[key]
-
-
-def _docker_config_dir() -> Path:
-    """The Docker CLI config directory ($DOCKER_CONFIG, else ~/.docker) — where contexts live."""
-    return Path(os.environ.get("DOCKER_CONFIG") or Path.home() / ".docker")
-
-
-def _active_context_name() -> str | None:
-    """Name of the active Docker CLI context: $DOCKER_CONTEXT, else config.json's currentContext."""
-    name = (os.environ.get("DOCKER_CONTEXT") or "").strip()
-    if name:
-        return name
-    try:
-        cfg = json.loads((_docker_config_dir() / "config.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-    return (cfg.get("currentContext") or "").strip() or None
-
-
-def _context_host(name: str) -> str | None:
-    """The docker endpoint Host for a named CLI context, read from its meta.json, or None."""
-    digest = hashlib.sha256(name.encode("utf-8")).hexdigest()
-    meta_path = _docker_config_dir() / "contexts" / "meta" / digest / "meta.json"
-    try:
-        meta = json.loads(meta_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-    host = (((meta.get("Endpoints") or {}).get("docker") or {}).get("Host") or "").strip()
-    return host or None
-
-
-def _probe_default_socket() -> str | None:
-    """First existing well-known daemon socket, newest Docker Desktop / rootless locations first."""
-    if sys.platform == "win32":  # pyright: ignore[reportUnreachable]
-        return None  # the npipe default is handled by from_env(); nothing to probe on disk
-    home = Path.home()
-    candidates = [
-        home / ".docker" / "run" / "docker.sock",  # Docker Desktop (mac/linux), 4.13+
-        home / ".docker" / "desktop" / "docker.sock",  # older Docker Desktop layout
-    ]
-    xdg = (os.environ.get("XDG_RUNTIME_DIR") or "").strip()
-    if xdg:
-        candidates.append(Path(xdg) / "docker.sock")  # rootless Linux
-    candidates.append(Path("/var/run/docker.sock"))  # classic / native Linux engine
-    for sock in candidates:
-        try:
-            if sock.is_socket():
-                return f"unix://{sock}"
-        except OSError:
-            continue
-    return None
-
-
-def _resolve_default_base_url() -> str | None:
-    """
-    Best-effort daemon endpoint when DOCKER_HOST is unset, mirroring how the `docker` CLI finds it.
-
-    docker-py's from_env() only reads DOCKER_HOST and otherwise falls back to the classic unix socket
-    (or the Windows named pipe) — it does NOT consult Docker CLI contexts. Docker Desktop 4.13+ stopped
-    creating /var/run/docker.sock by default and points the desktop-linux context at
-    ~/.docker/run/docker.sock instead, so the classic fallback misses a daemon the user's CLI reaches
-    fine. We close that gap by resolving the active context (DOCKER_CONTEXT / currentContext -> the
-    context's meta.json Host), then probing known socket locations. Returns None to let from_env() apply
-    its own platform default. TLS material attached to a remote context is not applied — a tcp+TLS
-    context still needs DOCKER_HOST/DOCKER_CERT_PATH (or it already did, since from_env ignored it too).
-    """
-    name = _active_context_name()
-    if name and name != "default":
-        host = _context_host(name)
-        if host:
-            return host
-    return _probe_default_socket()
-
-
 def _build_default_client() -> docker.DockerClient:
-    """Client for DOCKER_HOST when set (via from_env, honoring its TLS env), else the resolved endpoint."""
+    """Client for DOCKER_HOST when set (via from_env, honoring its TLS env), else the resolved endpoint.
+
+    auto/local resolution lives in docker_mcp._hosts now (the pure registry layer); resolve_auto() is
+    the relocated _resolve_default_base_url().
+    """
     if os.environ.get("DOCKER_HOST"):
         return docker.from_env()
-    base_url = _resolve_default_base_url()
+    base_url = resolve_auto()
     return docker.DockerClient(base_url=base_url) if base_url else docker.from_env()
 
 
@@ -385,7 +296,7 @@ def reconnect(docker_host: str | None = None) -> dict:
     global _client
     # Name the endpoint we'll actually use, mirroring _build_default_client's precedence so a failure
     # message points at the real target (context/socket resolution, not a misleading default).
-    target = docker_host or os.environ.get("DOCKER_HOST") or _resolve_default_base_url() or "the default Docker socket"
+    target = docker_host or os.environ.get("DOCKER_HOST") or resolve_auto() or "the default Docker socket"
     try:
         new_client = docker.DockerClient(base_url=docker_host) if docker_host else _build_default_client()
     except _CONNECT_ERRORS as exc:
@@ -481,7 +392,7 @@ def startup_preflight() -> None:
     daemon it reached. Never raises — diagnostics must not crash startup.
     """
     global _self_container_id
-    _scrub_unresolved_env()
+    scrub_unresolved_env()
     try:
         client = _get_client()
         client.ping()

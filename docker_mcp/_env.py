@@ -10,9 +10,13 @@
 # docker_mcp.tools, which would be a circular import at tool-registration time.
 
 import os
+import re
 import sys
 
 _TRUTHY = frozenset({"1", "true", "yes", "on"})
+
+# A value left as a single unresolved `${...}` substitution token (see scrub_unresolved_env).
+_UNRESOLVED_TEMPLATE = re.compile(r"\$\{[^}]*\}")
 
 # Deprecated aliases already warned about, so a repeatedly-read var nags at most once per process.
 _warned_aliases: set[str] = set()
@@ -50,3 +54,21 @@ def _warn_deprecated(alias: str, canonical: str) -> None:
         f"docker-mcp-server: environment variable {alias} is deprecated; use {canonical} instead.",
         file=sys.stderr,
     )
+
+
+def scrub_unresolved_env() -> None:
+    """
+    Drop env vars whose value is an unresolved `${...}` substitution template.
+
+    Some MCP hosts substitute a placeholder into the server's environment for every declared config
+    key but, when an optional field is left blank, pass the *literal* placeholder rather than omitting
+    the var — e.g. Claude Desktop loading a .mcpb desktop extension sets `DOCKER_HOST` (or
+    `DOCKER_MCP_SERVER_HOSTS`) to the string `${user_config.docker_host}`. Left in place that breaks
+    both docker-py and the CLI shell-out path (which forwards DOCKER_HOST to `docker`), and a
+    placeholder `DOCKER_MCP_SERVER_HOSTS` would fail-fast host parsing; clearing it lets default-host
+    resolution take over. Must run before the host registry is parsed. Scoped to whole-value `${...}`
+    tokens, which are never a usable value for any program.
+    """
+    for key, value in list(os.environ.items()):
+        if _UNRESOLVED_TEMPLATE.fullmatch(value.strip()):
+            del os.environ[key]

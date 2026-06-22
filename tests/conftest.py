@@ -32,6 +32,11 @@ for _canonical, _alias in (
     os.environ.pop(_canonical, None)
     os.environ.pop(_alias, None)
 
+# Net-new (canonical only, no alias). `docker_mcp/__init__.py` calls `_hosts.load()` on first import,
+# which parses this var and fail-fasts (SystemExit) on a malformed value — so a developer's shell value
+# could otherwise abort collection or skew the default single-host assumption the unit suite makes.
+os.environ.pop("DOCKER_MCP_SERVER_HOSTS", None)
+
 
 @pytest.fixture(autouse=True)
 def _force_host_install(monkeypatch):
