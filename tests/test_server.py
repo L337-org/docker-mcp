@@ -1,6 +1,8 @@
 import inspect
+import json
 import subprocess
 import sys
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -697,3 +699,75 @@ def test_disable_env_reports_hidden_doc_sections_in_catalog_end_to_end():
     import json
 
     assert json.loads(result.stdout) == ["scout", "scout-cli"]
+
+
+# ---------- slice 4: host threaded through tools; end-to-end schema + routing ----------
+
+
+def _tool_schema_in(env_vars: list[str], tool_name: str) -> dict:
+    """Import the package in a child process with the given env; return one tool's advertised schema."""
+    code = (
+        "import json, docker_mcp; from docker_mcp.server import mcp; "
+        f"print(json.dumps(mcp._tool_manager.get_tool({tool_name!r}).parameters))"
+    )
+    result = subprocess.run(  # noqa: S603 — fixed argv, sys.executable, no shell; trusted test input
+        [sys.executable, "-c", code], capture_output=True, text=True, env=_env_with(env_vars), check=True
+    )
+    return json.loads(result.stdout)
+
+
+def test_multi_host_injects_host_enum_into_tool_schemas_end_to_end():
+    env = ["DOCKER_MCP_SERVER_HOSTS=local=ssh://a, prod=ssh://b(ro)"]
+    read = _tool_schema_in(env, "list_containers")  # READ_ONLY: enum + optional
+    assert read["properties"]["host"]["enum"] == ["local", "prod"]
+    assert "host" not in read.get("required", [])
+    dest = _tool_schema_in(env, "remove_container")  # DESTRUCTIVE: enum + required
+    assert dest["properties"]["host"]["enum"] == ["local", "prod"]
+    assert "host" in dest["required"]
+    reg = _tool_schema_in(env, "registry_list_tags")  # daemon-agnostic: no host param
+    assert "host" not in reg.get("properties", {})
+
+
+def test_single_host_strips_host_from_tool_schemas_end_to_end():
+    assert "host" not in _tool_schema_in([], "list_containers").get("properties", {})
+
+
+def test_multi_host_router_caveat_present_end_to_end():
+    code = "import docker_mcp; print(docker_mcp.mcp.instructions)"
+    env = _env_with(["DOCKER_MCP_SERVER_HOSTS=local=ssh://a, prod=ssh://b(ro)"])
+    out = subprocess.run(  # noqa: S603
+        [sys.executable, "-c", code], capture_output=True, text=True, env=env, check=True
+    ).stdout
+    assert "Multiple hosts are configured" in out
+    assert "['local', 'prod']" in out
+
+
+def test_sdk_tool_threads_host_to_get_client(monkeypatch):
+    from docker_mcp.tools import containers
+
+    captured = {}
+
+    def fake_get_client(host=None):
+        captured["host"] = host
+        client = MagicMock()
+        client.containers.list.return_value = []
+        return client
+
+    monkeypatch.setattr(containers, "_get_client", fake_get_client)
+    containers.list_containers(host="prod")
+    assert captured["host"] == "prod"
+
+
+def test_cli_tool_threads_host_to_run_docker(monkeypatch):
+    from docker_mcp.tools import stack
+    from docker_mcp.tools._cli import CliResult
+
+    captured = {}
+
+    def fake_run_docker(args, **kwargs):
+        captured.update(kwargs)
+        return CliResult(returncode=0, stdout="", stderr="", truncated=False)
+
+    monkeypatch.setattr(stack, "run_docker", fake_run_docker)
+    stack.stack_ls(host="prod")
+    assert captured.get("host") == "prod"

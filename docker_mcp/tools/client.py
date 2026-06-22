@@ -188,43 +188,43 @@ def _get_client(host: str | None = None) -> docker.DockerClient:
 
 
 @tool()
-def ping() -> bool:
+def ping(host: str | None = None) -> bool:
     """
     Check that the Docker server is responsive.
 
     returns: bool - True if the daemon responded successfully
     """
-    return _get_client().ping()
+    return _get_client(host).ping()
 
 
 @tool()
-def version() -> dict:
+def version(host: str | None = None) -> dict:
     """
     Return Docker server version information.
 
     returns: dict - Version information from the Docker daemon
     """
-    return _get_client().version()
+    return _get_client(host).version()
 
 
 @tool()
-def info() -> dict:
+def info(host: str | None = None) -> dict:
     """
     Return system-wide Docker information.
 
     returns: dict - System information from the Docker daemon
     """
-    return _get_client().info()
+    return _get_client(host).info()
 
 
 @tool()
-def df() -> dict:
+def df(host: str | None = None) -> dict:
     """
     Return Docker disk usage information.
 
     returns: dict - Data usage information for images, containers and volumes
     """
-    return _get_client().df()
+    return _get_client(host).df()
 
 
 @tool()
@@ -331,6 +331,7 @@ def events(
     filters: dict | None = None,
     limit: int = 100,
     timeout_seconds: float = 30.0,
+    host: str | None = None,
 ) -> list:
     """
     Stream real-time events from the Docker server, bounded by `limit` events or `timeout_seconds`.
@@ -350,7 +351,7 @@ def events(
         timeout_seconds - Max wall-clock seconds before returning what was collected (default 30)
     returns: list - A list of decoded event dicts (length <= limit)
     """
-    stream = _get_client().events(since=since, until=until, filters=filters, decode=True)
+    stream = _get_client(host).events(since=since, until=until, filters=filters, decode=True)
     collected: list = []
     # The event stream is a CancellableStream; closing its socket from a watchdog timer unblocks
     # the iteration below (the blocked read surfaces as StopIteration), giving a hard time bound

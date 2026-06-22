@@ -47,9 +47,9 @@ def _global_args(
     return args
 
 
-def _run_compose(subcommand_args: list[str], *, cwd: str | None, timeout: float) -> CliResult:
+def _run_compose(subcommand_args: list[str], *, cwd: str | None, timeout: float, host: str | None = None) -> CliResult:
     require_plugin("compose")
-    return run_docker(["compose", *subcommand_args], cwd=cwd, timeout=timeout)
+    return run_docker(["compose", *subcommand_args], cwd=cwd, timeout=timeout, host=host)
 
 
 @tool()
@@ -64,6 +64,7 @@ def compose_up(
     remove_orphans: bool = False,
     wait: bool = False,
     timeout_seconds: float = _TIMEOUT_UP,
+    host: str | None = None,
 ) -> dict:
     """
     Bring up a Docker Compose project, detached.
@@ -95,7 +96,7 @@ def compose_up(
         args.append("--wait")
     if services:
         args.extend(safe_positional(s, "service") for s in services)
-    return _run_compose(args, cwd=project_dir, timeout=timeout_seconds).to_dict()
+    return _run_compose(args, cwd=project_dir, timeout=timeout_seconds, host=host).to_dict()
 
 
 @tool()
@@ -107,6 +108,7 @@ def compose_down(
     volumes: bool = False,
     remove_orphans: bool = False,
     timeout_seconds: float = _TIMEOUT_DOWN,
+    host: str | None = None,
 ) -> dict:
     """
     Stop and remove containers, networks (and optionally volumes) for a compose project.
@@ -126,7 +128,7 @@ def compose_down(
         args.append("--volumes")
     if remove_orphans:
         args.append("--remove-orphans")
-    return _run_compose(args, cwd=project_dir, timeout=timeout_seconds).to_dict()
+    return _run_compose(args, cwd=project_dir, timeout=timeout_seconds, host=host).to_dict()
 
 
 @tool()
@@ -136,6 +138,7 @@ def compose_ps(
     project_name: str | None = None,
     services: list[str] | None = None,
     all: bool = False,
+    host: str | None = None,
 ) -> dict:
     """
     List containers in a compose project, parsed from `--format json`.
@@ -154,7 +157,7 @@ def compose_ps(
         args.append("--all")
     if services:
         args.extend(safe_positional(s, "service") for s in services)
-    result = _run_compose(args, cwd=project_dir, timeout=_TIMEOUT_QUERY)
+    result = _run_compose(args, cwd=project_dir, timeout=_TIMEOUT_QUERY, host=host)
     parsed = (
         parse_json_or_ndjson(result.stdout, truncated=result.truncated, what="compose ps output")
         if result.returncode == 0
@@ -180,6 +183,7 @@ def compose_logs(
     since: str | None = None,
     until: str | None = None,
     timestamps: bool = False,
+    host: str | None = None,
 ) -> dict:
     """
     Fetch a bounded slice of logs from a compose project (never follows).
@@ -208,7 +212,7 @@ def compose_logs(
         args.append("--timestamps")
     if services:
         args.extend(safe_positional(s, "service") for s in services)
-    return _run_compose(args, cwd=project_dir, timeout=_TIMEOUT_QUERY).to_dict()
+    return _run_compose(args, cwd=project_dir, timeout=_TIMEOUT_QUERY, host=host).to_dict()
 
 
 @tool()
@@ -219,6 +223,7 @@ def compose_config(
     profiles: list[str] | None = None,
     services_only: bool = False,
     format: str = "yaml",
+    host: str | None = None,
 ) -> dict:
     """
     Render the canonical compose configuration after merges, profiles, and variable substitution.
@@ -239,7 +244,7 @@ def compose_config(
         args.append("--services")
     elif format == "json":
         args.extend(["--format", "json"])
-    result = _run_compose(args, cwd=project_dir, timeout=_TIMEOUT_QUERY)
+    result = _run_compose(args, cwd=project_dir, timeout=_TIMEOUT_QUERY, host=host)
     config: str | dict | list | None
     if result.returncode != 0:
         config = None
@@ -260,6 +265,7 @@ def compose_build(
     pull: bool = False,
     no_cache: bool = False,
     timeout_seconds: float = _TIMEOUT_BUILD,
+    host: str | None = None,
 ) -> dict:
     """
     Build images for a compose project.
@@ -281,7 +287,7 @@ def compose_build(
         args.append("--no-cache")
     if services:
         args.extend(safe_positional(s, "service") for s in services)
-    return _run_compose(args, cwd=project_dir, timeout=timeout_seconds).to_dict()
+    return _run_compose(args, cwd=project_dir, timeout=timeout_seconds, host=host).to_dict()
 
 
 @tool()
@@ -292,6 +298,7 @@ def compose_pull(
     services: list[str] | None = None,
     ignore_pull_failures: bool = False,
     timeout_seconds: float = _TIMEOUT_PULL,
+    host: str | None = None,
 ) -> dict:
     """
     Pull images declared by a compose project.
@@ -310,7 +317,7 @@ def compose_pull(
         args.append("--ignore-pull-failures")
     if services:
         args.extend(safe_positional(s, "service") for s in services)
-    return _run_compose(args, cwd=project_dir, timeout=timeout_seconds).to_dict()
+    return _run_compose(args, cwd=project_dir, timeout=timeout_seconds, host=host).to_dict()
 
 
 @tool()
@@ -321,6 +328,7 @@ def compose_restart(
     services: list[str] | None = None,
     stop_timeout_seconds: int | None = None,
     timeout_seconds: float = _TIMEOUT_RESTART,
+    host: str | None = None,
 ) -> dict:
     """
     Restart services in a compose project.
@@ -339,7 +347,7 @@ def compose_restart(
         args.extend(["--timeout", str(stop_timeout_seconds)])
     if services:
         args.extend(safe_positional(s, "service") for s in services)
-    return _run_compose(args, cwd=project_dir, timeout=timeout_seconds).to_dict()
+    return _run_compose(args, cwd=project_dir, timeout=timeout_seconds, host=host).to_dict()
 
 
 @tool()
@@ -350,6 +358,7 @@ def compose_stop(
     services: list[str] | None = None,
     stop_timeout_seconds: int | None = None,
     timeout_seconds: float = _TIMEOUT_DOWN,
+    host: str | None = None,
 ) -> dict:
     """
     Stop services in a compose project without removing their containers.
@@ -370,7 +379,7 @@ def compose_stop(
         args.extend(["--timeout", str(stop_timeout_seconds)])
     if services:
         args.extend(safe_positional(s, "service") for s in services)
-    return _run_compose(args, cwd=project_dir, timeout=timeout_seconds).to_dict()
+    return _run_compose(args, cwd=project_dir, timeout=timeout_seconds, host=host).to_dict()
 
 
 @tool()
@@ -380,6 +389,7 @@ def compose_start(
     project_name: str | None = None,
     services: list[str] | None = None,
     timeout_seconds: float = _TIMEOUT_UP,
+    host: str | None = None,
 ) -> dict:
     """
     Start existing (stopped) containers of a compose project.
@@ -398,7 +408,7 @@ def compose_start(
     args = [*_global_args(files, project_name, None), "start"]
     if services:
         args.extend(safe_positional(s, "service") for s in services)
-    return _run_compose(args, cwd=project_dir, timeout=timeout_seconds).to_dict()
+    return _run_compose(args, cwd=project_dir, timeout=timeout_seconds, host=host).to_dict()
 
 
 @tool()
@@ -416,6 +426,7 @@ def compose_run(
     env: dict | None = None,
     name: str | None = None,
     timeout_seconds: float = _TIMEOUT_RUN,
+    host: str | None = None,
 ) -> dict:
     """
     Run a one-off command against a compose service.
@@ -456,7 +467,7 @@ def compose_run(
     args.append(safe_positional(service, "service"))
     if command:
         args.extend(command)
-    return _run_compose(args, cwd=project_dir, timeout=timeout_seconds).to_dict()
+    return _run_compose(args, cwd=project_dir, timeout=timeout_seconds, host=host).to_dict()
 
 
 @tool()
@@ -471,6 +482,7 @@ def compose_exec(
     user: str | None = None,
     env: dict | None = None,
     timeout_seconds: float = _TIMEOUT_QUERY,
+    host: str | None = None,
 ) -> dict:
     """
     Run a command inside an already-running compose service container.
@@ -502,7 +514,7 @@ def compose_exec(
         args.extend(["--env", f"{key}={value}"])
     args.append(safe_positional(service, "service"))
     args.extend(command)
-    return _run_compose(args, cwd=project_dir, timeout=timeout_seconds).to_dict()
+    return _run_compose(args, cwd=project_dir, timeout=timeout_seconds, host=host).to_dict()
 
 
 @tool()
@@ -511,6 +523,7 @@ def compose_images(
     files: list[str] | None = None,
     project_name: str | None = None,
     services: list[str] | None = None,
+    host: str | None = None,
 ) -> list:
     """
     List the images used by a compose project's services, parsed from `--format json`.
@@ -525,7 +538,7 @@ def compose_images(
     args = [*_global_args(files, project_name, None), "images", "--format", "json"]
     if services:
         args.extend(safe_positional(s, "service") for s in services)
-    result = _run_compose(args, cwd=project_dir, timeout=_TIMEOUT_QUERY)
+    result = _run_compose(args, cwd=project_dir, timeout=_TIMEOUT_QUERY, host=host)
     raise_on_cli_failure(result, "compose images")
     parsed = parse_json_or_ndjson(result.stdout, truncated=result.truncated, what="compose images output")
     if isinstance(parsed, list):
@@ -544,6 +557,7 @@ def compose_port(
     project_dir: str | None = None,
     files: list[str] | None = None,
     project_name: str | None = None,
+    host: str | None = None,
 ) -> dict:
     """
     Resolve the host binding for a service's container port.
@@ -569,7 +583,7 @@ def compose_port(
         args.extend(["--index", str(index)])
     args.append(safe_positional(service, "service"))
     args.append(str(private_port))
-    result = _run_compose(args, cwd=project_dir, timeout=_TIMEOUT_QUERY)
+    result = _run_compose(args, cwd=project_dir, timeout=_TIMEOUT_QUERY, host=host)
     raise_on_cli_failure(result, "compose port")
     # `compose port` may print several bindings, one per line (e.g. an IPv4 and an IPv6 address).
     # Parse the first non-empty line deterministically — splitting on the *last* colon keeps the
@@ -595,6 +609,7 @@ def compose_wait(
     files: list[str] | None = None,
     project_name: str | None = None,
     timeout_seconds: float = _TIMEOUT_WAIT,
+    host: str | None = None,
 ) -> dict:
     """
     Block until the named service containers stop, then return their exit codes.
@@ -615,7 +630,7 @@ def compose_wait(
         raise ValueError("compose_wait requires at least one service.")
     args = [*_global_args(files, project_name, None), "wait"]
     args.extend(safe_positional(s, "service") for s in services)
-    return _run_compose(args, cwd=project_dir, timeout=timeout_seconds).to_dict()
+    return _run_compose(args, cwd=project_dir, timeout=timeout_seconds, host=host).to_dict()
 
 
 @tool()
@@ -624,6 +639,7 @@ def compose_top(
     project_dir: str | None = None,
     files: list[str] | None = None,
     project_name: str | None = None,
+    host: str | None = None,
 ) -> dict:
     """
     Show the running processes of a compose project's containers.
@@ -640,7 +656,7 @@ def compose_top(
     args = [*_global_args(files, project_name, None), "top"]
     if services:
         args.extend(safe_positional(s, "service") for s in services)
-    return _run_compose(args, cwd=project_dir, timeout=_TIMEOUT_QUERY).to_dict()
+    return _run_compose(args, cwd=project_dir, timeout=_TIMEOUT_QUERY, host=host).to_dict()
 
 
 @tool()
@@ -653,6 +669,7 @@ def compose_cp(
     files: list[str] | None = None,
     project_name: str | None = None,
     timeout_seconds: float = _TIMEOUT_CP,
+    host: str | None = None,
 ) -> dict:
     """
     Copy files/folders between a service container and the server host's filesystem.
@@ -679,7 +696,7 @@ def compose_cp(
         args.append("--all")
     args.append(safe_positional(source, "source"))
     args.append(safe_positional(dest, "dest"))
-    return _run_compose(args, cwd=project_dir, timeout=timeout_seconds).to_dict()
+    return _run_compose(args, cwd=project_dir, timeout=timeout_seconds, host=host).to_dict()
 
 
 @tool()
@@ -690,6 +707,7 @@ def compose_kill(
     project_dir: str | None = None,
     files: list[str] | None = None,
     project_name: str | None = None,
+    host: str | None = None,
 ) -> dict:
     """
     Send a signal to a compose project's containers (default SIGKILL).
@@ -710,7 +728,7 @@ def compose_kill(
         args.append("--remove-orphans")
     if services:
         args.extend(safe_positional(s, "service") for s in services)
-    return _run_compose(args, cwd=project_dir, timeout=_TIMEOUT_QUERY).to_dict()
+    return _run_compose(args, cwd=project_dir, timeout=_TIMEOUT_QUERY, host=host).to_dict()
 
 
 @tool()
@@ -719,6 +737,7 @@ def compose_pause(
     project_dir: str | None = None,
     files: list[str] | None = None,
     project_name: str | None = None,
+    host: str | None = None,
 ) -> dict:
     """
     Pause the containers of a compose project (freezes their processes).
@@ -733,7 +752,7 @@ def compose_pause(
     args = [*_global_args(files, project_name, None), "pause"]
     if services:
         args.extend(safe_positional(s, "service") for s in services)
-    return _run_compose(args, cwd=project_dir, timeout=_TIMEOUT_QUERY).to_dict()
+    return _run_compose(args, cwd=project_dir, timeout=_TIMEOUT_QUERY, host=host).to_dict()
 
 
 @tool()
@@ -742,6 +761,7 @@ def compose_unpause(
     project_dir: str | None = None,
     files: list[str] | None = None,
     project_name: str | None = None,
+    host: str | None = None,
 ) -> dict:
     """
     Unpause the containers of a compose project (resumes paused processes).
@@ -756,11 +776,11 @@ def compose_unpause(
     args = [*_global_args(files, project_name, None), "unpause"]
     if services:
         args.extend(safe_positional(s, "service") for s in services)
-    return _run_compose(args, cwd=project_dir, timeout=_TIMEOUT_QUERY).to_dict()
+    return _run_compose(args, cwd=project_dir, timeout=_TIMEOUT_QUERY, host=host).to_dict()
 
 
 @tool()
-def compose_ls(all: bool = False) -> list:
+def compose_ls(all: bool = False, host: str | None = None) -> list:
     """
     List compose projects known to the daemon (across all directories).
 
@@ -771,7 +791,7 @@ def compose_ls(all: bool = False) -> list:
     if all:
         args.append("--all")
     require_plugin("compose")
-    result = run_docker(args, timeout=_TIMEOUT_QUERY)
+    result = run_docker(args, timeout=_TIMEOUT_QUERY, host=host)
     raise_on_cli_failure(result, "compose ls")
     parsed = parse_json_or_ndjson(result.stdout, truncated=result.truncated, what="compose ls output")
     if isinstance(parsed, list):

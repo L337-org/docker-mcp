@@ -10,7 +10,9 @@ from docker_mcp.tools.client import _get_client
 
 
 @tool()
-def create_service(image: str, command: str | list | None = None, extra_kwargs: dict | None = None) -> dict:
+def create_service(
+    image: str, command: str | list | None = None, extra_kwargs: dict | None = None, host: str | None = None
+) -> dict:
     """
     Create a swarm service.
 
@@ -25,11 +27,11 @@ def create_service(image: str, command: str | list | None = None, extra_kwargs: 
     labels = with_provenance(kwargs.get("labels"), "create_service")
     if labels is not None:
         kwargs["labels"] = labels
-    return _get_client().services.create(image, command=command, **kwargs).attrs
+    return _get_client(host).services.create(image, command=command, **kwargs).attrs
 
 
 @tool()
-def get_service(service_id: str, insert_defaults: bool | None = None) -> dict:
+def get_service(service_id: str, insert_defaults: bool | None = None, host: str | None = None) -> dict:
     """
     Get a swarm service by id or name.
 
@@ -38,11 +40,11 @@ def get_service(service_id: str, insert_defaults: bool | None = None) -> dict:
         insert_defaults - Merge default values into the output
     returns: dict - The service's attrs
     """
-    return _get_client().services.get(service_id, insert_defaults=insert_defaults).attrs
+    return _get_client(host).services.get(service_id, insert_defaults=insert_defaults).attrs
 
 
 @tool()
-def list_services(filters: dict | None = None, managed_only: bool = False) -> list:
+def list_services(filters: dict | None = None, managed_only: bool = False, host: str | None = None) -> list:
     """
     List swarm services.
 
@@ -54,11 +56,11 @@ def list_services(filters: dict | None = None, managed_only: bool = False) -> li
     """
     if managed_only:
         filters = managed_filter(filters)
-    return [s.attrs for s in _get_client().services.list(**drop_none(filters=filters))]
+    return [s.attrs for s in _get_client(host).services.list(**drop_none(filters=filters))]
 
 
 @tool()
-def update_service(service_id: str, updates: dict) -> bool:
+def update_service(service_id: str, updates: dict, host: str | None = None) -> bool:
     """
     Update a swarm service's configuration.
 
@@ -67,25 +69,25 @@ def update_service(service_id: str, updates: dict) -> bool:
         updates - Fields to update on the service
     returns: bool - True after the update
     """
-    service = _get_client().services.get(service_id)
+    service = _get_client(host).services.get(service_id)
     service.update(**updates)
     return True
 
 
 @tool()
-def remove_service(service_id: str) -> bool:
+def remove_service(service_id: str, host: str | None = None) -> bool:
     """
     Stop and remove a swarm service.
 
     args: service_id - The service id or name
     returns: bool - True after the service is removed
     """
-    _get_client().services.get(service_id).remove()
+    _get_client(host).services.get(service_id).remove()
     return True
 
 
 @tool()
-def service_tasks(service_id: str, filters: dict | None = None) -> list:
+def service_tasks(service_id: str, filters: dict | None = None, host: str | None = None) -> list:
     """
     List the tasks of a swarm service.
 
@@ -94,7 +96,7 @@ def service_tasks(service_id: str, filters: dict | None = None) -> list:
         filters - Filter by id, name, node, label, desired-state
     returns: list - A list of task dicts
     """
-    service = _get_client().services.get(service_id)
+    service = _get_client(host).services.get(service_id)
     return service.tasks(filters=filters)
 
 
@@ -108,6 +110,7 @@ def service_logs(
     timestamps: bool = False,
     tail: int | Literal["all"] = "all",
     max_bytes: int = MAX_PAYLOAD_BYTES,
+    host: str | None = None,
 ) -> str:
     """
     Get a bounded snapshot of a swarm service's logs (never follows).
@@ -129,7 +132,7 @@ def service_logs(
         max_bytes - Abort with ValueError if the buffered logs exceed this many bytes (default 32 MiB)
     returns: str - Decoded log output
     """
-    service = _get_client().services.get(service_id)
+    service = _get_client(host).services.get(service_id)
     output = service.logs(
         details=details,
         follow=False,
@@ -149,7 +152,7 @@ def service_logs(
 
 
 @tool()
-def scale_service(service_id: str, replicas: int) -> bool:
+def scale_service(service_id: str, replicas: int, host: str | None = None) -> bool:
     """
     Scale a swarm service to a number of replicas.
 
@@ -158,23 +161,23 @@ def scale_service(service_id: str, replicas: int) -> bool:
         replicas - The desired number of replicas
     returns: bool - True after scaling
     """
-    return _get_client().services.get(service_id).scale(replicas)
+    return _get_client(host).services.get(service_id).scale(replicas)
 
 
 @tool()
-def force_update_service(service_id: str) -> bool:
+def force_update_service(service_id: str, host: str | None = None) -> bool:
     """
     Force update a swarm service even if its config has not changed.
 
     args: service_id - The service id or name
     returns: bool - True after the force update
     """
-    _get_client().services.get(service_id).force_update()
+    _get_client(host).services.get(service_id).force_update()
     return True
 
 
 @tool()
-def rollback_service(service_id: str) -> dict:
+def rollback_service(service_id: str, host: str | None = None) -> dict:
     """
     Roll a swarm service back to its previous spec (the docker `service rollback` equivalent).
 
@@ -187,7 +190,7 @@ def rollback_service(service_id: str) -> dict:
     args: service_id - The service id or name
     returns: dict - The daemon response (a dict with a "Warnings" key)
     """
-    api = _get_client().api
+    api = _get_client(host).api
     info = api.inspect_service(service_id)
     previous = info.get("PreviousSpec")
     if not previous:
