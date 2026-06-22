@@ -4,6 +4,7 @@ import json
 
 import httpx
 
+import docker_mcp._hosts as _hosts
 from docker_mcp.server import is_domain_disabled, mcp, register_resource_domains, tool_catalog
 from docker_mcp.tools._utils import package_version
 from docker_mcp.tools.client import _get_client, list_hosts
@@ -189,7 +190,35 @@ def _require_containers_domain() -> None:
         )
 
 
-@mcp.resource("docker://containers", mime_type="application/json")
+def _child_uri(scheme: str, ref: str, host: str | None) -> str:
+    """The child logs/stats URI matching the index's host context: host-qualified when an index is
+    host-scoped, else empty-authority (multi-host default) or bare (single-host)."""
+    if host is not None:
+        return f"{scheme}://{host}/{ref}"
+    return f"{scheme}:///{ref}" if _hosts.is_multi() else f"{scheme}://{ref}"
+
+
+def _render_index(host: str | None) -> str:
+    _require_containers_domain()
+    entries = []
+    for container in _get_client(host).containers.list(all=True):
+        state = container.attrs.get("State", {}) or {}
+        status = state.get("Status")
+        ref = container.name or container.short_id
+        entry: dict = {
+            "id": container.short_id,
+            "name": container.name,
+            "image": (container.attrs.get("Config", {}) or {}).get("Image"),
+            "status": status,
+            "logs": _child_uri("docker-logs", ref, host),
+            "stats": _child_uri("docker-stats", ref, host) if status == "running" else None,
+        }
+        if status == "exited":
+            entry["exit_code"] = state.get("ExitCode")
+        entries.append(entry)
+    return json.dumps({"containers": entries}, indent=2)
+
+
 def list_container_resources() -> str:
     """
     Index every container with the resource URIs for reading its logs and live stats.
@@ -201,27 +230,22 @@ def list_container_resources() -> str:
 
     returns: str - JSON object {"containers": [{id, name, image, status, exit_code?, logs, stats?}, ...]}
     """
-    _require_containers_domain()
-    entries = []
-    for container in _get_client().containers.list(all=True):
-        state = container.attrs.get("State", {}) or {}
-        status = state.get("Status")
-        ref = container.name or container.short_id
-        entry: dict = {
-            "id": container.short_id,
-            "name": container.name,
-            "image": (container.attrs.get("Config", {}) or {}).get("Image"),
-            "status": status,
-            "logs": f"docker-logs://{ref}",
-            "stats": f"docker-stats://{ref}" if status == "running" else None,
-        }
-        if status == "exited":
-            entry["exit_code"] = state.get("ExitCode")
-        entries.append(entry)
-    return json.dumps({"containers": entries}, indent=2)
+    return _render_index(None)
 
 
-@mcp.resource("docker-logs://{id_or_name}", mime_type="text/plain")
+def list_host_container_resources(host: str) -> str:
+    """
+    Index every container on a named host (host-qualified variant of docker://containers).
+
+    Same shape as the default index, but the child logs/stats URIs stay on `host` so following them
+    reads the same daemon.
+
+    args: host - Configured host label (from the docker-mcp://hosts resource)
+    returns: str - JSON object {"containers": [...]}
+    """
+    return _render_index(host)
+
+
 def get_container_logs_resource(id_or_name: str) -> str:
     """
     Read a bounded tail of a container's combined stdout/stderr logs.
@@ -236,7 +260,19 @@ def get_container_logs_resource(id_or_name: str) -> str:
     return _read_log_tail(id_or_name)
 
 
-@mcp.resource("docker-stats://{id_or_name}", mime_type="application/json")
+def get_host_container_logs_resource(host: str, id_or_name: str) -> str:
+    """
+    Read a bounded log tail for a container on a named host (host-qualified docker-logs variant).
+
+    args:
+        host - Configured host label (from the docker-mcp://hosts resource)
+        id_or_name - The container id or name (from that host's index)
+    returns: str - The decoded recent log tail
+    """
+    _require_containers_domain()
+    return _read_log_tail(id_or_name, host=host)
+
+
 def get_container_stats_resource(id_or_name: str) -> str:
     """
     Read a computed resource-usage summary for a running container.
@@ -250,6 +286,35 @@ def get_container_stats_resource(id_or_name: str) -> str:
     """
     _require_containers_domain()
     return json.dumps(_read_stats_summary(id_or_name), indent=2)
+
+
+def get_host_container_stats_resource(host: str, id_or_name: str) -> str:
+    """
+    Resource-usage summary for a running container on a named host (host-qualified docker-stats variant).
+
+    args:
+        host - Configured host label (from the docker-mcp://hosts resource)
+        id_or_name - The container id or name (from that host's index)
+    returns: str - JSON usage summary (same shape as docker-stats://{id_or_name})
+    """
+    _require_containers_domain()
+    return json.dumps(_read_stats_summary(id_or_name, host=host), indent=2)
+
+
+# Single-host keeps today's bare URIs (back-compat); multi-host uses empty-authority (`docker:///…`) for
+# the default host plus host-qualified (`docker://{host}/…`) variants, disambiguated by path-segment
+# count. The default index emits child URIs matching its own scheme (see `_child_uri`).
+if _hosts.is_multi():
+    mcp.resource("docker:///containers", mime_type="application/json")(list_container_resources)
+    mcp.resource("docker://{host}/containers", mime_type="application/json")(list_host_container_resources)
+    mcp.resource("docker-logs:///{id_or_name}", mime_type="text/plain")(get_container_logs_resource)
+    mcp.resource("docker-logs://{host}/{id_or_name}", mime_type="text/plain")(get_host_container_logs_resource)
+    mcp.resource("docker-stats:///{id_or_name}", mime_type="application/json")(get_container_stats_resource)
+    mcp.resource("docker-stats://{host}/{id_or_name}", mime_type="application/json")(get_host_container_stats_resource)
+else:
+    mcp.resource("docker://containers", mime_type="application/json")(list_container_resources)
+    mcp.resource("docker-logs://{id_or_name}", mime_type="text/plain")(get_container_logs_resource)
+    mcp.resource("docker-stats://{id_or_name}", mime_type="application/json")(get_container_stats_resource)
 
 
 @mcp.resource("docker-docs://{section}", mime_type="text/html")
