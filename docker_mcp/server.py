@@ -272,11 +272,13 @@ _tool_registry: dict[str, ToolRecord] = {}
 
 @dataclass(frozen=True)
 class PromptRecord:
-    """What the `@prompt()` decorator saw for one prompt: its (optional) domain and whether it registered."""
+    """What the `@prompt()` decorator saw for one prompt: its (optional) domain, whether it's gated to
+    multi-host mode, and whether it actually registered."""
 
     name: str
     domain: str | None
     registered: bool
+    multi_host: bool = False
 
 
 # Prompts processed by `@prompt()` this run (registered or skipped by DOCKER_MCP_SERVER_DISABLE), plus the
@@ -348,7 +350,7 @@ def tool_catalog() -> dict[str, Any]:
         # The non-tool surface DOCKER_MCP_SERVER_DISABLE also affects: prompts tied to a disabled domain are
         # skipped, and doc-resource sections for a disabled domain are hidden from docker-docs://contents.
         "prompts": [
-            {"name": r.name, "domain": r.domain, "registered": r.registered}
+            {"name": r.name, "domain": r.domain, "registered": r.registered, "multi_host": r.multi_host}
             for r in sorted(_prompt_registry.values(), key=lambda r: r.name)
         ],
         "disabled_doc_sections": sorted(s for s, d in _resource_domains.items() if d in DISABLED_DOMAINS),
@@ -693,19 +695,26 @@ def tool(**kwargs: Any) -> Callable[[Callable], Callable]:
     return decorator
 
 
-def prompt(description: str, *, domain: str | None = None) -> Callable[[Callable], Callable]:
+def prompt(description: str, *, domain: str | None = None, multi_host: bool = False) -> Callable[[Callable], Callable]:
     """
     Register an `@mcp.prompt`, honoring DOCKER_MCP_SERVER_DISABLE — the `@prompt()` every prompt module uses.
 
     A prompt tied to a feature area (`domain`) is skipped when that domain is disabled, so a server that
     drops e.g. `scout` doesn't keep prompts that steer the agent toward tools that are no longer
     registered. `domain=None` is for general / cross-domain prompts (doc lookup, prune, disk usage) that
-    always register. Gating happens at import like `@tool()`, and the choice is recorded for tool_catalog().
+    always register. A `multi_host=True` prompt registers only when 2+ hosts are configured (via
+    DOCKER_MCP_SERVER_HOSTS), so a multi-host workflow prompt stays hidden in the common single-host case
+    — the prompt-side parallel of the per-tool host param. Gating happens at import like `@tool()`, and
+    the choice is recorded for tool_catalog().
     """
 
     def decorator(func: Callable) -> Callable:
-        registered = domain is None or _domain_enabled(domain, DISABLED_DOMAINS)
-        _prompt_registry[func.__name__] = PromptRecord(name=func.__name__, domain=domain, registered=registered)
+        registered = (domain is None or _domain_enabled(domain, DISABLED_DOMAINS)) and (
+            not multi_host or _hosts.is_multi()
+        )
+        _prompt_registry[func.__name__] = PromptRecord(
+            name=func.__name__, domain=domain, registered=registered, multi_host=multi_host
+        )
         if not registered:
             return func
         return mcp.prompt(description=description)(func)

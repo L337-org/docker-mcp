@@ -622,11 +622,13 @@ def test_slim_schema_keeps_schema_valued_additional_properties():
 
 
 def test_every_prompt_recorded_in_registry():
-    # Every registered prompt has a record; by default (no switches) all of them register.
+    # Every registered prompt has a record; by default (no switches) all of them register, except the
+    # multi-host-gated prompts (e.g. survey_hosts), which are hidden in the single-host test environment.
     registered = set(_registered_prompts())
     assert registered, "fixture sanity: expected prompts to exist"
     assert registered <= set(_prompt_registry)
-    assert all(r.registered for r in _prompt_registry.values())
+    assert all(r.registered for r in _prompt_registry.values() if not r.multi_host)
+    assert any(r.multi_host and not r.registered for r in _prompt_registry.values())  # the gate works
 
 
 def test_scout_prompts_are_tagged_scout():
@@ -643,8 +645,8 @@ def test_general_prompts_have_no_domain():
 def test_tool_catalog_includes_prompts_and_doc_sections():
     catalog = tool_catalog()
     assert {p["name"] for p in catalog["prompts"]} == set(_prompt_registry)
-    # No switches in this process, so everything is registered and nothing is hidden.
-    assert all(p["registered"] for p in catalog["prompts"])
+    # No switches in this process, so everything registers except the multi-host-gated prompts.
+    assert all(p["registered"] for p in catalog["prompts"] if not p["multi_host"])
     assert catalog["disabled_doc_sections"] == []
 
 
@@ -670,11 +672,13 @@ def _prompt_names_by_domain(*domains: str) -> set[str]:
 
 
 def test_disable_env_drops_matching_prompts_end_to_end():
-    # Disabling scout removes exactly the scout prompts and leaves every other prompt registered.
+    # Disabling scout removes exactly the scout prompts and leaves every other prompt registered —
+    # except the multi-host-gated prompts, which stay hidden in this single-host subprocess.
     scout_prompts = _prompt_names_by_domain("scout")
     assert scout_prompts, "fixture sanity: expected scout prompts to exist"
+    multi_host_prompts = {name for name, r in _prompt_registry.items() if r.multi_host}
     names = _registered_prompt_names(["DOCKER_MCP_SERVER_DISABLE=scout"])
-    assert names == _all_prompt_names() - scout_prompts
+    assert names == _all_prompt_names() - scout_prompts - multi_host_prompts
 
 
 def test_disable_env_keeps_general_prompts_end_to_end():

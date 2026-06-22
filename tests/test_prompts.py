@@ -25,6 +25,7 @@ from docker_mcp.tools.prompts import (
     recommend_base_image,
     restore_volume,
     review_dockerfile,
+    survey_hosts,
     triage_incident,
     troubleshoot_compose_project,
     troubleshoot_container,
@@ -187,11 +188,12 @@ def test_troubleshoot_compose_project_gathers_state_first():
     assert "root cause" in out.lower()
 
 
-def test_audit_docker_contexts_lists_then_confirms():
+def test_audit_docker_contexts_reports_host_registry_then_contexts():
     out = audit_docker_contexts()
+    assert "list_hosts" in out  # the host registry is reported first
     assert "context_ls" in out
-    assert out.index("context_ls") < out.index("info")
-    assert "docker-py" in out.lower() or "sdk" in out.lower()
+    assert out.index("list_hosts") < out.index("context_ls")
+    assert "info" in out
 
 
 def test_audit_swarm_health_covers_nodes_services_and_tasks():
@@ -364,3 +366,56 @@ def test_deploy_swarm_stack_validates_swarm_then_deploys_and_verifies():
     # Mentions teardown but does not invoke it.
     assert "stack_rm" in out
     assert "do not call it" in out.lower()
+
+
+# ---------- slice 6: multi-host prompts ----------
+
+import subprocess  # noqa: E402
+import sys  # noqa: E402
+
+import docker_mcp._hosts as _hosts_mod  # noqa: E402
+from docker_mcp._hosts import parse_registry  # noqa: E402
+
+
+def _set_multi(monkeypatch):
+    monkeypatch.setattr(_hosts_mod, "_registry", parse_registry("local=unix:///l.sock, prod=tcp://p:2376"))
+
+
+def test_survey_hosts_explains_model_and_per_host_sweep():
+    out = survey_hosts()
+    assert "list_hosts" in out or "docker-mcp://hosts" in out
+    assert "host=<name>" in out
+    assert "docker://{host}/containers" in out
+    assert "read-only" in out.lower() and "require" in out.lower()
+
+
+def test_monitor_fleet_host_note_only_in_multi_host(monkeypatch):
+    assert "Multi-host" not in monitor_container_fleet()  # single host: no host-targeting note
+    _set_multi(monkeypatch)
+    multi = monitor_container_fleet()
+    assert "Multi-host" in multi and "host=<name>" in multi
+
+
+def test_triage_incident_host_note_only_in_multi_host(monkeypatch):
+    assert "Multi-host" not in triage_incident()
+    _set_multi(monkeypatch)
+    assert "Multi-host" in triage_incident()
+
+
+def _registered_prompts(hosts_value: str | None) -> set[str]:
+    import os
+
+    env = dict(os.environ)
+    env.pop("DOCKER_MCP_SERVER_HOSTS", None)
+    if hosts_value:
+        env["DOCKER_MCP_SERVER_HOSTS"] = hosts_value
+    code = "import docker_mcp; from docker_mcp.server import mcp; print('\\n'.join(mcp._prompt_manager._prompts))"
+    out = subprocess.run(  # noqa: S603 — fixed argv, sys.executable, no shell
+        [sys.executable, "-c", code], capture_output=True, text=True, env=env, check=True
+    ).stdout
+    return {line for line in out.splitlines() if line}
+
+
+def test_survey_hosts_registered_only_in_multi_host_end_to_end():
+    assert "survey_hosts" not in _registered_prompts(None)  # single host: hidden
+    assert "survey_hosts" in _registered_prompts("local=ssh://a, prod=ssh://b")  # multi: registered
