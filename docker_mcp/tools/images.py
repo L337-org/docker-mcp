@@ -27,6 +27,7 @@ def build_image(
     platform: str | None = None,
     isolation: str | None = None,
     use_config_proxy: bool = True,
+    host: str | None = None,
 ) -> dict:
     """
     Build an image from a Dockerfile.
@@ -78,23 +79,23 @@ def build_image(
             isolation=isolation,
         ),
     }
-    image, _logs = _get_client().images.build(**kwargs)
+    image, _logs = _get_client(host).images.build(**kwargs)
     return image.attrs
 
 
 @tool()
-def get_image(name: str) -> dict:
+def get_image(name: str, host: str | None = None) -> dict:
     """
     Get an image by name or id.
 
     args: name - The image name or id
     returns: dict - The image's attrs
     """
-    return _get_client().images.get(name).attrs
+    return _get_client(host).images.get(name).attrs
 
 
 @tool()
-def get_registry_data(name: str, auth_config: dict | None = None) -> dict:
+def get_registry_data(name: str, auth_config: dict | None = None, host: str | None = None) -> dict:
     """
     Get registry data for an image without pulling it.
 
@@ -107,11 +108,13 @@ def get_registry_data(name: str, auth_config: dict | None = None) -> dict:
         auth_config - Optional registry authentication config
     returns: dict - Registry data attrs
     """
-    return _get_client().images.get_registry_data(name, auth_config=auth_config).attrs
+    return _get_client(host).images.get_registry_data(name, auth_config=auth_config).attrs
 
 
 @tool()
-def list_images(name: str | None = None, all: bool = False, filters: dict | None = None) -> list:
+def list_images(
+    name: str | None = None, all: bool = False, filters: dict | None = None, host: str | None = None
+) -> list:
     """
     List images on the server.
 
@@ -121,12 +124,16 @@ def list_images(name: str | None = None, all: bool = False, filters: dict | None
         filters - Filter by attributes (label, dangling, before, since, etc.)
     returns: list - A list of image attrs dicts
     """
-    return [i.attrs for i in _get_client().images.list(name=name, all=all, filters=filters)]
+    return [i.attrs for i in _get_client(host).images.list(name=name, all=all, filters=filters)]
 
 
 @tool()
 def pull_image(
-    repository: str, tag: str | None = None, all_tags: bool = False, platform: str | None = None
+    repository: str,
+    tag: str | None = None,
+    all_tags: bool = False,
+    platform: str | None = None,
+    host: str | None = None,
 ) -> dict | list:
     """
     Pull an image of the given name.
@@ -138,14 +145,16 @@ def pull_image(
         platform - Platform in os/arch format
     returns: dict | list - Pulled image attrs (or a list of attrs if all_tags=True)
     """
-    result = _get_client().images.pull(repository, tag=tag, all_tags=all_tags, platform=platform)
+    result = _get_client(host).images.pull(repository, tag=tag, all_tags=all_tags, platform=platform)
     if isinstance(result, list):
         return [i.attrs for i in result]
     return result.attrs
 
 
 @tool()
-def push_image(repository: str, tag: str | None = None, auth_config: dict | None = None) -> str:
+def push_image(
+    repository: str, tag: str | None = None, auth_config: dict | None = None, host: str | None = None
+) -> str:
     """
     Push an image or repository to a registry.
 
@@ -159,14 +168,14 @@ def push_image(repository: str, tag: str | None = None, auth_config: dict | None
         auth_config - Optional registry authentication config
     returns: str - Push output as a string
     """
-    output = _get_client().images.push(repository, tag=tag, stream=False, auth_config=auth_config, decode=False)
+    output = _get_client(host).images.push(repository, tag=tag, stream=False, auth_config=auth_config, decode=False)
     if isinstance(output, bytes):
         return output.decode("utf-8", errors="replace")
     return str(output)
 
 
 @tool()
-def remove_image(image: str, force: bool = False, noprune: bool = False) -> bool:
+def remove_image(image: str, force: bool = False, noprune: bool = False, host: str | None = None) -> bool:
     """
     Remove an image.
 
@@ -176,12 +185,12 @@ def remove_image(image: str, force: bool = False, noprune: bool = False) -> bool
         noprune - Do not delete untagged parents
     returns: bool - True after removal completes
     """
-    _get_client().images.remove(image=image, force=force, noprune=noprune)
+    _get_client(host).images.remove(image=image, force=force, noprune=noprune)
     return True
 
 
 @tool()
-def search_images(term: str, limit: int | None = None) -> list:
+def search_images(term: str, limit: int | None = None, host: str | None = None) -> list:
     """
     Search Docker Hub for images.
 
@@ -190,22 +199,22 @@ def search_images(term: str, limit: int | None = None) -> list:
         limit - Maximum number of results
     returns: list - Search results
     """
-    return _get_client().images.search(term=term, limit=limit)
+    return _get_client(host).images.search(term=term, limit=limit)
 
 
 @tool()
-def prune_images(filters: dict | None = None) -> dict:
+def prune_images(filters: dict | None = None, host: str | None = None) -> dict:
     """
     Remove unused images.
 
     args: filters - Filters to apply (e.g. dangling, until, label)
     returns: dict - Information on deleted images and reclaimed space
     """
-    return _get_client().images.prune(filters=filters)
+    return _get_client(host).images.prune(filters=filters)
 
 
 @tool()
-def load_image(data: bytes) -> list:
+def load_image(data: bytes, host: str | None = None) -> list:
     """
     Load an image from a tarball produced by save_image.
 
@@ -215,11 +224,11 @@ def load_image(data: bytes) -> list:
     args: data - Tarball contents
     returns: list - A list of loaded image attrs dicts
     """
-    return [i.attrs for i in _get_client().images.load(data)]
+    return [i.attrs for i in _get_client(host).images.load(data)]
 
 
 @tool()
-def load_image_from_file(file_path: str) -> list:
+def load_image_from_file(file_path: str, host: str | None = None) -> list:
     """
     Load an image from a tar archive on the host running this MCP server.
 
@@ -231,11 +240,11 @@ def load_image_from_file(file_path: str) -> list:
     """
     path = host_read_path(file_path)
     with path.open("rb") as handle:
-        return [i.attrs for i in _get_client().images.load(handle)]
+        return [i.attrs for i in _get_client(host).images.load(handle)]
 
 
 @tool()
-def save_image(name: str, named: bool = False, max_bytes: int = MAX_PAYLOAD_BYTES) -> bytes:
+def save_image(name: str, named: bool = False, max_bytes: int = MAX_PAYLOAD_BYTES, host: str | None = None) -> bytes:
     """
     Save an image as a tar archive, returned in band.
 
@@ -248,12 +257,14 @@ def save_image(name: str, named: bool = False, max_bytes: int = MAX_PAYLOAD_BYTE
         max_bytes - Abort with ValueError if the tarball exceeds this many bytes (defaults to 32 MiB)
     returns: bytes - The tarball contents
     """
-    image = _get_client().images.get(name)
+    image = _get_client(host).images.get(name)
     return join_bounded(image.save(named=named), max_bytes, f"save of image {name}")
 
 
 @tool()
-def save_image_to_file(name: str, dest_path: str, named: bool = False, overwrite: bool = False) -> dict:
+def save_image_to_file(
+    name: str, dest_path: str, named: bool = False, overwrite: bool = False, host: str | None = None
+) -> dict:
     """
     Save an image as a tar archive written to a file on the host running this MCP server.
 
@@ -267,13 +278,13 @@ def save_image_to_file(name: str, dest_path: str, named: bool = False, overwrite
         overwrite - Replace dest_path if it already exists (default False)
     returns: dict - {"path": <resolved path>, "bytes_written": int}
     """
-    image = _get_client().images.get(name)
+    image = _get_client(host).images.get(name)
     path, written = stream_to_file(image.save(named=named), dest_path, overwrite=overwrite)
     return {"path": str(path), "bytes_written": written}
 
 
 @tool()
-def tag_image(name: str, repository: str, tag: str | None = None, force: bool = False) -> bool:
+def tag_image(name: str, repository: str, tag: str | None = None, force: bool = False, host: str | None = None) -> bool:
     """
     Tag an image into a repository.
 
@@ -284,16 +295,16 @@ def tag_image(name: str, repository: str, tag: str | None = None, force: bool = 
         force - Force the tag
     returns: bool - True if the image was tagged
     """
-    image = _get_client().images.get(name)
+    image = _get_client(host).images.get(name)
     return image.tag(repository, tag=tag, force=force)
 
 
 @tool()
-def image_history(name: str) -> list:
+def image_history(name: str, host: str | None = None) -> list:
     """
     Show the history of an image.
 
     args: name - The image name or id
     returns: list - History entries for each layer
     """
-    return _get_client().images.get(name).history()
+    return _get_client(host).images.get(name).history()

@@ -53,6 +53,7 @@ def stack_deploy(
     detach: bool = True,
     cwd: str | None = None,
     timeout_seconds: float = _TIMEOUT_DEPLOY,
+    host: str | None = None,
 ) -> dict:
     """
     Deploy (or update) a stack to the swarm from one or more Compose files.
@@ -87,11 +88,11 @@ def stack_deploy(
         args.append(f"--resolve-image={resolve_image}")
     args.append(f"--detach={'true' if detach else 'false'}")
     args.append(safe_positional(stack_name, "stack name"))
-    return run_docker(args, cwd=cwd, timeout=timeout_seconds).to_dict()
+    return run_docker(args, cwd=cwd, timeout=timeout_seconds, host=host).to_dict()
 
 
 @tool()
-def stack_ls() -> list:
+def stack_ls(host: str | None = None) -> list:
     """
     List the stacks deployed to the swarm, parsed from `--format '{{json .}}'`.
 
@@ -99,13 +100,15 @@ def stack_ls() -> list:
 
     returns: list - One dict per stack (name, services count, orchestrator)
     """
-    result = run_docker(["stack", "ls", "--format", _JSON_FORMAT], timeout=_TIMEOUT_QUERY)
+    result = run_docker(["stack", "ls", "--format", _JSON_FORMAT], timeout=_TIMEOUT_QUERY, host=host)
     raise_on_cli_failure(result, "stack ls")
     return _parse_stack_list(result.stdout, truncated=result.truncated, what="stack ls output")
 
 
 @tool()
-def stack_ps(stack_name: str, no_trunc: bool = False, filters: list[str] | None = None) -> list:
+def stack_ps(
+    stack_name: str, no_trunc: bool = False, filters: list[str] | None = None, host: str | None = None
+) -> list:
     """
     List the tasks of a stack, parsed from `--format '{{json .}}'`.
 
@@ -121,13 +124,13 @@ def stack_ps(stack_name: str, no_trunc: bool = False, filters: list[str] | None 
     for f in filters or []:
         args.extend(["--filter", f])
     args.append(safe_positional(stack_name, "stack name"))
-    result = run_docker(args, timeout=_TIMEOUT_QUERY)
+    result = run_docker(args, timeout=_TIMEOUT_QUERY, host=host)
     raise_on_cli_failure(result, "stack ps")
     return _parse_stack_list(result.stdout, truncated=result.truncated, what="stack ps output")
 
 
 @tool()
-def stack_services(stack_name: str, filters: list[str] | None = None) -> list:
+def stack_services(stack_name: str, filters: list[str] | None = None, host: str | None = None) -> list:
     """
     List the services of a stack, parsed from `--format '{{json .}}'`.
 
@@ -140,13 +143,15 @@ def stack_services(stack_name: str, filters: list[str] | None = None) -> list:
     for f in filters or []:
         args.extend(["--filter", f])
     args.append(safe_positional(stack_name, "stack name"))
-    result = run_docker(args, timeout=_TIMEOUT_QUERY)
+    result = run_docker(args, timeout=_TIMEOUT_QUERY, host=host)
     raise_on_cli_failure(result, "stack services")
     return _parse_stack_list(result.stdout, truncated=result.truncated, what="stack services output")
 
 
 @tool()
-def stack_rm(stack_names: list[str], detach: bool = True, timeout_seconds: float = _TIMEOUT_RM) -> dict:
+def stack_rm(
+    stack_names: list[str], detach: bool = True, timeout_seconds: float = _TIMEOUT_RM, host: str | None = None
+) -> dict:
     """
     Remove one or more stacks from the swarm (tears down their services, networks, and secrets).
 
@@ -163,4 +168,4 @@ def stack_rm(stack_names: list[str], detach: bool = True, timeout_seconds: float
         raise ValueError("stack_rm requires at least one entry in stack_names.")
     args = ["stack", "rm", f"--detach={'true' if detach else 'false'}"]
     args.extend(safe_positional(name, "stack name") for name in stack_names)
-    return run_docker(args, timeout=timeout_seconds).to_dict()
+    return run_docker(args, timeout=timeout_seconds, host=host).to_dict()

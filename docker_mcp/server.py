@@ -430,6 +430,12 @@ def build_instructions(registered_domains: set[str] | None = None) -> str:
         )
     if present & set(_SWARM_DOMAINS):
         caveats.append("Swarm-family tools require a swarm manager node.")
+    if _hosts.is_multi():
+        caveats.append(
+            f"Multiple hosts are configured ({_hosts.labels()}): read-only tools take `host=<label>` "
+            "(omit → the default, the first listed); mutating/destructive tools require an explicit "
+            "`host`; a host marked `(ro)` rejects writes. See the `docker-mcp://hosts` resource."
+        )
     if caveats:
         lines += ["", "Picking the right tool:"]
         lines += [f"- {c}" for c in caveats]
