@@ -433,6 +433,23 @@ def test_get_client_routes_to_named_host(monkeypatch):
     client_module._clients.clear()
 
 
+def test_tls_from_dir_mutual_when_client_cert_present(tmp_path):
+    for filename in ("ca.pem", "cert.pem", "key.pem"):
+        (tmp_path / filename).write_text("x", encoding="utf-8")
+    cfg = client_module._tls_from_dir(str(tmp_path))
+    assert cfg.cert == (str(tmp_path / "cert.pem"), str(tmp_path / "key.pem"))
+    assert cfg.ca_cert == str(tmp_path / "ca.pem")
+    assert cfg.verify is True
+
+
+def test_tls_from_dir_server_verify_only_without_client_cert(tmp_path):
+    (tmp_path / "ca.pem").write_text("x", encoding="utf-8")  # ca only -> verify the daemon, no client cert
+    cfg = client_module._tls_from_dir(str(tmp_path))
+    assert cfg.cert is None
+    assert cfg.ca_cert == str(tmp_path / "ca.pem")
+    assert cfg.verify is True
+
+
 def test_build_client_uses_per_host_cert_dir(monkeypatch):
     _set_multi(monkeypatch)
     host = Host("prod", "tcp://prod:2376", cert_dir="/certs/prod")

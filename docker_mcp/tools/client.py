@@ -128,13 +128,15 @@ def _build_default_client() -> docker.DockerClient:
 
 
 def _tls_from_dir(cert_dir: str) -> docker.TLSConfig:
-    """A TLSConfig from Docker's conventional ca.pem/cert.pem/key.pem in `cert_dir` (mutual TLS, verify on)."""
+    """
+    A TLSConfig from Docker's conventional certs in `cert_dir`. Always verifies the daemon against
+    `ca.pem`; presents a client cert (mutual TLS) only when both `cert.pem` and `key.pem` are present,
+    else verifies the daemon only (e.g. a self-signed daemon pinned via `ca.pem`, with no client auth).
+    """
     directory = Path(cert_dir)
-    return docker.TLSConfig(
-        client_cert=(str(directory / "cert.pem"), str(directory / "key.pem")),
-        ca_cert=str(directory / "ca.pem"),
-        verify=True,
-    )
+    cert, key = directory / "cert.pem", directory / "key.pem"
+    client_cert = (str(cert), str(key)) if cert.exists() and key.exists() else None
+    return docker.TLSConfig(client_cert=client_cert, ca_cert=str(directory / "ca.pem"), verify=True)
 
 
 def _tls_config_for(host: Host) -> docker.TLSConfig | None:

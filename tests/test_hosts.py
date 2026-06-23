@@ -148,8 +148,35 @@ def test_tls_marker_on_non_tcp_fails(tmp_path):
 
 
 def test_tls_marker_missing_files_fails(tmp_path):
-    with pytest.raises(HostConfigError, match="missing or cannot read"):
+    with pytest.raises(HostConfigError, match="missing or cannot read ca.pem"):
         parse_registry(f"prod=tcp://prod:2376(tls={tmp_path / 'nonexistent'})")
+
+
+def test_tls_marker_ca_only_ok(tmp_path):
+    # Server-verify-only: a self-signed daemon pinned via ca.pem, with no client cert.
+    certs = tmp_path / "certs"
+    certs.mkdir()
+    (certs / "ca.pem").write_text("x", encoding="utf-8")
+    reg = parse_registry(f"prod=tcp://prod:2376(tls={certs})")
+    assert reg["prod"].cert_dir == str(certs)
+
+
+def test_tls_marker_requires_ca_even_with_client_cert(tmp_path):
+    certs = tmp_path / "certs"
+    certs.mkdir()
+    (certs / "cert.pem").write_text("x", encoding="utf-8")
+    (certs / "key.pem").write_text("x", encoding="utf-8")  # client cert but no ca.pem
+    with pytest.raises(HostConfigError, match="missing or cannot read ca.pem"):
+        parse_registry(f"prod=tcp://prod:2376(tls={certs})")
+
+
+def test_tls_marker_lone_client_cert_without_key_fails(tmp_path):
+    certs = tmp_path / "certs"
+    certs.mkdir()
+    (certs / "ca.pem").write_text("x", encoding="utf-8")
+    (certs / "cert.pem").write_text("x", encoding="utf-8")  # cert without key
+    with pytest.raises(HostConfigError, match="exactly one of cert.pem/key.pem"):
+        parse_registry(f"prod=tcp://prod:2376(tls={certs})")
 
 
 def test_tls_marker_empty_dir_fails():
