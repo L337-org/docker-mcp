@@ -2,9 +2,9 @@
   "manifest_version": "0.4",
   "name": "docker-mcp-server",
   "display_name": "Docker MCP Server",
-  "version": "1.8.1",
+  "version": "1.9.0",
   "description": "Manage Docker through the Docker SDK for Python and the docker CLI: containers, images, networks, volumes, Compose, Swarm, Buildx, Scout, and OCI registries, exposed as MCP tools.",
-  "long_description": "Exposes the Docker SDK for Python and the docker CLI (Compose, Buildx, Scout, Context, Stack) as MCP tools so an agent can manage one or several Docker daemons in a single session. Connects over the local socket, a TCP endpoint, or `ssh://` (pure-Python paramiko transport, no system ssh binary). Point it at one daemon, or list several (e.g. local dev + remote prod, with prod marked read-only) via the Docker host(s) field below. Read-only / no-destructive / disabled-domain switches are exposed too so you can register a restricted tool surface. The server runs entirely on your machine and sends no telemetry — see the Privacy Policy.",
+  "long_description": "Manage one or several Docker daemons through your AI agent — containers, images, networks, volumes, Compose, Swarm, Buildx, Scout, and OCI registries, exposed as MCP tools. Install and go: it discovers your local Docker socket with no configuration. Or point it at remote daemons over TCP, TLS, or SSH in a single session (and mark any of them read-only to monitor without the risk of accidental changes). It also surfaces logs and stats as resources for triage — 'why did my container crash?', 'am I under memory pressure?'. Read-only / no-destructive / disabled-domain switches let you register a restricted tool surface. Runs entirely on your machine and sends no telemetry — see the Privacy Policy.",
   "author": {
     "name": "Gavin Lucas",
     "url": "https://github.com/GavinLucas"

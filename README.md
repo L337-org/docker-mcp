@@ -4,9 +4,15 @@
 
 <!-- mcp-name: io.github.GavinLucas/docker-mcp-server -->
 
-An [MCP](https://modelcontextprotocol.io) server that lets AI agents manage Docker — containers, images, networks, volumes, swarm services, secrets, configs, nodes, plugins, **Compose projects, CLI contexts, and OCI registries** — by wrapping the official [Docker SDK for Python](https://docker-py.readthedocs.io/en/stable/) and selectively shelling out to the `docker` CLI for features the SDK doesn't expose.
+More than just a fully featured [MCP](https://modelcontextprotocol.io) server that lets AI agents manage Docker — containers, images, networks, volumes, swarm services, secrets, configs, nodes, plugins, etc., it helps you create workflows to easily manage your Docker environments.
 
-Every documented domain of the Docker SDK is exposed: build and run containers, pull and push images, manage networks and volumes, drive a swarm, install plugins, and more — all with first-class argument validation through MCP. Compose v2 and Docker contexts are wrapped via the docker CLI; OCI v2 registries and Docker Hub are queried directly over HTTPS (no daemon required).
+For simple cases, you can just install and go with no configuration required - once loaded it will discover your local Docker socket and expose the full command surface to your AI agent. For more advanced users it can [manage multiple Docker daemons](#managing-several-daemons), e.g. both your local dev environment and also a remote production environment [over TCP, TLS or SSH](#talking-to-a-remote-daemon) in a single session. It can also be configured to mark some daemons as read-only, so you can monitor them without the risk of making accidental changes.
+
+The MCP server also exposes things like logs and stats as resources so that you can monitor and triage enabling you to [answer questions](#example-prompts) like 'why did my container crash?', 'what is the state of my swarm?', 'am I suffering memory pressure?', 'what is the disk usage of my volumes?', 'what differences are there between my test and production systems?', and more...
+
+docker-mcp-server is optimized to work efficiently with the new generation of MCP clients that support lazy tool loading. For clients that still eager load all tools, the server can optionally be configured to exclude tools from a subset of domains (e.g. exclude 'swarm' and 'scout' tools) to reduce the tool list size. It's also possible to put the MCP server into 'read-only' or 'no-destructive' modes that prevent any tools with write or destructive capabilities from being registered, which again reduces the footprint.
+
+The server runs entirely on your machine, either [natively](#using-the-server), as an [mcpb bundle](#install-as-a-desktop-extension-mcpb), or [containerized](#run-as-a-container), and sends no telemetry. You are entirely in control — see the [Privacy Policy](#privacy-policy).
 
 ## Requirements
 
@@ -189,7 +195,7 @@ Everything above targets one daemon. To manage **several in a single session** �
 }
 ```
 
-- **`endpoint`** is `auto` (your default context/socket, as [above](#talking-to-a-remote-daemon)), `local` (the platform-local socket, ignoring contexts), or a `unix://` / `tcp://` / `ssh://` / `npipe://` URL. `ssh://` is the recommended remote transport (per-host auth via your SSH keys, no TLS cert plumbing). A `tcp://` daemon over TLS takes a `(tls=<dir>)` marker pointing at a cert directory, e.g. `prod=tcp://prod:2376(tls=/etc/docker/prod)`. That directory must hold **`ca.pem`** (the daemon is always verified against it — so a self-signed daemon works, you just pin its cert here); add **`cert.pem`** and **`key.pem`** only if the daemon requires a client certificate (mutual TLS).
+- **`endpoint`** is `auto` (your default context/socket, as [above](#talking-to-a-remote-daemon)), `local` (the platform-local socket, ignoring contexts), or a `unix://` / `tcp://` / `ssh://` / `npipe://` URL. `ssh://` is the recommended remote transport (per-host auth via your SSH keys, no TLS cert plumbing). A `tcp://` daemon over TLS takes a `(tls=<dir>)` marker pointing at a cert directory, e.g. `prod=tcp://prod:2376(tls=/etc/docker/prod)`. That directory must hold **`ca.pem`** (the daemon is always verified against it — so a self-signed daemon works, you just pin its cert here); add **`cert.pem`** and **`key.pem`** only if the daemon requires a client certificate (mutual TLS). There is no unverified-TLS mode — a TLS connection always authenticates the daemon, so encryption never comes without verification.
 - **`(ro)`** after an endpoint marks that host **read-only**: mutating and destructive tools refuse to act on it. This is a per-host guard enforced at call time, independent of the server-wide `DOCKER_MCP_SERVER_READONLY` switch — mark production `(ro)` and the agent can inspect it all day but can't change it, while local stays read-write.
 - **Single daemon, simpler form.** A bare value with no `name=` is shorthand for one host — `DOCKER_MCP_SERVER_HOSTS=ssh://ops@prod` (or `auto`, or blank). So this one field also covers the single-remote case. `DOCKER_HOST` keeps working when `DOCKER_MCP_SERVER_HOSTS` is unset, but **`DOCKER_MCP_SERVER_HOSTS` takes over when set** (`DOCKER_HOST` is then ignored, with a one-time notice to stderr).
 
