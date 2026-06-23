@@ -19,6 +19,7 @@ from docker_mcp.server import (
     _domain_enabled,
     _domain_for,
     _enforce_host_guard,
+    _host_guard_needed,
     _parse_domains,
     _prompt_registry,
     _seen_tool_names,
@@ -33,6 +34,13 @@ from docker_mcp.server import (
 
 def _set_multi_host(monkeypatch, spec="local=auto, prod=ssh://h(ro)"):
     """Pin a deterministic 2-host registry so the host machinery sees multi-host mode."""
+    monkeypatch.setattr(_hosts, "resolve_auto", lambda: "unix:///auto.sock")
+    monkeypatch.setattr(_hosts, "resolve_local", lambda: "unix:///local.sock")
+    monkeypatch.setattr(_hosts, "_registry", parse_registry(spec))
+
+
+def _set_single_host(monkeypatch, spec="ssh://h(ro)"):
+    """Pin a single-host registry so the host machinery sees single-host mode (default (ro) by default)."""
     monkeypatch.setattr(_hosts, "resolve_auto", lambda: "unix:///auto.sock")
     monkeypatch.setattr(_hosts, "resolve_local", lambda: "unix:///local.sock")
     monkeypatch.setattr(_hosts, "_registry", parse_registry(spec))
@@ -137,6 +145,40 @@ def test_guard_checks_unknown_host_even_for_connection_control(monkeypatch):
         _enforce_host_guard("close", ToolCategory.MUTATING, "typo")
 
 
+# ---------- host param: single-host (ro) enforcement ----------
+
+
+def test_guard_refuses_write_to_single_read_only_host(monkeypatch):
+    # One (ro) host: the schema carries no host param to pass, but writes must still be refused.
+    _set_single_host(monkeypatch, "ssh://h(ro)")
+    with pytest.raises(RuntimeError, match="read-only"):
+        _enforce_host_guard("remove_container", ToolCategory.DESTRUCTIVE, None)
+
+
+def test_guard_allows_read_on_single_read_only_host(monkeypatch):
+    _set_single_host(monkeypatch, "ssh://h(ro)")
+    _enforce_host_guard("list_containers", ToolCategory.READ_ONLY, None)  # no raise
+
+
+def test_guard_allows_connection_control_on_single_read_only_host(monkeypatch):
+    _set_single_host(monkeypatch, "ssh://h(ro)")
+    _enforce_host_guard("close", ToolCategory.MUTATING, None)  # conn-control exempt from ro-refusal
+
+
+def test_guard_allows_write_on_single_writable_host(monkeypatch):
+    _set_single_host(monkeypatch, "ssh://h")  # no (ro) marker
+    _enforce_host_guard("remove_container", ToolCategory.DESTRUCTIVE, None)  # no raise
+
+
+def test_host_guard_needed_matrix(monkeypatch):
+    _set_single_host(monkeypatch, "ssh://h(ro)")
+    assert _host_guard_needed() is True  # single (ro): wrap to refuse writes
+    monkeypatch.setattr(_hosts, "_registry", parse_registry("ssh://h"))
+    assert _host_guard_needed() is False  # single writable: footprint-neutral, no wrap
+    monkeypatch.setattr(_hosts, "_registry", parse_registry("a=ssh://x, b=ssh://y"))
+    assert _host_guard_needed() is True  # multi-host
+
+
 # ---------- host param: wrapper ----------
 
 
@@ -152,6 +194,24 @@ def test_wrap_preserves_signature_and_name_and_enforces_guard(monkeypatch):
     with pytest.raises(RuntimeError, match="'host' is required"):
         wrapped(container_id="abc")  # write without host
     assert wrapped(container_id="abc", host="local") == "removed abc on local"
+
+
+def test_wrap_guards_an_async_tool(monkeypatch):
+    # No registered tool is async today, but FastMCP supports async tools, so the wrapper has an async
+    # branch — exercise it directly so the guard provably fires on a coroutine function too.
+    import asyncio
+
+    _set_multi_host(monkeypatch)
+
+    async def remove_container(container_id: str, host: str | None = None) -> str:
+        return f"removed {container_id} on {host}"
+
+    wrapped = _wrap_with_host_guard(remove_container, "remove_container", ToolCategory.DESTRUCTIVE)
+    assert inspect.iscoroutinefunction(wrapped)
+    assert inspect.signature(wrapped) == inspect.signature(remove_container)
+    with pytest.raises(RuntimeError, match="'host' is required"):
+        asyncio.run(wrapped(container_id="abc"))  # write without host
+    assert asyncio.run(wrapped(container_id="abc", host="local")) == "removed abc on local"
 
 
 # ---------- list_hosts ----------
@@ -734,6 +794,30 @@ def test_multi_host_injects_host_enum_into_tool_schemas_end_to_end():
 
 def test_single_host_strips_host_from_tool_schemas_end_to_end():
     assert "host" not in _tool_schema_in([], "list_containers").get("properties", {})
+
+
+def test_single_read_only_host_still_strips_host_param_end_to_end():
+    # A single (ro) host is footprint-neutral: no host param surfaces (there's only one daemon to choose),
+    # the (ro) marker is enforced by the call-time guard, not the schema.
+    schema = _tool_schema_in(["DOCKER_MCP_SERVER_HOSTS=ssh://h(ro)"], "remove_container")
+    assert "host" not in schema.get("properties", {})
+
+
+def test_single_read_only_host_refuses_write_end_to_end():
+    # Proves the guard is actually wrapped onto write tools at import time for a single (ro) host.
+    code = (
+        "from docker_mcp.tools import containers\n"
+        "try:\n"
+        "    containers.stop_container('x')\n"
+        "    print('NOGUARD')\n"
+        "except RuntimeError as e:\n"
+        "    print('REFUSED' if 'read-only' in str(e) else 'OTHER')\n"
+    )
+    env = _env_with(["DOCKER_MCP_SERVER_HOSTS=ssh://h(ro)"])
+    out = subprocess.run(  # noqa: S603
+        [sys.executable, "-c", code], capture_output=True, text=True, env=env, check=True
+    ).stdout
+    assert "REFUSED" in out
 
 
 def test_multi_host_router_caveat_present_end_to_end():

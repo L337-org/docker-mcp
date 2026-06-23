@@ -10,7 +10,7 @@ import inspect
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any
+from typing import Any, NoReturn
 
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
@@ -562,25 +562,36 @@ def _host_param_description(name: str, category: ToolCategory) -> str:
     return f"Target host label; omit to use the default ({_hosts.default().label!r})."
 
 
+def _raise_read_only(name: str, label: str, category: ToolCategory) -> NoReturn:
+    """Refuse a write to a host carrying the per-host (ro) marker (distinct from the
+    DOCKER_MCP_SERVER_READONLY switch, which drops write tools from the surface entirely)."""
+    raise RuntimeError(
+        f"{name}: host {label!r} is read-only (configured with the (ro) marker); refusing this "
+        f"{category.value} operation. For a fully read-only server use DOCKER_MCP_SERVER_READONLY."
+    )
+
+
 def _enforce_host_guard(name: str, category: ToolCategory, host: str | None) -> None:
     """
-    Central call-time guard for a daemon-targeting tool (only wired in multi-host mode). Raises when a
-    write omits `host`, when `host` is not a configured label, or when a write targets an (ro) host.
-    Read-only and connection-control tools may omit `host` (None -> default / all).
+    Central call-time guard for a daemon-targeting tool. Wired whenever there is something to enforce:
+    multiple hosts (host selection + per-host (ro) refusal) or a single host flagged (ro). Raises when a
+    write omits `host` in multi-host mode, when `host` is not a configured label, or when a write targets
+    an (ro) host. Read-only and connection-control tools may omit `host` (None -> default / all).
     """
     known = _hosts.labels()
     write = _is_host_write(name, category)
     if host is None:
-        if write:
+        # Multi-host: a write must name its target. Single-host: the schema carries no host param to
+        # pass, but an (ro) default host must still refuse writes.
+        if write and _hosts.is_multi():
             raise RuntimeError(f"{name}: 'host' is required when multiple hosts are configured; choose one of {known}.")
+        if write and _hosts.is_read_only():
+            _raise_read_only(name, _hosts.default().label, category)
         return
     if host not in known:
         raise RuntimeError(f"{name}: unknown host {host!r}; configured hosts: {known}.")
     if write and _hosts.is_read_only(host):
-        raise RuntimeError(
-            f"{name}: host {host!r} is read-only (configured with the (ro) marker); refusing this "
-            f"{category.value} operation."
-        )
+        _raise_read_only(name, host, category)
 
 
 def _apply_host_schema(parameters: Any, name: str, category: ToolCategory) -> None:
@@ -618,9 +629,17 @@ def _apply_host_schema(parameters: Any, name: str, category: ToolCategory) -> No
             required.append(_HOST_PARAM)
 
 
+def _host_guard_needed() -> bool:
+    """Whether daemon-targeting tools need the call-time host guard wrapped on. Two cases: multiple hosts
+    (host selection + per-host (ro) refusal), or a single host flagged (ro) (refuse writes even though the
+    schema carries no host param). A single writable host needs no guard — today's footprint-neutral path."""
+    return _hosts.is_multi() or _hosts.is_read_only()
+
+
 def _wrap_with_host_guard(func: Callable, name: str, category: ToolCategory) -> Callable:
-    """Wrap a daemon-targeting tool so the host guard runs before it (multi-host mode only). Preserves
-    the signature so FastMCP builds the same schema/fn_metadata, and matches the func's sync/async-ness."""
+    """Wrap a daemon-targeting tool so the host guard runs before it (when `_host_guard_needed()` —
+    multi-host, or a single host flagged (ro)). Preserves the signature so FastMCP builds the same
+    schema/fn_metadata, and matches the func's sync/async-ness."""
     signature = inspect.signature(func)
 
     def _host_of(args: tuple, kwargs: dict) -> str | None:
@@ -670,11 +689,12 @@ def tool(**kwargs: Any) -> Callable[[Callable], Callable]:
         _tool_registry[name] = ToolRecord(name=name, domain=domain, category=category, registered=registered)
         if not registered:
             return func
-        # Daemon-targeting tools (those declaring a `host` param) get a call-time host guard in
-        # multi-host mode; wrap before registering so FastMCP builds the schema from the wrapper, whose
-        # signature mirrors the original. Single-host (and host-agnostic) tools register func unchanged.
+        # Daemon-targeting tools (those declaring a `host` param) get a call-time host guard when there's
+        # something to enforce — multiple hosts, or a single host flagged (ro); wrap before registering so
+        # FastMCP builds the schema from the wrapper, whose signature mirrors the original. A single
+        # writable host (and host-agnostic tools) register func unchanged.
         target = func
-        if _has_host_param(func) and _hosts.is_multi():
+        if _has_host_param(func) and _host_guard_needed():
             target = _wrap_with_host_guard(func, name, category)
         decorated = mcp.tool(annotations=_annotations_for(name, category), **kwargs)(target)
         # Slim the advertised input schema (drop information-free titles, nullable-anyOf null branches,

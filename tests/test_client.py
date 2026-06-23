@@ -289,6 +289,53 @@ def test_detect_self_container_id_none_when_lookup_fails(monkeypatch):
     assert client_module._detect_self_container_id(mock_client) is None
 
 
+def test_detect_self_container_id_reads_etc_hostname_when_env_unset(monkeypatch):
+    # HOSTNAME unset (e.g. --hostname not exported): fall back to /etc/hostname.
+    monkeypatch.delenv("HOSTNAME", raising=False)
+    fake_path = MagicMock()
+    fake_path.read_text.return_value = "cafef00d5678\n"
+    mock_client = MagicMock()
+    mock_client.containers.get.return_value = types.SimpleNamespace(id="cafef00d5678fullid")
+    with patch.object(client_module, "Path", return_value=fake_path):
+        assert client_module._detect_self_container_id(mock_client) == "cafef00d5678fullid"
+    mock_client.containers.get.assert_called_once_with("cafef00d5678")
+
+
+def test_detect_self_container_id_none_when_no_hostname_anywhere(monkeypatch):
+    monkeypatch.delenv("HOSTNAME", raising=False)
+    fake_path = MagicMock()
+    fake_path.read_text.side_effect = OSError("no /etc/hostname")
+    with patch.object(client_module, "Path", return_value=fake_path):
+        assert client_module._detect_self_container_id(MagicMock()) is None
+
+
+# ---------- _self_host / _host_tag / _close_client_quietly ----------
+
+
+def test_self_host_picks_first_local_transport(monkeypatch):
+    _set_multi(monkeypatch, "prod=tcp://prod:2376, local=unix:///var/run/docker.sock")
+    self_host = client_module._self_host()
+    assert self_host is not None and self_host.label == "local"  # skips the remote tcp:// host
+
+
+def test_self_host_none_when_all_remote(monkeypatch):
+    _set_multi(monkeypatch, "a=tcp://a:2376, b=ssh://b")
+    assert client_module._self_host() is None
+
+
+def test_host_tag_annotates_ro_and_remote():
+    assert client_module._host_tag(Host(label="prod", url="tcp://prod:2376", read_only=True)) == "prod (ro, remote)"
+    assert client_module._host_tag(Host(label="local", url="unix:///var/run/docker.sock")) == "local"
+    assert client_module._host_tag(Host(label="def", url=None)) == "def"  # platform default counts as local
+
+
+def test_close_client_quietly_swallows_close_errors():
+    client = MagicMock()
+    client.close.side_effect = RuntimeError("already broken")
+    client_module._close_client_quietly(client)  # must not raise
+    client.close.assert_called_once()
+
+
 # ---------- startup_preflight ----------
 
 
