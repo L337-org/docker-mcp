@@ -280,15 +280,19 @@ def _read_capped_response(resp: httpx.Response, url: str) -> httpx.Response:
     Read a streamed response's body into memory bounded by `_MAX_RESPONSE_BYTES`, returning a
     fully-read `httpx.Response` so callers keep using `.json()` / `.text` / `.headers` unchanged.
     """
-    body = bytearray()
+    chunks: list[bytes] = []
+    total = 0
     for chunk in resp.iter_bytes():
-        body += chunk
-        if len(body) > _MAX_RESPONSE_BYTES:
+        total += len(chunk)
+        if total > _MAX_RESPONSE_BYTES:
             raise RuntimeError(
-                f"Registry response from {url} exceeded the {_MAX_RESPONSE_BYTES // (1024 * 1024)} MiB "
-                f"limit; refusing to buffer a response this large."
+                f"Registry response from {url} exceeded the {_MAX_RESPONSE_BYTES}-byte limit; "
+                f"refusing to buffer a response this large."
             )
-    return httpx.Response(status_code=resp.status_code, headers=resp.headers, content=bytes(body), request=resp.request)
+        chunks.append(chunk)
+    return httpx.Response(
+        status_code=resp.status_code, headers=resp.headers, content=b"".join(chunks), request=resp.request
+    )
 
 
 def _get_with_retry_policy(
