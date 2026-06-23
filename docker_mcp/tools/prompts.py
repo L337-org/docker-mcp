@@ -1,6 +1,26 @@
 # library of mcp prompt templates that guide the agent through common docker workflows
 
+import docker_mcp._hosts as _hosts
 from docker_mcp.server import prompt
+
+
+def _host_targeting_note() -> str:
+    """A trailing block (multi-host only) correcting the resource URIs and explaining host targeting.
+
+    The prompt bodies use the single-host `docker://containers` / `docker-…://{name}` forms, which are
+    NOT registered in multi-host mode (the index becomes empty-authority/host-qualified), so this note
+    redirects the agent to the right forms and to the URIs the index already carries per entry.
+    """
+    if not _hosts.is_multi():
+        return ""
+    return (
+        "\nMulti-host: the bare `docker://containers` / `docker-logs://{name}` / `docker-stats://{name}` "
+        "forms above are single-host only. Here the container index is `docker:///containers` for the "
+        "default host or `docker://{host}/containers` for a named one; pass `host=<name>` to the tools. "
+        "Don't build `docker-logs`/`docker-stats` URIs yourself — follow the `logs`/`stats` URIs each "
+        "index entry carries, which are already in the correct (empty-authority or host-qualified) form. "
+        "See `docker-mcp://hosts` for the configured hosts."
+    )
 
 
 @prompt(description="Read the Docker SDK for Python documentation for a section before writing code that uses it.")
@@ -113,7 +133,7 @@ def monitor_container_fleet(top: int = 5) -> str:
         "Render one table: name, status, CPU%, mem%, and a one-line health note per container, sorted "
         "with problems on top. End with a one-paragraph verdict naming the single container most worth "
         "attention and point at `troubleshoot_container` for a deep dive on it. Recommend nothing "
-        "destructive."
+        "destructive." + _host_targeting_note()
     )
 
 
@@ -151,7 +171,7 @@ def triage_incident(window_minutes: int = 30) -> str:
         "`die` in the timeline.\n"
         "State, in two sentences, the most likely root cause and the blast radius (one container, or "
         "host-wide). Then hand off: name the container for a `troubleshoot_container` deep dive, or flag "
-        "the host-level fix. Propose remediation but do not perform it."
+        "the host-level fix. Propose remediation but do not perform it." + _host_targeting_note()
     )
 
 
@@ -357,23 +377,32 @@ def troubleshoot_compose_project(project_dir: str, project_name: str | None = No
     )
 
 
-@prompt(description="Review available Docker contexts and the one this MCP server is targeting.", domain="context")
+@prompt(
+    description="Review this server's configured hosts and Docker contexts, and the daemon it targets.",
+    domain="context",
+)
 def audit_docker_contexts() -> str:
     """
-    Generate a plan for inventorying contexts and confirming the daemon target.
+    Generate a plan for inventorying the host registry + CLI contexts and confirming the daemon target.
 
-    returns: str - A prompt instructing the agent to enumerate contexts and confirm the active target
+    returns: str - A prompt instructing the agent to report configured hosts, enumerate contexts, and confirm the target
     """
     return (
-        "Audit the Docker context configuration on this host:\n"
-        "1. Call `context_ls` and present the table of contexts (name, current, daemon endpoint, description).\n"
-        "2. Highlight which context is `Current=true`. That's the one the docker CLI uses, but note that the\n"
-        "   long-lived docker-py client behind SDK-backed tools (e.g. `list_containers`) was bound at server\n"
-        "   startup — it does not retarget when `context_use` is called later.\n"
-        "3. Call `info` and report `Name`, `ServerVersion`, and `OperatingSystem`. Compare against the\n"
-        "   `DockerEndpoint` of the current context.\n"
-        "4. If multiple contexts point at different hosts, ask the user whether the active one is the\n"
-        "   intended target before any mutating operation."
+        "Audit what daemon(s) this server targets — its own host registry first, then the host's Docker contexts:\n"
+        "1. Call `list_hosts` (or read `docker-mcp://hosts`) for the hosts configured via DOCKER_MCP_SERVER_HOSTS:\n"
+        "   each `name`, resolved `url`, `read_only`/`tls` flags, and which is the `default` (used when a\n"
+        "   tool's `host` is omitted). With a single host this is just the one resolved daemon. These URLs are\n"
+        "   resolved (auto/local/context) and pinned at server startup — a later `docker context use` does not\n"
+        "   move them; restart to re-resolve.\n"
+        "2. Call `context_ls` and present the table of contexts (name, current, daemon endpoint, description).\n"
+        "3. Highlight which context is `Current=true`. That's the one the docker CLI uses by default, but note\n"
+        "   it only affects a host configured as `auto`/`local` — an explicit URL or a multi-host registry pins\n"
+        "   its own endpoint and ignores the ambient context.\n"
+        "4. Call `info` (pass `host=<name>` to pick a host when several are configured) and report `Name`,\n"
+        "   `ServerVersion`, and `OperatingSystem`. Compare against the host's resolved `url` / the current\n"
+        "   context's `DockerEndpoint`.\n"
+        "5. If the configured hosts or contexts point at different daemons, ask the user whether the intended\n"
+        "   target is selected before any mutating operation."
     )
 
 
@@ -852,4 +881,37 @@ def deploy_swarm_stack(stack_name: str, compose_file: str) -> str:
         f"Compose file and redeploy rather than removing first. Mention `stack_rm` as the teardown, but "
         f"do not call it.\n"
         f"Report the per-service desired-vs-running replica counts and any task errors."
+    )
+
+
+@prompt(
+    description="Survey every configured Docker host read-only and explain how to drive multi-host tools.",
+    domain=None,
+    multi_host=True,
+)
+def survey_hosts() -> str:
+    """
+    Generate a read-only sweep across every configured Docker host.
+
+    Only registered when 2+ hosts are configured (DOCKER_MCP_SERVER_HOSTS); the cross-host entry point
+    for "what's running where", and the place that explains the multi-host tool model.
+
+    returns: str - A prompt instructing the agent to enumerate hosts and sweep each one read-only
+    """
+    return (
+        "Survey every Docker host this server is configured for. Change nothing on any host:\n"
+        "1. Read `docker-mcp://hosts` (or call `list_hosts`) for the configured hosts: each `name`, "
+        "resolved `url`, `read_only`, `tls`, and which is the `default`.\n"
+        "2. For each host, ping it and read `info` with `host=<name>`: report reachability, ServerVersion, "
+        "OperatingSystem, and container/image counts. A host may be unreachable — note it and move on; the "
+        "others are independent.\n"
+        "3. For each reachable host, read its container index — the default host's is `docker:///containers`, "
+        "a named host's is `docker://{host}/containers` — and summarize running vs stopped, flagging any "
+        "`exited` with a non-zero `exit_code` or `restarting`.\n"
+        "4. Render one table across all hosts: host, reachable?, version, #running, #stopped, #problems, "
+        "read-only?.\n"
+        "Driving multi-host tools: read-only tools take `host=<name>` (omit to use the default — the first "
+        "configured); mutating/destructive tools REQUIRE an explicit `host`; a host marked read-only `(ro)` "
+        "rejects every write. End with a one-line health verdict per host and name the one most worth "
+        "attention. Recommend nothing destructive."
     )

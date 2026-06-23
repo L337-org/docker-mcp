@@ -24,9 +24,9 @@ _TIMEOUT_IMAGETOOLS_CREATE = 600.0
 _TIMEOUT_PRUNE = 600.0
 
 
-def _run_buildx(args: list[str], *, cwd: str | None = None, timeout: float) -> CliResult:
+def _run_buildx(args: list[str], *, cwd: str | None = None, timeout: float, host: str | None = None) -> CliResult:
     require_plugin("buildx")
-    return run_docker(["buildx", *args], cwd=cwd, timeout=timeout)
+    return run_docker(["buildx", *args], cwd=cwd, timeout=timeout, host=host)
 
 
 @tool()
@@ -55,6 +55,7 @@ def buildx_build(
     secret: list[str] | None = None,
     ssh: list[str] | None = None,
     timeout_seconds: float = _TIMEOUT_BUILD,
+    host: str | None = None,
 ) -> dict:
     """
     Build an image with BuildKit via `docker buildx build`.
@@ -156,7 +157,7 @@ def buildx_build(
     for spec in ssh or []:
         args.extend(["--ssh", spec])
     args.append(safe_positional(context, "build context"))
-    return _run_buildx(args, timeout=timeout_seconds).to_dict()
+    return _run_buildx(args, timeout=timeout_seconds, host=host).to_dict()
 
 
 @tool()
@@ -171,6 +172,7 @@ def buildx_bake(
     builder: str | None = None,
     cwd: str | None = None,
     timeout_seconds: float = _TIMEOUT_BAKE,
+    host: str | None = None,
 ) -> dict:
     """
     Build multiple targets defined in a bake file (HCL, JSON, or compose).
@@ -205,7 +207,7 @@ def buildx_bake(
         args.extend(["--builder", builder])
     if targets:
         args.extend(targets)
-    return _run_buildx(args, cwd=cwd, timeout=timeout_seconds).to_dict()
+    return _run_buildx(args, cwd=cwd, timeout=timeout_seconds, host=host).to_dict()
 
 
 @tool()
@@ -214,6 +216,7 @@ def buildx_imagetools_inspect(
     raw: bool = False,
     format: str | None = None,
     builder: str | None = None,
+    host: str | None = None,
 ) -> dict:
     """
     Inspect a manifest in a registry without pulling.
@@ -247,7 +250,7 @@ def buildx_imagetools_inspect(
     if builder is not None:
         args.extend(["--builder", builder])
     args.append(safe_positional(image, "image"))
-    return _run_buildx(args, timeout=_TIMEOUT_QUERY).to_dict()
+    return _run_buildx(args, timeout=_TIMEOUT_QUERY, host=host).to_dict()
 
 
 @tool()
@@ -261,6 +264,7 @@ def buildx_imagetools_create(
     files: list[str] | None = None,
     builder: str | None = None,
     timeout_seconds: float = _TIMEOUT_IMAGETOOLS_CREATE,
+    host: str | None = None,
 ) -> dict:
     """
     Create a manifest list / OCI image index from existing per-platform tags.
@@ -296,11 +300,11 @@ def buildx_imagetools_create(
     if builder is not None:
         args.extend(["--builder", builder])
     args.extend(safe_positional(s, "source") for s in sources)
-    return _run_buildx(args, timeout=timeout_seconds).to_dict()
+    return _run_buildx(args, timeout=timeout_seconds, host=host).to_dict()
 
 
 @tool()
-def buildx_ls() -> list:
+def buildx_ls(host: str | None = None) -> list:
     """
     List builder instances.
 
@@ -308,13 +312,13 @@ def buildx_ls() -> list:
                     If the captured stdout was truncated by MAX_CLI_OUTPUT_BYTES the
                     last (likely partial) record is dropped before parsing.
     """
-    result = _run_buildx(["ls", "--format", "{{json .}}"], timeout=_TIMEOUT_QUERY)
+    result = _run_buildx(["ls", "--format", "{{json .}}"], timeout=_TIMEOUT_QUERY, host=host)
     raise_on_cli_failure(result, "buildx ls")
     return parse_ndjson(result.stdout, truncated=result.truncated, what="buildx ls output")
 
 
 @tool()
-def buildx_history_ls(builder: str | None = None) -> list:
+def buildx_history_ls(builder: str | None = None, host: str | None = None) -> list:
     """
     List recent build records (BuildKit build history), parsed from `--format '{{json .}}'`.
 
@@ -329,13 +333,13 @@ def buildx_history_ls(builder: str | None = None) -> list:
     args = ["history", "ls", "--format", "{{json .}}"]
     if builder is not None:
         args.extend(["--builder", safe_positional(builder, "builder name")])
-    result = _run_buildx(args, timeout=_TIMEOUT_QUERY)
+    result = _run_buildx(args, timeout=_TIMEOUT_QUERY, host=host)
     raise_on_cli_failure(result, "buildx history ls")
     return parse_ndjson(result.stdout, truncated=result.truncated, what="buildx history ls output")
 
 
 @tool()
-def buildx_history_inspect(ref: str = "", builder: str | None = None) -> dict:
+def buildx_history_inspect(ref: str = "", builder: str | None = None, host: str | None = None) -> dict:
     """
     Inspect a single build record by ref, parsed from `--format json`.
 
@@ -368,14 +372,14 @@ def buildx_history_inspect(ref: str = "", builder: str | None = None) -> dict:
         args.extend(["--builder", safe_positional(effective_builder, "builder name")])
     if bare_ref:
         args.append(safe_positional(bare_ref, "build ref"))
-    result = _run_buildx(args, timeout=_TIMEOUT_QUERY)
+    result = _run_buildx(args, timeout=_TIMEOUT_QUERY, host=host)
     raise_on_cli_failure(result, "buildx history inspect")
     parsed = parse_json_or_ndjson(result.stdout, truncated=result.truncated, what="buildx history inspect output")
     return parsed if isinstance(parsed, dict) else {"raw": result.stdout}
 
 
 @tool()
-def buildx_inspect(name: str | None = None, bootstrap: bool = False) -> dict:
+def buildx_inspect(name: str | None = None, bootstrap: bool = False, host: str | None = None) -> dict:
     """
     Inspect a builder instance.
 
@@ -390,11 +394,11 @@ def buildx_inspect(name: str | None = None, bootstrap: bool = False) -> dict:
         args.append("--bootstrap")
     if name is not None:
         args.append(safe_positional(name, "builder name"))
-    return _run_buildx(args, timeout=_TIMEOUT_QUERY).to_dict()
+    return _run_buildx(args, timeout=_TIMEOUT_QUERY, host=host).to_dict()
 
 
 @tool()
-def buildx_du(builder: str | None = None) -> list:
+def buildx_du(builder: str | None = None, host: str | None = None) -> list:
     """
     Report BuildKit cache disk usage as a list of records.
 
@@ -409,7 +413,7 @@ def buildx_du(builder: str | None = None) -> list:
     args: list[str] = ["du", "--format", "{{json .}}"]
     if builder is not None:
         args.extend(["--builder", builder])
-    result = _run_buildx(args, timeout=_TIMEOUT_QUERY)
+    result = _run_buildx(args, timeout=_TIMEOUT_QUERY, host=host)
     raise_on_cli_failure(result, "buildx du")
     return parse_ndjson(result.stdout, truncated=result.truncated, what="buildx du output")
 
@@ -424,6 +428,7 @@ def buildx_prune(
     min_free_space: str | None = None,
     builder: str | None = None,
     timeout_seconds: float = _TIMEOUT_PRUNE,
+    host: str | None = None,
 ) -> dict:
     """
     Remove BuildKit cache entries.
@@ -457,7 +462,7 @@ def buildx_prune(
         args.extend(["--min-free-space", min_free_space])
     if builder is not None:
         args.extend(["--builder", builder])
-    return _run_buildx(args, timeout=timeout_seconds).to_dict()
+    return _run_buildx(args, timeout=timeout_seconds, host=host).to_dict()
 
 
 @tool()
@@ -471,6 +476,7 @@ def buildx_create(
     config: str | None = None,
     node_name: str | None = None,
     append: bool = False,
+    host: str | None = None,
 ) -> dict:
     """
     Create a new builder instance.
@@ -506,11 +512,11 @@ def buildx_create(
         args.append("--append")
     if name is not None:
         args.extend(["--name", name])
-    return _run_buildx(args, timeout=_TIMEOUT_QUERY).to_dict()
+    return _run_buildx(args, timeout=_TIMEOUT_QUERY, host=host).to_dict()
 
 
 @tool()
-def buildx_use(name: str, default: bool = False, global_default: bool = False) -> dict:
+def buildx_use(name: str, default: bool = False, global_default: bool = False, host: str | None = None) -> dict:
     """
     Switch the current builder.
 
@@ -526,7 +532,7 @@ def buildx_use(name: str, default: bool = False, global_default: bool = False) -
     if global_default:
         args.append("--global")
     args.append(safe_positional(name, "builder name"))
-    return _run_buildx(args, timeout=_TIMEOUT_QUERY).to_dict()
+    return _run_buildx(args, timeout=_TIMEOUT_QUERY, host=host).to_dict()
 
 
 @tool()
@@ -536,6 +542,7 @@ def buildx_rm(
     keep_state: bool = False,
     keep_daemon: bool = False,
     force: bool = False,
+    host: str | None = None,
 ) -> dict:
     """
     Remove a builder instance.
@@ -566,4 +573,4 @@ def buildx_rm(
         args.append("--force")
     if name is not None:
         args.append(safe_positional(name, "builder name"))
-    return _run_buildx(args, timeout=_TIMEOUT_QUERY).to_dict()
+    return _run_buildx(args, timeout=_TIMEOUT_QUERY, host=host).to_dict()

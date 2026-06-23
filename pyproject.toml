@@ -1,6 +1,6 @@
 [project]
 name = "docker-mcp-server"
-version = "1.8.1"
+version = "1.9.0"
 description = "MCP server for managing Docker resources via the Docker SDK for Python"
 readme = "README.md"
 license = "MIT"

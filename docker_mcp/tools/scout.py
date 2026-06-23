@@ -14,9 +14,9 @@ from docker_mcp.tools._cli import CliResult, require_plugin, run_docker, safe_po
 _TIMEOUT_SCOUT = 300.0
 
 
-def _run_scout(args: list[str], *, timeout: float = _TIMEOUT_SCOUT) -> CliResult:
+def _run_scout(args: list[str], *, timeout: float = _TIMEOUT_SCOUT, host: str | None = None) -> CliResult:
     require_plugin("scout")
-    return run_docker(["scout", *args], timeout=timeout)
+    return run_docker(["scout", *args], timeout=timeout, host=host)
 
 
 def _maybe_parse_json(text: str, format: str) -> dict | list | str | None:
@@ -40,6 +40,7 @@ def scout_cves(
     ignore_base: bool = False,
     format: str = "json",
     platform: str | None = None,
+    host: str | None = None,
 ) -> dict:
     """
     List vulnerabilities (CVEs) in an image via Docker Scout.
@@ -68,12 +69,12 @@ def scout_cves(
     if platform is not None:
         args.extend(["--platform", platform])
     args.append(safe_positional(image, "image"))
-    result = _run_scout(args)
+    result = _run_scout(args, host=host)
     return {"format": format, "result": _maybe_parse_json(result.stdout, format), "raw": result.to_dict()}
 
 
 @tool()
-def scout_quickview(image: str, format: str = "json", platform: str | None = None) -> dict:
+def scout_quickview(image: str, format: str = "json", platform: str | None = None, host: str | None = None) -> dict:
     """
     Render a compact summary of an image's CVE posture.
 
@@ -88,7 +89,7 @@ def scout_quickview(image: str, format: str = "json", platform: str | None = Non
     if platform is not None:
         args.extend(["--platform", platform])
     args.append(safe_positional(image, "image"))
-    result = _run_scout(args)
+    result = _run_scout(args, host=host)
     return {"format": format, "result": _maybe_parse_json(result.stdout, format), "raw": result.to_dict()}
 
 
@@ -100,6 +101,7 @@ def scout_recommendations(
     tag: str | None = None,
     format: str = "json",
     platform: str | None = None,
+    host: str | None = None,
 ) -> dict:
     """
     Suggest base-image upgrades for an image.
@@ -127,7 +129,7 @@ def scout_recommendations(
     if platform is not None:
         args.extend(["--platform", platform])
     args.append(safe_positional(image, "image"))
-    result = _run_scout(args)
+    result = _run_scout(args, host=host)
     return {"format": format, "result": _maybe_parse_json(result.stdout, format), "raw": result.to_dict()}
 
 
@@ -141,6 +143,7 @@ def scout_compare(
     ignore_unchanged: bool = False,
     format: str = "json",
     platform: str | None = None,
+    host: str | None = None,
 ) -> dict:
     """
     Compare two image references and report the CVE delta.
@@ -177,7 +180,7 @@ def scout_compare(
     if platform is not None:
         args.extend(["--platform", platform])
     args.append(safe_positional(image, "image"))
-    result = _run_scout(args)
+    result = _run_scout(args, host=host)
     return {"format": format, "result": _maybe_parse_json(result.stdout, format), "raw": result.to_dict()}
 
 
@@ -186,6 +189,7 @@ def scout_sbom(
     image: str,
     format: str = "spdx",
     platform: str | None = None,
+    host: str | None = None,
 ) -> dict:
     """
     Generate a Software Bill of Materials (SBOM) for an image.
@@ -207,7 +211,7 @@ def scout_sbom(
     if platform is not None:
         args.extend(["--platform", platform])
     args.append(safe_positional(image, "image"))
-    result = _run_scout(args)
+    result = _run_scout(args, host=host)
     # SPDX and CycloneDX are both JSON; the cyclonedx-xml variant returns XML.
     parse_as_json = format in {"spdx", "cyclonedx", "json"}
     parsed = _maybe_parse_json(result.stdout, "json") if parse_as_json else result.stdout

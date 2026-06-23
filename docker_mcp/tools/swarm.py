@@ -18,6 +18,7 @@ def init_swarm(
     labels: dict | None = None,
     autolock_managers: bool | None = None,
     log_driver: dict | None = None,
+    host: str | None = None,
 ) -> str:
     """
     Initialize a new swarm on this Engine.
@@ -51,7 +52,7 @@ def init_swarm(
             log_driver=log_driver,
         ),
     }
-    return _get_client().swarm.init(**kwargs)
+    return _get_client(host).swarm.init(**kwargs)
 
 
 @tool()
@@ -61,6 +62,7 @@ def join_swarm(
     listen_addr: str = "0.0.0.0:2377",
     advertise_addr: str | None = None,
     data_path_addr: str | None = None,
+    host: str | None = None,
 ) -> bool:
     """
     Join an existing swarm.
@@ -79,18 +81,18 @@ def join_swarm(
         "listen_addr": listen_addr,
         **drop_none(advertise_addr=advertise_addr, data_path_addr=data_path_addr),
     }
-    return _get_client().swarm.join(**kwargs)
+    return _get_client(host).swarm.join(**kwargs)
 
 
 @tool()
-def leave_swarm(force: bool = False) -> bool:
+def leave_swarm(force: bool = False, host: str | None = None) -> bool:
     """
     Leave the current swarm.
 
     args: force - Force leave even if the node is a manager
     returns: bool - True after leaving the swarm
     """
-    return _get_client().swarm.leave(force=force)
+    return _get_client(host).swarm.leave(force=force)
 
 
 @tool()
@@ -98,6 +100,7 @@ def update_swarm(
     rotate_worker_token: bool = False,
     rotate_manager_token: bool = False,
     rotate_manager_unlock_key: bool = False,
+    host: str | None = None,
 ) -> bool:
     """
     Update the swarm configuration.
@@ -108,7 +111,7 @@ def update_swarm(
         rotate_manager_unlock_key - Rotate the manager unlock key
     returns: bool - True after the update completes
     """
-    return _get_client().swarm.update(
+    return _get_client(host).swarm.update(
         rotate_worker_token=rotate_worker_token,
         rotate_manager_token=rotate_manager_token,
         rotate_manager_unlock_key=rotate_manager_unlock_key,
@@ -116,36 +119,36 @@ def update_swarm(
 
 
 @tool()
-def reload_swarm() -> dict:
+def reload_swarm(host: str | None = None) -> dict:
     """
     Reload the swarm and return its current attrs.
 
     returns: dict - The swarm's current attrs
     """
-    swarm = _get_client().swarm
+    swarm = _get_client(host).swarm
     swarm.reload()
     return swarm.attrs
 
 
 @tool()
-def unlock_swarm(key: str) -> bool:
+def unlock_swarm(key: str, host: str | None = None) -> bool:
     """
     Unlock a locked swarm.
 
     args: key - The unlock key
     returns: bool - True after the swarm is unlocked
     """
-    return _get_client().swarm.unlock(key)
+    return _get_client(host).swarm.unlock(key)
 
 
 @tool()
-def get_swarm_unlock_key() -> dict:
+def get_swarm_unlock_key(host: str | None = None) -> dict:
     """
     Return the swarm unlock key.
 
     returns: dict - The unlock key info
     """
-    return _get_client().swarm.get_unlock_key()
+    return _get_client(host).swarm.get_unlock_key()
 
 
 def _read_join_tokens(swarm: object) -> dict:
@@ -155,7 +158,7 @@ def _read_join_tokens(swarm: object) -> dict:
 
 
 @tool()
-def get_swarm_join_tokens() -> dict:
+def get_swarm_join_tokens(host: str | None = None) -> dict:
     """
     Return the swarm's worker and manager join tokens.
 
@@ -166,13 +169,13 @@ def get_swarm_join_tokens() -> dict:
 
     returns: dict - {"Worker": <worker join token>, "Manager": <manager join token>}
     """
-    swarm = _get_client().swarm
+    swarm = _get_client(host).swarm
     swarm.reload()
     return _read_join_tokens(swarm)
 
 
 @tool()
-def rotate_swarm_join_token(rotate_worker: bool = False, rotate_manager: bool = False) -> dict:
+def rotate_swarm_join_token(rotate_worker: bool = False, rotate_manager: bool = False, host: str | None = None) -> dict:
     """
     Rotate the worker and/or manager join token, then return the fresh tokens.
 
@@ -188,7 +191,7 @@ def rotate_swarm_join_token(rotate_worker: bool = False, rotate_manager: bool = 
     """
     if not (rotate_worker or rotate_manager):
         raise ValueError("Set rotate_worker and/or rotate_manager to True — nothing to rotate otherwise.")
-    swarm = _get_client().swarm
+    swarm = _get_client(host).swarm
     swarm.update(rotate_worker_token=rotate_worker, rotate_manager_token=rotate_manager)
     swarm.reload()
     return _read_join_tokens(swarm)

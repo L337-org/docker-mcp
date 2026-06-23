@@ -19,6 +19,7 @@ def create_network(
     attachable: bool | None = None,
     scope: str | None = None,
     ingress: bool | None = None,
+    host: str | None = None,
 ) -> dict:
     """
     Create a network.
@@ -51,18 +52,18 @@ def create_network(
             ingress=ingress,
         ),
     }
-    return _get_client().networks.create(name, **kwargs).attrs
+    return _get_client(host).networks.create(name, **kwargs).attrs
 
 
 @tool()
-def get_network(network_id: str) -> dict:
+def get_network(network_id: str, host: str | None = None) -> dict:
     """
     Get a network by id or name.
 
     args: network_id - The network id or name
     returns: dict - The network's attrs
     """
-    return _get_client().networks.get(network_id).attrs
+    return _get_client(host).networks.get(network_id).attrs
 
 
 @tool()
@@ -72,6 +73,7 @@ def list_networks(
     filters: dict | None = None,
     greedy: bool = False,
     managed_only: bool = False,
+    host: str | None = None,
 ) -> list:
     """
     List networks.
@@ -88,29 +90,29 @@ def list_networks(
     if managed_only:
         filters = managed_filter(filters)
     kwargs: dict = {"greedy": greedy, **drop_none(names=names, ids=ids, filters=filters)}
-    return [n.attrs for n in _get_client().networks.list(**kwargs)]
+    return [n.attrs for n in _get_client(host).networks.list(**kwargs)]
 
 
 @tool()
-def prune_networks(filters: dict | None = None) -> dict:
+def prune_networks(filters: dict | None = None, host: str | None = None) -> dict:
     """
     Remove unused networks.
 
     args: filters - Filters to apply
     returns: dict - Information on deleted networks
     """
-    return _get_client().networks.prune(filters=filters)
+    return _get_client(host).networks.prune(filters=filters)
 
 
 @tool()
-def remove_network(network_id: str) -> bool:
+def remove_network(network_id: str, host: str | None = None) -> bool:
     """
     Remove a network.
 
     args: network_id - The network id or name
     returns: bool - True after removal
     """
-    _get_client().networks.get(network_id).remove()
+    _get_client(host).networks.get(network_id).remove()
     return True
 
 
@@ -124,6 +126,7 @@ def connect_network(
     ipv6_address: str | None = None,
     link_local_ips: list | None = None,
     driver_opt: dict | None = None,
+    host: str | None = None,
 ) -> bool:
     """
     Connect a container to a network.
@@ -139,7 +142,7 @@ def connect_network(
         driver_opt - Network driver options
     returns: bool - True after the container is connected
     """
-    network = _get_client().networks.get(network_id)
+    network = _get_client(host).networks.get(network_id)
     network.connect(
         container,
         aliases=aliases,
@@ -153,7 +156,7 @@ def connect_network(
 
 
 @tool()
-def disconnect_network(network_id: str, container: str, force: bool = False) -> bool:
+def disconnect_network(network_id: str, container: str, force: bool = False, host: str | None = None) -> bool:
     """
     Disconnect a container from a network.
 
@@ -163,6 +166,6 @@ def disconnect_network(network_id: str, container: str, force: bool = False) -> 
         force - Force disconnect
     returns: bool - True after the container is disconnected
     """
-    network = _get_client().networks.get(network_id)
+    network = _get_client(host).networks.get(network_id)
     network.disconnect(container, force=force)
     return True

@@ -1,24 +1,237 @@
+import inspect
+import json
 import subprocess
 import sys
+from unittest.mock import MagicMock
+
+import pytest
 
 import docker_mcp  # noqa: F401 — imported for its side effect of registering every tool
+import docker_mcp._hosts as _hosts
+from docker_mcp._hosts import parse_registry
 from docker_mcp.server import (
     TOOL_CATEGORIES,
     _SCHEMA_NAME_MAPS,
     ToolCategory,
     _annotations_for,
+    _apply_host_schema,
     build_instructions,
     _domain_enabled,
     _domain_for,
+    _enforce_host_guard,
+    _host_guard_needed,
     _parse_domains,
     _prompt_registry,
     _seen_tool_names,
     _should_register,
     _slim_schema,
     _tool_registry,
+    _wrap_with_host_guard,
     mcp,
     tool_catalog,
 )
+
+
+def _set_multi_host(monkeypatch, spec="local=auto, prod=ssh://h(ro)"):
+    """Pin a deterministic 2-host registry so the host machinery sees multi-host mode."""
+    monkeypatch.setattr(_hosts, "resolve_auto", lambda: "unix:///auto.sock")
+    monkeypatch.setattr(_hosts, "resolve_local", lambda: "unix:///local.sock")
+    monkeypatch.setattr(_hosts, "_registry", parse_registry(spec))
+
+
+def _set_single_host(monkeypatch, spec="ssh://h(ro)"):
+    """Pin a single-host registry so the host machinery sees single-host mode (default (ro) by default)."""
+    monkeypatch.setattr(_hosts, "resolve_auto", lambda: "unix:///auto.sock")
+    monkeypatch.setattr(_hosts, "resolve_local", lambda: "unix:///local.sock")
+    monkeypatch.setattr(_hosts, "_registry", parse_registry(spec))
+
+
+def _host_schema(*, default=True, required=("name",)):
+    """A freshly-slimmed schema for a tool with `host: str | None = None` plus a required `name`."""
+    host: dict[str, object] = {"type": "string"}
+    if default:
+        host["default"] = None
+    return {"type": "object", "properties": {"host": host, "name": {"type": "string"}}, "required": list(required)}
+
+
+# ---------- host param: schema surgery ----------
+
+
+def test_apply_host_schema_strips_host_in_single_host_mode(monkeypatch):
+    monkeypatch.setattr(_hosts, "resolve_auto", lambda: "unix:///auto.sock")
+    monkeypatch.setattr(_hosts, "_registry", parse_registry(None))  # one synthesized host
+    schema = _host_schema()
+    _apply_host_schema(schema, "list_containers", ToolCategory.READ_ONLY)
+    assert "host" not in schema["properties"]
+
+
+def test_apply_host_schema_strips_host_from_required(monkeypatch):
+    monkeypatch.setattr(_hosts, "resolve_auto", lambda: "unix:///auto.sock")
+    monkeypatch.setattr(_hosts, "_registry", parse_registry(None))
+    schema = {"type": "object", "properties": {"host": {"type": "string"}}, "required": ["host"]}
+    _apply_host_schema(schema, "remove_container", ToolCategory.DESTRUCTIVE)
+    assert "host" not in schema["properties"]
+    assert "required" not in schema  # emptied -> dropped
+
+
+def test_apply_host_schema_injects_enum_for_read_only(monkeypatch):
+    _set_multi_host(monkeypatch)
+    schema = _host_schema()
+    _apply_host_schema(schema, "list_containers", ToolCategory.READ_ONLY)
+    assert schema["properties"]["host"]["enum"] == ["local", "prod"]
+    assert "host" not in schema.get("required", [])  # optional for reads
+    assert schema["properties"]["host"]["default"] is None  # retained
+    assert "local" in schema["properties"]["host"]["description"]  # names the default
+
+
+def test_apply_host_schema_requires_host_for_writes(monkeypatch):
+    _set_multi_host(monkeypatch)
+    schema = _host_schema()
+    _apply_host_schema(schema, "remove_container", ToolCategory.DESTRUCTIVE)
+    assert schema["properties"]["host"]["enum"] == ["local", "prod"]
+    assert "host" in schema["required"]
+    assert "default" not in schema["properties"]["host"]  # required field carries no default
+
+
+def test_apply_host_schema_connection_control_stays_optional(monkeypatch):
+    _set_multi_host(monkeypatch)
+    schema = _host_schema()
+    _apply_host_schema(schema, "close", ToolCategory.MUTATING)  # MUTATING but connection-control
+    assert schema["properties"]["host"]["enum"] == ["local", "prod"]
+    assert "host" not in schema.get("required", [])
+
+
+def test_apply_host_schema_noop_without_host_property(monkeypatch):
+    _set_multi_host(monkeypatch)
+    schema = {"type": "object", "properties": {"name": {"type": "string"}}}
+    _apply_host_schema(schema, "list_hosts", ToolCategory.READ_ONLY)
+    assert schema == {"type": "object", "properties": {"name": {"type": "string"}}}
+
+
+# ---------- host param: call-time guard ----------
+
+
+def test_guard_allows_read_only_without_host(monkeypatch):
+    _set_multi_host(monkeypatch)
+    _enforce_host_guard("list_containers", ToolCategory.READ_ONLY, None)  # no raise
+
+
+def test_guard_requires_host_for_write(monkeypatch):
+    _set_multi_host(monkeypatch)
+    with pytest.raises(RuntimeError, match="'host' is required"):
+        _enforce_host_guard("remove_container", ToolCategory.DESTRUCTIVE, None)
+
+
+def test_guard_rejects_unknown_host(monkeypatch):
+    _set_multi_host(monkeypatch)
+    with pytest.raises(RuntimeError, match="unknown host 'staging'"):
+        _enforce_host_guard("list_containers", ToolCategory.READ_ONLY, "staging")
+
+
+def test_guard_rejects_write_to_read_only_host(monkeypatch):
+    _set_multi_host(monkeypatch)  # prod is (ro)
+    with pytest.raises(RuntimeError, match="read-only"):
+        _enforce_host_guard("remove_container", ToolCategory.DESTRUCTIVE, "prod")
+
+
+def test_guard_allows_connection_control_on_read_only_host(monkeypatch):
+    _set_multi_host(monkeypatch)
+    _enforce_host_guard("close", ToolCategory.MUTATING, "prod")  # conn-control exempt from ro-refusal
+
+
+def test_guard_checks_unknown_host_even_for_connection_control(monkeypatch):
+    _set_multi_host(monkeypatch)
+    with pytest.raises(RuntimeError, match="unknown host"):
+        _enforce_host_guard("close", ToolCategory.MUTATING, "typo")
+
+
+# ---------- host param: single-host (ro) enforcement ----------
+
+
+def test_guard_refuses_write_to_single_read_only_host(monkeypatch):
+    # One (ro) host: the schema carries no host param to pass, but writes must still be refused.
+    _set_single_host(monkeypatch, "ssh://h(ro)")
+    with pytest.raises(RuntimeError, match="read-only"):
+        _enforce_host_guard("remove_container", ToolCategory.DESTRUCTIVE, None)
+
+
+def test_guard_allows_read_on_single_read_only_host(monkeypatch):
+    _set_single_host(monkeypatch, "ssh://h(ro)")
+    _enforce_host_guard("list_containers", ToolCategory.READ_ONLY, None)  # no raise
+
+
+def test_guard_allows_connection_control_on_single_read_only_host(monkeypatch):
+    _set_single_host(monkeypatch, "ssh://h(ro)")
+    _enforce_host_guard("close", ToolCategory.MUTATING, None)  # conn-control exempt from ro-refusal
+
+
+def test_guard_allows_write_on_single_writable_host(monkeypatch):
+    _set_single_host(monkeypatch, "ssh://h")  # no (ro) marker
+    _enforce_host_guard("remove_container", ToolCategory.DESTRUCTIVE, None)  # no raise
+
+
+def test_host_guard_needed_matrix(monkeypatch):
+    _set_single_host(monkeypatch, "ssh://h(ro)")
+    assert _host_guard_needed() is True  # single (ro): wrap to refuse writes
+    monkeypatch.setattr(_hosts, "_registry", parse_registry("ssh://h"))
+    assert _host_guard_needed() is False  # single writable: footprint-neutral, no wrap
+    monkeypatch.setattr(_hosts, "_registry", parse_registry("a=ssh://x, b=ssh://y"))
+    assert _host_guard_needed() is True  # multi-host
+
+
+# ---------- host param: wrapper ----------
+
+
+def test_wrap_preserves_signature_and_name_and_enforces_guard(monkeypatch):
+    _set_multi_host(monkeypatch)
+
+    def remove_container(container_id: str, host: str | None = None) -> str:
+        return f"removed {container_id} on {host}"
+
+    wrapped = _wrap_with_host_guard(remove_container, "remove_container", ToolCategory.DESTRUCTIVE)
+    assert wrapped.__name__ == "remove_container"
+    assert inspect.signature(wrapped) == inspect.signature(remove_container)
+    with pytest.raises(RuntimeError, match="'host' is required"):
+        wrapped(container_id="abc")  # write without host
+    assert wrapped(container_id="abc", host="local") == "removed abc on local"
+
+
+def test_wrap_guards_an_async_tool(monkeypatch):
+    # No registered tool is async today, but FastMCP supports async tools, so the wrapper has an async
+    # branch — exercise it directly so the guard provably fires on a coroutine function too.
+    import asyncio
+
+    _set_multi_host(monkeypatch)
+
+    async def remove_container(container_id: str, host: str | None = None) -> str:
+        return f"removed {container_id} on {host}"
+
+    wrapped = _wrap_with_host_guard(remove_container, "remove_container", ToolCategory.DESTRUCTIVE)
+    assert inspect.iscoroutinefunction(wrapped)
+    assert inspect.signature(wrapped) == inspect.signature(remove_container)
+    with pytest.raises(RuntimeError, match="'host' is required"):
+        asyncio.run(wrapped(container_id="abc"))  # write without host
+    assert asyncio.run(wrapped(container_id="abc", host="local")) == "removed abc on local"
+
+
+# ---------- list_hosts ----------
+
+
+def test_list_hosts_is_read_only_with_no_host_param():
+    from docker_mcp.tools.client import list_hosts
+
+    assert TOOL_CATEGORIES["list_hosts"] is ToolCategory.READ_ONLY
+    assert "host" not in inspect.signature(list_hosts).parameters
+
+
+def test_list_hosts_reports_registry(monkeypatch):
+    from docker_mcp.tools.client import list_hosts
+
+    _set_multi_host(monkeypatch)
+    rows = list_hosts()
+    assert [r["name"] for r in rows] == ["local", "prod"]
+    assert rows[0]["default"] is True and rows[1]["default"] is False
+    assert rows[1]["read_only"] is True
 
 
 def _registered_tools() -> dict:
@@ -469,11 +682,13 @@ def test_slim_schema_keeps_schema_valued_additional_properties():
 
 
 def test_every_prompt_recorded_in_registry():
-    # Every registered prompt has a record; by default (no switches) all of them register.
+    # Every registered prompt has a record; by default (no switches) all of them register, except the
+    # multi-host-gated prompts (e.g. survey_hosts), which are hidden in the single-host test environment.
     registered = set(_registered_prompts())
     assert registered, "fixture sanity: expected prompts to exist"
     assert registered <= set(_prompt_registry)
-    assert all(r.registered for r in _prompt_registry.values())
+    assert all(r.registered for r in _prompt_registry.values() if not r.multi_host)
+    assert any(r.multi_host and not r.registered for r in _prompt_registry.values())  # the gate works
 
 
 def test_scout_prompts_are_tagged_scout():
@@ -490,8 +705,8 @@ def test_general_prompts_have_no_domain():
 def test_tool_catalog_includes_prompts_and_doc_sections():
     catalog = tool_catalog()
     assert {p["name"] for p in catalog["prompts"]} == set(_prompt_registry)
-    # No switches in this process, so everything is registered and nothing is hidden.
-    assert all(p["registered"] for p in catalog["prompts"])
+    # No switches in this process, so everything registers except the multi-host-gated prompts.
+    assert all(p["registered"] for p in catalog["prompts"] if not p["multi_host"])
     assert catalog["disabled_doc_sections"] == []
 
 
@@ -517,11 +732,13 @@ def _prompt_names_by_domain(*domains: str) -> set[str]:
 
 
 def test_disable_env_drops_matching_prompts_end_to_end():
-    # Disabling scout removes exactly the scout prompts and leaves every other prompt registered.
+    # Disabling scout removes exactly the scout prompts and leaves every other prompt registered —
+    # except the multi-host-gated prompts, which stay hidden in this single-host subprocess.
     scout_prompts = _prompt_names_by_domain("scout")
     assert scout_prompts, "fixture sanity: expected scout prompts to exist"
+    multi_host_prompts = {name for name, r in _prompt_registry.items() if r.multi_host}
     names = _registered_prompt_names(["DOCKER_MCP_SERVER_DISABLE=scout"])
-    assert names == _all_prompt_names() - scout_prompts
+    assert names == _all_prompt_names() - scout_prompts - multi_host_prompts
 
 
 def test_disable_env_keeps_general_prompts_end_to_end():
@@ -546,3 +763,99 @@ def test_disable_env_reports_hidden_doc_sections_in_catalog_end_to_end():
     import json
 
     assert json.loads(result.stdout) == ["scout", "scout-cli"]
+
+
+# ---------- slice 4: host threaded through tools; end-to-end schema + routing ----------
+
+
+def _tool_schema_in(env_vars: list[str], tool_name: str) -> dict:
+    """Import the package in a child process with the given env; return one tool's advertised schema."""
+    code = (
+        "import json, docker_mcp; from docker_mcp.server import mcp; "
+        f"print(json.dumps(mcp._tool_manager.get_tool({tool_name!r}).parameters))"
+    )
+    result = subprocess.run(  # noqa: S603 — fixed argv, sys.executable, no shell; trusted test input
+        [sys.executable, "-c", code], capture_output=True, text=True, env=_env_with(env_vars), check=True
+    )
+    return json.loads(result.stdout)
+
+
+def test_multi_host_injects_host_enum_into_tool_schemas_end_to_end():
+    env = ["DOCKER_MCP_SERVER_HOSTS=local=ssh://a, prod=ssh://b(ro)"]
+    read = _tool_schema_in(env, "list_containers")  # READ_ONLY: enum + optional
+    assert read["properties"]["host"]["enum"] == ["local", "prod"]
+    assert "host" not in read.get("required", [])
+    dest = _tool_schema_in(env, "remove_container")  # DESTRUCTIVE: enum + required
+    assert dest["properties"]["host"]["enum"] == ["local", "prod"]
+    assert "host" in dest["required"]
+    reg = _tool_schema_in(env, "registry_list_tags")  # daemon-agnostic: no host param
+    assert "host" not in reg.get("properties", {})
+
+
+def test_single_host_strips_host_from_tool_schemas_end_to_end():
+    assert "host" not in _tool_schema_in([], "list_containers").get("properties", {})
+
+
+def test_single_read_only_host_still_strips_host_param_end_to_end():
+    # A single (ro) host is footprint-neutral: no host param surfaces (there's only one daemon to choose),
+    # the (ro) marker is enforced by the call-time guard, not the schema.
+    schema = _tool_schema_in(["DOCKER_MCP_SERVER_HOSTS=ssh://h(ro)"], "remove_container")
+    assert "host" not in schema.get("properties", {})
+
+
+def test_single_read_only_host_refuses_write_end_to_end():
+    # Proves the guard is actually wrapped onto write tools at import time for a single (ro) host.
+    code = (
+        "from docker_mcp.tools import containers\n"
+        "try:\n"
+        "    containers.stop_container('x')\n"
+        "    print('NOGUARD')\n"
+        "except RuntimeError as e:\n"
+        "    print('REFUSED' if 'read-only' in str(e) else 'OTHER')\n"
+    )
+    env = _env_with(["DOCKER_MCP_SERVER_HOSTS=ssh://h(ro)"])
+    out = subprocess.run(  # noqa: S603
+        [sys.executable, "-c", code], capture_output=True, text=True, env=env, check=True
+    ).stdout
+    assert "REFUSED" in out
+
+
+def test_multi_host_router_caveat_present_end_to_end():
+    code = "import docker_mcp; print(docker_mcp.mcp.instructions)"
+    env = _env_with(["DOCKER_MCP_SERVER_HOSTS=local=ssh://a, prod=ssh://b(ro)"])
+    out = subprocess.run(  # noqa: S603
+        [sys.executable, "-c", code], capture_output=True, text=True, env=env, check=True
+    ).stdout
+    assert "Multiple hosts are configured" in out
+    assert "['local', 'prod']" in out
+
+
+def test_sdk_tool_threads_host_to_get_client(monkeypatch):
+    from docker_mcp.tools import containers
+
+    captured = {}
+
+    def fake_get_client(host=None):
+        captured["host"] = host
+        client = MagicMock()
+        client.containers.list.return_value = []
+        return client
+
+    monkeypatch.setattr(containers, "_get_client", fake_get_client)
+    containers.list_containers(host="prod")
+    assert captured["host"] == "prod"
+
+
+def test_cli_tool_threads_host_to_run_docker(monkeypatch):
+    from docker_mcp.tools import stack
+    from docker_mcp.tools._cli import CliResult
+
+    captured = {}
+
+    def fake_run_docker(args, **kwargs):
+        captured.update(kwargs)
+        return CliResult(returncode=0, stdout="", stderr="", truncated=False)
+
+    monkeypatch.setattr(stack, "run_docker", fake_run_docker)
+    stack.stack_ls(host="prod")
+    assert captured.get("host") == "prod"

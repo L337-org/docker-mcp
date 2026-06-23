@@ -51,6 +51,7 @@ def run_container(
     mem_limit: int | str | None = None,
     cpu_count: int | None = None,
     extra_kwargs: dict | None = None,
+    host: str | None = None,
 ) -> dict | str:
     """
     Run a container from an image.
@@ -110,7 +111,7 @@ def run_container(
             kwargs[key] = value
     if extra_kwargs:
         kwargs.update(extra_kwargs)
-    result = _get_client().containers.run(image, **kwargs)
+    result = _get_client(host).containers.run(image, **kwargs)
     if detach:
         return result.attrs
     if isinstance(result, bytes):
@@ -119,7 +120,9 @@ def run_container(
 
 
 @tool()
-def create_container(image: str, command: str | list | None = None, extra_kwargs: dict | None = None) -> dict:
+def create_container(
+    image: str, command: str | list | None = None, extra_kwargs: dict | None = None, host: str | None = None
+) -> dict:
     """
     Create a container without starting it.
 
@@ -133,19 +136,19 @@ def create_container(image: str, command: str | list | None = None, extra_kwargs
     labels = with_provenance(kwargs.get("labels"), "create_container")
     if labels is not None:
         kwargs["labels"] = labels
-    container = _get_client().containers.create(image, command=command, **kwargs)
+    container = _get_client(host).containers.create(image, command=command, **kwargs)
     return container.attrs
 
 
 @tool()
-def get_container(id_or_name: str) -> dict:
+def get_container(id_or_name: str, host: str | None = None) -> dict:
     """
     Get a container by id or name.
 
     args: id_or_name - The container id or name
     returns: dict - The container's attrs
     """
-    return _get_client().containers.get(id_or_name).attrs
+    return _get_client(host).containers.get(id_or_name).attrs
 
 
 @tool()
@@ -158,6 +161,7 @@ def list_containers(
     sparse: bool = False,
     ignore_removed: bool = False,
     managed_only: bool = False,
+    host: str | None = None,
 ) -> list:
     """
     List containers.
@@ -182,36 +186,36 @@ def list_containers(
         "ignore_removed": ignore_removed,
         **drop_none(since=since, before=before, limit=limit, filters=filters),
     }
-    return [c.attrs for c in _get_client().containers.list(**kwargs)]
+    return [c.attrs for c in _get_client(host).containers.list(**kwargs)]
 
 
 @tool()
-def prune_containers(filters: dict | None = None) -> dict:
+def prune_containers(filters: dict | None = None, host: str | None = None) -> dict:
     """
     Remove stopped containers.
 
     args: filters - Filters to apply to the prune operation
     returns: dict - Information on deleted containers and reclaimed space
     """
-    return _get_client().containers.prune(filters=filters)
+    return _get_client(host).containers.prune(filters=filters)
 
 
 @tool()
-def start_container(id_or_name: str) -> dict:
+def start_container(id_or_name: str, host: str | None = None) -> dict:
     """
     Start a container.
 
     args: id_or_name - The container id or name
     returns: dict - The container's attrs after start
     """
-    container = _get_client().containers.get(id_or_name)
+    container = _get_client(host).containers.get(id_or_name)
     container.start()
     container.reload()
     return container.attrs
 
 
 @tool()
-def stop_container(id_or_name: str, timeout: int = 10) -> dict:
+def stop_container(id_or_name: str, timeout: int = 10, host: str | None = None) -> dict:
     """
     Stop a container.
 
@@ -220,15 +224,15 @@ def stop_container(id_or_name: str, timeout: int = 10) -> dict:
         timeout - Seconds to wait before forcing termination
     returns: dict - The container's attrs after stop
     """
-    container = _get_client().containers.get(id_or_name)
-    guard_not_self(container)
+    container = _get_client(host).containers.get(id_or_name)
+    guard_not_self(container, host=host)
     container.stop(timeout=timeout)
     container.reload()
     return container.attrs
 
 
 @tool()
-def restart_container(id_or_name: str, timeout: int = 10) -> dict:
+def restart_container(id_or_name: str, timeout: int = 10, host: str | None = None) -> dict:
     """
     Restart a container.
 
@@ -237,15 +241,15 @@ def restart_container(id_or_name: str, timeout: int = 10) -> dict:
         timeout - Seconds to wait before forcing restart
     returns: dict - The container's attrs after restart
     """
-    container = _get_client().containers.get(id_or_name)
-    guard_not_self(container)
+    container = _get_client(host).containers.get(id_or_name)
+    guard_not_self(container, host=host)
     container.restart(timeout=timeout)
     container.reload()
     return container.attrs
 
 
 @tool()
-def kill_container(id_or_name: str, signal: str | None = None) -> dict:
+def kill_container(id_or_name: str, signal: str | None = None, host: str | None = None) -> dict:
     """
     Send a signal to a container.
 
@@ -254,44 +258,46 @@ def kill_container(id_or_name: str, signal: str | None = None) -> dict:
         signal - Signal to send (defaults to SIGKILL)
     returns: dict - The container's attrs after kill
     """
-    container = _get_client().containers.get(id_or_name)
-    guard_not_self(container)
+    container = _get_client(host).containers.get(id_or_name)
+    guard_not_self(container, host=host)
     container.kill(signal=signal)
     container.reload()
     return container.attrs
 
 
 @tool()
-def pause_container(id_or_name: str) -> dict:
+def pause_container(id_or_name: str, host: str | None = None) -> dict:
     """
     Pause all processes in a container.
 
     args: id_or_name - The container id or name
     returns: dict - The container's attrs after pause
     """
-    container = _get_client().containers.get(id_or_name)
-    guard_not_self(container)
+    container = _get_client(host).containers.get(id_or_name)
+    guard_not_self(container, host=host)
     container.pause()
     container.reload()
     return container.attrs
 
 
 @tool()
-def unpause_container(id_or_name: str) -> dict:
+def unpause_container(id_or_name: str, host: str | None = None) -> dict:
     """
     Resume all processes in a paused container.
 
     args: id_or_name - The container id or name
     returns: dict - The container's attrs after unpause
     """
-    container = _get_client().containers.get(id_or_name)
+    container = _get_client(host).containers.get(id_or_name)
     container.unpause()
     container.reload()
     return container.attrs
 
 
 @tool()
-def remove_container(id_or_name: str, v: bool = False, link: bool = False, force: bool = False) -> bool:
+def remove_container(
+    id_or_name: str, v: bool = False, link: bool = False, force: bool = False, host: str | None = None
+) -> bool:
     """
     Remove a container.
 
@@ -302,8 +308,8 @@ def remove_container(id_or_name: str, v: bool = False, link: bool = False, force
         force - Force remove a running container
     returns: bool - True after removal completes
     """
-    container = _get_client().containers.get(id_or_name)
-    guard_not_self(container)
+    container = _get_client(host).containers.get(id_or_name)
+    guard_not_self(container, host=host)
     container.remove(v=v, link=link, force=force)
     return True
 
@@ -317,6 +323,7 @@ def container_logs(
     tail: int | Literal["all"] = "all",
     since: float | None = None,
     until: float | None = None,
+    host: str | None = None,
 ) -> str:
     """
     Get the logs of a container.
@@ -331,7 +338,7 @@ def container_logs(
         until - Only return logs created before this unix timestamp
     returns: str - Decoded log output
     """
-    container = _get_client().containers.get(id_or_name)
+    container = _get_client(host).containers.get(id_or_name)
     output = container.logs(
         stdout=stdout,
         stderr=stderr,
@@ -355,6 +362,7 @@ def follow_container_logs(
     timestamps: bool = False,
     since: float | None = None,
     timeout_seconds: float = 30.0,
+    host: str | None = None,
 ) -> str:
     """
     Tail a container's log stream, bounded by `limit_lines`, `timeout_seconds`, or container exit.
@@ -377,7 +385,7 @@ def follow_container_logs(
         timeout_seconds - Max wall-clock seconds to follow before returning what was collected (default 30)
     returns: str - Decoded log output containing up to `limit_lines` lines
     """
-    container = _get_client().containers.get(id_or_name)
+    container = _get_client(host).containers.get(id_or_name)
     stream = container.logs(
         stdout=stdout,
         stderr=stderr,
@@ -405,14 +413,14 @@ def follow_container_logs(
 
 
 @tool()
-def container_stats(id_or_name: str) -> dict:
+def container_stats(id_or_name: str, host: str | None = None) -> dict:
     """
     Get a single resource usage stats snapshot for a container.
 
     args: id_or_name - The container id or name
     returns: dict - Decoded stats snapshot
     """
-    container = _get_client().containers.get(id_or_name)
+    container = _get_client(host).containers.get(id_or_name)
     # `decode` is only valid with stream=True; a one-shot stream=False read already returns a dict.
     return cast(dict, container.stats(stream=False))
 
@@ -423,9 +431,9 @@ def container_stats(id_or_name: str) -> dict:
 _LOG_TAIL_LINES = 200
 
 
-def _read_log_tail(id_or_name: str, tail: int = _LOG_TAIL_LINES) -> str:
+def _read_log_tail(id_or_name: str, tail: int = _LOG_TAIL_LINES, host: str | None = None) -> str:
     """Return a bounded, non-streaming tail of a container's combined stdout/stderr logs."""
-    container = _get_client().containers.get(id_or_name)
+    container = _get_client(host).containers.get(id_or_name)
     output = container.logs(stdout=True, stderr=True, stream=False, timestamps=False, tail=tail)
     if isinstance(output, bytes):
         return output.decode("utf-8", errors="replace")
@@ -485,7 +493,7 @@ def _summarize_stats(name: str | None, snapshot: dict) -> dict:
     }
 
 
-def _read_stats_summary(id_or_name: str) -> dict:
+def _read_stats_summary(id_or_name: str, host: str | None = None) -> dict:
     """
     Return a computed resource-usage summary for a running container.
 
@@ -493,7 +501,7 @@ def _read_stats_summary(id_or_name: str) -> dict:
     stopped container, so the `docker-stats://` resource surfaces a clean message instead of a raw
     daemon error.
     """
-    container = _get_client().containers.get(id_or_name)
+    container = _get_client(host).containers.get(id_or_name)
     container.reload()
     status = (container.attrs.get("State", {}) or {}).get("Status")
     if status != "running":
@@ -506,7 +514,7 @@ def _read_stats_summary(id_or_name: str) -> dict:
 
 
 @tool()
-def container_top(id_or_name: str, ps_args: str | None = None) -> dict:
+def container_top(id_or_name: str, ps_args: str | None = None, host: str | None = None) -> dict:
     """
     Show the running processes inside a container.
 
@@ -515,7 +523,7 @@ def container_top(id_or_name: str, ps_args: str | None = None) -> dict:
         ps_args - Arguments to pass to ps inside the container
     returns: dict - Output of the top command
     """
-    container = _get_client().containers.get(id_or_name)
+    container = _get_client(host).containers.get(id_or_name)
     return cast(dict, container.top(ps_args=ps_args))
 
 
@@ -533,6 +541,7 @@ def exec_in_container(
     environment: dict | list | None = None,
     workdir: str | None = None,
     demux: bool = False,
+    host: str | None = None,
 ) -> dict:
     """
     Run a command inside a running container.
@@ -556,7 +565,7 @@ def exec_in_container(
         demux - Return stdout and stderr separately
     returns: dict - Mapping with exit_code and output keys
     """
-    container = _get_client().containers.get(id_or_name)
+    container = _get_client(host).containers.get(id_or_name)
     result = container.exec_run(
         cmd,
         stdout=stdout,
@@ -588,6 +597,7 @@ def commit_container(
     pause: bool = True,
     changes: str | list | None = None,
     conf: dict | None = None,
+    host: str | None = None,
 ) -> dict:
     """
     Commit a container to an image.
@@ -603,7 +613,7 @@ def commit_container(
         conf - Configuration overrides
     returns: dict - The new image's attrs
     """
-    container = _get_client().containers.get(id_or_name)
+    container = _get_client(host).containers.get(id_or_name)
     image = container.commit(
         repository=repository,
         tag=tag,
@@ -617,19 +627,19 @@ def commit_container(
 
 
 @tool()
-def container_diff(id_or_name: str) -> list:
+def container_diff(id_or_name: str, host: str | None = None) -> list:
     """
     Inspect changes on a container's filesystem.
 
     args: id_or_name - The container id or name
     returns: list - Filesystem changes since the image was created
     """
-    container = _get_client().containers.get(id_or_name)
+    container = _get_client(host).containers.get(id_or_name)
     return container.diff()
 
 
 @tool()
-def rename_container(id_or_name: str, name: str) -> dict:
+def rename_container(id_or_name: str, name: str, host: str | None = None) -> dict:
     """
     Rename a container.
 
@@ -638,14 +648,14 @@ def rename_container(id_or_name: str, name: str) -> dict:
         name - The new name
     returns: dict - The container's attrs after rename
     """
-    container = _get_client().containers.get(id_or_name)
+    container = _get_client(host).containers.get(id_or_name)
     container.rename(name)
     container.reload()
     return container.attrs
 
 
 @tool()
-def resize_container(id_or_name: str, height: int, width: int) -> bool:
+def resize_container(id_or_name: str, height: int, width: int, host: str | None = None) -> bool:
     """
     Resize the tty session of a container.
 
@@ -655,13 +665,13 @@ def resize_container(id_or_name: str, height: int, width: int) -> bool:
         width - New tty width in characters
     returns: bool - True after the resize completes
     """
-    container = _get_client().containers.get(id_or_name)
+    container = _get_client(host).containers.get(id_or_name)
     container.resize(height, width)
     return True
 
 
 @tool()
-def update_container(id_or_name: str, updates: dict) -> dict:
+def update_container(id_or_name: str, updates: dict, host: str | None = None) -> dict:
     """
     Update resource limits on a running container.
 
@@ -670,7 +680,7 @@ def update_container(id_or_name: str, updates: dict) -> dict:
         updates - Resource fields to update (cpu_shares, mem_limit, restart_policy, etc.)
     returns: dict - The container's attrs after the update
     """
-    container = _get_client().containers.get(id_or_name)
+    container = _get_client(host).containers.get(id_or_name)
     container.update(**updates)
     container.reload()
     return container.attrs
@@ -681,6 +691,7 @@ def wait_container(
     id_or_name: str,
     timeout: int | None = 600,
     condition: Literal["not-running", "next-exit", "removed"] = "not-running",
+    host: str | None = None,
 ) -> dict:
     """
     Block until a container stops, then return its exit info.
@@ -696,7 +707,7 @@ def wait_container(
         condition - State to wait for: "not-running" (default), "next-exit", or "removed"
     returns: dict - The wait result with StatusCode and Error keys
     """
-    container = _get_client().containers.get(id_or_name)
+    container = _get_client(host).containers.get(id_or_name)
     try:
         return cast(dict, container.wait(timeout=timeout, condition=condition))
     except requests.exceptions.ReadTimeout as exc:
@@ -726,6 +737,7 @@ def wait_for_container_healthy(
     id_or_name: str,
     timeout: float = 120.0,
     poll_interval: float = 2.0,
+    host: str | None = None,
 ) -> dict:
     """
     Poll a container until its healthcheck reports `healthy` (or it stops, or the timeout elapses).
@@ -749,7 +761,7 @@ def wait_for_container_healthy(
     """
     if poll_interval <= 0:
         raise ValueError(f"poll_interval must be > 0, got {poll_interval}.")
-    container = _get_client().containers.get(id_or_name)
+    container = _get_client(host).containers.get(id_or_name)
     start = time.monotonic()
     deadline = start + timeout
     while True:
@@ -777,7 +789,7 @@ def wait_for_container_healthy(
 
 
 @tool()
-def export_container(id_or_name: str, max_bytes: int = MAX_PAYLOAD_BYTES) -> bytes:
+def export_container(id_or_name: str, max_bytes: int = MAX_PAYLOAD_BYTES, host: str | None = None) -> bytes:
     """
     Export a container's filesystem as a tar archive, returned in band.
 
@@ -789,12 +801,12 @@ def export_container(id_or_name: str, max_bytes: int = MAX_PAYLOAD_BYTES) -> byt
         max_bytes - Abort with ValueError if the export exceeds this many bytes (defaults to 32 MiB)
     returns: bytes - The tar archive contents
     """
-    container = _get_client().containers.get(id_or_name)
+    container = _get_client(host).containers.get(id_or_name)
     return join_bounded(cast(Iterable[bytes], container.export()), max_bytes, f"export of {id_or_name}")
 
 
 @tool()
-def export_container_to_file(id_or_name: str, dest_path: str, overwrite: bool = False) -> dict:
+def export_container_to_file(id_or_name: str, dest_path: str, overwrite: bool = False, host: str | None = None) -> dict:
     """
     Export a container's filesystem as a tar archive written to a file on the server host.
 
@@ -807,13 +819,15 @@ def export_container_to_file(id_or_name: str, dest_path: str, overwrite: bool = 
         overwrite - Replace dest_path if it already exists (default False)
     returns: dict - {"path": <resolved path>, "bytes_written": int}
     """
-    container = _get_client().containers.get(id_or_name)
+    container = _get_client(host).containers.get(id_or_name)
     path, written = stream_to_file(cast(Iterable[bytes], container.export()), dest_path, overwrite=overwrite)
     return {"path": str(path), "bytes_written": written}
 
 
 @tool()
-def get_container_archive(id_or_name: str, path: str, max_bytes: int = MAX_PAYLOAD_BYTES) -> dict:
+def get_container_archive(
+    id_or_name: str, path: str, max_bytes: int = MAX_PAYLOAD_BYTES, host: str | None = None
+) -> dict:
     """
     Retrieve a file or directory from a container as a tar archive, returned in band.
 
@@ -826,13 +840,15 @@ def get_container_archive(id_or_name: str, path: str, max_bytes: int = MAX_PAYLO
         max_bytes - Abort with ValueError if the archive exceeds this many bytes (defaults to 32 MiB)
     returns: dict - Mapping with archive (bytes) and stat (dict) keys
     """
-    container = _get_client().containers.get(id_or_name)
+    container = _get_client(host).containers.get(id_or_name)
     stream, stat = container.get_archive(path)
     return {"archive": join_bounded(stream, max_bytes, f"archive of {id_or_name}:{path}"), "stat": stat}
 
 
 @tool()
-def get_container_archive_to_file(id_or_name: str, path: str, dest_path: str, overwrite: bool = False) -> dict:
+def get_container_archive_to_file(
+    id_or_name: str, path: str, dest_path: str, overwrite: bool = False, host: str | None = None
+) -> dict:
     """
     Retrieve a file or directory from a container as a tar archive written to a file on the server host.
 
@@ -846,14 +862,14 @@ def get_container_archive_to_file(id_or_name: str, path: str, dest_path: str, ov
         overwrite - Replace dest_path if it already exists (default False)
     returns: dict - {"path": <resolved path>, "bytes_written": int, "stat": dict}
     """
-    container = _get_client().containers.get(id_or_name)
+    container = _get_client(host).containers.get(id_or_name)
     stream, stat = container.get_archive(path)
     written_path, written = stream_to_file(stream, dest_path, overwrite=overwrite)
     return {"path": str(written_path), "bytes_written": written, "stat": stat}
 
 
 @tool()
-def put_container_archive(id_or_name: str, path: str, data: bytes) -> bool:
+def put_container_archive(id_or_name: str, path: str, data: bytes, host: str | None = None) -> bool:
     """
     Upload a tar archive to a path inside a container.
 
@@ -866,12 +882,12 @@ def put_container_archive(id_or_name: str, path: str, data: bytes) -> bool:
         data - Tar archive bytes
     returns: bool - True if the upload succeeded
     """
-    container = _get_client().containers.get(id_or_name)
+    container = _get_client(host).containers.get(id_or_name)
     return container.put_archive(path, data)
 
 
 @tool()
-def put_container_archive_from_file(id_or_name: str, path: str, file_path: str) -> bool:
+def put_container_archive_from_file(id_or_name: str, path: str, file_path: str, host: str | None = None) -> bool:
     """
     Upload a tar archive from a file on the server host to a path inside a container.
 
@@ -884,7 +900,7 @@ def put_container_archive_from_file(id_or_name: str, path: str, file_path: str) 
         file_path - Path on the server host to the tar archive to upload
     returns: bool - True if the upload succeeded
     """
-    container = _get_client().containers.get(id_or_name)
+    container = _get_client(host).containers.get(id_or_name)
     source = host_read_path(file_path)
     with source.open("rb") as handle:
         return container.put_archive(path, handle)

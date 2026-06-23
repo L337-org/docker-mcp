@@ -5,18 +5,18 @@ from docker_mcp.tools.client import _get_client
 
 
 @tool()
-def get_plugin(name: str) -> dict:
+def get_plugin(name: str, host: str | None = None) -> dict:
     """
     Get an installed plugin by name.
 
     args: name - The plugin name
     returns: dict - The plugin's attrs
     """
-    return _get_client().plugins.get(name).attrs
+    return _get_client(host).plugins.get(name).attrs
 
 
 @tool()
-def install_plugin(remote_name: str, local_name: str | None = None) -> dict:
+def install_plugin(remote_name: str, local_name: str | None = None, host: str | None = None) -> dict:
     """
     Install a plugin from a remote reference.
 
@@ -25,21 +25,21 @@ def install_plugin(remote_name: str, local_name: str | None = None) -> dict:
         local_name - Optional local name for the plugin
     returns: dict - The installed plugin's attrs
     """
-    return _get_client().plugins.install(remote_name, local_name=local_name).attrs
+    return _get_client(host).plugins.install(remote_name, local_name=local_name).attrs
 
 
 @tool()
-def list_plugins() -> list:
+def list_plugins(host: str | None = None) -> list:
     """
     List installed plugins.
 
     returns: list - A list of plugin attrs dicts
     """
-    return [p.attrs for p in _get_client().plugins.list()]
+    return [p.attrs for p in _get_client(host).plugins.list()]
 
 
 @tool()
-def configure_plugin(name: str, options: dict) -> bool:
+def configure_plugin(name: str, options: dict, host: str | None = None) -> bool:
     """
     Configure a plugin's settings.
 
@@ -48,12 +48,12 @@ def configure_plugin(name: str, options: dict) -> bool:
         options - Key/value plugin settings
     returns: bool - True after configuration
     """
-    _get_client().plugins.get(name).configure(options)
+    _get_client(host).plugins.get(name).configure(options)
     return True
 
 
 @tool()
-def disable_plugin(name: str, force: bool = False) -> bool:
+def disable_plugin(name: str, force: bool = False, host: str | None = None) -> bool:
     """
     Disable a plugin.
 
@@ -62,12 +62,12 @@ def disable_plugin(name: str, force: bool = False) -> bool:
         force - Force disable
     returns: bool - True after the plugin is disabled
     """
-    _get_client().plugins.get(name).disable(force=force)
+    _get_client(host).plugins.get(name).disable(force=force)
     return True
 
 
 @tool()
-def enable_plugin(name: str, timeout: int = 0) -> bool:
+def enable_plugin(name: str, timeout: int = 0, host: str | None = None) -> bool:
     """
     Enable a plugin.
 
@@ -76,23 +76,23 @@ def enable_plugin(name: str, timeout: int = 0) -> bool:
         timeout - Timeout in seconds (0 means no timeout)
     returns: bool - True after the plugin is enabled
     """
-    _get_client().plugins.get(name).enable(timeout=timeout)
+    _get_client(host).plugins.get(name).enable(timeout=timeout)
     return True
 
 
 @tool()
-def push_plugin(name: str) -> dict:
+def push_plugin(name: str, host: str | None = None) -> dict:
     """
     Push a plugin to a remote registry.
 
     args: name - The plugin name
     returns: dict - Push status returned by the daemon
     """
-    return _get_client().plugins.get(name).push()
+    return _get_client(host).plugins.get(name).push()
 
 
 @tool()
-def remove_plugin(name: str, force: bool = False) -> bool:
+def remove_plugin(name: str, force: bool = False, host: str | None = None) -> bool:
     """
     Remove a plugin.
 
@@ -101,12 +101,12 @@ def remove_plugin(name: str, force: bool = False) -> bool:
         force - Force removal even if the plugin is enabled
     returns: bool - True after removal
     """
-    _get_client().plugins.get(name).remove(force=force)
+    _get_client(host).plugins.get(name).remove(force=force)
     return True
 
 
 @tool()
-def upgrade_plugin(name: str, remote: str | None = None) -> bool:
+def upgrade_plugin(name: str, remote: str | None = None, host: str | None = None) -> bool:
     """
     Upgrade a plugin.
 
@@ -115,7 +115,7 @@ def upgrade_plugin(name: str, remote: str | None = None) -> bool:
         remote - Remote reference to upgrade from (defaults to current name)
     returns: bool - True after the upgrade completes
     """
-    plugin = _get_client().plugins.get(name)
+    plugin = _get_client(host).plugins.get(name)
     if remote is None:
         plugin.upgrade()
     else:

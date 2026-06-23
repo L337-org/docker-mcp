@@ -1,9 +1,15 @@
 import json
+import os
+import subprocess
+import sys
 from unittest.mock import MagicMock, patch
 
 import httpx
 import pytest
 
+import docker_mcp  # noqa: F401 — side-effect import: docker_mcp/__init__ runs _hosts.load() to pin the registry
+import docker_mcp._hosts as _hosts_mod
+from docker_mcp._hosts import parse_registry
 from docker_mcp.server import TOOL_CATEGORIES
 from docker_mcp.tools.resources import (
     DOCKER_DOCS_BASE_URL,
@@ -12,9 +18,13 @@ from docker_mcp.tools.resources import (
     get_container_logs_resource,
     get_container_stats_resource,
     get_docs_section,
+    get_host_container_logs_resource,
+    get_host_container_stats_resource,
+    get_hosts_resource,
     get_tool_catalog,
     list_container_resources,
     list_docs_sections,
+    list_host_container_resources,
 )
 
 
@@ -83,6 +93,14 @@ def test_get_tool_catalog_returns_json_covering_every_tool():
     assert {t["name"] for t in payload["tools"]} == set(TOOL_CATEGORIES)
     assert "DOCKER_MCP_SERVER_DISABLE" in payload["switches"]
     assert payload["domains"]  # per-domain summary is populated
+
+
+def test_get_hosts_resource_returns_the_configured_hosts():
+    # Default test env (no DOCKER_MCP_SERVER_HOSTS) -> a single synthesized default host.
+    payload = json.loads(get_hosts_resource())
+    assert isinstance(payload, list) and len(payload) == 1
+    assert payload[0]["default"] is True
+    assert set(payload[0]) == {"name", "url", "read_only", "tls", "default"}
 
 
 # ---------- DOCKER_MCP_SERVER_DISABLE also hides a disabled domain's doc sections ----------
@@ -176,3 +194,76 @@ def test_container_resources_refused_when_containers_domain_disabled(monkeypatch
     ):
         with pytest.raises(ValueError, match="disabled via DOCKER_MCP_SERVER_DISABLE"):
             call()
+
+
+# ---------- slice 5: host-qualified container resource URIs ----------
+
+
+def _set_multi(monkeypatch):
+    monkeypatch.setattr(_hosts_mod, "_registry", parse_registry("local=unix:///l.sock, prod=tcp://p:2376"))
+
+
+def test_default_index_emits_empty_authority_children_in_multi_host(monkeypatch):
+    _set_multi(monkeypatch)
+    running = _container("web", "abc123", "running", "nginx")
+    with patch("docker_mcp.tools.resources._get_client") as mock_client:
+        mock_client.return_value.containers.list.return_value = [running]
+        web = json.loads(list_container_resources())["containers"][0]
+    assert web["logs"] == "docker-logs:///web"  # empty authority = default host
+    assert web["stats"] == "docker-stats:///web"
+
+
+def test_host_index_emits_host_qualified_children_and_routes(monkeypatch):
+    _set_multi(monkeypatch)
+    running = _container("web", "abc123", "running", "nginx")
+    with patch("docker_mcp.tools.resources._get_client") as mock_client:
+        mock_client.return_value.containers.list.return_value = [running]
+        web = json.loads(list_host_container_resources("prod"))["containers"][0]
+    assert web["logs"] == "docker-logs://prod/web"
+    assert web["stats"] == "docker-stats://prod/web"
+    mock_client.assert_called_once_with("prod")  # index routed to the named host
+
+
+def test_host_logs_resource_routes_to_host():
+    with patch("docker_mcp.tools.resources._read_log_tail", return_value="L1\nL2") as mock_read:
+        assert get_host_container_logs_resource("prod", "web") == "L1\nL2"
+    mock_read.assert_called_once_with("web", host="prod")
+
+
+def test_host_stats_resource_routes_to_host():
+    with patch("docker_mcp.tools.resources._read_stats_summary", return_value={"container": "web"}) as mock_read:
+        assert json.loads(get_host_container_stats_resource("prod", "web")) == {"container": "web"}
+    mock_read.assert_called_once_with("web", host="prod")
+
+
+def _registered_resource_uris(hosts_value: str | None) -> set[str]:
+    """Import the package in a child process; return the registered static + template resource URIs."""
+    env = dict(os.environ)
+    env.pop("DOCKER_MCP_SERVER_HOSTS", None)
+    if hosts_value:
+        env["DOCKER_MCP_SERVER_HOSTS"] = hosts_value
+    code = (
+        "import asyncio, docker_mcp; from docker_mcp.server import mcp; "
+        "u=[str(r.uri) for r in asyncio.run(mcp.list_resources())]"
+        "+[t.uriTemplate for t in asyncio.run(mcp.list_resource_templates())]; "
+        "print('\\n'.join(u))"
+    )
+    out = subprocess.run(  # noqa: S603 — fixed argv, sys.executable, no shell
+        [sys.executable, "-c", code], capture_output=True, text=True, env=env, check=True
+    ).stdout
+    return {line for line in out.splitlines() if line}
+
+
+def test_single_host_registers_bare_container_uris_end_to_end():
+    uris = _registered_resource_uris(None)
+    assert "docker://containers" in uris
+    assert "docker-logs://{id_or_name}" in uris
+    assert not any("{host}" in u for u in uris)  # no host-qualified variants single-host
+
+
+def test_multi_host_registers_empty_authority_and_host_qualified_uris_end_to_end():
+    uris = _registered_resource_uris("local=ssh://a, prod=ssh://b")
+    assert {"docker:///containers", "docker://{host}/containers"} <= uris
+    assert {"docker-logs:///{id_or_name}", "docker-logs://{host}/{id_or_name}"} <= uris
+    assert {"docker-stats:///{id_or_name}", "docker-stats://{host}/{id_or_name}"} <= uris
+    assert "docker://containers" not in uris  # bare form replaced by empty-authority in multi-host

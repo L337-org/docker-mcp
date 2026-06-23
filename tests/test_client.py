@@ -1,7 +1,4 @@
-import hashlib
-import json
 import os
-import sys
 import threading
 import types
 from typing import Any
@@ -10,8 +7,15 @@ from unittest.mock import MagicMock, patch
 import pytest
 from docker.errors import DockerException
 
+import docker_mcp._hosts as _hosts_mod
 import docker_mcp.tools.client as client_module
+from docker_mcp._hosts import Host, parse_registry
 from docker_mcp.tools.client import _get_client, close, df, events, info, login, logout, ping, reconnect, version
+
+
+def _set_multi(monkeypatch, spec="local=unix:///local.sock, prod=tcp://prod:2376"):
+    """Pin a deterministic 2-host registry (explicit URLs, no auto/local resolution) → multi-host mode."""
+    monkeypatch.setattr(_hosts_mod, "_registry", parse_registry(spec))
 
 
 class _BlockingStream:
@@ -150,66 +154,53 @@ def test_events_returns_on_timeout_when_stream_is_quiet():
 
 
 def test_get_client_wraps_daemon_unreachable():
-    client_module._client = None
+    client_module._clients.clear()
     with patch("docker_mcp.tools.client._build_default_client", side_effect=DockerException("connection refused")):
         with pytest.raises(RuntimeError, match="Cannot reach the Docker daemon"):
             _get_client()
-    client_module._client = None
+    client_module._clients.clear()
 
 
-def test_close_resets_cached_client():
+def test_close_drops_all_pooled_clients():
     fake_client = MagicMock()
-    client_module._client = fake_client
+    client_module._clients["default"] = fake_client
     assert close() is True
     fake_client.close.assert_called_once()
-    assert client_module._client is None
+    assert client_module._clients == {}
 
 
-def test_close_when_no_cached_client():
-    client_module._client = None
+def test_close_when_pool_empty():
+    client_module._clients.clear()
     assert close() is True
-    assert client_module._client is None
+    assert client_module._clients == {}
 
 
-def test_reconnect_with_explicit_host_swaps_and_closes_old():
+def test_reconnect_rebuilds_default_from_pinned_endpoint():
     old_client = MagicMock()
     new_client = MagicMock()
-    new_client.version.return_value = {"Version": "25.0.0"}
-    client_module._client = old_client
-    with patch("docker_mcp.tools.client.docker.DockerClient", return_value=new_client) as ctor:
-        result = reconnect(docker_host="tcp://10.0.0.5:2376")
-    ctor.assert_called_once_with(base_url="tcp://10.0.0.5:2376")
-    assert result == {"Version": "25.0.0"}
-    assert client_module._client is new_client
-    old_client.close.assert_called_once()  # the previous client is torn down after the swap
-    client_module._client = None
-
-
-def test_reconnect_without_host_rebuilds_from_default():
-    new_client = MagicMock()
     new_client.version.return_value = {"Version": "26.0.0"}
-    client_module._client = None
-    with patch("docker_mcp.tools.client._build_default_client", return_value=new_client) as build:
+    client_module._clients["default"] = old_client
+    with patch("docker_mcp.tools.client._build_default_client", return_value=new_client):
         result = reconnect()
-    build.assert_called_once_with()
     assert result == {"Version": "26.0.0"}
-    assert client_module._client is new_client
-    client_module._client = None
+    assert client_module._clients["default"] is new_client
+    old_client.close.assert_called_once()  # previous client torn down after the swap
+    client_module._clients.clear()
 
 
-def test_reconnect_keeps_old_client_when_new_endpoint_unreachable():
+def test_reconnect_keeps_old_client_when_rebuild_unreachable():
     old_client = MagicMock()
     new_client = MagicMock()
     new_client.version.side_effect = DockerException("connection refused")
-    client_module._client = old_client
-    with patch("docker_mcp.tools.client.docker.DockerClient", return_value=new_client):
+    client_module._clients["default"] = old_client
+    with patch("docker_mcp.tools.client._build_default_client", return_value=new_client):
         with pytest.raises(RuntimeError, match="daemon is unreachable"):
-            reconnect(docker_host="tcp://unreachable:2376")
-    # The working client must survive a failed reconnect, and the half-built one is closed.
-    assert client_module._client is old_client
+            reconnect()
+    # The working client must survive a failed rebuild, and the half-built one is closed.
+    assert client_module._clients["default"] is old_client
     new_client.close.assert_called_once()
     old_client.close.assert_not_called()
-    client_module._client = None
+    client_module._clients.clear()
 
 
 def test_events_returns_collected_when_stream_close_raises():
@@ -298,13 +289,60 @@ def test_detect_self_container_id_none_when_lookup_fails(monkeypatch):
     assert client_module._detect_self_container_id(mock_client) is None
 
 
+def test_detect_self_container_id_reads_etc_hostname_when_env_unset(monkeypatch):
+    # HOSTNAME unset (e.g. --hostname not exported): fall back to /etc/hostname.
+    monkeypatch.delenv("HOSTNAME", raising=False)
+    fake_path = MagicMock()
+    fake_path.read_text.return_value = "cafef00d5678\n"
+    mock_client = MagicMock()
+    mock_client.containers.get.return_value = types.SimpleNamespace(id="cafef00d5678fullid")
+    with patch.object(client_module, "Path", return_value=fake_path):
+        assert client_module._detect_self_container_id(mock_client) == "cafef00d5678fullid"
+    mock_client.containers.get.assert_called_once_with("cafef00d5678")
+
+
+def test_detect_self_container_id_none_when_no_hostname_anywhere(monkeypatch):
+    monkeypatch.delenv("HOSTNAME", raising=False)
+    fake_path = MagicMock()
+    fake_path.read_text.side_effect = OSError("no /etc/hostname")
+    with patch.object(client_module, "Path", return_value=fake_path):
+        assert client_module._detect_self_container_id(MagicMock()) is None
+
+
+# ---------- _self_host / _host_tag / _close_client_quietly ----------
+
+
+def test_self_host_picks_first_local_transport(monkeypatch):
+    _set_multi(monkeypatch, "prod=tcp://prod:2376, local=unix:///var/run/docker.sock")
+    self_host = client_module._self_host()
+    assert self_host is not None and self_host.label == "local"  # skips the remote tcp:// host
+
+
+def test_self_host_none_when_all_remote(monkeypatch):
+    _set_multi(monkeypatch, "a=tcp://a:2376, b=ssh://b")
+    assert client_module._self_host() is None
+
+
+def test_host_tag_annotates_ro_and_remote():
+    assert client_module._host_tag(Host(label="prod", url="tcp://prod:2376", read_only=True)) == "prod (ro, remote)"
+    assert client_module._host_tag(Host(label="local", url="unix:///var/run/docker.sock")) == "local"
+    assert client_module._host_tag(Host(label="def", url=None)) == "def"  # platform default counts as local
+
+
+def test_close_client_quietly_swallows_close_errors():
+    client = MagicMock()
+    client.close.side_effect = RuntimeError("already broken")
+    client_module._close_client_quietly(client)  # must not raise
+    client.close.assert_called_once()
+
+
 # ---------- startup_preflight ----------
 
 
 def test_startup_preflight_unreachable_prints_help_and_does_not_raise(monkeypatch, capsys):
     monkeypatch.setattr(client_module, "_self_container_id", None)
     monkeypatch.setattr(client_module, "in_container", lambda: False)
-    monkeypatch.setattr(client_module, "_get_client", lambda: (_ for _ in ()).throw(RuntimeError("no daemon")))
+    monkeypatch.setattr(client_module, "_get_client", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no daemon")))
     client_module.startup_preflight()  # must not raise
     err = capsys.readouterr().err
     assert "cannot reach the Docker daemon" in err
@@ -314,7 +352,7 @@ def test_startup_preflight_unreachable_prints_help_and_does_not_raise(monkeypatc
 def test_startup_preflight_in_container_help_is_os_aware(monkeypatch, capsys):
     monkeypatch.setattr(client_module, "in_container", lambda: True)
     monkeypatch.setattr(client_module, "classify_host_kernel", lambda: "docker-desktop")
-    monkeypatch.setattr(client_module, "_get_client", lambda: (_ for _ in ()).throw(RuntimeError("no daemon")))
+    monkeypatch.setattr(client_module, "_get_client", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no daemon")))
     client_module.startup_preflight()
     err = capsys.readouterr().err
     assert "Docker Desktop (macOS)" in err
@@ -327,15 +365,18 @@ def test_startup_preflight_success_on_host_pins_nothing(monkeypatch, capsys):
     mock_client = MagicMock()
     mock_client.ping.return_value = True
     mock_client.info.return_value = {"OperatingSystem": "Ubuntu 22.04", "SecurityOptions": []}
-    monkeypatch.setattr(client_module, "_get_client", lambda: mock_client)
+    monkeypatch.setattr(client_module, "_get_client", lambda *a, **k: mock_client)
     client_module.startup_preflight()
     assert client_module._self_container_id is None
-    assert "connected to Docker daemon — Ubuntu 22.04" in capsys.readouterr().err
+    assert "connected to default host 'default' — Ubuntu 22.04" in capsys.readouterr().err
 
 
 def test_startup_preflight_success_in_container_pins_self(monkeypatch, capsys):
     monkeypatch.setattr(client_module, "_self_container_id", None)
+    monkeypatch.setattr(client_module, "_self_host_label", None)
     monkeypatch.setattr(client_module, "in_container", lambda: True)
+    # Self-id is detected against the self host (first local-transport entry), pinned deterministically here.
+    monkeypatch.setattr(client_module, "_self_host", lambda: Host("default", "unix:///var/run/docker.sock"))
     monkeypatch.setenv("HOSTNAME", "cafe1234")
     mock_client = MagicMock()
     mock_client.ping.return_value = True
@@ -344,17 +385,17 @@ def test_startup_preflight_success_in_container_pins_self(monkeypatch, capsys):
         "OperatingSystem": "Docker Desktop",
         "SecurityOptions": ["name=seccomp", "name=rootless"],
     }
-    monkeypatch.setattr(client_module, "_get_client", lambda: mock_client)
+    monkeypatch.setattr(client_module, "_get_client", lambda *a, **k: mock_client)
     client_module.startup_preflight()
     assert client_module._self_container_id == "cafe1234fullid"
+    assert client_module._self_host_label == "default"
     err = capsys.readouterr().err
     assert "(rootless)" in err
     assert "self-termination guard active" in err
 
 
-def test_connection_help_ssh_endpoint_gives_ssh_specific_hints(monkeypatch):
-    monkeypatch.setenv("DOCKER_HOST", "ssh://user@remote")
-    help_text = client_module._connection_help(RuntimeError("boom"))
+def test_connection_help_ssh_endpoint_gives_ssh_specific_hints():
+    help_text = client_module._connection_help(RuntimeError("boom"), Host("prod", "ssh://user@remote"))
     assert "ssh://" in help_text
     # The ssh branch must call out the paramiko-specific gotchas, not socket-mount advice.
     assert "known_hosts" in help_text
@@ -366,10 +407,9 @@ def test_connection_help_ssh_endpoint_gives_ssh_specific_hints(monkeypatch):
 def test_connection_help_non_ssh_endpoint_keeps_socket_guidance(monkeypatch):
     # Exercise the in-container branch so the socket-mount guidance is actually emitted — a non-ssh
     # endpoint must get the docker.sock hints, not the ssh-specific ones.
-    monkeypatch.setenv("DOCKER_HOST", "unix:///var/run/docker.sock")
     monkeypatch.setattr(client_module, "in_container", lambda: True)
     monkeypatch.setattr(client_module, "classify_host_kernel", lambda: "linux")
-    help_text = client_module._connection_help(RuntimeError("boom"))
+    help_text = client_module._connection_help(RuntimeError("boom"), Host("local", "unix:///var/run/docker.sock"))
     assert "docker.sock" in help_text
     assert "known_hosts" not in help_text
 
@@ -379,131 +419,15 @@ def test_paramiko_is_available_for_ssh_transport():
     import paramiko  # noqa: F401
 
 
-# --- default-daemon resolution when DOCKER_HOST is unset -------------------------------------------
-# docker-py's from_env() ignores Docker CLI contexts and falls back to the classic unix socket, which
-# Docker Desktop 4.13+ no longer creates by default. _resolve_default_base_url() closes that gap by
-# following the active context (like the docker CLI) and then probing known socket locations.
-
-
-def test_scrub_unresolved_env_removes_placeholders(monkeypatch):
-    # An MCP host that leaves an optional config field blank can pass the literal placeholder.
-    monkeypatch.setenv("DOCKER_HOST", "${user_config.docker_host}")
-    monkeypatch.setenv("DOCKER_MCP_SERVER_DISABLE", "${user_config.disable_domains}")
-    client_module._scrub_unresolved_env()
-    assert "DOCKER_HOST" not in os.environ
-    assert "DOCKER_MCP_SERVER_DISABLE" not in os.environ
-
-
-def test_scrub_unresolved_env_keeps_real_values(monkeypatch):
-    monkeypatch.setenv("DOCKER_HOST", "tcp://10.0.0.5:2375")
-    monkeypatch.setenv("DOCKER_MCP_SERVER_READONLY", "true")
-    client_module._scrub_unresolved_env()
-    assert os.environ["DOCKER_HOST"] == "tcp://10.0.0.5:2375"
-    assert os.environ["DOCKER_MCP_SERVER_READONLY"] == "true"
-
-
-def test_scrub_unresolved_env_keeps_partial_template(monkeypatch):
-    # Only a whole-value ${...} token is scrubbed; a value that merely contains braces is left alone.
-    monkeypatch.setenv("SOME_VAR", "before ${x} after")
-    client_module._scrub_unresolved_env()
-    assert os.environ["SOME_VAR"] == "before ${x} after"
-
-
 def test_startup_preflight_scrubs_unresolved_docker_host(monkeypatch):
     monkeypatch.setenv("DOCKER_HOST", "${user_config.docker_host}")
     monkeypatch.setattr(client_module, "in_container", lambda: False)
     mock_client = MagicMock()
     mock_client.ping.return_value = True
     mock_client.info.return_value = {"OperatingSystem": "Ubuntu 22.04", "SecurityOptions": []}
-    monkeypatch.setattr(client_module, "_get_client", lambda: mock_client)
+    monkeypatch.setattr(client_module, "_get_client", lambda *a, **k: mock_client)
     client_module.startup_preflight()
     assert "DOCKER_HOST" not in os.environ  # cleared before the daemon connection is attempted
-
-
-def test_active_context_name_prefers_env(monkeypatch):
-    monkeypatch.setenv("DOCKER_CONTEXT", "colima")
-    assert client_module._active_context_name() == "colima"
-
-
-def test_active_context_name_reads_current_context(monkeypatch, tmp_path):
-    monkeypatch.delenv("DOCKER_CONTEXT", raising=False)
-    monkeypatch.setenv("DOCKER_CONFIG", str(tmp_path))
-    (tmp_path / "config.json").write_text(json.dumps({"currentContext": "desktop-linux"}), encoding="utf-8")
-    assert client_module._active_context_name() == "desktop-linux"
-
-
-def test_active_context_name_none_when_no_config(monkeypatch, tmp_path):
-    monkeypatch.delenv("DOCKER_CONTEXT", raising=False)
-    monkeypatch.setenv("DOCKER_CONFIG", str(tmp_path))  # empty dir, no config.json
-    assert client_module._active_context_name() is None
-
-
-def test_context_host_reads_meta_json(monkeypatch, tmp_path):
-    monkeypatch.setenv("DOCKER_CONFIG", str(tmp_path))
-    name = "desktop-linux"
-    digest = hashlib.sha256(name.encode("utf-8")).hexdigest()
-    meta_dir = tmp_path / "contexts" / "meta" / digest
-    meta_dir.mkdir(parents=True)
-    host = "unix:///Users/gavin/.docker/run/docker.sock"
-    (meta_dir / "meta.json").write_text(
-        json.dumps({"Name": name, "Endpoints": {"docker": {"Host": host}}}), encoding="utf-8"
-    )
-    assert client_module._context_host(name) == host
-
-
-def test_context_host_none_when_meta_missing(monkeypatch, tmp_path):
-    monkeypatch.setenv("DOCKER_CONFIG", str(tmp_path))
-    assert client_module._context_host("nonexistent") is None
-
-
-def test_resolve_default_base_url_follows_context():
-    with (
-        patch("docker_mcp.tools.client._active_context_name", return_value="desktop-linux"),
-        patch("docker_mcp.tools.client._context_host", return_value="unix:///home/u/.docker/run/docker.sock") as ch,
-        patch("docker_mcp.tools.client._probe_default_socket") as probe,
-    ):
-        assert client_module._resolve_default_base_url() == "unix:///home/u/.docker/run/docker.sock"
-    ch.assert_called_once_with("desktop-linux")
-    probe.assert_not_called()  # a resolved context short-circuits the probe
-
-
-def test_resolve_default_base_url_skips_default_context_and_probes():
-    with (
-        patch("docker_mcp.tools.client._active_context_name", return_value="default"),
-        patch("docker_mcp.tools.client._context_host") as ch,
-        patch("docker_mcp.tools.client._probe_default_socket", return_value="unix:///var/run/docker.sock"),
-    ):
-        assert client_module._resolve_default_base_url() == "unix:///var/run/docker.sock"
-    ch.assert_not_called()  # the "default" context means the classic socket — no meta.json to read
-
-
-def test_resolve_default_base_url_probes_when_context_has_no_host():
-    with (
-        patch("docker_mcp.tools.client._active_context_name", return_value="broken"),
-        patch("docker_mcp.tools.client._context_host", return_value=None),
-        patch("docker_mcp.tools.client._probe_default_socket", return_value="unix:///run/user/1000/docker.sock"),
-    ):
-        assert client_module._resolve_default_base_url() == "unix:///run/user/1000/docker.sock"
-
-
-@pytest.mark.skipif(sys.platform == "win32", reason="socket probe is POSIX-only; Windows uses npipe via from_env()")
-def test_probe_default_socket_returns_first_existing(monkeypatch):
-    monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
-    # Only /var/run/docker.sock "exists"; the home-dir candidates ahead of it do not.
-    monkeypatch.setattr(client_module.Path, "is_socket", lambda self: str(self) == "/var/run/docker.sock")
-    assert client_module._probe_default_socket() == "unix:///var/run/docker.sock"
-
-
-def test_probe_default_socket_none_on_windows(monkeypatch):
-    # The probe short-circuits on Windows — the npipe default is handled by docker.from_env().
-    monkeypatch.setattr(client_module.sys, "platform", "win32")
-    assert client_module._probe_default_socket() is None
-
-
-def test_probe_default_socket_none_when_nothing_exists(monkeypatch):
-    monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
-    monkeypatch.setattr(client_module.Path, "is_socket", lambda _self: False)
-    assert client_module._probe_default_socket() is None
 
 
 def test_build_default_client_honors_docker_host(monkeypatch):
@@ -522,7 +446,7 @@ def test_build_default_client_uses_resolved_base_url(monkeypatch):
     monkeypatch.delenv("DOCKER_HOST", raising=False)
     sentinel = MagicMock()
     with (
-        patch("docker_mcp.tools.client._resolve_default_base_url", return_value="unix:///x/docker.sock"),
+        patch("docker_mcp.tools.client.resolve_auto", return_value="unix:///x/docker.sock"),
         patch("docker_mcp.tools.client.docker.DockerClient", return_value=sentinel) as ctor,
     ):
         assert client_module._build_default_client() is sentinel
@@ -533,8 +457,121 @@ def test_build_default_client_falls_back_to_from_env(monkeypatch):
     monkeypatch.delenv("DOCKER_HOST", raising=False)
     sentinel = MagicMock()
     with (
-        patch("docker_mcp.tools.client._resolve_default_base_url", return_value=None),
+        patch("docker_mcp.tools.client.resolve_auto", return_value=None),
         patch("docker_mcp.tools.client.docker.from_env", return_value=sentinel) as from_env,
     ):
         assert client_module._build_default_client() is sentinel
     from_env.assert_called_once_with()
+
+
+# ---------- multi-host: pool routing, per-host TLS, scoped close, host-aware self-guard ----------
+
+
+def test_get_client_routes_to_named_host(monkeypatch):
+    _set_multi(monkeypatch)
+    client_module._clients.clear()
+    sentinel = MagicMock()
+    with patch("docker_mcp.tools.client._build_client", return_value=sentinel) as build:
+        assert _get_client("prod") is sentinel
+        assert _get_client("prod") is sentinel  # cached: built once
+    build.assert_called_once()
+    assert build.call_args.args[0].label == "prod"
+    assert client_module._clients["prod"] is sentinel
+    client_module._clients.clear()
+
+
+def test_tls_from_dir_mutual_when_client_cert_present(tmp_path):
+    for filename in ("ca.pem", "cert.pem", "key.pem"):
+        (tmp_path / filename).write_text("x", encoding="utf-8")
+    cfg = client_module._tls_from_dir(str(tmp_path))
+    assert cfg.cert == (str(tmp_path / "cert.pem"), str(tmp_path / "key.pem"))
+    assert cfg.ca_cert == str(tmp_path / "ca.pem")
+    assert cfg.verify is True
+
+
+def test_tls_from_dir_server_verify_only_without_client_cert(tmp_path):
+    (tmp_path / "ca.pem").write_text("x", encoding="utf-8")  # ca only -> verify the daemon, no client cert
+    cfg = client_module._tls_from_dir(str(tmp_path))
+    assert cfg.cert is None
+    assert cfg.ca_cert == str(tmp_path / "ca.pem")
+    assert cfg.verify is True
+
+
+def test_build_client_uses_per_host_cert_dir(monkeypatch):
+    _set_multi(monkeypatch)
+    host = Host("prod", "tcp://prod:2376", cert_dir="/certs/prod")
+    sentinel, tls_obj = MagicMock(), MagicMock()
+    with (
+        patch("docker_mcp.tools.client._tls_from_dir", return_value=tls_obj) as tls,
+        patch("docker_mcp.tools.client.docker.DockerClient", return_value=sentinel) as ctor,
+    ):
+        assert client_module._build_client(host) is sentinel
+    tls.assert_called_once_with("/certs/prod")
+    ctor.assert_called_once_with(base_url="tcp://prod:2376", tls=tls_obj)
+
+
+def test_build_client_falls_back_to_global_tls_env(monkeypatch):
+    _set_multi(monkeypatch)
+    monkeypatch.setenv("DOCKER_TLS_VERIFY", "1")
+    monkeypatch.setenv("DOCKER_CERT_PATH", "/global/certs")
+    host = Host("prod", "tcp://prod:2376")  # no per-host cert dir
+    sentinel, tls_obj = MagicMock(), MagicMock()
+    with (
+        patch("docker_mcp.tools.client._tls_from_dir", return_value=tls_obj) as tls,
+        patch("docker_mcp.tools.client.docker.DockerClient", return_value=sentinel) as ctor,
+    ):
+        assert client_module._build_client(host) is sentinel
+    tls.assert_called_once_with("/global/certs")
+    ctor.assert_called_once_with(base_url="tcp://prod:2376", tls=tls_obj)
+
+
+def test_build_client_plaintext_when_no_tls(monkeypatch):
+    _set_multi(monkeypatch)
+    monkeypatch.delenv("DOCKER_TLS_VERIFY", raising=False)
+    host = Host("prod", "tcp://prod:2376")
+    sentinel = MagicMock()
+    with patch("docker_mcp.tools.client.docker.DockerClient", return_value=sentinel) as ctor:
+        assert client_module._build_client(host) is sentinel
+    ctor.assert_called_once_with(base_url="tcp://prod:2376")  # no tls kwarg
+
+
+def test_close_one_host_leaves_others(monkeypatch):
+    _set_multi(monkeypatch)
+    local_client, prod_client = MagicMock(), MagicMock()
+    client_module._clients.update({"local": local_client, "prod": prod_client})
+    assert close(host="prod") is True
+    prod_client.close.assert_called_once()
+    local_client.close.assert_not_called()
+    assert set(client_module._clients) == {"local"}
+    client_module._clients.clear()
+
+
+def test_guard_not_self_inert_on_a_non_self_host(monkeypatch):
+    _set_multi(monkeypatch)  # self host is local; targeting prod can't be our own container
+    monkeypatch.setattr(client_module, "_self_container_id", "self-full-id")
+    monkeypatch.setattr(client_module, "_self_host_label", "local")
+    assert client_module.guard_not_self(_fake_container("self-full-id"), host="prod") is None
+
+
+def test_guard_not_self_enforced_on_the_self_host(monkeypatch):
+    _set_multi(monkeypatch)
+    monkeypatch.setattr(client_module, "_self_container_id", "self-full-id")
+    monkeypatch.setattr(client_module, "_self_host_label", "local")
+    with pytest.raises(RuntimeError, match="own container"):
+        client_module.guard_not_self(_fake_container("self-full-id", name="mcp"), host="local")
+
+
+def test_build_client_platform_default_ignores_ambient_docker_host(monkeypatch):
+    # An explicit host (HOSTS set) that resolved to url=None must use the platform default, NOT read
+    # the ambient DOCKER_HOST (which is ignored in multi-host mode) via from_env.
+    _set_multi(monkeypatch)
+    monkeypatch.setenv("DOCKER_HOST", "tcp://ambient:2375")
+    monkeypatch.delenv("DOCKER_TLS_VERIFY", raising=False)
+    sentinel = MagicMock()
+    with (
+        patch("docker_mcp.tools.client.docker.DockerClient", return_value=sentinel) as ctor,
+        patch("docker_mcp.tools.client.docker.from_env") as from_env,
+    ):
+        assert client_module._build_client(Host("local", None)) is sentinel
+    ctor.assert_called_once_with()  # no base_url -> platform socket/npipe; ambient DOCKER_HOST ignored
+    from_env.assert_not_called()

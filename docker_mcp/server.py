@@ -5,14 +5,17 @@
 # tool, (b) the two env switches that decide what gets registered, and (c) the ToolAnnotations
 # attached to each registered tool. `mcp` is still exported for `@mcp.prompt` / `@mcp.resource`.
 
+import functools
+import inspect
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any
+from typing import Any, NoReturn
 
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 
+import docker_mcp._hosts as _hosts
 from docker_mcp._env import env_flag, read_env
 
 mcp = FastMCP("docker-mcp-server")
@@ -37,6 +40,7 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "info": ToolCategory.READ_ONLY,
     "df": ToolCategory.READ_ONLY,
     "events": ToolCategory.READ_ONLY,
+    "list_hosts": ToolCategory.READ_ONLY,
     "login": ToolCategory.MUTATING,
     "logout": ToolCategory.MUTATING,
     "close": ToolCategory.MUTATING,
@@ -215,6 +219,15 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
 # are already gone). Surfaced via ToolAnnotations.idempotentHint so clients can treat retries as safe.
 _IDEMPOTENT_TOOLS = frozenset({"prune_containers", "prune_images", "prune_networks", "prune_volumes", "buildx_prune"})
 
+# The optional per-call parameter that selects which configured host a daemon-targeting tool acts on.
+_HOST_PARAM = "host"
+
+# Tools that take a `host` param but are client-connection control, not daemon writes: they're exempt
+# from the "host required for writes" rule and the (ro)-host refusal (you must be able to close/reconnect
+# a read-only host's client, and login/logout touch an in-process cache). The unknown-host check still
+# applies to them. They are MUTATING in TOOL_CATEGORIES but never mutate daemon state.
+_CONNECTION_CONTROL = frozenset({"close", "reconnect", "login", "logout"})
+
 
 # Read-only env switches, evaluated once at import (registration time):
 #   DOCKER_MCP_SERVER_READONLY       — register only READ_ONLY tools (a true read-only server).
@@ -259,11 +272,13 @@ _tool_registry: dict[str, ToolRecord] = {}
 
 @dataclass(frozen=True)
 class PromptRecord:
-    """What the `@prompt()` decorator saw for one prompt: its (optional) domain and whether it registered."""
+    """What the `@prompt()` decorator saw for one prompt: its (optional) domain, whether it's gated to
+    multi-host mode, and whether it actually registered."""
 
     name: str
     domain: str | None
     registered: bool
+    multi_host: bool = False
 
 
 # Prompts processed by `@prompt()` this run (registered or skipped by DOCKER_MCP_SERVER_DISABLE), plus the
@@ -335,7 +350,7 @@ def tool_catalog() -> dict[str, Any]:
         # The non-tool surface DOCKER_MCP_SERVER_DISABLE also affects: prompts tied to a disabled domain are
         # skipped, and doc-resource sections for a disabled domain are hidden from docker-docs://contents.
         "prompts": [
-            {"name": r.name, "domain": r.domain, "registered": r.registered}
+            {"name": r.name, "domain": r.domain, "registered": r.registered, "multi_host": r.multi_host}
             for r in sorted(_prompt_registry.values(), key=lambda r: r.name)
         ],
         "disabled_doc_sections": sorted(s for s, d in _resource_domains.items() if d in DISABLED_DOMAINS),
@@ -368,7 +383,7 @@ _DOMAIN_BLURBS: dict[str, str] = {
     "context": "docker CLI contexts; CLI-backed",
     "registry": "OCI registries + Docker Hub over HTTPS; no daemon needed",
     "plugins": "plugin lifecycle (install/enable/disable/configure/upgrade/remove)",
-    "client": "ping, version, info, df (disk usage), events, login, logout",
+    "client": "ping, version, info, df (disk usage), events, login, logout, list_hosts (configured daemons)",
 }
 
 # CLI- and swarm-tied caveats are only worth emitting when the relevant domains actually registered.
@@ -417,6 +432,12 @@ def build_instructions(registered_domains: set[str] | None = None) -> str:
         )
     if present & set(_SWARM_DOMAINS):
         caveats.append("Swarm-family tools require a swarm manager node.")
+    if _hosts.is_multi():
+        caveats.append(
+            f"Multiple hosts are configured ({_hosts.labels()}): read-only tools take `host=<label>` "
+            "(omit → the default, the first listed); mutating/destructive tools require an explicit "
+            "`host`; a host marked `(ro)` rejects writes. See the `docker-mcp://hosts` resource."
+        )
     if caveats:
         lines += ["", "Picking the right tool:"]
         lines += [f"- {c}" for c in caveats]
@@ -522,6 +543,131 @@ def _slim_schema(node: Any) -> None:
             _slim_schema(item)
 
 
+def _has_host_param(func: Callable) -> bool:
+    """A tool is daemon-targeting iff its signature declares the `host` param (registry/hub/context
+    tools and list_hosts don't, so they're untouched by the host machinery)."""
+    return _HOST_PARAM in inspect.signature(func).parameters
+
+
+def _is_host_write(name: str, category: ToolCategory) -> bool:
+    """A host-targeting *write*: a MUTATING/DESTRUCTIVE tool that is not connection-control. These
+    require an explicit host (multi-host) and refuse an (ro) host; everything else may default."""
+    return category in (ToolCategory.MUTATING, ToolCategory.DESTRUCTIVE) and name not in _CONNECTION_CONTROL
+
+
+def _host_param_description(name: str, category: ToolCategory) -> str:
+    """The advertised `host` description in multi-host mode — the enum carries the valid labels."""
+    if _is_host_write(name, category):
+        return "Target host label (required when multiple hosts are configured)."
+    return f"Target host label; omit to use the default ({_hosts.default().label!r})."
+
+
+def _raise_read_only(name: str, label: str, category: ToolCategory) -> NoReturn:
+    """Refuse a write to a host carrying the per-host (ro) marker (distinct from the
+    DOCKER_MCP_SERVER_READONLY switch, which drops write tools from the surface entirely)."""
+    raise RuntimeError(
+        f"{name}: host {label!r} is read-only (configured with the (ro) marker); refusing this "
+        f"{category.value} operation. For a fully read-only server use DOCKER_MCP_SERVER_READONLY."
+    )
+
+
+def _enforce_host_guard(name: str, category: ToolCategory, host: str | None) -> None:
+    """
+    Central call-time guard for a daemon-targeting tool. Wired whenever there is something to enforce:
+    multiple hosts (host selection + per-host (ro) refusal) or a single host flagged (ro). Raises when a
+    write omits `host` in multi-host mode, when `host` is not a configured label, or when a write targets
+    an (ro) host. Read-only and connection-control tools may omit `host` (None -> default / all).
+    """
+    known = _hosts.labels()
+    write = _is_host_write(name, category)
+    if host is None:
+        # Multi-host: a write must name its target. Single-host: the schema carries no host param to
+        # pass, but an (ro) default host must still refuse writes.
+        if write and _hosts.is_multi():
+            raise RuntimeError(f"{name}: 'host' is required when multiple hosts are configured; choose one of {known}.")
+        if write and _hosts.is_read_only():
+            _raise_read_only(name, _hosts.default().label, category)
+        return
+    if host not in known:
+        raise RuntimeError(f"{name}: unknown host {host!r}; configured hosts: {known}.")
+    if write and _hosts.is_read_only(host):
+        _raise_read_only(name, host, category)
+
+
+def _apply_host_schema(parameters: Any, name: str, category: ToolCategory) -> None:
+    """
+    Display-only surgery on a daemon-targeting tool's advertised `host` property (run after _slim_schema;
+    call-time validation runs off the separate fn_metadata, so this never changes behavior).
+
+    Single-host mode: drop `host` entirely so the schema is byte-for-byte today's (footprint-neutral).
+    Multi-host mode: constrain `host` to an `enum` of the configured labels with a generated description,
+    and for writes mark it required (advisory — the guard is the teeth) by adding it to `required` and
+    dropping its default.
+    """
+    if not isinstance(parameters, dict):
+        return
+    properties = parameters.get("properties")
+    if not isinstance(properties, dict) or _HOST_PARAM not in properties:
+        return
+    if not _hosts.is_multi():
+        del properties[_HOST_PARAM]
+        required = parameters.get("required")
+        if isinstance(required, list) and _HOST_PARAM in required:
+            required.remove(_HOST_PARAM)
+            if not required:
+                parameters.pop("required", None)
+        return
+    host_schema = properties[_HOST_PARAM]
+    if not isinstance(host_schema, dict):
+        return
+    host_schema["enum"] = _hosts.labels()
+    host_schema["description"] = _host_param_description(name, category)
+    if _is_host_write(name, category):
+        host_schema.pop("default", None)
+        required = parameters.setdefault("required", [])
+        if isinstance(required, list) and _HOST_PARAM not in required:
+            required.append(_HOST_PARAM)
+
+
+def _host_guard_needed() -> bool:
+    """Whether daemon-targeting tools need the call-time host guard wrapped on. Two cases: multiple hosts
+    (host selection + per-host (ro) refusal), or a single host flagged (ro) (refuse writes even though the
+    schema carries no host param). A single writable host needs no guard — today's footprint-neutral path."""
+    return _hosts.is_multi() or _hosts.is_read_only()
+
+
+def _wrap_with_host_guard(func: Callable, name: str, category: ToolCategory) -> Callable:
+    """Wrap a daemon-targeting tool so the host guard runs before it (when `_host_guard_needed()` —
+    multi-host, or a single host flagged (ro)). Preserves the signature so FastMCP builds the same
+    schema/fn_metadata, and matches the func's sync/async-ness."""
+    signature = inspect.signature(func)
+
+    def _host_of(args: tuple, kwargs: dict) -> str | None:
+        try:
+            bound = signature.bind_partial(*args, **kwargs)
+        except TypeError:
+            return kwargs.get(_HOST_PARAM)
+        return bound.arguments.get(_HOST_PARAM)
+
+    if inspect.iscoroutinefunction(func):
+
+        @functools.wraps(func)
+        async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
+            _enforce_host_guard(name, category, _host_of(args, kwargs))
+            return await func(*args, **kwargs)
+
+        async_wrapper.__signature__ = signature  # pyright: ignore[reportAttributeAccessIssue]
+        return async_wrapper
+
+    @functools.wraps(func)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        _enforce_host_guard(name, category, _host_of(args, kwargs))
+        return func(*args, **kwargs)
+
+    wrapper.__signature__ = signature  # pyright: ignore[reportAttributeAccessIssue]
+    return wrapper
+
+
 def tool(**kwargs: Any) -> Callable[[Callable], Callable]:
     """
     Register an @mcp.tool with central classification — the drop-in `@tool()` every tool module uses.
@@ -543,9 +689,17 @@ def tool(**kwargs: Any) -> Callable[[Callable], Callable]:
         _tool_registry[name] = ToolRecord(name=name, domain=domain, category=category, registered=registered)
         if not registered:
             return func
-        decorated = mcp.tool(annotations=_annotations_for(name, category), **kwargs)(func)
+        # Daemon-targeting tools (those declaring a `host` param) get a call-time host guard when there's
+        # something to enforce — multiple hosts, or a single host flagged (ro); wrap before registering so
+        # FastMCP builds the schema from the wrapper, whose signature mirrors the original. A single
+        # writable host (and host-agnostic tools) register func unchanged.
+        target = func
+        if _has_host_param(func) and _host_guard_needed():
+            target = _wrap_with_host_guard(func, name, category)
+        decorated = mcp.tool(annotations=_annotations_for(name, category), **kwargs)(target)
         # Slim the advertised input schema (drop information-free titles, nullable-anyOf null branches,
-        # and redundant `additionalProperties: true`). This reaches into FastMCP internals
+        # and redundant `additionalProperties: true`), then apply the host-param surgery (enum + required
+        # in multi-host, or strip it in single-host). Both reach into FastMCP internals
         # (`_tool_manager.get_tool(...).parameters`); guard it so a future FastMCP refactor degrades to
         # "schema not slimmed" (a test catches that) rather than crashing the server at import time.
         try:
@@ -555,24 +709,32 @@ def tool(**kwargs: Any) -> Callable[[Callable], Callable]:
         parameters = registered_tool.parameters if registered_tool is not None else None
         if isinstance(parameters, dict):
             _slim_schema(parameters)
+            _apply_host_schema(parameters, name, category)
         return decorated
 
     return decorator
 
 
-def prompt(description: str, *, domain: str | None = None) -> Callable[[Callable], Callable]:
+def prompt(description: str, *, domain: str | None = None, multi_host: bool = False) -> Callable[[Callable], Callable]:
     """
     Register an `@mcp.prompt`, honoring DOCKER_MCP_SERVER_DISABLE — the `@prompt()` every prompt module uses.
 
     A prompt tied to a feature area (`domain`) is skipped when that domain is disabled, so a server that
     drops e.g. `scout` doesn't keep prompts that steer the agent toward tools that are no longer
     registered. `domain=None` is for general / cross-domain prompts (doc lookup, prune, disk usage) that
-    always register. Gating happens at import like `@tool()`, and the choice is recorded for tool_catalog().
+    always register. A `multi_host=True` prompt registers only when 2+ hosts are configured (via
+    DOCKER_MCP_SERVER_HOSTS), so a multi-host workflow prompt stays hidden in the common single-host case
+    — the prompt-side parallel of the per-tool host param. Gating happens at import like `@tool()`, and
+    the choice is recorded for tool_catalog().
     """
 
     def decorator(func: Callable) -> Callable:
-        registered = domain is None or _domain_enabled(domain, DISABLED_DOMAINS)
-        _prompt_registry[func.__name__] = PromptRecord(name=func.__name__, domain=domain, registered=registered)
+        registered = (domain is None or _domain_enabled(domain, DISABLED_DOMAINS)) and (
+            not multi_host or _hosts.is_multi()
+        )
+        _prompt_registry[func.__name__] = PromptRecord(
+            name=func.__name__, domain=domain, registered=registered, multi_host=multi_host
+        )
         if not registered:
             return func
         return mcp.prompt(description=description)(func)
