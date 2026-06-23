@@ -31,7 +31,6 @@ _DEFAULT_LABEL = "default"
 _VALID_LABEL = re.compile(r"[A-Za-z0-9_.-]+")
 _URL_SCHEMES = ("unix://", "tcp://", "ssh://", "npipe://")
 _TRAILING_MARKER = re.compile(r"\(([^)]*)\)\s*$")
-_CERT_FILES = ("ca.pem", "cert.pem", "key.pem")
 
 
 class HostConfigError(Exception):
@@ -44,8 +43,8 @@ class Host:
     One configured daemon.
 
     `url` is the resolved concrete daemon URL, or None to let docker-py's from_env() apply its own
-    platform default (e.g. the Windows named pipe). `cert_dir` holds Docker's conventional
-    ca.pem/cert.pem/key.pem directory for a tcp+TLS daemon, or None.
+    platform default (e.g. the Windows named pipe). `cert_dir` is a tcp+TLS cert directory (`ca.pem`
+    required — the daemon is always verified; `cert.pem`/`key.pem` optional for mutual TLS), or None.
     """
 
     label: str
@@ -154,16 +153,40 @@ def _parse_markers(text: str, context: str) -> tuple[str, bool, str | None]:
     return text.strip(), read_only, cert_dir
 
 
+def _readable(path: Path) -> bool:
+    """True if `path` exists and can be opened for reading."""
+    try:
+        with path.open("rb"):
+            return True
+    except OSError:
+        return False
+
+
 def _validate_cert_dir(label: str, cert_dir: str) -> None:
-    """Fail-fast unless cert_dir holds readable ca.pem/cert.pem/key.pem (a misparsed TLS config must
-    never silently leave a daemon connection unencrypted)."""
+    """
+    Fail-fast on a malformed tcp+TLS cert dir (a misparsed TLS config must never silently leave a
+    daemon connection unencrypted or misconfigured).
+
+    `ca.pem` is always required — the daemon is always verified against it (this is encryption + server
+    authentication, never opportunistic encryption). The client cert is optional but paired: provide
+    `cert.pem` AND `key.pem` for mutual TLS (a daemon that requires client auth), or neither to verify
+    the daemon only (e.g. a self-signed daemon you pin via `ca.pem`).
+    """
     directory = Path(cert_dir)
-    for filename in _CERT_FILES:
-        try:
-            with (directory / filename).open("rb"):
-                pass
-        except OSError as exc:
-            _fail(f"host {label!r}: TLS dir {cert_dir!r} is missing or cannot read {filename} ({exc})")
+    if not _readable(directory / "ca.pem"):
+        _fail(f"host {label!r}: TLS dir {cert_dir!r} is missing or cannot read ca.pem (required to verify the daemon)")
+    cert, key = directory / "cert.pem", directory / "key.pem"
+    # Pair on existence (matching how _tls_from_dir decides whether to send a client cert), then require
+    # any present file to be readable — an exists-but-unreadable cert/key would pass an existence-only
+    # check yet break at connect time.
+    if cert.exists() != key.exists():
+        _fail(
+            f"host {label!r}: TLS dir {cert_dir!r} has exactly one of cert.pem/key.pem — provide both "
+            f"(mutual TLS) or neither (verify the daemon only)"
+        )
+    for client_file in (cert, key):
+        if client_file.exists() and not _readable(client_file):
+            _fail(f"host {label!r}: TLS dir {cert_dir!r} has {client_file.name} but cannot read it")
 
 
 def _make_host(label: str, raw_endpoint: str, context: str) -> Host:
