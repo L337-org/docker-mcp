@@ -637,8 +637,9 @@ def _host_guard_needed() -> bool:
 
 
 def _wrap_with_host_guard(func: Callable, name: str, category: ToolCategory) -> Callable:
-    """Wrap a daemon-targeting tool so the host guard runs before it (multi-host mode only). Preserves
-    the signature so FastMCP builds the same schema/fn_metadata, and matches the func's sync/async-ness."""
+    """Wrap a daemon-targeting tool so the host guard runs before it (when `_host_guard_needed()` —
+    multi-host, or a single host flagged (ro)). Preserves the signature so FastMCP builds the same
+    schema/fn_metadata, and matches the func's sync/async-ness."""
     signature = inspect.signature(func)
 
     def _host_of(args: tuple, kwargs: dict) -> str | None:
