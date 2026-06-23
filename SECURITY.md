@@ -16,7 +16,8 @@ The trust boundary, credential-handling guidance, and known risks
 operations, secret material in tool traffic — registry credentials,
 swarm secrets/configs, and swarm join/unlock tokens (the manager join
 token is cluster-root-equivalent) — the CLI shell-out attack surface,
-and Docker context retargeting) are documented in
+the startup-fixed daemon set, and the per-host read-only guard) are
+documented in
 [README.md → Security considerations](README.md#security-considerations).
 Read that section before connecting an AI agent to this server.
 
@@ -25,6 +26,10 @@ host, and this server exposes the full Docker SDK surface plus selected
 docker CLI features (Compose, Context) and direct registry HTTPS access.
 There is no per-tool authorization layer — the daemon (and, for CLI-backed
 tools, the host running this server) is the trust boundary. Treat the
-agent as a privileged user, and prefer pointing `DOCKER_HOST` at a scoped
+agent as a privileged user, and prefer pointing the server at a scoped
 daemon (development VM, remote sandbox, Docker Desktop, rootless install)
-rather than a production socket.
+rather than a production socket — via `DOCKER_MCP_SERVER_HOSTS` (or
+`DOCKER_HOST`). The daemon set is fixed at startup (no runtime retarget to
+an arbitrary endpoint), and a host listed `(ro)` in `DOCKER_MCP_SERVER_HOSTS`
+makes the agent refuse to mutate it — an accident guard, not a substitute
+for a genuinely scoped daemon.

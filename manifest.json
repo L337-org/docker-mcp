@@ -4,7 +4,7 @@
   "display_name": "Docker MCP Server",
   "version": "1.8.1",
   "description": "Manage Docker through the Docker SDK for Python and the docker CLI: containers, images, networks, volumes, Compose, Swarm, Buildx, Scout, and OCI registries, exposed as MCP tools.",
-  "long_description": "Exposes the Docker SDK for Python and the docker CLI (Compose, Buildx, Scout, Context, Stack) as MCP tools so an agent can manage local or remote Docker daemons. Connects over the local socket, a TCP endpoint, or `ssh://` (pure-Python paramiko transport, no system ssh binary). Read-only / no-destructive / disabled-domain switches are exposed below so you can register a restricted tool surface. The server runs entirely on your machine and sends no telemetry — see the Privacy Policy.",
+  "long_description": "Exposes the Docker SDK for Python and the docker CLI (Compose, Buildx, Scout, Context, Stack) as MCP tools so an agent can manage one or several Docker daemons in a single session. Connects over the local socket, a TCP endpoint, or `ssh://` (pure-Python paramiko transport, no system ssh binary). Point it at one daemon, or list several (e.g. local dev + remote prod, with prod marked read-only) via the Docker host(s) field below. Read-only / no-destructive / disabled-domain switches are exposed too so you can register a restricted tool surface. The server runs entirely on your machine and sends no telemetry — see the Privacy Policy.",
   "author": {
     "name": "Gavin Lucas",
     "url": "https://github.com/GavinLucas"
@@ -27,7 +27,7 @@
       "command": "uv",
       "args": ["run", "--directory", "${__dirname}", "mcpb_run.py"],
       "env": {
-        "DOCKER_HOST": "${user_config.docker_host}",
+        "DOCKER_MCP_SERVER_HOSTS": "${user_config.docker_hosts}",
         "DOCKER_MCP_SERVER_READONLY": "${user_config.read_only}",
         "DOCKER_MCP_SERVER_NO_DESTRUCTIVE": "${user_config.no_destructive}",
         "DOCKER_MCP_SERVER_DISABLE": "${user_config.disable_domains}"
@@ -35,10 +35,10 @@
     }
   },
   "user_config": {
-    "docker_host": {
+    "docker_hosts": {
       "type": "string",
-      "title": "DOCKER_HOST",
-      "description": "Docker daemon to connect to, e.g. unix:///var/run/docker.sock or ssh://user@host. Leave blank to use your default Docker context / socket.",
+      "title": "Docker host(s)",
+      "description": "Docker daemon(s) to manage. Blank = your default Docker context / socket. One remote: ssh://user@host (recommended; auth via your SSH keys), tcp://host:2375 for a plaintext TCP daemon, or tcp://host:2376(tls=/path/to/certs) for a TLS daemon (the directory holds ca.pem/cert.pem/key.pem). Several: comma-separated name=endpoint pairs, e.g. local=auto, prod=ssh://ops@prod.example.com(ro) — append (ro) to make a host read-only. When set, this replaces DOCKER_HOST.",
       "required": false
     },
     "read_only": {

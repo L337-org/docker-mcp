@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -c \"import json,sys; d=json.load(sys.stdin); fp=(d.get('tool_input') or {}).get('file_path',''); print(json.dumps({'hookSpecificOutput':{'hookEventName':'PostToolUse','additionalContext':'You edited CLAUDE.md \\u2014 MIRROR RULE: make the equivalent change in .github/copilot-instructions.md (it drives GitHub Copilot review of every PR). Treat the change as incomplete until both files reflect it.'}})) if fp.endswith('CLAUDE.md') else None\""
+          }
+        ]
+      }
+    ]
+  }
+}
