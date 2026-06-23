@@ -1,6 +1,10 @@
 # docker-mcp-server
 
-An [MCP](https://modelcontextprotocol.io) server that lets AI agents manage Docker — containers, images, networks, volumes, swarm services, secrets, configs, nodes, plugins, **Compose projects, CLI contexts, and OCI registries** — by wrapping the official [Docker SDK for Python](https://docker-py.readthedocs.io/en/stable/) and selectively shelling out to the `docker` CLI for features the SDK doesn't expose.
+More than just a fully featured [MCP](https://modelcontextprotocol.io) server that lets AI agents manage Docker — containers, images, networks, volumes, swarm services, secrets, configs, nodes, plugins, etc., it helps you create workflows to easily manage your Docker environments.
+
+It can manage multiple Docker daemons, e.g. both your local dev environment and also a remote production environment over TCP, TLS or SSH in a single session. It can also be configured to mark some daemons as read-only, so that you can monitor them without the risk of making accidental changes. It also exposes things like logs and stats as resources so that you can easily monitor and triage your environments with a few prompts.
+
+The server runs entirely on your machine and sends no telemetry. You are entirely in control — see the [Privacy Policy](https://github.com/GavinLucas/docker-mcp#privacy-policy).
 
 This image is the container distribution of the project. **Full documentation, configuration, and source are on GitHub: <https://github.com/GavinLucas/docker-mcp>.**
 
