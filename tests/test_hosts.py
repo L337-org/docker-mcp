@@ -179,6 +179,18 @@ def test_tls_marker_lone_client_cert_without_key_fails(tmp_path):
         parse_registry(f"prod=tcp://prod:2376(tls={certs})")
 
 
+def test_tls_marker_client_cert_present_but_unreadable_fails(tmp_path):
+    # Both client-cert files exist (so the existence pairing passes), but key.pem can't be read —
+    # a directory named key.pem stands in for an unreadable file (no chmod/root dependency).
+    certs = tmp_path / "certs"
+    certs.mkdir()
+    (certs / "ca.pem").write_text("x", encoding="utf-8")
+    (certs / "cert.pem").write_text("x", encoding="utf-8")
+    (certs / "key.pem").mkdir()
+    with pytest.raises(HostConfigError, match="has key.pem but cannot read it"):
+        parse_registry(f"prod=tcp://prod:2376(tls={certs})")
+
+
 def test_tls_marker_empty_dir_fails():
     with pytest.raises(HostConfigError, match=r"\(tls=\) needs a directory"):
         parse_registry("prod=tcp://prod:2376(tls=)")

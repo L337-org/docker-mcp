@@ -175,11 +175,18 @@ def _validate_cert_dir(label: str, cert_dir: str) -> None:
     directory = Path(cert_dir)
     if not _readable(directory / "ca.pem"):
         _fail(f"host {label!r}: TLS dir {cert_dir!r} is missing or cannot read ca.pem (required to verify the daemon)")
-    if _readable(directory / "cert.pem") != _readable(directory / "key.pem"):
+    cert, key = directory / "cert.pem", directory / "key.pem"
+    # Pair on existence (matching how _tls_from_dir decides whether to send a client cert), then require
+    # any present file to be readable — an exists-but-unreadable cert/key would pass an existence-only
+    # check yet break at connect time.
+    if cert.exists() != key.exists():
         _fail(
             f"host {label!r}: TLS dir {cert_dir!r} has exactly one of cert.pem/key.pem — provide both "
             f"(mutual TLS) or neither (verify the daemon only)"
         )
+    for client_file in (cert, key):
+        if client_file.exists() and not _readable(client_file):
+            _fail(f"host {label!r}: TLS dir {cert_dir!r} has {client_file.name} but cannot read it")
 
 
 def _make_host(label: str, raw_endpoint: str, context: str) -> Host:
