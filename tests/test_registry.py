@@ -939,3 +939,15 @@ def test_hub_rate_limit_unlimited_when_no_headers():
     assert result["unlimited"] is True
     assert result["limit"] is None
     assert result["remaining"] is None
+
+
+def test_registry_response_size_is_capped(monkeypatch):
+    # An oversized (e.g. malicious) registry response is rejected, not buffered unbounded into memory.
+    monkeypatch.setattr("docker_mcp.tools.registry._MAX_RESPONSE_BYTES", 20)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"tags": ["a", "b", "c", "d", "e", "f"]})  # > 20 bytes
+
+    with _mock_client(handler):
+        with pytest.raises(RuntimeError, match="refusing to buffer a response this large"):
+            registry_list_tags("alpine")

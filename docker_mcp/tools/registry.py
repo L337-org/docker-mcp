@@ -267,6 +267,30 @@ def _raise_rate_limited(resp: httpx.Response, url: str) -> NoReturn:
     raise RuntimeError(f"Registry rate-limited (HTTP 429) for {url}{suffix}.{guidance}")
 
 
+# Cap on the (decoded) bytes we'll buffer from a single registry HTTP response. Registries are
+# agent-pointed and untrusted — a malicious or compromised one could stream a multi-GB body (there is
+# no built-in response-size limit in httpx) and OOM the server. Manifests and tag pages are KBs to a
+# few MB, so this is generous. We cap `iter_bytes()` (the *decoded* stream), so this also stops a
+# decompression bomb — a tiny gzip that inflates to gigabytes.
+_MAX_RESPONSE_BYTES = 16 * 1024 * 1024  # 16 MiB
+
+
+def _read_capped_response(resp: httpx.Response, url: str) -> httpx.Response:
+    """
+    Read a streamed response's body into memory bounded by `_MAX_RESPONSE_BYTES`, returning a
+    fully-read `httpx.Response` so callers keep using `.json()` / `.text` / `.headers` unchanged.
+    """
+    body = bytearray()
+    for chunk in resp.iter_bytes():
+        body += chunk
+        if len(body) > _MAX_RESPONSE_BYTES:
+            raise RuntimeError(
+                f"Registry response from {url} exceeded the {_MAX_RESPONSE_BYTES // (1024 * 1024)} MiB "
+                f"limit; refusing to buffer a response this large."
+            )
+    return httpx.Response(status_code=resp.status_code, headers=resp.headers, content=bytes(body), request=resp.request)
+
+
 def _get_with_retry_policy(
     client: httpx.Client,
     url: str,
@@ -277,7 +301,8 @@ def _get_with_retry_policy(
 ) -> httpx.Response:
     """
     GET that applies the project's transient-failure retry policy, retrying in a single loop so a
-    5xx blip after a 429 retry (or vice versa) is still absorbed rather than bubbling up.
+    5xx blip after a 429 retry (or vice versa) is still absorbed rather than bubbling up. The body is
+    streamed and read bounded by `_MAX_RESPONSE_BYTES` (registries are untrusted; see `_read_capped_response`).
 
     - On a transient 5xx (502/503/504): retry up to `_TRANSIENT_MAX_RETRIES` times with a short
       backoff (honoring `Retry-After` when present, capped at the threshold). If it still fails,
@@ -290,25 +315,25 @@ def _get_with_retry_policy(
     transient_attempts = 0
     retried_429 = False
     while True:
-        resp = client.get(url, headers=headers, params=params, auth=auth)
-        if resp.status_code in _TRANSIENT_STATUS and transient_attempts < _TRANSIENT_MAX_RETRIES:
-            transient_attempts += 1
-            retry_after = _parse_retry_after(resp.headers.get("Retry-After"))
-            delay = (
-                min(retry_after, _RATE_LIMIT_RETRY_THRESHOLD_SECONDS)
-                if retry_after is not None
-                else _TRANSIENT_BACKOFF_SECONDS
-            )
-            time.sleep(delay)
-            continue
-        if resp.status_code == 429:
-            retry_after = _parse_retry_after(resp.headers.get("Retry-After"))
-            if retried_429 or retry_after is None or retry_after > _RATE_LIMIT_RETRY_THRESHOLD_SECONDS:
-                _raise_rate_limited(resp, url)
-            retried_429 = True
-            time.sleep(retry_after)
-            continue
-        return resp
+        with client.stream("GET", url, headers=headers, params=params, auth=auth) as resp:
+            if resp.status_code in _TRANSIENT_STATUS and transient_attempts < _TRANSIENT_MAX_RETRIES:
+                transient_attempts += 1
+                retry_after = _parse_retry_after(resp.headers.get("Retry-After"))
+                delay = (
+                    min(retry_after, _RATE_LIMIT_RETRY_THRESHOLD_SECONDS)
+                    if retry_after is not None
+                    else _TRANSIENT_BACKOFF_SECONDS
+                )
+            elif resp.status_code == 429:
+                retry_after = _parse_retry_after(resp.headers.get("Retry-After"))
+                if retried_429 or retry_after is None or retry_after > _RATE_LIMIT_RETRY_THRESHOLD_SECONDS:
+                    _raise_rate_limited(resp, url)
+                retried_429 = True
+                delay = retry_after
+            else:
+                # Final response — read the body bounded (after the stream context closes it).
+                return _read_capped_response(resp, url)
+        time.sleep(delay)
 
 
 def _registry_get(
