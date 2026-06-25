@@ -2,6 +2,8 @@
 
 # docker-mcp-server
 
+[![docker-mcp MCP server](https://glama.ai/mcp/servers/GavinLucas/docker-mcp/badges/score.svg)](https://glama.ai/mcp/servers/GavinLucas/docker-mcp)
+
 <!-- mcp-name: io.github.GavinLucas/docker-mcp-server -->
 
 More than just a fully featured [MCP](https://modelcontextprotocol.io) server that lets AI agents manage Docker — containers, images, networks, volumes, swarm services, secrets, configs, nodes, plugins, etc., it helps you create workflows to easily manage your Docker environments.
