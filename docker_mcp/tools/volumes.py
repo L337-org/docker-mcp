@@ -15,12 +15,20 @@ def create_volume(
     host: str | None = None,
 ) -> dict:
     """
-    Create a volume.
+    Create a named volume managed by Docker.
+
+    Named volumes persist after their containers stop or are removed; use them for
+    databases, uploads, or any data that must outlive a container. Anonymous volumes
+    (no `name`) are removed when their container is removed. Common `driver_opts` for
+    the default `local` driver: bind-mount an existing host path with
+    `{"type": "bind", "device": "/host/path", "o": "bind"}`, or mount an NFS share with
+    `{"type": "nfs", "device": "server:/export", "o": "addr=server,rw"}`. Third-party
+    drivers (e.g. `rexray`, `convoy`) accept their own option keys.
 
     args:
-        name - Volume name (auto-generated if omitted)
-        driver - Volume driver name
-        driver_opts - Driver-specific options
+        name - Volume name; auto-generated if omitted (creates an anonymous volume)
+        driver - Volume driver to use (default: "local")
+        driver_opts - Driver-specific options dict
         labels - Labels to set on the volume
     returns: dict - The created volume's attrs
     """

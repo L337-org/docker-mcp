@@ -30,29 +30,35 @@ def build_image(
     host: str | None = None,
 ) -> dict:
     """
-    Build an image from a Dockerfile.
+    Build an image from a Dockerfile using the daemon's classic builder.
+
+    Use this for simple single-platform builds from a local context. For multi-platform
+    builds, BuildKit cache export/import, or advanced build features prefer `buildx_build`.
+    `path` must be a directory accessible on the host running this server (it is the build
+    context sent to the daemon). `dockerfile` is relative to `path`; omit to use the
+    default `Dockerfile`.
 
     args:
-        path - Path to the build context directory
-        tag - Tag to apply to the built image
-        quiet - Suppress build output
-        nocache - Do not use the build cache
-        rm - Remove intermediate containers
-        pull - Always pull a newer version of the base image
-        forcerm - Always remove intermediate containers, even on failure
-        dockerfile - Name of the Dockerfile within the build context
-        buildargs - Build-time variables
-        container_limits - Resource limits for the build container
-        shmsize - Size of /dev/shm in bytes
-        labels - Labels to apply to the image
-        cache_from - Images used as cache sources
-        target - Target build stage to stop at
-        network_mode - Network mode for the run instructions during build
-        squash - Squash newly built layers into a single layer
-        extra_hosts - Extra hosts to add to /etc/hosts during build
-        platform - Platform in the format os/arch
-        isolation - Isolation technology
-        use_config_proxy - Use proxy values from the local config
+        path - Build context directory path on the server host
+        tag - Name and optional tag in "name:tag" format to apply to the built image
+        quiet - Suppress verbose build output (final image id still returned)
+        nocache - Ignore the layer cache and rebuild all layers
+        rm - Remove intermediate containers on success (default True)
+        pull - Always pull a newer version of each FROM base image before building
+        forcerm - Remove intermediate containers even on build failure
+        dockerfile - Dockerfile filename relative to path (default: "Dockerfile")
+        buildargs - Build-time variables passed as `--build-arg`; dict of str→str
+        container_limits - Resource limits for the build container, e.g. {"memory": 134217728}
+        shmsize - Size of /dev/shm in bytes for build steps that need shared memory
+        labels - Labels to apply to the resulting image; dict of str→str
+        cache_from - List of image references to use as layer cache sources
+        target - Stop at this named build stage (multi-stage Dockerfiles)
+        network_mode - Network mode for RUN instructions during build (e.g. "host", "none")
+        squash - Squash all new layers into one (experimental; requires daemon flag)
+        extra_hosts - Additional /etc/hosts entries during build; dict of hostname→ip
+        platform - Target platform, e.g. "linux/amd64" (single platform only; use buildx for multi)
+        isolation - Windows isolation technology ("default", "process", "hyperv")
+        use_config_proxy - Forward proxy env vars from Docker client config to build
     returns: dict - The built image's attrs
     """
     kwargs: dict = {
@@ -177,12 +183,18 @@ def push_image(
 @tool()
 def remove_image(image: str, force: bool = False, noprune: bool = False, host: str | None = None) -> bool:
     """
-    Remove an image.
+    Remove a local image by name or id.
+
+    Fails without `force` if the image is tagged by multiple names (untag first with
+    `tag_image`) or if stopped containers reference it. Running containers always block
+    removal regardless of `force`. `noprune` keeps untagged parent layers that would
+    otherwise be removed as a side-effect; leave False unless you need to preserve
+    the parent layers for another purpose.
 
     args:
-        image - The image name or id
-        force - Force removal
-        noprune - Do not delete untagged parents
+        image - Image name (with optional tag/digest) or id to remove
+        force - Remove even if referenced by stopped containers or multiple tags
+        noprune - Do not delete untagged intermediate parent layers
     returns: bool - True after removal completes
     """
     _get_client(host).images.remove(image=image, force=force, noprune=noprune)
@@ -192,12 +204,16 @@ def remove_image(image: str, force: bool = False, noprune: bool = False, host: s
 @tool()
 def search_images(term: str, limit: int | None = None, host: str | None = None) -> list:
     """
-    Search Docker Hub for images.
+    Search Docker Hub for public images matching a term.
+
+    Searches Docker Hub only — not GHCR, ECR, or other registries. For listing tags on a
+    specific image from any OCI registry use `registry_list_tags` instead. Each result dict
+    includes `name`, `description`, `star_count`, `is_official`, and `is_automated`.
 
     args:
-        term - Search term
-        limit - Maximum number of results
-    returns: list - Search results
+        term - Search keyword, e.g. "nginx" or "python"
+        limit - Maximum number of results to return (Docker Hub default is 25)
+    returns: list - List of matching image dicts from Docker Hub
     """
     return _get_client(host).images.search(term=term, limit=limit)
 
@@ -205,10 +221,16 @@ def search_images(term: str, limit: int | None = None, host: str | None = None) 
 @tool()
 def prune_images(filters: dict | None = None, host: str | None = None) -> dict:
     """
-    Remove unused images.
+    Remove unused local images to reclaim disk space.
 
-    args: filters - Filters to apply (e.g. dangling, until, label)
-    returns: dict - Information on deleted images and reclaimed space
+    Without filters removes only "dangling" images — untagged layers not referenced by any
+    tag or container. To remove all images not used by any container (including tagged ones)
+    pass `filters={"dangling": False}`. Valid filter keys: `dangling` (bool as string
+    "true"/"false"), `until` (RFC3339 timestamp or duration like "24h"), `label`
+    (key or key=value). Use `df` first to see how much space is reclaimable.
+
+    args: filters - Narrow which images to remove; omit to remove dangling images only
+    returns: dict - {"ImagesDeleted": [...], "SpaceReclaimed": <bytes>}
     """
     return _get_client(host).images.prune(filters=filters)
 
@@ -302,9 +324,15 @@ def tag_image(name: str, repository: str, tag: str | None = None, force: bool = 
 @tool()
 def image_history(name: str, host: str | None = None) -> list:
     """
-    Show the history of an image.
+    Return the layer history of an image.
 
-    args: name - The image name or id
-    returns: list - History entries for each layer
+    Useful for auditing what commands built each layer and diagnosing image size. Each entry
+    includes `Id` (layer digest or "<missing>" for imported layers), `Created` (unix
+    timestamp), `CreatedBy` (the Dockerfile command that produced the layer, e.g. a RUN or
+    COPY), `Size` (bytes added by that layer), and `Comment`. For full image metadata use
+    `get_image` instead.
+
+    args: name - Image name (with optional tag/digest) or id
+    returns: list - Layer history entries, newest first
     """
     return _get_client(host).images.get(name).history()

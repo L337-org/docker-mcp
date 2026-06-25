@@ -301,15 +301,21 @@ def compose_pull(
     host: str | None = None,
 ) -> dict:
     """
-    Pull images declared by a compose project.
+    Pre-fetch images for a compose project's services without starting them.
+
+    Use this to stage images before an outage window, to refresh cached images before
+    `compose_up`, or to verify images are accessible without starting containers. For
+    registry-authenticated pulls ensure the daemon is logged in first with `login`.
+    `compose_up --pull always` does the same as part of startup; use this tool when you
+    want to separate the pull step.
 
     args:
-        project_dir - Dir with the compose file (default: server cwd)
-        files - Explicit compose file paths (repeatable, `-f`)
-        project_name - Compose project name override
-        services - Specific services to pull (default: all)
-        ignore_pull_failures - Continue past individual pull failures
-        timeout_seconds - Subprocess timeout (default 1800s)
+        project_dir - Dir containing the compose file (default: server cwd)
+        files - Explicit compose file paths, passed as `-f` (overrides auto-discovery)
+        project_name - Override the compose project name
+        services - Pull only these services; omit to pull all
+        ignore_pull_failures - Continue if an individual image pull fails
+        timeout_seconds - Subprocess timeout (default 1800s for large image pulls)
     returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
     """
     args = [*_global_args(files, project_name, None), "pull"]
@@ -331,14 +337,19 @@ def compose_restart(
     host: str | None = None,
 ) -> dict:
     """
-    Restart services in a compose project.
+    Stop then start services without recreating containers or applying config changes.
+
+    Use this to bounce a service (e.g. to pick up a runtime file change or clear an
+    in-memory state). If the compose file has changed (new image, environment, volumes,
+    ports) use `compose_up` instead — it recreates affected containers to apply the diff.
+    `stop_timeout_seconds` controls the SIGTERM grace period before Docker sends SIGKILL.
 
     args:
-        project_dir - Dir with the compose file (default: server cwd)
-        files - Explicit compose file paths (repeatable, `-f`)
-        project_name - Compose project name override
-        services - Specific services to restart (default: all)
-        stop_timeout_seconds - Grace period before SIGKILL (passed as `--timeout`)
+        project_dir - Dir containing the compose file (default: server cwd)
+        files - Explicit compose file paths, passed as `-f`
+        project_name - Override the compose project name
+        services - Restart only these services; omit to restart all
+        stop_timeout_seconds - Seconds to wait for graceful stop before SIGKILL
         timeout_seconds - Subprocess timeout (default 300s)
     returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
     """

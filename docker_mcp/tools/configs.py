@@ -11,14 +11,21 @@ def create_config(
     name: str, data: bytes, labels: dict | None = None, templating: dict | None = None, host: str | None = None
 ) -> dict:
     """
-    Create a swarm config.
+    Create an immutable Swarm config object; requires a swarm manager.
+
+    Configs store non-sensitive configuration files (nginx.conf, app.yaml, etc.) and mount
+    them into service containers at a specified path. Unlike secrets, config data is not
+    encrypted at rest — use `create_secret` for credentials or keys. `data` is raw bytes;
+    encode strings first (e.g. `"my config".encode()`). Once created, a config is immutable:
+    to update it, create a new config with a new name and update the service to reference it,
+    then remove the old config with `remove_config`.
 
     args:
-        name - The name of the config
-        data - The config payload
-        labels - Labels to apply
-        templating - Templating driver configuration
-    returns: dict - The created config's attrs
+        name - Unique config name within the swarm
+        data - Raw bytes content of the config file
+        labels - Labels to apply to the config object
+        templating - Templating driver config (e.g. {"Name": "golang"} for Go template syntax)
+    returns: dict - The created config's attrs including its id
     """
     kwargs: dict = {
         "name": name,

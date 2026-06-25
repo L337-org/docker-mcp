@@ -518,12 +518,18 @@ def buildx_create(
 @tool()
 def buildx_use(name: str, default: bool = False, global_default: bool = False, host: str | None = None) -> dict:
     """
-    Switch the current builder.
+    Select the active builder for subsequent buildx operations.
+
+    Without `default` or `global_default` the switch applies only to the current CLI
+    session. `default` persists the choice for the current Docker context; `global_default`
+    persists across all Docker contexts. Use `buildx_ls` to see available builders and their
+    current status. To avoid switching the global default, pass a specific builder name
+    directly via `buildx_build`'s `builder` parameter instead.
 
     args:
-        name - Builder name to activate
-        default - Set as default for this context
-        global_default - Set as default across all contexts
+        name - Builder name to activate (from `buildx_ls`)
+        default - Persist as default builder for the current Docker context
+        global_default - Persist as default builder across all Docker contexts
     returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
     """
     args: list[str] = ["use"]

@@ -96,10 +96,14 @@ def list_networks(
 @tool()
 def prune_networks(filters: dict | None = None, host: str | None = None) -> dict:
     """
-    Remove unused networks.
+    Remove networks that have no active container endpoints.
 
-    args: filters - Filters to apply
-    returns: dict - Information on deleted networks
+    Built-in networks (bridge, host, none) are never removed. Only networks with zero
+    connected containers are eligible. Valid filter keys: `until` (RFC3339 timestamp or
+    duration — removes networks created before that point), `label` (key or key=value).
+
+    args: filters - Narrow which networks to remove; omit to remove all unused custom networks
+    returns: dict - {"NetworksDeleted": [...]}
     """
     return _get_client(host).networks.prune(filters=filters)
 
@@ -129,17 +133,24 @@ def connect_network(
     host: str | None = None,
 ) -> bool:
     """
-    Connect a container to a network.
+    Attach a running container to an additional network without restarting it.
+
+    Use this to give a container access to services on a network it was not started with.
+    `aliases` sets extra DNS names for this container within the network (other containers
+    can reach it by those names in addition to its container name). `ipv4_address` /
+    `ipv6_address` assign a specific IP on the network; omit to let the driver assign one.
+    `links` is a legacy feature (deprecated; prefer DNS aliases). Use `disconnect_network`
+    to undo.
 
     args:
-        network_id - The network id or name
-        container - The container id or name
-        aliases - Endpoint aliases for the container in this network
-        links - Links to other containers
-        ipv4_address - IPv4 address to assign
-        ipv6_address - IPv6 address to assign
-        link_local_ips - Link-local addresses
-        driver_opt - Network driver options
+        network_id - Network id or name to connect the container to
+        container - Container id or name to attach
+        aliases - Additional DNS names for this container within the network
+        links - Legacy container links (deprecated)
+        ipv4_address - Static IPv4 address to assign on this network
+        ipv6_address - Static IPv6 address to assign on this network
+        link_local_ips - Link-local IP addresses to assign
+        driver_opt - Driver-specific endpoint options
     returns: bool - True after the container is connected
     """
     network = _get_client(host).networks.get(network_id)

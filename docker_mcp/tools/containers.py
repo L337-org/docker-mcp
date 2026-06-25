@@ -197,10 +197,16 @@ def list_containers(
 @tool()
 def prune_containers(filters: dict | None = None, host: str | None = None) -> dict:
     """
-    Remove stopped containers.
+    Remove all stopped containers to reclaim disk space.
 
-    args: filters - Filters to apply to the prune operation
-    returns: dict - Information on deleted containers and reclaimed space
+    Only removes containers that are not running — running containers are never affected.
+    Use `list_containers(all=True)` to preview what would be removed before calling this.
+    Valid filter keys: `until` (RFC3339 timestamp or duration like "24h" — removes containers
+    stopped before that point), `label` (key or key=value). For a broader cleanup of
+    containers plus unused images, networks, and volumes see the `prune_managed` prompt.
+
+    args: filters - Narrow which stopped containers to remove; omit to remove all stopped
+    returns: dict - {"ContainersDeleted": [...], "SpaceReclaimed": <bytes>}
     """
     return _get_client(host).containers.prune(filters=filters)
 
@@ -610,17 +616,23 @@ def commit_container(
     host: str | None = None,
 ) -> dict:
     """
-    Commit a container to an image.
+    Snapshot a container's current filesystem state as a new image.
+
+    Useful for capturing a debugging state or saving manual changes made inside a container.
+    For repeatable builds use a Dockerfile instead. The container is paused by default during
+    the snapshot to ensure filesystem consistency — set `pause=False` only if the container
+    cannot be paused. `changes` accepts Dockerfile instructions to apply on top of the
+    snapshot, e.g. `["CMD [\"python\", \"app.py\"]", "ENV FOO=bar"]`.
 
     args:
-        id_or_name - The container id or name
-        repository - Repository for the new image
-        tag - Tag for the new image
-        message - Commit message
-        author - Author of the commit
-        pause - Pause container during commit
-        changes - Dockerfile instructions to apply
-        conf - Configuration overrides
+        id_or_name - Container id or name to snapshot
+        repository - Repository name for the new image, e.g. "myorg/myimage"
+        tag - Tag for the new image (default: "latest")
+        message - Commit message stored in the image metadata
+        author - Author string stored in the image metadata
+        pause - Pause the container during commit for consistency (default True)
+        changes - Dockerfile instructions (CMD, ENV, EXPOSE, etc.) to apply to the image
+        conf - Additional image configuration overrides as a dict
     returns: dict - The new image's attrs
     """
     container = _get_client(host).containers.get(id_or_name)
@@ -683,12 +695,20 @@ def resize_container(id_or_name: str, height: int, width: int, host: str | None 
 @tool()
 def update_container(id_or_name: str, updates: dict, host: str | None = None) -> dict:
     """
-    Update resource limits on a running container.
+    Update resource limits on a container without recreating it.
+
+    Changes take effect immediately on Linux (cgroups); not all fields are updatable on
+    every platform. Common `updates` keys: `mem_limit` (bytes, e.g. 134217728 for 128 MB),
+    `memswap_limit` (memory+swap in bytes; -1 = unlimited), `cpu_shares` (relative weight,
+    default 1024), `cpu_period` / `cpu_quota` (microseconds for CFS throttling),
+    `cpuset_cpus` (e.g. "0-1"), `restart_policy` (dict with `Name` such as
+    "on-failure"/"always"/"unless-stopped" and optional `MaximumRetryCount`). To change
+    image, env, or volumes the container must be recreated.
 
     args:
-        id_or_name - The container id or name
-        updates - Resource fields to update (cpu_shares, mem_limit, restart_policy, etc.)
-    returns: dict - The container's attrs after the update
+        id_or_name - Container id or name to update
+        updates - Resource fields to update; see description for valid keys
+    returns: dict - The container's full attrs after the update
     """
     container = _get_client(host).containers.get(id_or_name)
     container.update(**updates)
