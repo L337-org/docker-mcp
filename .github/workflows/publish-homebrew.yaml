@@ -4,6 +4,10 @@ name: 'Publish Homebrew formula'
 # the frozen lockfile so versions are pinned), packages each set into a wheelhouse tarball, attaches
 # both to the release, then pushes an updated Formula/docker-mcp-server.rb to GavinLucas/homebrew-tap.
 #
+# Runs on macos-latest (arm64) so pip resolves native arm64 wheel tags correctly. Linux runners fail
+# to match abi3 wheels like macosx_10_12_arm64 (used by bcrypt, cryptography, etc.) when
+# cross-downloading with --platform. x86_64 wheels are still downloaded cross-arch via --platform.
+#
 # Homebrew's install sandbox has no network access, so all dependencies must ship inside the tarball.
 # `--only-binary :all:` fails loudly if any locked dep lacks a macOS binary wheel — that is the
 # guardrail; do not remove it. The one known gap (cryptography ≥49 on Intel) is already pinned out
@@ -32,7 +36,7 @@ jobs:
 
   publish:
     name: Build wheelhouses and push formula
-    runs-on: ubuntu-latest
+    runs-on: macos-14  # arm64 Apple Silicon; explicit to avoid macos-latest drift to a future arch
     if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
     permissions:
       contents: write  # upload wheelhouse tarballs to the release
@@ -61,12 +65,14 @@ jobs:
         run: uv export --frozen --no-dev --no-emit-project --no-hashes -o /tmp/requirements.txt
 
       - name: Download macOS arm64 wheelhouse
+        # Runs on macos-latest (arm64) so pip resolves native arm64 wheel tags correctly.
+        # Specifying --platform on a Linux runner fails to match abi3 wheels that many packages
+        # (bcrypt, cryptography, etc.) publish for macosx_10_12_arm64 and similar older tags.
         run: |
           set -euo pipefail
           mkdir wheelhouse-arm64
           pip3 download \
             --no-deps \
-            --platform macosx_11_0_arm64 \
             --python-version 3.14 \
             --implementation cp \
             --only-binary :all: \
@@ -80,7 +86,6 @@ jobs:
           for attempt in 1 2 3 4 5; do
             if pip3 download \
                 --no-deps \
-                --platform macosx_11_0_arm64 \
                 --python-version 3.14 \
                 --implementation cp \
                 --only-binary :all: \
@@ -127,8 +132,8 @@ jobs:
           X86_64="docker-mcp-server-${{ env.VERSION }}-wheelhouse-macos-x86_64.tar.gz"
           (cd wheelhouse-arm64  && tar czf "../$ARM64"  .)
           (cd wheelhouse-x86_64 && tar czf "../$X86_64" .)
-          SHA_ARM64=$(sha256sum "$ARM64"  | awk '{print $1}')
-          SHA_X86_64=$(sha256sum "$X86_64" | awk '{print $1}')
+          SHA_ARM64=$(shasum -a 256 "$ARM64"  | awk '{print $1}')
+          SHA_X86_64=$(shasum -a 256 "$X86_64" | awk '{print $1}')
           echo "SHA_ARM64=$SHA_ARM64"   >> "$GITHUB_ENV"
           echo "SHA_X86_64=$SHA_X86_64" >> "$GITHUB_ENV"
           echo "arm64  sha256: \`$SHA_ARM64\`"  >> "$GITHUB_STEP_SUMMARY"
@@ -154,8 +159,12 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           mkdir -p Formula
-          envsubst '$VERSION $TAG $SHA_ARM64 $SHA_X86_64' \
-            < "$GITHUB_WORKSPACE/scripts/docker-mcp-server.rb.tpl" \
+          sed \
+            -e "s|\${VERSION}|${VERSION}|g" \
+            -e "s|\${TAG}|${TAG}|g" \
+            -e "s|\${SHA_ARM64}|${SHA_ARM64}|g" \
+            -e "s|\${SHA_X86_64}|${SHA_X86_64}|g" \
+            "$GITHUB_WORKSPACE/scripts/docker-mcp-server.rb.tpl" \
             > Formula/docker-mcp-server.rb
           git add Formula/docker-mcp-server.rb
           if git diff --cached --quiet; then
