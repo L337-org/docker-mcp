@@ -156,7 +156,7 @@ class DockerMcpServer < Formula
     python3 = Formula["python@3.14"].opt_bin/"python3.14"
     system "uv", "venv", libexec.to_s, "--python", python3.to_s
     system "uv", "pip", "install",
-      "--python", libexec.to_s,
+      "--python", (libexec/"bin/python3").to_s,
       "--no-index",
       "--find-links=#{buildpath}",
       "docker-mcp-server==#{version}"
