@@ -4,14 +4,19 @@ name: 'Publish Homebrew formula'
 # the frozen lockfile so versions are pinned), packages each set into a wheelhouse tarball, attaches
 # both to the release, then pushes an updated Formula/docker-mcp-server.rb to GavinLucas/homebrew-tap.
 #
-# Runs on macos-latest (arm64) so pip resolves native arm64 wheel tags correctly. Linux runners fail
-# to match abi3 wheels like macosx_10_12_arm64 (used by bcrypt, cryptography, etc.) when
-# cross-downloading with --platform. x86_64 wheels are still downloaded cross-arch via --platform.
+# Runs on ubuntu-latest. Both wheelhouses are built via cross-platform pip downloads using explicit
+# --platform flags, so no macOS runner is needed. Two platform flags are required per arch:
+#   arm64:   --platform macosx_11_0_arm64  +  --platform macosx_10_12_universal2
+#   x86_64:  --platform macosx_10_13_x86_64  +  --platform macosx_10_12_universal2
+# The universal2 fallback is needed because several packages (bcrypt 5.x, cryptography, pynacl)
+# publish macOS wheels only as universal2 fat binaries. pip does not automatically include
+# universal2 in x86_64/arm64 tag expansions; adding it explicitly covers both.
+# pip's --python-version flag does not generate correct abi3 tags when run under an older
+# interpreter, so we install Python 3.14 via uv and run all pip download calls under it.
 #
 # Homebrew's install sandbox has no network access, so all dependencies must ship inside the tarball.
 # `--only-binary :all:` fails loudly if any locked dep lacks a macOS binary wheel — that is the
-# guardrail; do not remove it. The one known gap (cryptography ≥49 on Intel) is already pinned out
-# in pyproject.toml.
+# guardrail; do not remove it.
 #
 # Requires the repository secret TAP_GITHUB_TOKEN: a fine-grained PAT with Contents read+write on
 # GavinLucas/homebrew-tap. Create it at github.com/settings/tokens and add it as a secret on this
@@ -36,7 +41,7 @@ jobs:
 
   publish:
     name: Build wheelhouses and push formula
-    runs-on: macos-14  # arm64 Apple Silicon; explicit to avoid macos-latest drift to a future arch
+    runs-on: ubuntu-latest
     if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
     permissions:
       contents: write  # upload wheelhouse tarballs to the release
@@ -48,8 +53,6 @@ jobs:
 
       - name: Install uv
         uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
-        with:
-          version: "latest"
 
       - name: Resolve version from tag
         run: |
@@ -75,11 +78,16 @@ jobs:
           echo "PYTHON_314=$PYTHON_314" >> "$GITHUB_ENV"
 
       - name: Download macOS arm64 wheelhouse
+        # See top-of-file comment for the --platform rationale.
         run: |
           set -euo pipefail
           mkdir wheelhouse-arm64
           "$PYTHON_314" -m pip download \
             --no-deps \
+            --platform macosx_11_0_arm64 \
+            --platform macosx_10_12_universal2 \
+            --python-version 3.14 \
+            --implementation cp \
             --only-binary :all: \
             -r /tmp/requirements.txt \
             -d wheelhouse-arm64
@@ -91,6 +99,10 @@ jobs:
           for attempt in 1 2 3 4 5; do
             if "$PYTHON_314" -m pip download \
                 --no-deps \
+                --platform macosx_11_0_arm64 \
+                --platform macosx_10_12_universal2 \
+                --python-version 3.14 \
+                --implementation cp \
                 --only-binary :all: \
                 "docker-mcp-server==${{ env.VERSION }}" \
                 -d wheelhouse-arm64; then
