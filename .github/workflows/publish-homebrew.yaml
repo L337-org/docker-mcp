@@ -32,9 +32,11 @@ name: 'Publish Homebrew formula'
 permissions:
   contents: read
 
+# DISABLED: automatic release trigger removed pending resolution of the Homebrew dylib linkage
+# issue (pydantic_core wheels lack -headerpad_max_install_names). Re-enable by adding:
+#   release:
+#     types: [published]
 on:
-  release:
-    types: [published]
   workflow_dispatch:
     inputs:
       tag:
