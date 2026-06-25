@@ -5,14 +5,18 @@ name: 'Publish Homebrew formula'
 # both to the release, then pushes an updated Formula/docker-mcp-server.rb to GavinLucas/homebrew-tap.
 #
 # Runs on ubuntu-latest. Both wheelhouses are built via cross-platform pip downloads:
-#   arm64:   --platform macosx_12_0_arm64  +  --platform macosx_12_0_universal2
-#   x86_64:  --platform macosx_12_0_x86_64  +  --platform macosx_12_0_universal2
-# macosx_12_0 (Monterey) is Homebrew's minimum supported macOS. pip's backwards-compatible tag
-# expansion means this single floor covers all wheels with older macOS minimums (10.x, 11.x).
+#   arm64:   --platform macosx_<floor>_arm64  +  --platform macosx_<floor>_universal2
+#   x86_64:  --platform macosx_<floor>_x86_64  +  --platform macosx_<floor>_universal2
+# The floor is Homebrew's minimum supported macOS, discovered at runtime by querying the
+# Homebrew formulae API (oldest Intel bottle of a core formula → version number). pip's
+# backwards-compatible tag expansion means a higher floor still covers all wheels with older
+# macOS minimums (10.x, 11.x, 12.x, ...).
 # The universal2 flag is required alongside each arch because some packages (bcrypt, cryptography,
 # pynacl) publish macOS wheels only as universal2 fat binaries; pip does not fold universal2 into
 # the arch-specific tag expansion automatically.
 # --python-version is derived from requires-python in pyproject.toml so it tracks Python bumps.
+# The codename→version map in "Resolve macOS floor" needs a new entry when Apple announces a new
+# macOS release (well before it could become Homebrew's minimum); the floor itself self-updates.
 #
 # Homebrew's install sandbox has no network access, so all dependencies must ship inside the tarball.
 # `--only-binary :all:` fails loudly if any locked dep lacks a macOS binary wheel — that is the
@@ -54,14 +58,44 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
 
-      - name: Resolve version and Python target from pyproject.toml
+      - name: Resolve version, Python target, and macOS floor
         run: |
           set -euo pipefail
           TAG="${{ github.event.release.tag_name || github.event.inputs.tag }}"
           echo "TAG=$TAG" >> "$GITHUB_ENV"
           echo "VERSION=${TAG#v}" >> "$GITHUB_ENV"
-          PYTHON_VER=$(python3 -c "import tomllib, re; d=tomllib.load(open('pyproject.toml','rb')); print(re.search(r'[\d.]+', d['project']['requires-python']).group())")
+
+          PYTHON_VER=$(python3 -c "
+          import tomllib, re
+          d = tomllib.load(open('pyproject.toml', 'rb'))
+          print(re.search(r'[\d.]+', d['project']['requires-python']).group())
+          ")
           echo "PYTHON_VER=$PYTHON_VER" >> "$GITHUB_ENV"
+
+          # Discover Homebrew's minimum supported macOS from their formulae API.
+          # Add a new entry to VERSIONS when Apple announces a new macOS release.
+          MACOS_FLOOR=$(python3 -c "
+          import json, sys, urllib.request
+          VERSIONS = {'monterey': 12, 'ventura': 13, 'sonoma': 14, 'sequoia': 15, 'tahoe': 16}
+          try:
+              data = json.loads(urllib.request.urlopen(
+                  'https://formulae.brew.sh/api/formula/curl.json', timeout=15).read())
+              intel = sorted(k for k in data['bottle']['stable']['files']
+                             if not k.startswith('arm64_') and 'linux' not in k)
+              codename = intel[0]
+              ver = VERSIONS.get(codename)
+              if ver is None:
+                  print(f'Unknown macOS codename {codename!r} — add it to VERSIONS', file=sys.stderr)
+                  sys.exit(1)
+              print(f'{ver}_0')
+          except SystemExit:
+              raise
+          except Exception as e:
+              print(f'Failed to resolve Homebrew macOS floor: {e}', file=sys.stderr)
+              sys.exit(1)
+          ")
+          echo "MACOS_FLOOR=$MACOS_FLOOR" >> "$GITHUB_ENV"
+          echo "Python target: $PYTHON_VER  |  macOS floor: $MACOS_FLOOR" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Export locked dependencies
         # --no-emit-project excludes docker-mcp-server itself (downloaded separately below so we
@@ -76,8 +110,8 @@ jobs:
           mkdir wheelhouse-arm64
           python3 -m pip download \
             --no-deps \
-            --platform macosx_12_0_arm64 \
-            --platform macosx_12_0_universal2 \
+            --platform "macosx_${MACOS_FLOOR}_arm64" \
+            --platform "macosx_${MACOS_FLOOR}_universal2" \
             --python-version "$PYTHON_VER" \
             --implementation cp \
             --only-binary :all: \
@@ -91,8 +125,8 @@ jobs:
           for attempt in 1 2 3 4 5; do
             if python3 -m pip download \
                 --no-deps \
-                --platform macosx_12_0_arm64 \
-                --platform macosx_12_0_universal2 \
+                --platform "macosx_${MACOS_FLOOR}_arm64" \
+                --platform "macosx_${MACOS_FLOOR}_universal2" \
                 --python-version "$PYTHON_VER" \
                 --implementation cp \
                 --only-binary :all: \
@@ -111,8 +145,8 @@ jobs:
           mkdir wheelhouse-x86_64
           python3 -m pip download \
             --no-deps \
-            --platform macosx_12_0_x86_64 \
-            --platform macosx_12_0_universal2 \
+            --platform "macosx_${MACOS_FLOOR}_x86_64" \
+            --platform "macosx_${MACOS_FLOOR}_universal2" \
             --python-version "$PYTHON_VER" \
             --implementation cp \
             --only-binary :all: \
@@ -122,8 +156,8 @@ jobs:
           for attempt in 1 2 3 4 5; do
             if python3 -m pip download \
                 --no-deps \
-                --platform macosx_12_0_x86_64 \
-                --platform macosx_12_0_universal2 \
+                --platform "macosx_${MACOS_FLOOR}_x86_64" \
+                --platform "macosx_${MACOS_FLOOR}_universal2" \
                 --python-version "$PYTHON_VER" \
                 --implementation cp \
                 --only-binary :all: \
