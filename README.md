@@ -62,28 +62,6 @@ To pin a specific version, append `==<version>` to the package name (e.g. `docke
 
 To pin a specific revision, append `@<tag-or-commit>` to the git URL.
 
-**Homebrew (macOS).** If you prefer Homebrew, the server is available from a [personal tap](https://github.com/GavinLucas/homebrew-tap):
-
-```bash
-brew install gavinlucas/tap/docker-mcp-server
-```
-
-Then point your MCP client at the installed binary:
-
-```json
-{
-  "mcpServers": {
-    "docker-mcp-server": {
-      "command": "docker-mcp-server",
-      "args": [],
-      "env": {}
-    }
-  }
-}
-```
-
-> **Homebrew 6.0+:** The fully-qualified form above auto-trusts this tap for that one formula. If you `brew tap gavinlucas/tap` first and then use the short name, run `brew trust --formula gavinlucas/tap/docker-mcp-server` before installing.
-
 ### Install as a Desktop Extension (.mcpb)
 
 For [Claude Desktop](https://claude.com/download), a one-click bundle is attached to each
@@ -405,7 +383,6 @@ Connecting this server to an AI agent grants it the same level of access as a lo
 | Docker Hub (container) | [gavinlucas/docker-mcp-server](https://hub.docker.com/r/gavinlucas/docker-mcp-server) |
 | Desktop Extension (.mcpb) | [GitHub Releases](https://github.com/GavinLucas/docker-mcp/releases) |
 | Official MCP Registry | [io.github.GavinLucas/docker-mcp-server](https://registry.modelcontextprotocol.io/v0.1/servers/io.github.GavinLucas%2Fdocker-mcp-server/versions) |
-| Homebrew tap | [gavinlucas/homebrew-tap](https://github.com/GavinLucas/homebrew-tap) |
 | Glama | [docker-mcp-server](https://glama.ai/mcp/servers/GavinLucas/docker-mcp) |
 | mcp.so | [docker-mcp-server](https://mcp.so/server/docker-mcp-server/GavinLucas) |
 
