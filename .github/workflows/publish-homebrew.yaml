@@ -36,7 +36,7 @@ jobs:
 
   publish:
     name: Build wheelhouses and push formula
-    runs-on: macos-latest
+    runs-on: macos-14  # arm64 Apple Silicon; explicit to avoid macos-latest drift to a future arch
     if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
     permissions:
       contents: write  # upload wheelhouse tarballs to the release
@@ -132,8 +132,8 @@ jobs:
           X86_64="docker-mcp-server-${{ env.VERSION }}-wheelhouse-macos-x86_64.tar.gz"
           (cd wheelhouse-arm64  && tar czf "../$ARM64"  .)
           (cd wheelhouse-x86_64 && tar czf "../$X86_64" .)
-          SHA_ARM64=$(sha256sum "$ARM64"  | awk '{print $1}')
-          SHA_X86_64=$(sha256sum "$X86_64" | awk '{print $1}')
+          SHA_ARM64=$(shasum -a 256 "$ARM64"  | awk '{print $1}')
+          SHA_X86_64=$(shasum -a 256 "$X86_64" | awk '{print $1}')
           echo "SHA_ARM64=$SHA_ARM64"   >> "$GITHUB_ENV"
           echo "SHA_X86_64=$SHA_X86_64" >> "$GITHUB_ENV"
           echo "arm64  sha256: \`$SHA_ARM64\`"  >> "$GITHUB_STEP_SUMMARY"
@@ -159,8 +159,12 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           mkdir -p Formula
-          envsubst '$VERSION $TAG $SHA_ARM64 $SHA_X86_64' \
-            < "$GITHUB_WORKSPACE/scripts/docker-mcp-server.rb.tpl" \
+          sed \
+            -e "s|\${VERSION}|${VERSION}|g" \
+            -e "s|\${TAG}|${TAG}|g" \
+            -e "s|\${SHA_ARM64}|${SHA_ARM64}|g" \
+            -e "s|\${SHA_X86_64}|${SHA_X86_64}|g" \
+            "$GITHUB_WORKSPACE/scripts/docker-mcp-server.rb.tpl" \
             > Formula/docker-mcp-server.rb
           git add Formula/docker-mcp-server.rb
           if git diff --cached --quiet; then
