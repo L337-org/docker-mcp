@@ -11,8 +11,8 @@ name: 'Publish Homebrew formula'
 # The universal2 fallback is needed because several packages (bcrypt 5.x, cryptography, pynacl)
 # publish macOS wheels only as universal2 fat binaries. pip does not automatically include
 # universal2 in x86_64/arm64 tag expansions; adding it explicitly covers both.
-# pip's --python-version flag does not generate correct abi3 tags when run under an older
-# interpreter, so we install Python 3.14 via uv and run all pip download calls under it.
+# --python-version 3.14 --implementation cp tells pip to generate cp314 compatibility tags;
+# this is sufficient regardless of the pip interpreter version on the runner.
 #
 # Homebrew's install sandbox has no network access, so all dependencies must ship inside the tarball.
 # `--only-binary :all:` fails loudly if any locked dep lacks a macOS binary wheel — that is the
@@ -67,22 +67,12 @@ jobs:
         # --no-hashes keeps the requirements file simple; wheel integrity is enforced by shasum.
         run: uv export --frozen --no-dev --no-emit-project --no-hashes -o /tmp/requirements.txt
 
-      - name: Install Python 3.14 and bootstrap pip
-        # pip's --python-version flag does not correctly expand abi3 compatibility tags when run
-        # under an older interpreter (e.g. 3.12). Running pip under the actual 3.14 interpreter
-        # fixes the tag resolution — bcrypt 5.x, cryptography, etc. are found correctly.
-        run: |
-          uv python install 3.14
-          PYTHON_314=$(uv python find 3.14)
-          "$PYTHON_314" -m ensurepip --upgrade
-          echo "PYTHON_314=$PYTHON_314" >> "$GITHUB_ENV"
-
       - name: Download macOS arm64 wheelhouse
         # See top-of-file comment for the --platform rationale.
         run: |
           set -euo pipefail
           mkdir wheelhouse-arm64
-          "$PYTHON_314" -m pip download \
+          pip3 download \
             --no-deps \
             --platform macosx_11_0_arm64 \
             --platform macosx_10_12_universal2 \
@@ -97,7 +87,7 @@ jobs:
           # ordering guarantee, so the wheel may not yet be on PyPI when this step starts.
           downloaded=false
           for attempt in 1 2 3 4 5; do
-            if "$PYTHON_314" -m pip download \
+            if pip3 download \
                 --no-deps \
                 --platform macosx_11_0_arm64 \
                 --platform macosx_10_12_universal2 \
@@ -124,7 +114,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir wheelhouse-x86_64
-          "$PYTHON_314" -m pip download \
+          pip3 download \
             --no-deps \
             --platform macosx_10_13_x86_64 \
             --platform macosx_10_12_universal2 \
@@ -135,7 +125,7 @@ jobs:
             -d wheelhouse-x86_64
           downloaded=false
           for attempt in 1 2 3 4 5; do
-            if "$PYTHON_314" -m pip download \
+            if pip3 download \
                 --no-deps \
                 --platform macosx_10_13_x86_64 \
                 --platform macosx_10_12_universal2 \
@@ -157,8 +147,8 @@ jobs:
           X86_64="docker-mcp-server-${{ env.VERSION }}-wheelhouse-macos-x86_64.tar.gz"
           (cd wheelhouse-arm64  && tar czf "../$ARM64"  .)
           (cd wheelhouse-x86_64 && tar czf "../$X86_64" .)
-          SHA_ARM64=$(shasum -a 256 "$ARM64"  | awk '{print $1}')
-          SHA_X86_64=$(shasum -a 256 "$X86_64" | awk '{print $1}')
+          SHA_ARM64=$(sha256sum "$ARM64"  | awk '{print $1}')
+          SHA_X86_64=$(sha256sum "$X86_64" | awk '{print $1}')
           echo "SHA_ARM64=$SHA_ARM64"   >> "$GITHUB_ENV"
           echo "SHA_X86_64=$SHA_X86_64" >> "$GITHUB_ENV"
           echo "arm64  sha256: \`$SHA_ARM64\`"  >> "$GITHUB_STEP_SUMMARY"
