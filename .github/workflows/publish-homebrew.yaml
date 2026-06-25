@@ -64,10 +64,11 @@ jobs:
         run: |
           set -euo pipefail
           mkdir wheelhouse-arm64
-          uv pip download \
+          pip3 download \
             --no-deps \
-            --python-platform aarch64-apple-darwin \
+            --platform macosx_11_0_arm64 \
             --python-version 3.14 \
+            --implementation cp \
             --only-binary :all: \
             -r /tmp/requirements.txt \
             -d wheelhouse-arm64
@@ -77,9 +78,11 @@ jobs:
           # ordering guarantee, so the wheel may not yet be on PyPI when this step starts.
           downloaded=false
           for attempt in 1 2 3 4 5; do
-            if uv pip download \
+            if pip3 download \
                 --no-deps \
+                --platform macosx_11_0_arm64 \
                 --python-version 3.14 \
+                --implementation cp \
                 --only-binary :all: \
                 "docker-mcp-server==${{ env.VERSION }}" \
                 -d wheelhouse-arm64; then
@@ -93,18 +96,21 @@ jobs:
         run: |
           set -euo pipefail
           mkdir wheelhouse-x86_64
-          uv pip download \
+          pip3 download \
             --no-deps \
-            --python-platform x86_64-apple-darwin \
+            --platform macosx_10_9_x86_64 \
             --python-version 3.14 \
+            --implementation cp \
             --only-binary :all: \
             -r /tmp/requirements.txt \
             -d wheelhouse-x86_64
           downloaded=false
           for attempt in 1 2 3 4 5; do
-            if uv pip download \
+            if pip3 download \
                 --no-deps \
+                --platform macosx_10_9_x86_64 \
                 --python-version 3.14 \
+                --implementation cp \
                 --only-binary :all: \
                 "docker-mcp-server==${{ env.VERSION }}" \
                 -d wheelhouse-x86_64; then
