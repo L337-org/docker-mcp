@@ -9,6 +9,12 @@ class DockerMcpServer < Formula
   depends_on "python@3.14"
   depends_on "uv" => :build
 
+  # Prevent Homebrew's post-install linkage fixer from rewriting @rpath IDs
+  # in Python extension .so files inside the virtualenv. Those binaries don't
+  # have headerpad room for longer absolute paths and don't need relinking —
+  # Python loads them directly by path, not via the dylib ID.
+  skip_clean "libexec"
+
   on_macos do
     on_arm do
       url "https://github.com/GavinLucas/docker-mcp/releases/download/${TAG}/docker-mcp-server-${VERSION}-wheelhouse-macos-arm64.tar.gz"
