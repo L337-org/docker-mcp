@@ -82,13 +82,17 @@ jobs:
     steps:
       - name: Set up uv
         uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          # This job deliberately has no checkout — it tests the *published* package, not the
+          # repo — so disable the repo-keyed cache and the empty-workdir warning it triggers.
+          enable-cache: false
+          ignore-empty-workdir: true
 
       - name: Import smoke (full tool-registration path, no daemon needed)
         run: uv run --no-project --python 3.14 --with docker-mcp-server python -c "import docker_mcp"
 
       - name: Entry-point smoke (uvx console script)
-        # Depends on the published package having the --version flag (added in the same PR as
-        # this workflow) — expect this step to fail until the first release after that PR ships.
+        # Requires the published package to have the --version flag (shipped in v1.9.3).
         run: uvx --python 3.14 docker-mcp-server --version
 
   notify:
