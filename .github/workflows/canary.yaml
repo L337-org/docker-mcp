@@ -1,0 +1,111 @@
+name: Weekly canary
+
+# Proactive platform/ecosystem drift detection — the class of breakage premerge CI (ubuntu +
+# CPython 3.14 only) can't see. Two angles:
+#
+#   1. resolve-crossplatform (ubuntu, no mac/windows hardware needed): wheels-only dependency
+#      resolution for Intel macOS, Apple-silicon macOS, and Windows — against BOTH the repo's
+#      pyproject.toml (would the next release install?) and the latest published PyPI release
+#      (did an upstream dep pull its wheels out from under an already-shipped version?). This is
+#      exactly the check that would have caught cryptography 49 dropping its x86_64-macOS wheel.
+#   2. install-smoke (real runners): install the published package with uv and import/run it on
+#      macos-latest (arm64), macos-15-intel (x86_64), and windows-latest.
+#
+# On failure the notify job files (or comments on) a deduplicated issue labeled
+# ci-failure + wf:canary — one open issue per stream, so four red Mondays make one thread, which
+# the scheduled Claude responder routine (and the humans it defers to) works from.
+
+permissions:
+  contents: read
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'  # Mondays 06:00 UTC
+  workflow_dispatch:
+
+jobs:
+
+  resolve-crossplatform:
+    name: Cross-platform wheel resolution
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+
+      - name: Resolve runtime deps as wheels-only for each platform
+        # --only-binary :all: makes resolution fail if any dependency lacks a wheel for the
+        # target platform — a source-build fallback is exactly the breakage this hunts (users
+        # without a Rust/C toolchain). pyproject.toml resolution covers [project].dependencies
+        # only (the uvx install surface, not dev groups). If a deliberately sdist-only dep ever
+        # enters the tree, exempt it per-package rather than dropping :all:.
+        run: |
+          set -euo pipefail
+          latest="$(curl -fsSL https://pypi.org/pypi/docker-mcp-server/json | jq -r .info.version)"
+          echo "Latest published release: $latest"
+          failed=0
+          for target in x86_64-apple-darwin aarch64-apple-darwin x86_64-pc-windows-msvc; do
+            echo "::group::$target (repo pyproject.toml)"
+            # stdout (the compiled lock) is discarded — only resolution success matters. Don't
+            # use `-o /dev/null`: uv writes output atomically via a sibling temp file, which
+            # fails inside /dev.
+            if ! uv pip compile pyproject.toml --python-platform "$target" --python-version 3.14 \
+                --only-binary :all: > /dev/null; then
+              echo "::error::wheels-only resolution FAILED for $target against the repo pyproject.toml — the next release would not install there"
+              failed=1
+            fi
+            echo "::endgroup::"
+            echo "::group::$target (published docker-mcp-server==$latest)"
+            if ! echo "docker-mcp-server==$latest" | uv pip compile - --python-platform "$target" \
+                --python-version 3.14 --only-binary :all: > /dev/null; then
+              echo "::error::wheels-only resolution FAILED for $target against published $latest — an upstream dep dropped wheels under a shipped release"
+              failed=1
+            fi
+            echo "::endgroup::"
+          done
+          exit "$failed"
+
+  install-smoke:
+    # Real install of the *published* package on each platform's actual runner.
+    # macos-15-intel is the last Intel-macOS hosted runner label; GitHub retires it August 2027.
+    # When the label disappears, drop that matrix leg — wheel resolution for x86_64-apple-darwin
+    # continues in the resolve-crossplatform job above, which needs no Intel hardware.
+    name: Install smoke (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, macos-15-intel, windows-latest]
+    steps:
+      - name: Set up uv
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+
+      - name: Import smoke (full tool-registration path, no daemon needed)
+        run: uv run --no-project --python 3.14 --with docker-mcp-server python -c "import docker_mcp"
+
+      - name: Entry-point smoke (uvx console script)
+        # Depends on the published package having the --version flag (added in the same PR as
+        # this workflow) — expect this step to fail until the first release after that PR ships.
+        run: uvx --python 3.14 docker-mcp-server --version
+
+  notify:
+    name: File failure issue
+    runs-on: ubuntu-latest
+    needs: [resolve-crossplatform, install-smoke]
+    if: failure()
+    permissions:
+      contents: read   # checkout, to use the local composite action
+      issues: write
+    steps:
+      - name: Check out source repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: File or update the failure issue
+        uses: ./.github/actions/file-failure-issue
+        with:
+          label: 'wf:canary'
+          title: 'Weekly canary failed'
+          token: ${{ github.token }}

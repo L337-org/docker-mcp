@@ -55,6 +55,16 @@ non-required `Check docs mirror` job flags a PR that edits `CLAUDE.md` or
 `.github/copilot-instructions.md` without the other (see the MIRROR RULE above) — it's a prompt to
 double-check, not a merge blocker.
 
+A **weekly canary** (`.github/workflows/canary.yaml`, Mondays + dispatch) hunts platform/ecosystem
+drift premerge CI can't see: wheels-only (`--only-binary :all:`) dependency resolution for Intel
+macOS / ARM macOS / Windows against both the repo `pyproject.toml` and the latest published PyPI
+release (the check that would have caught cryptography 49 dropping its x86_64-macOS wheel), plus
+real install smokes of the published package on `macos-latest`, `macos-15-intel` (Intel runner
+label retires Aug 2027), and `windows-latest` — `import docker_mcp` and `uvx docker-mcp-server
+--version`. Failures file a deduplicated `ci-failure` + `wf:canary` issue via
+`.github/actions/file-failure-issue`. `main()` handles `--version` (print the installed version,
+exit) before any daemon/network contact — the canary's entry-point smoke depends on it.
+
 ## Architecture
 
 ### Entry point

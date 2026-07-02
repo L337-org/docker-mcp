@@ -19,6 +19,18 @@ def main():
     """
     Main function to run the MCP server.
     """
+    import sys
+
+    # Exit-fast version report, so the published package can be smoke-tested (the weekly canary
+    # workflow runs `uvx docker-mcp-server --version` on each platform) without starting a server
+    # that never returns. Handled before startup_preflight: no daemon, no network. Printing to
+    # stdout is safe here — the stdio-channel constraint only applies once the server is serving.
+    if "--version" in sys.argv[1:]:
+        from importlib.metadata import version
+
+        print(version("docker-mcp-server"))
+        return
+
     from docker_mcp.tools.client import startup_preflight
 
     startup_preflight()
