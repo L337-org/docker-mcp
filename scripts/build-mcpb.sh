@@ -2,8 +2,8 @@
 #
 # build-mcpb.sh — pack a local Claude Desktop Extension (.mcpb) bundle for testing.
 #
-# A developer convenience, NOT a CI tool. CI packs the official release bundle via
-# .github/workflows/publish-mcpb.yaml (which stamps the version from the release tag and
+# A developer convenience, NOT a CI tool. CI packs the official release bundle via the mcpb
+# job in .github/workflows/release.yaml (which stamps the version from the release tag and
 # attaches the asset to the GitHub Release). This script mirrors that pack step so you can
 # produce an installable bundle locally to smoke-test in Claude Desktop.
 #

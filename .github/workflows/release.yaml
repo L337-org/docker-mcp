@@ -1,0 +1,547 @@
+name: Release
+
+# The consolidated release pipeline. On each published GitHub Release (or a manual re-run via
+# workflow_dispatch with the tag) it runs:
+#
+#   preflight ─→ pypi ──────────────┐
+#             ├→ images ─→ hub-desc ├─→ registry ─→ verify
+#             └→ mcpb ──────────────┘        (notify files an issue if anything failed)
+#
+# This replaces the four independent publish-*.yaml workflows that all fanned out on the release
+# event. Ordering `registry` after the three artifact publishers removes the race it previously
+# absorbed with a 20-minute retry loop (it verifies markers those jobs publish); `preflight` blocks
+# a "split-brain" release where the tag and the committed pyproject.toml version disagree (PyPI
+# ships the pyproject version, everything else ships the tag version); `verify` confirms every
+# channel actually converged so a partial release is loud instead of silent.
+#
+# PyPI Trusted Publishing pins the WORKFLOW FILENAME: the trusted publisher on PyPI must list
+# `release.yaml` (owner GavinLucas, repo docker-mcp). If the pypi job fails with an OIDC
+# `invalid-publisher` error, that registration is missing — add it on PyPI, then re-run.
+#
+# Partial-failure semantics: no rollback is attempted (PyPI files are immutable anyway). The
+# notify job files a `ci-failure` issue naming the failed jobs; after fixing, re-run the whole
+# pipeline via workflow_dispatch with the same tag — every job is idempotent for a re-run
+# (`skip-existing` on PyPI, re-pushed image tags, `--clobber` on the .mcpb, duplicate-tolerant
+# registry publish).
+#
+# Two releases published minutes apart run in parallel (per-tag concurrency groups); the only
+# shared mutable state is the Docker Hub description (last-writer-wins, identical content) —
+# acceptable. cancel-in-progress is off so a re-run can never kill a half-done publish.
+
+permissions:
+  contents: read
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to (re-)publish (e.g. v1.9.3)'
+        required: true
+
+concurrency:
+  group: release-${{ github.event.release.tag_name || inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+
+  preflight:
+    # Resolves the tag/version once for every downstream job, and fails fast if the committed
+    # versions at that tag disagree with it — before anything publishes.
+    name: Release preflight
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+      version: ${{ steps.resolve.outputs.version }}
+    steps:
+      - name: Resolve tag and version
+        id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          tag="${RELEASE_TAG:-$INPUT_TAG}"
+          # On a dispatch re-run, confirm the release actually exists before doing anything.
+          gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json tagName >/dev/null
+          version="${tag#v}"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Releasing \`$tag\` (version \`$version\`)" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Check out the release tag
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ steps.resolve.outputs.tag }}
+
+      - name: Set up Python environment
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.14"
+
+      - name: Assert committed versions match the tag
+        env:
+          VERSION: ${{ steps.resolve.outputs.version }}
+        # server.json is deliberately NOT checked: its committed version is stale by design and is
+        # stamped from the tag by the registry job below.
+        run: |
+          python3 - <<'EOF'
+          import json, os, sys, tomllib
+
+          version = os.environ["VERSION"]
+          errors = []
+
+          pyproject = tomllib.load(open("pyproject.toml", "rb"))["project"]["version"]
+          if pyproject != version:
+              errors.append(f"pyproject.toml version {pyproject!r} != release version {version!r}"
+                            " — the PyPI wheel would ship a DIFFERENT version to every other channel")
+
+          manifest = json.load(open("manifest.json"))["version"]
+          if manifest != version:
+              errors.append(f"manifest.json version {manifest!r} != release version {version!r}")
+
+          lock = tomllib.load(open("uv.lock", "rb"))
+          entries = [p for p in lock["package"]
+                     if p["name"] == "docker-mcp-server" and p.get("source", {}).get("editable") == "."]
+          if len(entries) != 1:
+              errors.append(f"expected exactly one editable self-entry in uv.lock, found {len(entries)}")
+          elif entries[0]["version"] != version:
+              errors.append(f"uv.lock self-entry version {entries[0]['version']!r} != release version {version!r}"
+                            " — run `uv lock` after bumping")
+
+          if errors:
+              for e in errors:
+                  print(f"::error::{e}")
+              print("::error::Nothing has been published. To fix: bump the versions "
+                    "(pyproject.toml + manifest.json, then `uv lock`), merge, delete this release "
+                    "AND its tag, and publish a new release from the fixed commit.")
+              sys.exit(1)
+          print(f"Version consistency OK: {version}")
+          EOF
+
+  pypi:
+    # Publishes the sdist + wheel via PyPI Trusted Publishing (OIDC) — no stored API token. The
+    # trusted publisher on PyPI must name THIS workflow file (release.yaml); see the header.
+    name: Build and publish to PyPI
+    runs-on: ubuntu-latest
+    needs: [preflight]
+    permissions:
+      contents: read
+      id-token: write  # required for Trusted Publishing (OIDC)
+    steps:
+      - name: Check out the release tag
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ needs.preflight.outputs.tag }}
+
+      - name: Set up Python environment
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.14"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+
+      - name: Build sdist and wheel
+        run: uv build
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # v1.14.0
+        with:
+          # Makes a dispatch re-run after a partial failure idempotent (PyPI files are immutable,
+          # so a re-upload of the same files would otherwise 400). This can't mask publishing a
+          # wrong version: preflight pins tag == pyproject version, and verify independently
+          # confirms the version exists on PyPI.
+          skip-existing: true
+
+  images:
+    # Publishes the container images:
+    #   full     -> docker-mcp-server:latest    + :<version>
+    #   no-scout -> docker-mcp-server:no-scout   + :<version>-no-scout
+    # Images go to GHCR (ghcr.io/gavinlucas/docker-mcp-server) always, and are mirrored to Docker
+    # Hub (docker.io/gavinlucas/docker-mcp-server) when the DOCKERHUB_USER / DOCKERHUB_TOKEN repo
+    # secrets are set. The Hub mirror is opt-in: with the secrets unset the Hub login/tags steps
+    # are skipped and only GHCR is pushed, so a release never fails for lack of Hub credentials.
+    # The Hub token must have read/write/delete scope (the description-sync API rejects a
+    # read/write-only token with 403).
+    name: Publish ${{ matrix.variant }} image
+    runs-on: ubuntu-latest
+    needs: [preflight]
+    permissions:
+      contents: read
+      packages: write
+    # Hoisted to job-level env so the step `if:` (resolved before step-scoped env exists) can gate
+    # the Docker Hub steps on whether the secrets are present. Referencing `secrets.*` in a step
+    # `if:` directly is rejected at workflow-validation time, so this hoist is the only working shape.
+    env:
+      DOCKERHUB_USER: ${{ secrets.DOCKERHUB_USER }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: full
+            install_cli: '1'
+            install_scout: '1'
+            disable_domains: ''
+          - variant: no-scout
+            install_cli: '1'
+            install_scout: '0'
+            disable_domains: 'scout'
+    steps:
+      - name: Check out the release tag
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ needs.preflight.outputs.tag }}
+
+      - name: Compute image tags
+        id: meta
+        env:
+          VERSION: ${{ needs.preflight.outputs.version }}
+        run: |
+          # GHCR always; mirror to Docker Hub only when the credentials are present (see header).
+          registries="ghcr.io/gavinlucas/docker-mcp-server"
+          if [ -n "$DOCKERHUB_USER" ] && [ -n "$DOCKERHUB_TOKEN" ]; then
+            registries="$registries docker.io/gavinlucas/docker-mcp-server"
+          fi
+          tags=""
+          for img in $registries; do
+            if [ "${{ matrix.variant }}" = "full" ]; then
+              tags="$tags,$img:latest,$img:$VERSION"
+            else
+              tags="$tags,$img:no-scout,$img:$VERSION-no-scout"
+            fi
+          done
+          tags="${tags#,}"
+          echo "tags=$tags" >> "$GITHUB_OUTPUT"
+          echo "Publishing \`${{ matrix.variant }}\` as: $tags" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4.1.0
+        with:
+          # The two matrix jobs race to cache the same binfmt image; skip the cache to avoid the
+          # harmless "unable to reserve cache" warning while keeping both builds parallel.
+          cache-image: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
+
+      - name: Log in to GHCR
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Log in to Docker Hub
+        if: env.DOCKERHUB_USER != '' && env.DOCKERHUB_TOKEN != ''
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
+        with:
+          username: ${{ secrets.DOCKERHUB_USER }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push ${{ matrix.variant }}
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          # image.source links the GHCR package to this repo (visibility + "connected repository").
+          # io.modelcontextprotocol.server.name is the MCP Registry's OCI ownership marker — it must
+          # match `name` in server.json so the registry can verify we own this image (see the
+          # registry job below). image.version is the v-stripped version, matching the image tags.
+          labels: |
+            org.opencontainers.image.source=https://github.com/GavinLucas/docker-mcp
+            org.opencontainers.image.version=${{ needs.preflight.outputs.version }}
+            io.modelcontextprotocol.server.name=io.github.GavinLucas/docker-mcp-server
+          build-args: |
+            INSTALL_CLI=${{ matrix.install_cli }}
+            INSTALL_SCOUT=${{ matrix.install_scout }}
+            DISABLE_DOMAINS=${{ matrix.disable_domains }}
+
+  dockerhub-description:
+    # Sync DOCKERHUB.md (a slim, container-focused readme — the full README.md exceeds Hub's 25 KB
+    # cap) onto the Docker Hub repository's description page. Opt-in like the mirror: both steps
+    # are gated on the DOCKERHUB_* secrets, so nothing runs when they're unset.
+    name: Sync Docker Hub description
+    runs-on: ubuntu-latest
+    needs: [preflight, images]
+    env:
+      DOCKERHUB_USER: ${{ secrets.DOCKERHUB_USER }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+    steps:
+      - name: Check out the release tag
+        if: env.DOCKERHUB_USER != '' && env.DOCKERHUB_TOKEN != ''
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ needs.preflight.outputs.tag }}
+
+      - name: Update Docker Hub description
+        if: env.DOCKERHUB_USER != '' && env.DOCKERHUB_TOKEN != ''
+        uses: peter-evans/dockerhub-description@1b9a80c056b620d92cedb9d9b5a223409c68ddfa # v5.0.0
+        with:
+          username: ${{ secrets.DOCKERHUB_USER }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          repository: gavinlucas/docker-mcp-server
+          readme-filepath: ./DOCKERHUB.md
+          short-description: "MCP server exposing the Docker SDK for Python and docker CLI as tools for AI agents"
+
+  mcpb:
+    # Packs the Claude Desktop Extension (.mcpb) and attaches it — plus its SHA-256 — to the
+    # release assets. The bundle is a `uv`-type extension (manifest.json: server.type = "uv"): it
+    # ships the package source + pyproject.toml, and the host's managed uv resolves dependencies
+    # and runs `mcpb_run.py` at install time. The manifest version is rewritten from the release
+    # tag before packing so it can never drift from the release being published. Node and `gh`
+    # are preinstalled on ubuntu runners; the mcpb CLI runs via `npx @anthropic-ai/mcpb`.
+    name: Pack and attach .mcpb
+    runs-on: ubuntu-latest
+    needs: [preflight]
+    permissions:
+      contents: write  # upload the .mcpb as a release asset
+    steps:
+      - name: Check out the release tag
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ needs.preflight.outputs.tag }}
+
+      - name: Pack the bundle
+        id: pack
+        env:
+          VERSION: ${{ needs.preflight.outputs.version }}
+        run: |
+          set -euo pipefail
+          # Single source of truth for the version is the release tag; stamp it into the manifest so
+          # the committed default (whatever it was) can't drift from the release being published.
+          tmp="$(mktemp)"
+          jq --arg v "$VERSION" '.version = $v' manifest.json > "$tmp" && mv "$tmp" manifest.json
+          mkdir -p dist
+          name="docker-mcp-server-${VERSION}.mcpb"
+          npx -y @anthropic-ai/mcpb pack . "dist/$name"
+          # Record the bare filename (not dist/<name>) in the .sha256 so anyone downloading both
+          # assets into one directory can run `sha256sum -c` directly — including the verify job.
+          (cd dist && sha256sum "$name" | tee "$name.sha256")
+          echo "file=dist/$name" >> "$GITHUB_OUTPUT"
+          echo "Packed \`dist/$name\`" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
+        run: |
+          set -euo pipefail
+          gh release upload "$RELEASE_TAG" \
+            "${{ steps.pack.outputs.file }}" \
+            "${{ steps.pack.outputs.file }}.sha256" \
+            --clobber
+
+  registry:
+    # Publishes server.json to the official MCP Registry (registry.modelcontextprotocol.io). The
+    # registry stores only metadata — it points at the artifacts the sibling jobs above publish —
+    # and verifies we own each listed package via a marker that must equal server.json's `name`
+    # (io.github.GavinLucas/docker-mcp-server):
+    #   - pypi  -> the `<!-- mcp-name: ... -->` comment in README.md (PyPI long-description)
+    #   - oci   -> the io.modelcontextprotocol.server.name image label (set in the images job)
+    #   - mcpb  -> the .mcpb release-asset URL (must contain "mcp") + a matching fileSha256
+    # Running with `needs: [pypi, images, mcpb]` guarantees all three markers are live before this
+    # starts — the old standalone workflow raced them and needed a 20-minute retry loop. The small
+    # retries that remain only absorb registry-side read lag (CDN / index propagation).
+    # Authentication is GitHub OIDC (no stored secret).
+    name: Publish to MCP Registry
+    runs-on: ubuntu-latest
+    needs: [preflight, pypi, images, mcpb]
+    permissions:
+      contents: read
+      id-token: write  # required for MCP Registry GitHub OIDC authentication
+    steps:
+      - name: Check out the release tag
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ needs.preflight.outputs.tag }}
+
+      - name: Stamp version + .mcpb hash into server.json
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.preflight.outputs.tag }}
+          VERSION: ${{ needs.preflight.outputs.version }}
+        run: |
+          set -euo pipefail
+          # Fetch the exact published .mcpb to hash it (clients validate this fileSha256 on
+          # install). The mcpb job finished before this one starts; the short retry only covers
+          # asset-CDN lag.
+          mkdir -p _mcpb
+          for i in $(seq 1 3); do
+            if gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern '*.mcpb' --dir _mcpb --clobber; then
+              break
+            fi
+            echo "::notice::.mcpb asset for $TAG not readable yet (attempt $i/3); waiting 10s"
+            sleep 10
+          done
+          # Hash exactly one .mcpb: fail loudly on zero (download never succeeded) or more than one
+          # (ambiguous), rather than stamping a blank or concatenated fileSha256 into server.json.
+          shopt -s nullglob
+          mcpb_files=(_mcpb/*.mcpb)
+          if [ "${#mcpb_files[@]}" -ne 1 ]; then
+            echo "::error::expected exactly one .mcpb asset on $TAG, found ${#mcpb_files[@]}"
+            exit 1
+          fi
+          sha="$(sha256sum "${mcpb_files[0]}" | awk '{print $1}')"
+          echo "Resolved $TAG -> version $VERSION, .mcpb sha256 $sha"
+          jq --arg v "$VERSION" --arg tag "$TAG" --arg sha "$sha" '
+            .version = $v
+            | (.packages[] | select(.registryType == "pypi") | .version) = $v
+            | (.packages[] | select(.registryType == "oci")  | .identifier)
+                = "ghcr.io/gavinlucas/docker-mcp-server:\($v)"
+            | (.packages[] | select(.registryType == "mcpb") | .identifier)
+                = "https://github.com/GavinLucas/docker-mcp/releases/download/\($tag)/docker-mcp-server-\($v).mcpb"
+            | (.packages[] | select(.registryType == "mcpb") | .fileSha256) = $sha
+          ' server.json > server.tmp && mv server.tmp server.json
+          echo "--- server.json ---"; cat server.json
+
+      - name: Install mcp-publisher (pinned + checksum-verified)
+        env:
+          # Pin the publisher CLI rather than tracking releases/latest (supply-chain + reproducibility).
+          # The runner is always ubuntu-latest (linux/amd64); SHA256 is mcp-publisher_linux_amd64.tar.gz
+          # at this version. Re-pin VERSION and SHA256 together when bumping.
+          MCP_PUBLISHER_VERSION: v1.7.9
+          MCP_PUBLISHER_SHA256: ab128162b0616090b47cf245afe0a23f3ef08936fdce19074f5ba0a4469281ac
+        run: |
+          set -euo pipefail
+          curl -fsSL "https://github.com/modelcontextprotocol/registry/releases/download/${MCP_PUBLISHER_VERSION}/mcp-publisher_linux_amd64.tar.gz" \
+            -o mcp-publisher.tar.gz
+          echo "${MCP_PUBLISHER_SHA256}  mcp-publisher.tar.gz" | sha256sum -c -
+          tar xzf mcp-publisher.tar.gz mcp-publisher
+
+      - name: Authenticate to the MCP Registry (GitHub OIDC)
+        run: ./mcp-publisher login github-oidc
+
+      - name: Publish server.json
+        run: |
+          set -uo pipefail
+          # The verified artifacts were all published by the jobs this one `needs`, so only
+          # registry-side read lag remains — retry 8 x 30s (4 min). Three outcome classes, checked
+          # propagation-first because the registry's "image does not exist" 400 ALSO contains the
+          # words "validation failed":
+          #   * propagation ("does not exist" / 404 / 429 / 5xx) -> keep waiting
+          #   * duplicate (this exact version already published) -> success; a dispatch re-run of a
+          #     tag whose registry publish already landed is expected to hit this
+          #   * deterministic (bad server.json field / namespace permission) -> fail fast
+          attempts=8
+          for i in $(seq 1 "$attempts"); do
+            if out="$(./mcp-publisher publish 2>&1)"; then
+              echo "$out"; echo "Published to the MCP Registry."; exit 0
+            fi
+            echo "$out"
+            if printf '%s\n' "$out" | grep -qiE 'does not exist|not found|no such|status (404|429|5[0-9][0-9])'; then
+              echo "::notice::a verified artifact isn't readable yet (attempt $i/$attempts) — waiting 30s for propagation"
+              sleep 30; continue
+            fi
+            if printf '%s\n' "$out" | grep -qiE 'already exists|duplicate'; then
+              echo "::notice::this version is already published to the registry — treating as success (idempotent re-run)"
+              exit 0
+            fi
+            if printf '%s\n' "$out" | grep -qiE 'status 4[0-9][0-9]|unprocessable|expected length|forbidden|permission'; then
+              echo "::error::MCP Registry rejected the publish (not propagation) — fix server.json / namespace; a retry won't help."
+              exit 1
+            fi
+            echo "::notice::publish attempt $i/$attempts failed; waiting 30s"
+            sleep 30
+          done
+          echo "::error::MCP Registry publish failed after retries — re-run the Release workflow via workflow_dispatch with this tag."
+          exit 1
+
+  verify:
+    # Confirms every channel converged on the released version, so a partial release can't pass
+    # silently. Each check retries briefly (5 x 15s) to absorb CDN/index lag.
+    name: Verify release convergence
+    runs-on: ubuntu-latest
+    needs: [preflight, registry]
+    env:
+      TAG: ${{ needs.preflight.outputs.tag }}
+      VERSION: ${{ needs.preflight.outputs.version }}
+    steps:
+      - name: Verify PyPI has the version
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 5); do
+            if curl -fsS "https://pypi.org/pypi/docker-mcp-server/${VERSION}/json" >/dev/null; then
+              echo "PyPI OK: docker-mcp-server ${VERSION}"; exit 0
+            fi
+            echo "::notice::PyPI does not serve ${VERSION} yet (attempt $i/5); waiting 15s"
+            sleep 15
+          done
+          echo "::error::PyPI never served docker-mcp-server ${VERSION}"
+          exit 1
+
+      - name: Verify GHCR has both image tags
+        run: |
+          set -euo pipefail
+          for tag in "${VERSION}" "${VERSION}-no-scout"; do
+            ok=""
+            for i in $(seq 1 5); do
+              if docker buildx imagetools inspect "ghcr.io/gavinlucas/docker-mcp-server:${tag}" >/dev/null 2>&1; then
+                echo "GHCR OK: :${tag}"; ok=1; break
+              fi
+              echo "::notice::GHCR tag :${tag} not readable yet (attempt $i/5); waiting 15s"
+              sleep 15
+            done
+            if [ -z "$ok" ]; then
+              echo "::error::GHCR tag :${tag} missing"
+              exit 1
+            fi
+          done
+
+      - name: Verify the .mcpb release asset and its checksum
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p _verify
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern '*.mcpb*' --dir _verify
+          shopt -s nullglob
+          mcpb=(_verify/*.mcpb); sums=(_verify/*.sha256)
+          if [ "${#mcpb[@]}" -ne 1 ] || [ "${#sums[@]}" -ne 1 ]; then
+            echo "::error::expected exactly one .mcpb and one .sha256 on $TAG, found ${#mcpb[@]} / ${#sums[@]}"
+            exit 1
+          fi
+          (cd _verify && sha256sum -c ./*.sha256)
+          echo "Release asset OK: $(basename "${mcpb[0]}")"
+
+      - name: Verify the MCP Registry lists the version
+        run: |
+          set -euo pipefail
+          url="https://registry.modelcontextprotocol.io/v0/servers?search=io.github.GavinLucas/docker-mcp-server"
+          for i in $(seq 1 5); do
+            if curl -fsS "$url" | jq -e --arg v "$VERSION" \
+                '.servers[] | select(.server.version == $v)' >/dev/null; then
+              echo "MCP Registry OK: ${VERSION} listed"; exit 0
+            fi
+            echo "::notice::MCP Registry does not list ${VERSION} yet (attempt $i/5); waiting 15s"
+            sleep 15
+          done
+          echo "::error::MCP Registry never listed version ${VERSION}"
+          exit 1
+
+  notify:
+    # Files (or comments on) a `ci-failure` issue when any job above failed, so a partial release
+    # is loud. Skipped jobs downstream of a failure don't mask it: `if: failure()` is true when
+    # anything in the needs chain failed. Silent on cancellation.
+    name: File failure issue
+    runs-on: ubuntu-latest
+    needs: [preflight, pypi, images, dockerhub-description, mcpb, registry, verify]
+    if: failure()
+    permissions:
+      contents: read   # checkout, to use the local composite action
+      issues: write
+    steps:
+      - name: Check out source repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: File or update the failure issue
+        uses: ./.github/actions/file-failure-issue
+        with:
+          label: 'wf:release'
+          title: "Release pipeline failed: ${{ needs.preflight.outputs.tag || github.event.release.tag_name || inputs.tag }}"
+          token: ${{ github.token }}

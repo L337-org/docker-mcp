@@ -526,7 +526,7 @@ scripts/build-mcpb.sh
 scripts/build-mcpb.sh my-test-bundle
 ```
 
-It reads the version from `pyproject.toml`, creates `dist/` if needed, writes a `.sha256` alongside the bundle, and packs via Anthropic's `mcpb` CLI (a global `mcpb`, else `npx @anthropic-ai/mcpb`; see `--help` for the `MCPB=` override). The official release bundle is built separately by `.github/workflows/publish-mcpb.yaml` — this script is for local testing only and is **not** used by CI.
+It reads the version from `pyproject.toml`, creates `dist/` if needed, writes a `.sha256` alongside the bundle, and packs via Anthropic's `mcpb` CLI (a global `mcpb`, else `npx @anthropic-ai/mcpb`; see `--help` for the `MCPB=` override). The official release bundle is built separately by the `mcpb` job in `.github/workflows/release.yaml` — this script is for local testing only and is **not** used by CI.
 
 ### Reporting issues
 

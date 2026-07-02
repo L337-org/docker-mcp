@@ -1,0 +1,75 @@
+name: 'File failure issue'
+description: >
+  Opens — or comments on — a deduplicated GitHub issue describing a failed automation run.
+  Dedupe key: an open issue carrying BOTH the shared `ci-failure` label and this workflow's
+  stream label (e.g. `wf:release`), so repeated failures of the same pipeline collect in one
+  thread instead of spawning duplicates. The issue body is written to be actionable by the
+  scheduled Claude responder routine that polls `ci-failure` issues (as well as by a human):
+  it names the failed jobs, links the run, and states how to re-run. The calling job needs
+  `issues: write` permission and must pass `github.token`.
+
+inputs:
+  label:
+    description: 'Per-workflow stream label, e.g. wf:release or wf:canary'
+    required: true
+  title:
+    description: 'Issue title used when no open issue exists for this stream'
+    required: true
+  token:
+    description: 'GitHub token with issues: write (pass github.token)'
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: File or update the failure issue
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        LABEL: ${{ inputs.label }}
+        TITLE: ${{ inputs.title }}
+      run: |
+        set -euo pipefail
+
+        # Ensure the labels exist (idempotent; --force updates color/description if they do).
+        gh label create ci-failure -R "$GITHUB_REPOSITORY" --force \
+          --color B60205 --description "Automated failure report from a workflow run"
+        gh label create "$LABEL" -R "$GITHUB_REPOSITORY" --force \
+          --color D93F0B --description "Failure stream: $LABEL"
+
+        run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+
+        # The failed jobs have already completed by the time this (if: failure()) job runs.
+        failed_jobs="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/jobs" --paginate \
+          --jq '.jobs[] | select(.conclusion == "failure") | "- \(.name)"' || true)"
+        if [ -z "$failed_jobs" ]; then
+          failed_jobs="- (could not list failed jobs — see the run)"
+        fi
+
+        body="$(cat <<EOF
+        An automated run of the **${GITHUB_WORKFLOW}** workflow failed.
+
+        - Run: ${run_url}
+        - Failed jobs:
+        ${failed_jobs}
+
+        To re-run after fixing: Actions → ${GITHUB_WORKFLOW} → Run workflow (the Release
+        workflow takes the release tag as input; re-runs are idempotent).
+
+        <!-- filed by .github/actions/file-failure-issue -->
+        EOF
+        )"
+
+        # Dedupe on the open issue carrying both labels: comment there instead of opening a
+        # duplicate, keeping one thread per failure stream.
+        existing="$(gh issue list -R "$GITHUB_REPOSITORY" --state open \
+          --label ci-failure --label "$LABEL" --json number --jq '.[0].number // empty')"
+        if [ -n "$existing" ]; then
+          echo "Open issue #$existing exists for $LABEL — commenting instead of duplicating."
+          gh issue comment "$existing" -R "$GITHUB_REPOSITORY" --body "$body"
+        else
+          gh issue create -R "$GITHUB_REPOSITORY" \
+            --title "$TITLE" \
+            --label ci-failure --label "$LABEL" \
+            --body "$body"
+        fi

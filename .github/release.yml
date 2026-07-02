@@ -1,0 +1,13 @@
+# GitHub's auto-generated release-notes configuration ("Generate release notes" on the release
+# page groups merged PRs by these label-based categories). NOTE: this is .github/release.yml —
+# GitHub's release-NOTES config — distinct from .github/workflows/release.yaml (the release
+# pipeline). Dependabot applies the `dependencies` label automatically; everything else lands in
+# the catch-all, and the hand-written release intro stays hand-written.
+changelog:
+  categories:
+    - title: Dependencies
+      labels:
+        - dependencies
+    - title: Changes
+      labels:
+        - "*"
