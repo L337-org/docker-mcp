@@ -512,7 +512,7 @@ uv add <package>
 uv add --group dev <package>
 ```
 
-CI runs both `pytest` and `ruff` on every push and pull request via `.github/workflows/premerge.yaml`.
+CI runs `pytest` (unit + integration), `ruff` (lint + format check), and `pyright` on every pull request and push to `main` via `.github/workflows/premerge.yaml`.
 
 ### Building a local Desktop Extension (.mcpb)
 

@@ -11,6 +11,12 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Cancel superseded runs on the same ref (e.g. rapid pushes to a PR branch); a push to main
+# gets its own ref group so PR runs never cancel main's. Same shape codeql.yaml uses.
+concurrency:
+  group: premerge-${{ github.ref }}
+  cancel-in-progress: true
+
 # Jobs
 jobs:
 
@@ -30,13 +36,18 @@ jobs:
         uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
 
       - name: Install dependencies
-        run: uv sync --all-groups
+        # --locked fails if uv.lock disagrees with pyproject.toml instead of silently
+        # re-locking — catches a lockfile-only dependency change (e.g. a Dependabot lock
+        # rewrite that raises a cap pyproject still pins) that would otherwise pass CI.
+        run: uv sync --all-groups --locked
 
       - name: Run pytest
         run: uv run pytest -v
 
   ruff-run:
-    # Runs ruff lints
+    # Runs ruff lint + format checks. `uv run` (not `uvx`) so the ruff version is the
+    # dev-group pin resolved through uv.lock — the same version pre-commit hooks run
+    # locally — rather than a floating latest that can disagree with both.
 
     runs-on: [ubuntu-latest]
 
@@ -54,10 +65,70 @@ jobs:
         uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
 
       - name: Install dependencies
-        run: uv sync --all-groups
+        # --locked fails if uv.lock disagrees with pyproject.toml instead of silently
+        # re-locking — catches a lockfile-only dependency change (e.g. a Dependabot lock
+        # rewrite that raises a cap pyproject still pins) that would otherwise pass CI.
+        run: uv sync --all-groups --locked
 
-      - name: Run ruff
-        run: uvx ruff check .
+      - name: Run ruff lint
+        run: uv run ruff check .
+
+      - name: Run ruff format check
+        run: uv run ruff format --check .
+
+  pyright-run:
+    # Type-checks with the pyright pin from the dev group ([tool.pyright] config in
+    # pyproject.toml). Documented as a project convention; this job enforces it.
+    runs-on: [ubuntu-latest]
+    name: Run pyright
+    steps:
+      - name: Check out source repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Set up Python environment
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.14"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+
+      - name: Install dependencies
+        # --locked fails if uv.lock disagrees with pyproject.toml instead of silently
+        # re-locking — catches a lockfile-only dependency change (e.g. a Dependabot lock
+        # rewrite that raises a cap pyproject still pins) that would otherwise pass CI.
+        run: uv sync --all-groups --locked
+
+      - name: Run pyright
+        run: uv run pyright
+
+  mirror-check:
+    # CLAUDE.md and .github/copilot-instructions.md are mirrors (see the MIRROR RULE in
+    # CLAUDE.md); this flags a PR that edits one without the other. Deliberately NOT a
+    # required check — a one-sided edit can be legitimate (typo, wording) — so a red X
+    # here is a prompt to double-check, not a merge blocker. Fork-safe: read-only, no
+    # secrets, plain git diff (a PR-comment approach would need pull-requests:write,
+    # which fork PRs don't get).
+    runs-on: [ubuntu-latest]
+    name: Check docs mirror
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Check out source repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0  # need the merge-base with the PR base branch
+
+      - name: Compare CLAUDE.md and copilot-instructions.md changes
+        run: |
+          base="$(git merge-base "origin/${GITHUB_BASE_REF}" HEAD)"
+          changed="$(git diff --name-only "$base" HEAD)"
+          c=$(grep -cx 'CLAUDE.md' <<<"$changed" || true)
+          g=$(grep -cx '.github/copilot-instructions.md' <<<"$changed" || true)
+          if [ "$c" != "$g" ]; then
+            echo "::error::MIRROR RULE: this PR changes one of CLAUDE.md / .github/copilot-instructions.md but not the other. If the change is architectural, mirror it; if it's a legitimate one-sided edit (typo/wording), this warning can be ignored — the check is not required for merge."
+            exit 1
+          fi
+          echo "Docs mirror OK (both changed: $c)"
 
   integration-tests:
     # Runs the suite gated by `-m integration` against the Docker daemon that
@@ -90,7 +161,10 @@ jobs:
         uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
 
       - name: Install dependencies
-        run: uv sync --all-groups
+        # --locked fails if uv.lock disagrees with pyproject.toml instead of silently
+        # re-locking — catches a lockfile-only dependency change (e.g. a Dependabot lock
+        # rewrite that raises a cap pyproject still pins) that would otherwise pass CI.
+        run: uv sync --all-groups --locked
 
       - name: Verify Docker tooling on the runner
         # ubuntu-latest ships Docker Engine + docker CLI + compose v2 + buildx.

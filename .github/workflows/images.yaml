@@ -21,6 +21,11 @@ on:
       - '.github/workflows/images.yaml'
   workflow_dispatch:
 
+# Cancel superseded runs on the same ref (image builds are the most expensive premerge jobs).
+concurrency:
+  group: images-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
 
   build-and-measure:
