@@ -44,6 +44,17 @@ uv run pyright
 uv run pre-commit install
 ```
 
+CI (`.github/workflows/premerge.yaml`) enforces `pytest`, `ruff check`, `ruff format --check`, and
+`pyright` on every push/PR — all via `uv run`, so the dev-group pins in `pyproject.toml` (bumped by
+Dependabot's monthly uv pass) are the single tool-version source. The pre-commit hooks are local
+hooks running `uv run ruff …` for the same reason, so a synced venv (`uv sync`) is required before
+committing. CI installs with `uv sync --locked`, which fails if `uv.lock` disagrees with
+`pyproject.toml` instead of silently re-locking — a lockfile-only dependency change (e.g. a
+Dependabot lock rewrite that raises a cap pyproject still pins) fails CI rather than landing. A
+non-required `Check docs mirror` job flags a PR that edits `CLAUDE.md` or
+`.github/copilot-instructions.md` without the other (see the MIRROR RULE above) — it's a prompt to
+double-check, not a merge blocker.
+
 ## Architecture
 
 ### Entry point
