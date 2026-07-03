@@ -1,6 +1,6 @@
 [project]
 name = "docker-mcp-server"
-version = "1.9.3"
+version = "2.0.0"
 description = "MCP server for managing Docker resources via the Docker SDK for Python"
 readme = "README.md"
 license = "MIT"
@@ -26,7 +26,7 @@ dependencies = [
     "httpx>=0.28.1",
     "mcp>=1.27.1",
     # Pulled in transitively by docker, but we import requests.exceptions directly
-    # (wait_container catches ReadTimeout), so declare it explicitly.
+    # (container_wait catches ReadTimeout), so declare it explicitly.
     "requests>=2.26.0",
     # Pulled in transitively via mcp -> pyjwt[crypto]. cryptography 49.x dropped
     # the macosx_10_9_universal2 wheel and now ships an arm64-only macOS wheel, so

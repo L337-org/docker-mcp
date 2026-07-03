@@ -166,6 +166,15 @@ All publishing runs through one workflow on each **published GitHub Release** (n
 
 ## Conventions
 
+- **Tool naming convention (2.0, permanent):** every tool is named `<management-command>_<verb>`, anchored
+  to the docker CLI's management-command structure (`docker container ls` → `container_list`), with
+  **long-form verbs** (`list`/`remove`/`inspect` — never `ls`/`rm`/`get`), applied uniformly even where the
+  CLI lacks the long alias. Singular prefixes (`container_`, not `containers_`); read-only fetches may be
+  noun-form (`container_logs`, `registry_tags`). Names never encode the backend (SDK vs CLI). Identifier
+  params use one rule: `id_or_name` (daemon objects addressable by either), `name`/`names` (name-only
+  resources: volumes, contexts, plugins, stacks, builders), `repository` (remote repo refs); durations are
+  `timeout_seconds`. `tests/test_naming.py` enforces all of this (approved prefixes, banned short forms and
+  1.x spellings, canonical shared-param descriptions) — a violating tool fails CI.
 - New Docker functionality goes in the matching `docker_mcp/tools/<domain>.py` file, not in a new file.
 - Every new `docker_mcp/tools/` file must be imported in `docker_mcp/tools/__init__.py` (private `_*.py` helpers excluded).
 - Every new `docker_mcp/tools/<module>.py` must have a matching `tests/test_<module>.py`.
@@ -211,7 +220,7 @@ New CLI tools should pick the style matching their return shape rather than mixi
 When you add a new `docker_mcp/tools/<domain>.py` (especially for CLI features outside docker-py), update **all** of these — easy to miss:
 
 1. `docker_mcp/tools/__init__.py` — star-import.
-2. `docker_mcp/server.py` — add a `TOOL_CATEGORIES` entry for every new tool (`READ_ONLY` / `MUTATING` / `DESTRUCTIVE`); `tests/test_server.py` fails otherwise. A new module is a new **domain**, so also add a `_DOMAIN_BLURBS` entry (one-line router blurb) or the `instructions` router will silently omit it.
+2. `docker_mcp/server.py` — add a `TOOL_CATEGORIES` entry for every new tool (`READ_ONLY` / `MUTATING` / `DESTRUCTIVE`); `tests/test_server.py` fails otherwise. Tool names must follow the naming convention above (`tests/test_naming.py` fails otherwise; a new domain also adds its prefix to that test's approved list). A new module is a new **domain**, so also add a `_DOMAIN_BLURBS` entry (one-line router blurb) or the `instructions` router will silently omit it.
 3. `tests/test_<domain>.py` — unit tests using mocks.
 4. `tests/integration/test_<domain>.py` — at least one happy-path test against a real daemon (override `skip_if_no_daemon` if the module doesn't need one).
 5. `docker_mcp/tools/prompts.py` — at least one `@mcp.prompt()` template using the new tools.

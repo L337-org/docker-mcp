@@ -105,6 +105,15 @@ All publishing runs through one workflow on each **published GitHub Release**: `
 
 ## Conventions
 
+- **Tool naming convention (2.0, permanent):** every tool is named `<management-command>_<verb>`, anchored
+  to the docker CLI's management-command structure (`docker container ls` → `container_list`), with
+  **long-form verbs** (`list`/`remove`/`inspect` — never `ls`/`rm`/`get`), applied uniformly even where the
+  CLI lacks the long alias. Singular prefixes (`container_`, not `containers_`); read-only fetches may be
+  noun-form (`container_logs`, `registry_tags`). Names never encode the backend (SDK vs CLI). Identifier
+  params use one rule: `id_or_name` (daemon objects addressable by either), `name`/`names` (name-only
+  resources: volumes, contexts, plugins, stacks, builders), `repository` (remote repo refs); durations are
+  `timeout_seconds`. `tests/test_naming.py` enforces all of this (approved prefixes, banned short forms and
+  1.x spellings, canonical shared-param descriptions) — a violating tool fails CI.
 - **MIRROR RULE:** this file mirrors `CLAUDE.md` and drives Copilot review of every PR. Any change to project structure, conventions, env vars, or the tool/prompt/resource surface must update **both** files in the same PR — flag a PR that updates one but not the other.
 - New Docker functionality goes in the matching `docker_mcp/tools/<domain>.py` — do not create new tool files without a corresponding entry in `docker_mcp/tools/__init__.py` and a matching test file.
 - Tool functions are decorated with `@tool()` (imported from `docker_mcp.server`) and **must have a `TOOL_CATEGORIES` entry** in `docker_mcp/server.py`. A new tool module is a new domain — also add a `_DOMAIN_BLURBS` entry so the `instructions` router advertises it.
