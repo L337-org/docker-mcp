@@ -26,6 +26,9 @@ for _tunable in (
     # The container guards key off these; clear shell values so they can't perturb default-mode tests.
     "DOCKER_MCP_SERVER_IN_CONTAINER",
     "DOCKER_MCP_SERVER_ALLOW_SELF_TERMINATE",
+    # Provenance stamping is on by default and the label tests assert it; a shell opt-out would
+    # break them.
+    "DOCKER_MCP_SERVER_NO_LABELS",
 ):
     os.environ.pop(_tunable, None)
 
