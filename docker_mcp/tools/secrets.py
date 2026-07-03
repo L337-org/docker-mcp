@@ -31,9 +31,9 @@ def secret_create(
 @tool()
 def secret_inspect(id_or_name: str, host: str | None = None) -> dict:
     """
-    Get a swarm secret by id.
+    Get a swarm secret by id or name.
 
-    args: id_or_name - The secret id
+    args: id_or_name - The secret id or name
     returns: dict - The secret's attrs
     """
     return _get_client(host).secrets.get(id_or_name).attrs
@@ -59,10 +59,9 @@ def secret_remove(id_or_name: str, host: str | None = None) -> bool:
     have the secret mounted retain access until they are restarted or the service is updated.
     Use `service_list` and inspect each service's spec via `service_inspect` to identify
     services that mount the secret before removing it (service filters do not support
-    filtering by secret reference). The secret id (not name) is required; retrieve it from `secret_list`
-    or `secret_inspect`.
+    filtering by secret reference).
 
-    args: id_or_name - The secret id to remove
+    args: id_or_name - The secret id or name to remove
     returns: bool - True after removal
     """
     _get_client(host).secrets.get(id_or_name).remove()

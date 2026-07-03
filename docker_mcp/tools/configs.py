@@ -38,9 +38,9 @@ def config_create(
 @tool()
 def config_inspect(id_or_name: str, host: str | None = None) -> dict:
     """
-    Get a swarm config by id.
+    Get a swarm config by id or name.
 
-    args: id_or_name - The config id
+    args: id_or_name - The config id or name
     returns: dict - The config's attrs
     """
     return _get_client(host).configs.get(id_or_name).attrs
@@ -62,7 +62,7 @@ def config_remove(id_or_name: str, host: str | None = None) -> bool:
     """
     Remove a swarm config.
 
-    args: id_or_name - The config id
+    args: id_or_name - The config id or name
     returns: bool - True after removal
     """
     _get_client(host).configs.get(id_or_name).remove()

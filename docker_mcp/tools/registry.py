@@ -558,7 +558,7 @@ def _parse_platform(platform: str) -> tuple[str, str, str | None]:
 
 def _select_platform_digest(index: dict, platform: str) -> tuple[str, str]:
     """
-    Pick the sub-manifest matching `platform` from a manifest list / OCI repository index.
+    Pick the sub-manifest matching `platform` from a manifest list / OCI image index.
 
     `platform` is "os/arch[/variant]". An omitted variant matches any variant of that os/arch — so
     "linux/arm64" still selects a "linux/arm64/v8" entry, following Docker's default-variant
@@ -576,7 +576,7 @@ def _select_platform_digest(index: dict, platform: str) -> tuple[str, str]:
         plat = entry.get("platform", {})
         os_, arch = plat.get("os"), plat.get("architecture")
         if os_ in (None, "unknown") or arch in (None, "unknown"):
-            continue  # attestation / non-repository manifest
+            continue  # attestation / non-image manifest
         variant = plat.get("variant")
         actual = "/".join(p for p in (os_, arch, variant) if p)
         available.append(actual)
@@ -585,7 +585,7 @@ def _select_platform_digest(index: dict, platform: str) -> tuple[str, str]:
             if digest:
                 return digest, actual
     raise ValueError(
-        f"No manifest for platform {platform!r} in repository index. Available platforms: "
+        f"No manifest for platform {platform!r} in image index. Available platforms: "
         f"{', '.join(sorted(set(available))) or 'none'}."
     )
 

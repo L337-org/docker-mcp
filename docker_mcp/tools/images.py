@@ -281,7 +281,7 @@ def image_save(
     args:
         id_or_name - Image name or id
         dest_path - Destination path on the server host; omit to return the bytes in band
-        named - Whether to keep the image id_or_name when saving
+        named - Whether to retain repository/tag names in the saved archive
         overwrite - Replace dest_path if it already exists (default False)
         max_bytes - In-band mode: abort with ValueError beyond this many bytes (default 32 MiB)
     returns: bytes | dict - the tarball bytes (in band), or {"path": <resolved path>, "bytes_written": int}
