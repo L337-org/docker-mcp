@@ -68,17 +68,28 @@ def service_list(filters: dict | None = None, managed_only: bool = False, host: 
 
 
 @tool()
-def service_update(service_id: str, updates: dict, host: str | None = None) -> bool:
+def service_update(service_id: str, updates: dict | None = None, force: bool = False, host: str | None = None) -> bool:
     """
-    Update a swarm service's configuration.
+    Update a swarm service's configuration, or force a redeploy with no spec change.
+
+    Pass exactly one of `updates` (fields to change, same parameters as `service_create`) or
+    `force=True` (the `docker service update --force` equivalent: bumps the ForceUpdate counter so
+    the service's tasks redeploy with an unchanged spec — e.g. to reschedule after a node change or
+    re-pull a mutable tag).
 
     args:
         service_id - The service id or name
-        updates - Fields to update on the service
+        updates - Fields to update on the service; exactly one of updates/force
+        force - Redeploy the service without changing its spec; exactly one of updates/force
     returns: bool - True after the update
     """
+    if (updates is None) == (not force):
+        raise ValueError("Pass exactly one of `updates` (fields to change) or `force=True` (redeploy unchanged).")
     service = _get_client(host).services.get(service_id)
-    service.update(**updates)
+    if force:
+        service.force_update()
+        return True
+    service.update(**cast(dict, updates))
     return True
 
 
@@ -173,24 +184,12 @@ def service_scale(service_id: str, replicas: int, host: str | None = None) -> bo
 
 
 @tool()
-def service_force_update(service_id: str, host: str | None = None) -> bool:
-    """
-    Force update a swarm service even if its config has not changed.
-
-    args: service_id - The service id or name
-    returns: bool - True after the force update
-    """
-    _get_client(host).services.get(service_id).force_update()
-    return True
-
-
-@tool()
 def service_rollback(service_id: str, host: str | None = None) -> dict:
     """
     Roll a swarm service back to its previous spec (the docker `service rollback` equivalent).
 
     Re-applies the service's `PreviousSpec` — the spec from before the most recent `service_update` /
-    `service_scale` / `service_force_update`. Raises ValueError if the service has no PreviousSpec
+    `service_scale`. Raises ValueError if the service has no PreviousSpec
     (it has never been updated, or was already rolled back). The high-level SDK exposes no rollback,
     so this reads the current version and previous spec via the low-level APIClient and submits them
     with the low-level `update_service` API call.

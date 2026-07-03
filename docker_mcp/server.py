@@ -59,23 +59,18 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "container_unpause": ToolCategory.MUTATING,
     "container_remove": ToolCategory.DESTRUCTIVE,
     "container_logs": ToolCategory.READ_ONLY,
-    "container_logs_follow": ToolCategory.READ_ONLY,
     "container_stats": ToolCategory.READ_ONLY,
     "container_top": ToolCategory.READ_ONLY,
     "container_exec": ToolCategory.MUTATING,
     "container_commit": ToolCategory.MUTATING,
     "container_diff": ToolCategory.READ_ONLY,
     "container_rename": ToolCategory.MUTATING,
-    "container_resize": ToolCategory.MUTATING,
     "container_update": ToolCategory.MUTATING,
     "container_wait": ToolCategory.READ_ONLY,
-    "container_wait_healthy": ToolCategory.READ_ONLY,
-    "container_export": ToolCategory.READ_ONLY,
-    "container_export_to_file": ToolCategory.MUTATING,  # writes a file on the server host
+    "container_export": ToolCategory.MUTATING,  # can write a file on the server host (dest_path)
     "container_archive_get": ToolCategory.READ_ONLY,
     "container_archive_get_to_file": ToolCategory.MUTATING,  # writes a file on the server host
     "container_archive_put": ToolCategory.MUTATING,
-    "container_archive_put_from_file": ToolCategory.MUTATING,
     # images
     "image_build": ToolCategory.MUTATING,
     "image_inspect": ToolCategory.READ_ONLY,
@@ -87,9 +82,7 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "image_search": ToolCategory.READ_ONLY,
     "image_prune": ToolCategory.DESTRUCTIVE,
     "image_load": ToolCategory.MUTATING,
-    "image_load_from_file": ToolCategory.MUTATING,
-    "image_save": ToolCategory.READ_ONLY,
-    "image_save_to_file": ToolCategory.MUTATING,  # writes a file on the server host
+    "image_save": ToolCategory.MUTATING,  # can write a file on the server host (dest_path)
     "image_tag": ToolCategory.MUTATING,
     "image_history": ToolCategory.READ_ONLY,
     # networks
@@ -130,7 +123,6 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "service_tasks": ToolCategory.READ_ONLY,
     "service_logs": ToolCategory.READ_ONLY,
     "service_scale": ToolCategory.MUTATING,
-    "service_force_update": ToolCategory.MUTATING,
     "service_rollback": ToolCategory.MUTATING,
     # swarm
     "swarm_init": ToolCategory.MUTATING,
@@ -149,7 +141,6 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "plugin_configure": ToolCategory.MUTATING,
     "plugin_disable": ToolCategory.MUTATING,
     "plugin_enable": ToolCategory.MUTATING,
-    "plugin_push": ToolCategory.MUTATING,
     "plugin_remove": ToolCategory.DESTRUCTIVE,
     "plugin_upgrade": ToolCategory.MUTATING,
     # compose
@@ -418,9 +409,8 @@ def build_instructions(registered_domains: set[str] | None = None) -> str:
     caveats = []
     if present & {"containers", "images"}:
         caveats.append(
-            "`*_to_file` tools (`container_export_to_file`, `image_save_to_file`, "
-            "`container_archive_get_to_file`) write to the host disk — prefer them over the streaming "
-            "variant when persisting output."
+            "To persist output to the host disk, pass `dest_path` to `container_export`/`image_save`, "
+            "or use `container_archive_get_to_file` (prefer these over in-band bytes for anything large)."
         )
     if present & {"containers", "networks", "volumes", "services"}:
         caveats.append("`list_*(managed_only=True)` returns only resources this server created (provenance-labeled).")

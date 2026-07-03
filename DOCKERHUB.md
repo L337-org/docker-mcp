@@ -54,7 +54,7 @@ The image defaults `DOCKER_HOST` to `unix:///var/run/docker.sock`, so mounting y
 
 ## Host filesystem access
 
-Inside a container, the file-path tools (`image_save_to_file`, `image_load_from_file`, `container_export_to_file`, the container-archive `*_to_file` / `*_from_file` variants, and compose `project_dir` / `files`) resolve paths *inside the container*. Bind-mount any directory you want to exchange files through — using the **same path inside and out** keeps host and container paths identical:
+Inside a container, the file-path tools (`image_save` / `container_export` with `dest_path`, `image_load` / `container_archive_put` with `from_file`, `container_archive_get_to_file`, and compose `project_dir` / `files`) resolve paths *inside the container*. Bind-mount any directory you want to exchange files through — using the **same path inside and out** keeps host and container paths identical:
 
 ```
 -v $HOME/docker-work:$HOME/docker-work

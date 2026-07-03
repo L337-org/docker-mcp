@@ -7,8 +7,8 @@ from pathlib import Path
 import pytest
 from docker.errors import DockerException
 
-from docker_mcp.tools.containers import container_create, container_export_to_file, container_remove
-from docker_mcp.tools.images import image_inspect, image_load_from_file, image_pull, image_save_to_file
+from docker_mcp.tools.containers import container_create, container_export, container_remove
+from docker_mcp.tools.images import image_inspect, image_load, image_pull, image_save
 
 _IMAGE = "alpine:3"
 
@@ -25,24 +25,24 @@ def _require_alpine():
 
 def test_save_to_file_then_load_round_trip(tmp_path: Path):
     dest = tmp_path / "alpine.tar"
-    result = image_save_to_file(_IMAGE, str(dest))
+    result = image_save(_IMAGE, dest_path=str(dest))
     assert result["path"] == str(dest)
     assert result["bytes_written"] > 0
     # The stream-to-file write matches what landed on disk.
     assert dest.stat().st_size == result["bytes_written"]
 
-    loaded = image_load_from_file(str(dest))
+    loaded = image_load(from_file=str(dest))
     assert isinstance(loaded, list)
     # The image is still addressable after the save/load round-trip.
     assert image_inspect(_IMAGE)["Id"]
 
 
-def test_container_export_to_file(tmp_path: Path):
+def test_container_export_to_dest_path(tmp_path: Path):
     name = f"docker-mcp-it-{uuid.uuid4().hex[:8]}"
     container_create(_IMAGE, command="true", extra_kwargs={"name": name})
     try:
         dest = tmp_path / "ct.tar"
-        result = container_export_to_file(name, str(dest))
+        result = container_export(name, dest_path=str(dest))
         assert result["bytes_written"] > 0
         assert dest.stat().st_size == result["bytes_written"]
     finally:

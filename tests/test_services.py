@@ -4,7 +4,6 @@ import pytest
 
 from docker_mcp.tools.services import (
     service_create,
-    service_force_update,
     service_inspect,
     service_list,
     service_remove,
@@ -134,12 +133,19 @@ def test_service_scale():
     service.scale.assert_called_once_with(5)
 
 
-def test_service_force_update():
+def test_service_update_force_redeploys_unchanged():
     service = MagicMock()
     with _patch() as mock_client:
         mock_client.return_value.services.get.return_value = service
-        assert service_force_update("svc1") is True
+        assert service_update("svc1", force=True) is True
     service.force_update.assert_called_once()
+
+
+def test_service_update_rejects_ambiguous_arguments():
+    with pytest.raises(ValueError, match="exactly one"):
+        service_update("svc1")
+    with pytest.raises(ValueError, match="exactly one"):
+        service_update("svc1", updates={"labels": {}}, force=True)
 
 
 def test_rollback_service_reapplies_previous_spec_at_current_version():

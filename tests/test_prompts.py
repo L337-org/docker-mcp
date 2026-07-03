@@ -344,7 +344,8 @@ def test_restore_volume_confirms_clears_and_uses_root_path():
     out = restore_volume("pgdata", "/backups/pg.tar")
     assert "pgdata" in out
     assert "/backups/pg.tar" in out
-    assert "container_archive_put_from_file" in out
+    assert "container_archive_put" in out
+    assert "from_file" in out
     assert "volume_create" in out
     # Existing volume => always confirm (can't tell whether it holds data without mounting).
     assert "confirm" in out.lower()

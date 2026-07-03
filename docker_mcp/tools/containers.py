@@ -339,10 +339,21 @@ def container_logs(
     tail: int | Literal["all"] = "all",
     since: float | None = None,
     until: float | None = None,
+    follow: bool = False,
+    limit_lines: int = 200,
+    timeout_seconds: float = 30.0,
     host: str | None = None,
 ) -> str:
     """
-    Get the logs of a container.
+    Get the logs of a container: a one-shot snapshot by default, or a bounded live tail with `follow=True`.
+
+    Follow mode returns when `limit_lines` lines are collected, `timeout_seconds` elapses, or the
+    container exits, whichever comes first — so the agent can watch live output without blocking
+    forever. `limit_lines`/`timeout_seconds` apply only in follow mode; `until` only in snapshot mode.
+
+    Caveat for `ssh://` daemons: docker-py can't cancel an SSH stream, so in follow mode the
+    `timeout_seconds` watchdog can't interrupt a fully silent container — use the snapshot mode
+    there if you need a hard time bound.
 
     args:
         id_or_name - The container id or name
@@ -351,63 +362,33 @@ def container_logs(
         timestamps - Include timestamps
         tail - Number of lines from the end, or the literal "all"
         since - Only return logs created after this unix timestamp
-        until - Only return logs created before this unix timestamp
-    returns: str - Decoded log output
+        until - Only return logs created before this unix timestamp (snapshot mode only)
+        follow - Follow the live log stream instead of returning a snapshot
+        limit_lines - Follow mode: max lines to collect before returning (default 200)
+        timeout_seconds - Follow mode: max wall-clock seconds before returning what was collected (default 30)
+    returns: str - Decoded log output (up to `limit_lines` lines in follow mode)
     """
     container = _get_client(host).containers.get(id_or_name)
-    output = container.logs(
-        stdout=stdout,
-        stderr=stderr,
-        stream=False,
-        timestamps=timestamps,
-        tail=tail,
-        since=since,
-        until=until,
-    )
-    if isinstance(output, bytes):
-        return output.decode("utf-8", errors="replace")
-    return str(output)
-
-
-@tool()
-def container_logs_follow(
-    id_or_name: str,
-    limit_lines: int = 200,
-    stdout: bool = True,
-    stderr: bool = True,
-    timestamps: bool = False,
-    since: float | None = None,
-    timeout_seconds: float = 30.0,
-    host: str | None = None,
-) -> str:
-    """
-    Tail a container's log stream, bounded by `limit_lines`, `timeout_seconds`, or container exit.
-
-    Returns when `limit_lines` lines are collected, `timeout_seconds` elapses, or the container exits,
-    whichever comes first — so the agent can watch live output without blocking forever (`limit_lines`
-    bounds memory, `timeout_seconds` bounds wall-clock for a quiet but long-lived container).
-
-    Caveat for `ssh://` daemons: docker-py can't cancel an SSH stream, so the `timeout_seconds`
-    watchdog can't interrupt a fully silent container — use `container_logs` (one-shot, non-streaming)
-    there if you need a hard time bound.
-
-    args:
-        id_or_name - The container id or name
-        limit_lines - Max lines to collect before returning (default 200)
-        stdout - Include stdout
-        stderr - Include stderr
-        timestamps - Include timestamps
-        since - Only return logs created after this unix timestamp
-        timeout_seconds - Max wall-clock seconds to follow before returning what was collected (default 30)
-    returns: str - Decoded log output containing up to `limit_lines` lines
-    """
-    container = _get_client(host).containers.get(id_or_name)
+    if not follow:
+        output = container.logs(
+            stdout=stdout,
+            stderr=stderr,
+            stream=False,
+            timestamps=timestamps,
+            tail=tail,
+            since=since,
+            until=until,
+        )
+        if isinstance(output, bytes):
+            return output.decode("utf-8", errors="replace")
+        return str(output)
     stream = container.logs(
         stdout=stdout,
         stderr=stderr,
         stream=True,
         follow=True,
         timestamps=timestamps,
+        tail=tail,
         since=since,
     )
     collected: list[str] = []
@@ -677,22 +658,6 @@ def container_rename(id_or_name: str, name: str, host: str | None = None) -> dic
 
 
 @tool()
-def container_resize(id_or_name: str, height: int, width: int, host: str | None = None) -> bool:
-    """
-    Resize the tty session of a container.
-
-    args:
-        id_or_name - The container id or name
-        height - New tty height in characters
-        width - New tty width in characters
-    returns: bool - True after the resize completes
-    """
-    container = _get_client(host).containers.get(id_or_name)
-    container.resize(height, width)
-    return True
-
-
-@tool()
 def container_update(id_or_name: str, updates: dict, host: str | None = None) -> dict:
     """
     Update resource limits on a container without recreating it.
@@ -716,84 +681,81 @@ def container_update(id_or_name: str, updates: dict, host: str | None = None) ->
     return container.attrs
 
 
-@tool()
-def container_wait(
+def _wait_result(
     id_or_name: str,
-    timeout: int | None = 600,
-    condition: Literal["not-running", "next-exit", "removed"] = "not-running",
-    host: str | None = None,
+    until: str,
+    *,
+    met: bool,
+    start: float,
+    timed_out: bool = False,
+    status_code: int | None = None,
+    error: str | None = None,
+    health: str | None = None,
+    status: str | None = None,
 ) -> dict:
-    """
-    Block until a container stops, then return its exit info.
-
-    The default `timeout` is finite (600s) so the call can't block the MCP server indefinitely on
-    a container that never reaches `condition`. When the timeout is exceeded a RuntimeError is
-    raised (poll `container_inspect` instead, or pass a larger `timeout`). Pass `timeout=None` to
-    restore the old unbounded behavior — only do so if you are sure the wait will complete.
-
-    args:
-        id_or_name - The container id or name
-        timeout - Maximum seconds to wait before raising (default 600; None waits forever)
-        condition - State to wait for: "not-running" (default), "next-exit", or "removed"
-    returns: dict - The wait result with StatusCode and Error keys
-    """
-    container = _get_client(host).containers.get(id_or_name)
-    try:
-        return cast(dict, container.wait(timeout=timeout, condition=condition))
-    except requests.exceptions.ReadTimeout as exc:
-        raise RuntimeError(
-            f"Container {id_or_name!r} did not reach condition {condition!r} within {timeout}s. "
-            f"Poll `container_inspect` for its current state, or call `container_wait` with a larger "
-            f"`timeout` (or `timeout=None` to wait indefinitely)."
-        ) from exc
-
-
-def _health_result(
-    id_or_name: str, *, healthy: bool, health: str | None, status: str | None, start: float, timed_out: bool = False
-) -> dict:
-    """Build the container_wait_healthy result snapshot from the current poll observation."""
+    """Build the unified container_wait result snapshot — the same shape for every `until` mode."""
     return {
         "container": id_or_name,
-        "healthy": healthy,
+        "until": until,
+        "met": met,
+        "timed_out": timed_out,
+        "status_code": status_code,
+        "error": error,
         "health": health,
         "status": status,
         "waited_seconds": round(time.monotonic() - start, 2),
-        "timed_out": timed_out,
     }
 
 
 @tool()
-def container_wait_healthy(
+def container_wait(
     id_or_name: str,
-    timeout: float = 120.0,
+    until: Literal["not-running", "next-exit", "removed", "healthy"] = "not-running",
+    timeout_seconds: float = 600.0,
     poll_interval: float = 2.0,
     host: str | None = None,
 ) -> dict:
     """
-    Poll a container until its healthcheck reports `healthy` (or it stops, or the timeout elapses).
+    Block until a container reaches a condition: stopped ("not-running"/"next-exit"/"removed") or "healthy".
 
-    Complements `container_wait` (which waits for *exit*): this waits for a running container to become
-    *healthy*. Re-inspects every `poll_interval`s, never blocks past `timeout` (no exception on timeout —
-    the result carries `timed_out: true`).
+    One contract for every mode: never raises on timeout — the result always carries `met` (condition
+    reached) and `timed_out`. The stop conditions use the daemon's blocking wait and fill `status_code`/
+    `error` (the container's exit info); "healthy" polls the container's HEALTHCHECK every
+    `poll_interval`s and fills `health`/`status`.
 
-    Health comes from the container's HEALTHCHECK. With none defined, once the container is `running`
-    the tool returns promptly with `health: null` and `healthy: false` (false = "not confirmed healthy",
-    not "unhealthy" — check `health` to tell them apart). A container that exits before becoming healthy
-    returns its terminal `status` and `healthy: false`.
+    Health semantics: with no HEALTHCHECK defined, once the container is `running` the tool returns
+    promptly with `health: null` and `met: false` (false = "not confirmed healthy", not "unhealthy" —
+    check `health` to tell them apart). A container that exits before becoming healthy returns its
+    terminal `status` and `met: false`.
 
     args:
         id_or_name - The container id or name
-        timeout - Max seconds to wait before returning timed_out (default 120)
-        poll_interval - Seconds between re-inspections (default 2, > 0); also capped by the time left,
-                              so a large value can't push the total wait past `timeout`
-    returns: dict - {"container", "healthy", "health", "status", "waited_seconds", "timed_out"};
-                     `health` is "starting"/"healthy"/"unhealthy" or null when no healthcheck is defined.
+        until - Condition to wait for: "not-running" (default), "next-exit", "removed", or "healthy"
+        timeout_seconds - Max seconds to wait before returning with timed_out=true (default 600)
+        poll_interval - "healthy" mode only: seconds between re-inspections (default 2, > 0); capped by
+                        the time left so a large value can't push the total wait past the timeout
+    returns: dict - {"container", "until", "met", "timed_out", "status_code", "error", "health",
+                     "status", "waited_seconds"}; stop modes fill status_code/error, "healthy" fills
+                     health ("starting"/"healthy"/"unhealthy", or null with no healthcheck) and status.
     """
-    if poll_interval <= 0:
+    if until == "healthy" and poll_interval <= 0:
         raise ValueError(f"poll_interval must be > 0, got {poll_interval}.")
     container = _get_client(host).containers.get(id_or_name)
     start = time.monotonic()
-    deadline = start + timeout
+    if until != "healthy":
+        try:
+            result = cast(dict, container.wait(timeout=int(timeout_seconds), condition=until))
+        except requests.exceptions.ReadTimeout:
+            return _wait_result(id_or_name, until, met=False, start=start, timed_out=True)
+        return _wait_result(
+            id_or_name,
+            until,
+            met=True,
+            start=start,
+            status_code=result.get("StatusCode"),
+            error=(result.get("Error") or {}).get("Message") if isinstance(result.get("Error"), dict) else None,
+        )
+    deadline = start + timeout_seconds
     while True:
         container.reload()
         state = container.attrs.get("State", {}) or {}
@@ -801,55 +763,50 @@ def container_wait_healthy(
         health = (state.get("Health") or {}).get("Status")  # starting / healthy / unhealthy, or None
 
         if health == "healthy":
-            return _health_result(id_or_name, healthy=True, health=health, status=status, start=start)
+            return _wait_result(id_or_name, until, met=True, start=start, health=health, status=status)
         if health == "unhealthy":
-            return _health_result(id_or_name, healthy=False, health=health, status=status, start=start)
+            return _wait_result(id_or_name, until, met=False, start=start, health=health, status=status)
         if status in ("exited", "dead"):
             # Stopped before ever becoming healthy.
-            return _health_result(id_or_name, healthy=False, health=health, status=status, start=start)
+            return _wait_result(id_or_name, until, met=False, start=start, health=health, status=status)
         if health is None and status == "running":
             # No HEALTHCHECK defined: there's nothing to converge to, so don't poll to the timeout.
-            return _health_result(id_or_name, healthy=False, health=health, status=status, start=start)
+            return _wait_result(id_or_name, until, met=False, start=start, health=health, status=status)
         # Otherwise still settling (health "starting", or status created/restarting/paused): keep polling.
         remaining = deadline - time.monotonic()
         if remaining <= 0:
-            return _health_result(id_or_name, healthy=False, health=health, status=status, start=start, timed_out=True)
-        # Bound the sleep by the time left so a large poll_interval can't block past `timeout`.
+            return _wait_result(id_or_name, until, met=False, start=start, timed_out=True, health=health, status=status)
+        # Bound the sleep by the time left so a large poll_interval can't block past the timeout.
         time.sleep(min(poll_interval, remaining))
 
 
 @tool()
-def container_export(id_or_name: str, max_bytes: int = MAX_PAYLOAD_BYTES, host: str | None = None) -> bytes:
+def container_export(
+    id_or_name: str,
+    dest_path: str | None = None,
+    overwrite: bool = False,
+    max_bytes: int = MAX_PAYLOAD_BYTES,
+    host: str | None = None,
+) -> bytes | dict:
     """
-    Export a container's filesystem as a tar archive, returned in band.
+    Export a container's filesystem as a tar archive: to a file on the server host, or in band.
 
-    For anything but a small container prefer `container_export_to_file`, which streams to a host
-    path; the in-band bytes here are capped (default 32 MiB) because MCP base64-encodes them.
+    With `dest_path` the archive streams straight to disk (no byte cap), so it handles large
+    containers — the file is written by the server's user, `~` is expanded, and an existing file is
+    refused unless `overwrite=True`. Without `dest_path` the tar bytes are returned in band, capped
+    at `max_bytes` (default 32 MiB) because MCP base64-encodes them — a fallback for when no
+    writable host path exists (e.g. a containerized server without a bind mount).
 
     args:
         id_or_name - The container id or name
-        max_bytes - Abort with ValueError if the export exceeds this many bytes (defaults to 32 MiB)
-    returns: bytes - The tar archive contents
-    """
-    container = _get_client(host).containers.get(id_or_name)
-    return join_bounded(cast(Iterable[bytes], container.export()), max_bytes, f"export of {id_or_name}")
-
-
-@tool()
-def container_export_to_file(id_or_name: str, dest_path: str, overwrite: bool = False, host: str | None = None) -> dict:
-    """
-    Export a container's filesystem as a tar archive written to a file on the server host.
-
-    Streams straight to disk (no in-band byte cap), so it handles large containers. The file is
-    written by the server's user; `~` is expanded and an existing file is refused unless `overwrite=True`.
-
-    args:
-        id_or_name - The container id or name
-        dest_path - Destination path on the server host for the tarball
+        dest_path - Destination path on the server host; omit to return the bytes in band
         overwrite - Replace dest_path if it already exists (default False)
-    returns: dict - {"path": <resolved path>, "bytes_written": int}
+        max_bytes - In-band mode: abort with ValueError beyond this many bytes (default 32 MiB)
+    returns: bytes | dict - the tar bytes (in band), or {"path": <resolved path>, "bytes_written": int}
     """
     container = _get_client(host).containers.get(id_or_name)
+    if dest_path is None:
+        return join_bounded(cast(Iterable[bytes], container.export()), max_bytes, f"export of {id_or_name}")
     path, written = stream_to_file(cast(Iterable[bytes], container.export()), dest_path, overwrite=overwrite)
     return {"path": str(path), "bytes_written": written}
 
@@ -899,38 +856,32 @@ def container_archive_get_to_file(
 
 
 @tool()
-def container_archive_put(id_or_name: str, path: str, data: bytes, host: str | None = None) -> bool:
+def container_archive_put(
+    id_or_name: str,
+    path: str,
+    data: bytes | None = None,
+    from_file: str | None = None,
+    host: str | None = None,
+) -> bool:
     """
-    Upload a tar archive to a path inside a container.
+    Upload a tar archive to a path inside a container, from in-band bytes or a file on the server host.
 
-    For a tarball already on the server host, prefer `container_archive_put_from_file` — it streams
-    from disk instead of carrying the (base64-encoded) bytes through the MCP protocol.
-
-    args:
-        id_or_name - The container id or name
-        path - Destination path inside the container
-        data - Tar archive bytes
-    returns: bool - True if the upload succeeded
-    """
-    container = _get_client(host).containers.get(id_or_name)
-    return container.put_archive(path, data)
-
-
-@tool()
-def container_archive_put_from_file(id_or_name: str, path: str, file_path: str, host: str | None = None) -> bool:
-    """
-    Upload a tar archive from a file on the server host to a path inside a container.
-
-    Streams the file straight to the daemon, so it handles large archives that would be impractical
-    to pass in band via `container_archive_put`. `file_path` is read by the server's user; `~` is expanded.
+    Pass exactly one of `data` (tar bytes in band) or `from_file` (a path on the server host, streamed
+    straight to the daemon — preferred for large archives, since in-band bytes are base64-encoded by
+    MCP). `from_file` is read by the server's user; `~` is expanded.
 
     args:
         id_or_name - The container id or name
         path - Destination path inside the container (must already exist)
-        file_path - Path on the server host to the tar archive to upload
+        data - Tar archive bytes; exactly one of data/from_file
+        from_file - Path on the server host to the tar archive to upload; exactly one of data/from_file
     returns: bool - True if the upload succeeded
     """
+    if (data is None) == (from_file is None):
+        raise ValueError("Pass exactly one of `data` (in-band tar bytes) or `from_file` (a server-host path).")
     container = _get_client(host).containers.get(id_or_name)
-    source = host_read_path(file_path)
+    if data is not None:
+        return container.put_archive(path, data)
+    source = host_read_path(cast(str, from_file))
     with source.open("rb") as handle:
         return container.put_archive(path, handle)

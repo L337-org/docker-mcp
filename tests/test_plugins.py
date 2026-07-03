@@ -7,7 +7,6 @@ from docker_mcp.tools.plugins import (
     plugin_inspect,
     plugin_install,
     plugin_list,
-    plugin_push,
     plugin_remove,
     plugin_upgrade,
 )
@@ -65,14 +64,6 @@ def test_plugin_enable():
         mock_client.return_value.plugins.get.return_value = plugin
         assert plugin_enable("myplugin", timeout=30) is True
     plugin.enable.assert_called_once_with(timeout=30)
-
-
-def test_plugin_push():
-    plugin = MagicMock()
-    plugin.push.return_value = {"status": "ok"}
-    with _patch() as mock_client:
-        mock_client.return_value.plugins.get.return_value = plugin
-        assert plugin_push("myplugin") == {"status": "ok"}
 
 
 def test_plugin_remove():

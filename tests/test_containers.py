@@ -18,8 +18,6 @@ from docker_mcp.tools.containers import (
     container_create,
     container_exec,
     container_export,
-    container_export_to_file,
-    container_logs_follow,
     container_inspect,
     container_archive_get,
     container_archive_get_to_file,
@@ -28,10 +26,8 @@ from docker_mcp.tools.containers import (
     container_pause,
     container_prune,
     container_archive_put,
-    container_archive_put_from_file,
     container_remove,
     container_rename,
-    container_resize,
     container_restart,
     container_run,
     container_start,
@@ -39,7 +35,6 @@ from docker_mcp.tools.containers import (
     container_unpause,
     container_update,
     container_wait,
-    container_wait_healthy,
 )
 
 
@@ -202,27 +197,27 @@ def test_container_logs_decodes_bytes():
         assert container_logs("web") == "line1\nline2\n"
 
 
-def test_follow_container_logs_stops_at_limit():
+def test_container_logs_follow_stops_at_limit():
     container = MagicMock()
     container.logs.return_value = iter([b"a\nb\n", b"c\nd\n", b"e\nf\n"])
     with _patch() as mock_client:
         mock_client.return_value.containers.get.return_value = container
-        result = container_logs_follow("web", limit_lines=3)
+        result = container_logs("web", follow=True, limit_lines=3)
     assert result == "a\nb\nc"
     kwargs = container.logs.call_args.kwargs
     assert kwargs["stream"] is True
     assert kwargs["follow"] is True
 
 
-def test_follow_container_logs_returns_all_when_stream_ends_first():
+def test_container_logs_follow_returns_all_when_stream_ends_first():
     container = MagicMock()
     container.logs.return_value = iter([b"only\n"])
     with _patch() as mock_client:
         mock_client.return_value.containers.get.return_value = container
-        assert container_logs_follow("web", limit_lines=200) == "only"
+        assert container_logs("web", follow=True, limit_lines=200) == "only"
 
 
-def test_follow_container_logs_returns_on_timeout_when_quiet():
+def test_container_logs_follow_returns_on_timeout_when_quiet():
     # A long-lived container that emits nothing would block forever; the watchdog closes the
     # CancellableStream after timeout_seconds so the call returns what it has.
     closed = threading.Event()
@@ -242,7 +237,7 @@ def test_follow_container_logs_returns_on_timeout_when_quiet():
     container.logs.return_value = _BlockingLogStream()
     with _patch() as mock_client:
         mock_client.return_value.containers.get.return_value = container
-        result = container_logs_follow("web", timeout_seconds=0.1)
+        result = container_logs("web", follow=True, timeout_seconds=0.1)
     assert result == ""
     assert closed.is_set()
 
@@ -311,14 +306,6 @@ def test_container_rename():
     container.rename.assert_called_once_with("api")
 
 
-def test_container_resize():
-    container = MagicMock()
-    with _patch() as mock_client:
-        mock_client.return_value.containers.get.return_value = container
-        assert container_resize("web", 24, 80) is True
-    container.resize.assert_called_once_with(24, 80)
-
-
 def test_container_update():
     container = MagicMock()
     with _patch() as mock_client:
@@ -327,23 +314,39 @@ def test_container_update():
     container.update.assert_called_once_with(cpu_shares=512)
 
 
-def test_wait_container_uses_finite_default_timeout():
+def test_container_wait_uses_finite_default_timeout():
     container = MagicMock()
     container.wait.return_value = {"StatusCode": 0}
     with _patch() as mock_client:
         mock_client.return_value.containers.get.return_value = container
-        assert container_wait("web") == {"StatusCode": 0}
+        result = container_wait("web")
+    assert result["met"] is True
+    assert result["timed_out"] is False
+    assert result["status_code"] == 0
     # Default timeout is finite so the tool can't block the server indefinitely.
     container.wait.assert_called_once_with(timeout=600, condition="not-running")
 
 
-def test_wait_container_raises_clean_error_on_timeout():
+def test_container_wait_returns_timed_out_instead_of_raising():
     container = MagicMock()
     container.wait.side_effect = requests.exceptions.ReadTimeout("timed out")
     with _patch() as mock_client:
         mock_client.return_value.containers.get.return_value = container
-        with pytest.raises(RuntimeError, match="did not reach condition .* within 600s"):
-            container_wait("web")
+        result = container_wait("web")
+    assert result["met"] is False
+    assert result["timed_out"] is True
+    assert result["status_code"] is None
+
+
+def test_container_wait_surfaces_daemon_error_message():
+    container = MagicMock()
+    container.wait.return_value = {"StatusCode": 137, "Error": {"Message": "oom"}}
+    with _patch() as mock_client:
+        mock_client.return_value.containers.get.return_value = container
+        result = container_wait("web", until="next-exit")
+    assert result["status_code"] == 137
+    assert result["error"] == "oom"
+    container.wait.assert_called_once_with(timeout=600, condition="next-exit")
 
 
 def test_container_export():
@@ -354,7 +357,7 @@ def test_container_export():
         assert container_export("web") == b"chunk1chunk2"
 
 
-def test_export_container_raises_when_max_bytes_exceeded():
+def test_container_export_raises_when_max_bytes_exceeded():
     container = MagicMock()
     container.export.return_value = iter([b"x" * 50, b"x" * 60])
     with _patch() as mock_client:
@@ -372,13 +375,22 @@ def test_container_archive_get():
     assert result == {"archive": b"tar", "stat": {"name": "etc"}}
 
 
-def test_get_container_archive_raises_when_max_bytes_exceeded():
+def test_container_archive_get_raises_when_max_bytes_exceeded():
     container = MagicMock()
     container.get_archive.return_value = (iter([b"x" * 50, b"x" * 60]), {"name": "etc"})
     with _patch() as mock_client:
         mock_client.return_value.containers.get.return_value = container
         with pytest.raises(ValueError, match="exceeded max_bytes=100"):
             container_archive_get("web", "/etc", max_bytes=100)
+
+
+def test_container_archive_put_rejects_ambiguous_source(tmp_path):
+    src = tmp_path / "payload.tar"
+    src.write_bytes(b"archive-bytes")
+    with pytest.raises(ValueError, match="exactly one"):
+        container_archive_put("web", "/dest")
+    with pytest.raises(ValueError, match="exactly one"):
+        container_archive_put("web", "/dest", data=b"tar", from_file=str(src))
 
 
 def test_container_archive_put():
@@ -393,18 +405,18 @@ def test_container_archive_put():
 # ---------- file-path archive variants ----------
 
 
-def test_export_container_to_file_streams_and_returns_metadata(tmp_path):
+def test_container_export_to_dest_path_streams_and_returns_metadata(tmp_path):
     container = MagicMock()
     container.export.return_value = iter([b"aa", b"bbb"])
     dest = tmp_path / "ct.tar"
     with _patch() as mock_client:
         mock_client.return_value.containers.get.return_value = container
-        result = container_export_to_file("web", str(dest))
+        result = container_export("web", dest_path=str(dest))
     assert dest.read_bytes() == b"aabbb"
     assert result == {"path": str(dest), "bytes_written": 5}
 
 
-def test_export_container_to_file_refuses_existing(tmp_path):
+def test_container_export_to_dest_path_refuses_existing(tmp_path):
     dest = tmp_path / "ct.tar"
     dest.write_bytes(b"old")
     container = MagicMock()
@@ -412,10 +424,10 @@ def test_export_container_to_file_refuses_existing(tmp_path):
     with _patch() as mock_client:
         mock_client.return_value.containers.get.return_value = container
         with pytest.raises(FileExistsError):
-            container_export_to_file("web", str(dest))
+            container_export("web", dest_path=str(dest))
 
 
-def test_get_container_archive_to_file_writes_and_returns_stat(tmp_path):
+def test_container_archive_get_to_file_writes_and_returns_stat(tmp_path):
     container = MagicMock()
     container.get_archive.return_value = (iter([b"tar", b"data"]), {"name": "etc", "size": 7})
     dest = tmp_path / "etc.tar"
@@ -426,20 +438,20 @@ def test_get_container_archive_to_file_writes_and_returns_stat(tmp_path):
     assert result == {"path": str(dest), "bytes_written": 7, "stat": {"name": "etc", "size": 7}}
 
 
-def test_put_container_archive_from_file_streams_handle(tmp_path):
+def test_container_archive_put_from_file_streams_handle(tmp_path):
     src = tmp_path / "payload.tar"
     src.write_bytes(b"archive-bytes")
     container = MagicMock()
     container.put_archive.return_value = True
     with _patch() as mock_client:
         mock_client.return_value.containers.get.return_value = container
-        assert container_archive_put_from_file("web", "/dest", str(src)) is True
+        assert container_archive_put("web", "/dest", from_file=str(src)) is True
     call = container.put_archive.call_args
     assert call.args[0] == "/dest"
     assert hasattr(call.args[1], "read")  # an open file handle, not raw bytes
 
 
-def test_follow_container_logs_returns_collected_when_stream_close_raises():
+def test_container_logs_follow_returns_collected_when_stream_close_raises():
     # ssh:// daemons: CancellableStream.close() raises in the finally — the collected lines must
     # still be returned rather than the close error replacing them.
     class _FiniteRaisingCloseStream:
@@ -459,11 +471,11 @@ def test_follow_container_logs_returns_collected_when_stream_close_raises():
     container.logs.return_value = _FiniteRaisingCloseStream()
     with _patch() as mock_client:
         mock_client.return_value.containers.get.return_value = container
-        result = container_logs_follow("web", limit_lines=200)
+        result = container_logs("web", follow=True, limit_lines=200)
     assert result == "line1\nline2"
 
 
-# ---------- container_wait_healthy ----------
+# ---------- container_wait(until="healthy") ----------
 
 
 def _health_container(*states: dict) -> MagicMock:
@@ -480,86 +492,86 @@ def _health_container(*states: dict) -> MagicMock:
     return container
 
 
-def test_wait_for_container_healthy_returns_when_healthy():
+def test_container_wait_healthy_returns_when_healthy():
     container = _health_container({"State": {"Status": "running", "Health": {"Status": "healthy"}}})
     with _patch() as mock_client:
         mock_client.return_value.containers.get.return_value = container
-        result = container_wait_healthy("web", timeout=5)
-    assert result["healthy"] is True
+        result = container_wait("web", until="healthy", timeout_seconds=5)
+    assert result["met"] is True
     assert result["health"] == "healthy"
     assert result["timed_out"] is False
     container.reload.assert_called()
 
 
-def test_wait_for_container_healthy_polls_through_starting():
+def test_container_wait_healthy_polls_through_starting():
     container = _health_container(
         {"State": {"Status": "running", "Health": {"Status": "starting"}}},
         {"State": {"Status": "running", "Health": {"Status": "healthy"}}},
     )
     with _patch() as mock_client, patch("docker_mcp.tools.containers.time.sleep") as sleep:
         mock_client.return_value.containers.get.return_value = container
-        result = container_wait_healthy("web", timeout=10, poll_interval=0.01)
-    assert result["healthy"] is True
+        result = container_wait("web", until="healthy", timeout_seconds=10, poll_interval=0.01)
+    assert result["met"] is True
     assert container.reload.call_count == 2  # starting, then healthy
     sleep.assert_called_once()  # slept once between the two polls
 
 
-def test_wait_for_container_healthy_reports_unhealthy():
+def test_container_wait_healthy_reports_unhealthy():
     container = _health_container({"State": {"Status": "running", "Health": {"Status": "unhealthy"}}})
     with _patch() as mock_client:
         mock_client.return_value.containers.get.return_value = container
-        result = container_wait_healthy("web", timeout=5)
-    assert result["healthy"] is False
+        result = container_wait("web", until="healthy", timeout_seconds=5)
+    assert result["met"] is False
     assert result["health"] == "unhealthy"
 
 
-def test_wait_for_container_healthy_stops_if_container_exits():
+def test_container_wait_healthy_stops_if_container_exits():
     container = _health_container({"State": {"Status": "exited", "Health": {"Status": "starting"}}})
     with _patch() as mock_client:
         mock_client.return_value.containers.get.return_value = container
-        result = container_wait_healthy("batch", timeout=5)
-    assert result["healthy"] is False
+        result = container_wait("batch", until="healthy", timeout_seconds=5)
+    assert result["met"] is False
     assert result["status"] == "exited"
 
 
-def test_wait_for_container_healthy_no_healthcheck_returns_promptly():
+def test_container_wait_healthy_no_healthcheck_returns_promptly():
     # Running container with no Health key (no HEALTHCHECK): return at once, health=None.
     container = _health_container({"State": {"Status": "running"}})
     with _patch() as mock_client, patch("docker_mcp.tools.containers.time.sleep") as sleep:
         mock_client.return_value.containers.get.return_value = container
-        result = container_wait_healthy("web", timeout=5)
-    assert result["healthy"] is False
+        result = container_wait("web", until="healthy", timeout_seconds=5)
+    assert result["met"] is False
     assert result["health"] is None
     assert result["status"] == "running"
     sleep.assert_not_called()  # did not poll-wait
 
 
-def test_wait_for_container_healthy_times_out():
+def test_container_wait_healthy_times_out():
     container = _health_container({"State": {"Status": "running", "Health": {"Status": "starting"}}})
     with _patch() as mock_client:
         mock_client.return_value.containers.get.return_value = container
-        result = container_wait_healthy("web", timeout=0.0)  # deadline already passed
-    assert result["healthy"] is False
+        result = container_wait("web", until="healthy", timeout_seconds=0.0)  # deadline already passed
+    assert result["met"] is False
     assert result["timed_out"] is True
     assert result["health"] == "starting"
 
 
-def test_wait_for_container_healthy_sleep_bounded_by_timeout():
+def test_container_wait_healthy_sleep_bounded_by_timeout():
     # A poll_interval far larger than the timeout must NOT push the total wait past the timeout:
     # the sleep is clamped to the remaining time, so this returns in ~timeout, not ~poll_interval.
     container = _health_container({"State": {"Status": "running", "Health": {"Status": "starting"}}})
     with _patch() as mock_client:
         mock_client.return_value.containers.get.return_value = container
         started = time.monotonic()
-        result = container_wait_healthy("web", timeout=0.05, poll_interval=100)
+        result = container_wait("web", until="healthy", timeout_seconds=0.05, poll_interval=100)
         elapsed = time.monotonic() - started
     assert result["timed_out"] is True
     assert elapsed < 2.0, f"sleep overshot the timeout ({elapsed:.2f}s); should be bounded near 0.05s"
 
 
-def test_wait_for_container_healthy_rejects_nonpositive_poll_interval():
+def test_container_wait_healthy_rejects_nonpositive_poll_interval():
     with pytest.raises(ValueError, match="poll_interval"):
-        container_wait_healthy("web", poll_interval=0)
+        container_wait("web", until="healthy", poll_interval=0)
 
 
 # ---------- shared resource helpers: log tail + computed stats summary ----------

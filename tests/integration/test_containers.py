@@ -11,7 +11,7 @@ from docker_mcp.tools.containers import (
     container_list,
     container_remove,
     container_run,
-    container_wait_healthy,
+    container_wait,
 )
 from docker_mcp.tools.resources import (
     get_container_logs_resource,
@@ -44,9 +44,9 @@ def healthy_container():
     container_remove(name, force=True)
 
 
-def test_wait_for_container_healthy_real(healthy_container):
-    result = container_wait_healthy(healthy_container, timeout=30, poll_interval=1.0)
-    assert result["healthy"] is True
+def test_container_wait_healthy_real(healthy_container):
+    result = container_wait(healthy_container, until="healthy", timeout_seconds=30, poll_interval=1.0)
+    assert result["met"] is True
     assert result["health"] == "healthy"
     assert result["timed_out"] is False
 

@@ -84,7 +84,7 @@ A **weekly canary** (`.github/workflows/canary.yaml`, Mondays + dispatch) hunts 
 
 An additional distribution channel alongside the uvx-from-git install (unchanged). One ARG-gated multi-stage `Dockerfile` builds `full` (docker CLI + compose + buildx + scout) and `no-scout` (sets `DOCKER_MCP_SERVER_DISABLE=scout` so absent-plugin scout tools don't register), published on each GitHub Release via the `images` job in `.github/workflows/publish.yaml` (see "Release pipeline" below) — always to GHCR, and mirrored to Docker Hub (plus a `DOCKERHUB.md`→Hub-description sync — a slim container-focused readme, as the full `README.md` exceeds Hub's 25 KB cap) when the opt-in `DOCKERHUB_USER`/`DOCKERHUB_TOKEN` secrets are set — the Hub token must have `read/write/delete` scope (build/measure on PRs/pushes is the separate `images.yaml`); `lite` (`INSTALL_CLI=0`) is buildable but not published. Two container-aware guards live behind `_utils.in_container()` (true when `/.dockerenv` exists or `DOCKER_MCP_SERVER_IN_CONTAINER=1`) and are **inert on the host install** — keep them in mind when editing `_utils.py` or the file-path tools:
 
-- **Filesystem guard** — `assert_host_writable` (hooked into `stream_to_file`) refuses a `*_to_file` write to a path that isn't a host bind mount (it would be lost on `--rm`); `host_read_path` enriches the read-side "missing file" case.
+- **Filesystem guard** — `assert_host_writable` (hooked into `stream_to_file`) refuses a host-file write (`dest_path` / `container_archive_get_to_file`) to a path that isn't a host bind mount (it would be lost on `--rm`); `host_read_path` enriches the read-side "missing file" case.
 - **Self-termination guard** — `system.startup_preflight()` (called from `main()`) pins the server's own container id (detected against the *self host* — the first local-transport entry, which can differ from a remote default) and prints OS-aware socket hints to stderr; `system.guard_not_self(container, host=)` stops the destructive container-lifecycle tools (`container_remove`/`container_kill`/`container_stop`/`container_restart`/`container_pause`) from acting on the server's own container, **only when the call targets the self host** (override `DOCKER_MCP_SERVER_ALLOW_SELF_TERMINATE=1`).
 
 ### Desktop Extension (MCPB)
@@ -151,8 +151,8 @@ def mcp_example(name: str):
 
 ### Bounding rules
 
-- Tools that buffer a daemon-side byte stream in memory must cap it with `join_bounded(stream, max_bytes, what)`; the in-band default is `MAX_PAYLOAD_BYTES` (32 MiB). Large payloads belong in the `*_to_file` / `*_from_file` variants, which stream via `stream_to_file` / an open file handle.
-- Tools that iterate a potentially endless stream (events, followed logs) must have a wall-clock bound — see the `threading.Timer` + `CancellableStream.close()` watchdog pattern in `system.py:system_events` and `containers.py:container_logs_follow`.
+- Tools that buffer a daemon-side byte stream in memory must cap it with `join_bounded(stream, max_bytes, what)`; the in-band default is `MAX_PAYLOAD_BYTES` (32 MiB). Large payloads belong in the file-path modes (`dest_path` / `from_file` params, or `container_archive_get_to_file`), which stream via `stream_to_file` / an open file handle.
+- Tools that iterate a potentially endless stream (events, followed logs) must have a wall-clock bound — see the `threading.Timer` + `CancellableStream.close()` watchdog pattern in `system.py:system_events` and `containers.py:container_logs` (follow mode).
 
 ### MCP resources
 

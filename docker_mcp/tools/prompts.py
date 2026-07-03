@@ -839,7 +839,7 @@ def restore_volume(volume: str, source_path: str) -> str:
         f'4. Clear stale files first with `container_exec(<helper>, ["sh", "-c", "rm -rf /data/* '
         f'/data/.[!.]* /data/..?* 2>/dev/null || true"])` — otherwise files not present in the archive '
         f"survive the restore.\n"
-        f'5. Call `container_archive_put_from_file(<helper>, path="/", file_path="{source_path}")`. Use '
+        f'5. Call `container_archive_put(<helper>, path="/", from_file="{source_path}")`. Use '
         f'`path="/"`, not `/data`: a `backup_volume` archive is rooted at `data/`, so extracting it at '
         f"the root lands the contents back in `/data` (extracting at `/data` would nest them in "
         f"`/data/data`). `{source_path}` is read from the host running this MCP server.\n"

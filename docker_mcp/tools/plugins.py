@@ -104,22 +104,6 @@ def plugin_enable(name: str, timeout: int = 0, host: str | None = None) -> bool:
 
 
 @tool()
-def plugin_push(name: str, host: str | None = None) -> dict:
-    """
-    Push a locally built or pulled plugin image to a remote registry.
-
-    The daemon must already be authenticated with the target registry — call `system_login` first if
-    needed. `name` must include the registry host for any registry other than Docker Hub,
-    e.g. "registry.example.com/myplugin:1.0". The plugin must already exist locally
-    (installed via `plugin_install` or built externally with `docker plugin create`).
-
-    args: name - Plugin name including tag, e.g. "myorg/myplugin:latest"
-    returns: dict - Push progress/status events returned by the daemon
-    """
-    return _get_client(host).plugins.get(name).push()
-
-
-@tool()
 def plugin_remove(name: str, force: bool = False, host: str | None = None) -> bool:
     """
     Remove a plugin.

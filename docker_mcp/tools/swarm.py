@@ -127,9 +127,9 @@ def swarm_update(
 @tool()
 def swarm_inspect(host: str | None = None) -> dict:
     """
-    Reload the swarm and return its current attrs.
+    Inspect the swarm this daemon belongs to (id, spec, join-token config, CA info).
 
-    returns: dict - The swarm's current attrs
+    returns: dict - The swarm's attrs, as returned by the daemon's swarm inspect endpoint
     """
     swarm = _get_client(host).swarm
     swarm.reload()
