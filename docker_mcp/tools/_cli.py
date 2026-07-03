@@ -291,6 +291,24 @@ def safe_positional(value: str, what: str = "value") -> str:
     return value
 
 
+def filter_args(filters: dict | None) -> list[str]:
+    """
+    Translate an SDK-shaped filters dict into repeated `--filter key=value` CLI arguments.
+
+    Lets CLI-backed tools accept the same `filters` shape as the docker-py-backed tools (one
+    `filters` contract across the surface). A list value emits one `--filter` per element —
+    docker-py's own convention for repeated filters (`{"label": ["a=1", "b=2"]}`) — and a bool
+    lowercases to the CLI's `true`/`false`.
+    """
+    args: list[str] = []
+    for key, value in (filters or {}).items():
+        values = value if isinstance(value, (list, tuple)) else [value]
+        for item in values:
+            rendered = str(item).lower() if isinstance(item, bool) else str(item)
+            args.extend(["--filter", f"{key}={rendered}"])
+    return args
+
+
 def raise_on_cli_failure(result: CliResult, command: str) -> None:
     """
     Raise RuntimeError if a docker subprocess exited non-zero.

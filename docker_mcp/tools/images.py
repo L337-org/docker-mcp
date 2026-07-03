@@ -232,7 +232,7 @@ def image_prune(filters: dict | None = None, host: str | None = None) -> dict:
     tag or container. To remove all images not used by any container (including tagged ones)
     pass `filters={"dangling": False}`. Valid filter keys: `dangling` (bool as string
     "true"/"false"), `until` (RFC3339 timestamp or duration like "24h"), `label`
-    (key or key=value). Use `df` first to see how much space is reclaimable.
+    (key or key=value). Use `system_df` first to see how much space is reclaimable.
 
     args: filters - Narrow which images to remove; omit to remove dangling images only
     returns: dict - {"ImagesDeleted": [...], "SpaceReclaimed": <bytes>}

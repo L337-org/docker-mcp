@@ -103,7 +103,7 @@ def swarm_update(
     host: str | None = None,
 ) -> bool:
     """
-    Update swarm-wide settings; currently exposes token and unlock-key rotation.
+    Update swarm-wide settings: the single home for join-token and unlock-key rotation.
 
     Must be called on a swarm manager node. Token rotation invalidates the old join token
     immediately — nodes that have not yet joined using the old token must use the new one.
@@ -184,28 +184,5 @@ def swarm_join_tokens(host: str | None = None) -> dict:
     returns: dict - {"Worker": <worker join token>, "Manager": <manager join token>}
     """
     swarm = _get_client(host).swarm
-    swarm.reload()
-    return _read_join_tokens(swarm)
-
-
-@tool()
-def swarm_join_token_rotate(rotate_worker: bool = False, rotate_manager: bool = False, host: str | None = None) -> dict:
-    """
-    Rotate the worker and/or manager join token, then return the fresh tokens.
-
-    Rotating invalidates the old token immediately — nodes that have already joined are unaffected,
-    but any pending invitations using the old token will fail. At least one of `rotate_worker` /
-    `rotate_manager` must be True. Wraps `swarm.update(rotate_*_token=...)` and re-reads the tokens so
-    the caller gets the new value in one step.
-
-    args:
-        rotate_worker - Rotate the worker join token
-        rotate_manager - Rotate the manager join token
-    returns: dict - {"Worker": <worker join token>, "Manager": <manager join token>} after rotation
-    """
-    if not (rotate_worker or rotate_manager):
-        raise ValueError("Set rotate_worker and/or rotate_manager to True — nothing to rotate otherwise.")
-    swarm = _get_client(host).swarm
-    swarm.update(rotate_worker_token=rotate_worker, rotate_manager_token=rotate_manager)
     swarm.reload()
     return _read_join_tokens(swarm)

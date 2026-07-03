@@ -7,6 +7,8 @@
 # (`-T`, `--no-follow`) so they can't block the MCP server. To stream logs or
 # attach, use the host CLI directly.
 
+from typing import Literal
+
 from docker_mcp.server import tool
 from docker_mcp.tools._cli import (
     CliResult,
@@ -179,7 +181,7 @@ def compose_logs(
     files: list[str] | None = None,
     project_name: str | None = None,
     services: list[str] | None = None,
-    tail: int = 200,
+    tail: int | Literal["all"] = 200,
     since: str | None = None,
     until: str | None = None,
     timestamps: bool = False,
@@ -193,17 +195,14 @@ def compose_logs(
         files - Explicit compose file paths (repeatable, `-f`)
         project_name - Compose project name override
         services - Restrict to these services (default: all)
-        tail - Lines per container (default 200; 0 = all, still capped at MAX_CLI_OUTPUT_BYTES)
+        tail - Lines per container (default 200), or the literal "all" (still capped at MAX_CLI_OUTPUT_BYTES)
         since - Show logs since this timestamp/duration (e.g. "10m", "2024-01-01T00:00:00")
         until - Show logs before this timestamp/duration
         timestamps - Include per-line timestamps
     returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
     """
     args = [*_global_args(files, project_name, None), "logs", "--no-color", "--no-log-prefix"]
-    if tail and tail > 0:
-        args.extend(["--tail", str(tail)])
-    elif tail == 0:
-        args.extend(["--tail", "all"])
+    args.extend(["--tail", str(tail)])
     if since:
         args.extend(["--since", since])
     if until:
@@ -305,7 +304,7 @@ def compose_pull(
 
     Use this to stage images before an outage window, to refresh cached images before
     `compose_up`, or to verify images are accessible without starting containers. For
-    registry-authenticated pulls ensure the daemon is logged in first with `login`.
+    registry-authenticated pulls ensure the daemon is logged in first with `system_login`.
     `compose_up --pull always` does the same as part of startup; use this tool when you
     want to separate the pull step.
 

@@ -85,7 +85,10 @@ _BANNED_PARAMS = frozenset(
         "stack_names",
         "id_or_names",
         "v",
-        "timeout",  # always timeout_seconds
+        "timeout",  # always timeout_seconds (or stop_timeout_seconds for Docker's stop grace)
+        "filter",  # always plural
+        "node_spec",  # node_update takes `spec`
+        "remote_name",  # plugin tools take `remote`
     }
 )
 

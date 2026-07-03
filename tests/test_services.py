@@ -10,7 +10,7 @@ from docker_mcp.tools.services import (
     service_rollback,
     service_scale,
     service_logs,
-    service_tasks,
+    service_ps,
     service_update,
 )
 
@@ -88,12 +88,12 @@ def test_service_remove():
     service.remove.assert_called_once()
 
 
-def test_service_tasks():
+def test_service_ps():
     service = MagicMock()
     service.tasks.return_value = [{"ID": "t1"}]
     with _patch() as mock_client:
         mock_client.return_value.services.get.return_value = service
-        assert service_tasks("svc1") == [{"ID": "t1"}]
+        assert service_ps("svc1") == [{"ID": "t1"}]
     service.tasks.assert_called_once_with(filters=None)
 
 

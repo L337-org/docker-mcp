@@ -167,11 +167,18 @@ def test_compose_logs_default_tail_and_no_color():
     assert result["stdout"] == "hello"
 
 
-def test_compose_logs_tail_zero_means_all():
+def test_compose_logs_tail_all_literal():
     with patch("docker_mcp.tools.compose.run_docker", return_value=_ok()) as run:
-        compose_logs(tail=0)
+        compose_logs(tail="all")
     args = run.call_args.args[0]
     assert args[args.index("--tail") + 1] == "all"
+
+
+def test_compose_logs_tail_defaults_bounded():
+    with patch("docker_mcp.tools.compose.run_docker", return_value=_ok()) as run:
+        compose_logs()
+    args = run.call_args.args[0]
+    assert args[args.index("--tail") + 1] == "200"
 
 
 def test_compose_logs_with_since_until_timestamps_services():

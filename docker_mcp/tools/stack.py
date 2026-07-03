@@ -11,6 +11,7 @@
 
 from docker_mcp.server import tool
 from docker_mcp.tools._cli import (
+    filter_args,
     parse_json_or_ndjson,
     raise_on_cli_failure,
     run_docker,
@@ -106,21 +107,20 @@ def stack_list(host: str | None = None) -> list:
 
 
 @tool()
-def stack_ps(name: str, no_trunc: bool = False, filters: list[str] | None = None, host: str | None = None) -> list:
+def stack_ps(name: str, no_trunc: bool = False, filters: dict | None = None, host: str | None = None) -> list:
     """
     List the tasks of a stack, parsed from `--format '{{json .}}'`.
 
     args:
         name - The stack to list tasks for
         no_trunc - Do not truncate task IDs / errors in the output
-        filters - Repeatable `--filter` expressions, e.g. ["desired-state=running"]
+        filters - Filter by attributes, e.g. {"desired-state": "running"}; a list value repeats the filter
     returns: list - One dict per task (id, name, node, image, desired/current state, error)
     """
     args = ["stack", "ps", "--format", _JSON_FORMAT]
     if no_trunc:
         args.append("--no-trunc")
-    for f in filters or []:
-        args.extend(["--filter", f])
+    args.extend(filter_args(filters))
     args.append(safe_positional(name, "stack name"))
     result = run_docker(args, timeout=_TIMEOUT_QUERY, host=host)
     raise_on_cli_failure(result, "stack ps")
@@ -128,18 +128,17 @@ def stack_ps(name: str, no_trunc: bool = False, filters: list[str] | None = None
 
 
 @tool()
-def stack_services(name: str, filters: list[str] | None = None, host: str | None = None) -> list:
+def stack_services(name: str, filters: dict | None = None, host: str | None = None) -> list:
     """
     List the services of a stack, parsed from `--format '{{json .}}'`.
 
     args:
         name - The stack to list services for
-        filters - Repeatable `--filter` expressions, e.g. ["name=web"]
+        filters - Filter by attributes, e.g. {"name": "web"}; a list value repeats the filter
     returns: list - One dict per service (id, name, mode, replicas, image, ports)
     """
     args = ["stack", "services", "--format", _JSON_FORMAT]
-    for f in filters or []:
-        args.extend(["--filter", f])
+    args.extend(filter_args(filters))
     args.append(safe_positional(name, "stack name"))
     result = run_docker(args, timeout=_TIMEOUT_QUERY, host=host)
     raise_on_cli_failure(result, "stack services")

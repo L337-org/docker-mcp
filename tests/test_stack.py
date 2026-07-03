@@ -116,7 +116,7 @@ def test_stack_ls_raises_on_failure():
 def test_stack_ps_builds_args_with_no_trunc_and_filters():
     with _patch_run() as run:
         run.return_value = _ok(stdout='{"Name":"web.1","CurrentState":"Running"}')
-        result = stack_ps("web", no_trunc=True, filters=["desired-state=running"])
+        result = stack_ps("web", no_trunc=True, filters={"desired-state": "running"})
     assert result == [{"Name": "web.1", "CurrentState": "Running"}]
     argv = run.call_args.args[0]
     assert argv[:2] == ["stack", "ps"]
@@ -136,7 +136,7 @@ def test_stack_ps_raises_on_failure():
 def test_stack_services_builds_args_with_filters():
     with _patch_run() as run:
         run.return_value = _ok(stdout='{"Name":"web_api","Replicas":"3/3"}')
-        result = stack_services("web", filters=["name=web_api"])
+        result = stack_services("web", filters={"name": "web_api"})
     assert result == [{"Name": "web_api", "Replicas": "3/3"}]
     argv = run.call_args.args[0]
     assert argv[:2] == ["stack", "services"]

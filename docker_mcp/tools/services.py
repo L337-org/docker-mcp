@@ -106,7 +106,7 @@ def service_remove(id_or_name: str, host: str | None = None) -> bool:
 
 
 @tool()
-def service_tasks(id_or_name: str, filters: dict | None = None, host: str | None = None) -> list:
+def service_ps(id_or_name: str, filters: dict | None = None, host: str | None = None) -> list:
     """
     List the tasks of a swarm service.
 
@@ -127,7 +127,7 @@ def service_logs(
     stderr: bool = True,
     since: int = 0,
     timestamps: bool = False,
-    tail: int | Literal["all"] = "all",
+    tail: int | Literal["all"] = 200,
     max_bytes: int = MAX_PAYLOAD_BYTES,
     host: str | None = None,
 ) -> str:
@@ -136,9 +136,9 @@ def service_logs(
 
     `follow` is intentionally not exposed: the stream is joined into one string before returning, so
     following would block forever and grow unbounded. Collection is capped at `max_bytes` (ValueError
-    if exceeded) so a noisy service can't OOM the server. The default `tail="all"` returns the whole
-    buffer, which can be huge on long-running services and exceed the agent's context — pass an
-    integer (e.g. `tail=500`) or use `since` to constrain output.
+    if exceeded) so a noisy service can't OOM the server. The default is a bounded `tail=200`;
+    `tail="all"` returns the whole buffer, which can be huge on long-running services and exceed
+    the agent's context — prefer an integer, or `since`, to constrain output.
 
     args:
         id_or_name - The service id or name
@@ -147,7 +147,7 @@ def service_logs(
         stderr - Include stderr
         since - Show logs since this Unix timestamp
         timestamps - Include timestamps
-        tail - Number of lines from the end, or the literal "all"
+        tail - Number of lines from the end (default 200), or the literal "all" for everything
         max_bytes - Abort with ValueError if the buffered logs exceed this many bytes (default 32 MiB)
     returns: str - Decoded log output
     """
