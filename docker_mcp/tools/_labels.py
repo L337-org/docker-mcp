@@ -34,7 +34,7 @@ def provenance_labels(created_by: str) -> dict[str, str]:
     """
     The MCP-provenance label set for a resource this server creates, or {} when stamping is disabled.
 
-    `created_by` is the @tool name (e.g. "run_container") recorded in the `.tool` label.
+    `created_by` is the @tool name (e.g. "container_run") recorded in the `.tool` label.
     """
     if env_flag(DISABLE_ENV, _LEGACY_DISABLE_ENV):
         return {}

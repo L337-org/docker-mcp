@@ -7,7 +7,7 @@ import httpx
 import docker_mcp._hosts as _hosts
 from docker_mcp.server import is_domain_disabled, mcp, register_resource_domains, tool_catalog
 from docker_mcp.tools._utils import package_version
-from docker_mcp.tools.client import _get_client, list_hosts
+from docker_mcp.tools.system import _get_client, host_list
 from docker_mcp.tools.containers import _read_log_tail, _read_stats_summary
 
 DOCKER_DOCS_BASE_URL = "https://docker-py.readthedocs.io/en/stable"
@@ -166,14 +166,14 @@ def get_tool_catalog() -> str:
 @mcp.resource("docker-mcp://hosts", mime_type="application/json")
 def get_hosts_resource() -> str:
     """
-    The Docker hosts configured via DOCKER_MCP_SERVER_HOSTS — the same data as the `list_hosts` tool:
+    The Docker hosts configured via DOCKER_MCP_SERVER_HOSTS — the same data as the `host_list` tool:
     each host's name, resolved daemon URL, read_only / tls flags, and which one is the default used when
     a tool's `host` argument is omitted. The resolved default is observable here but is not itself a
     selectable label.
 
     returns: str - JSON list, one object per configured host
     """
-    return json.dumps(list_hosts(), indent=2)
+    return json.dumps(host_list(), indent=2)
 
 
 # Container observability resources. These mirror the container_logs / container_stats tools but as

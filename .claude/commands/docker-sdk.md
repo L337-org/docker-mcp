@@ -32,7 +32,7 @@ The project structure maps SDK domains to tool files one-to-one:
 
 | docker_mcp/tools/ file | tests/ file | Docker SDK domain |
 |-------------|-------------|-------------------|
-| `docker_mcp/tools/client.py` | `tests/test_client.py` | `DockerClient` |
+| `docker_mcp/tools/system.py` | `tests/test_system.py` | `DockerClient` |
 | `docker_mcp/tools/containers.py` | `tests/test_containers.py` | Containers |
 | `docker_mcp/tools/images.py` | `tests/test_images.py` | Images |
 | `docker_mcp/tools/networks.py` | `tests/test_networks.py` | Networks |

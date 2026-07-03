@@ -5,8 +5,8 @@
 # probe — but every subcommand requires the target daemon to be a swarm manager and will fail
 # otherwise. These tools shell out via the cross-platform helper in `tools/_cli.py`.
 #
-# Error convention (see CLAUDE.md): action tools (`stack_deploy`, `stack_rm`) return the raw
-# CliResult dict and never raise; parsed-query tools (`stack_ls`, `stack_ps`, `stack_services`)
+# Error convention (see CLAUDE.md): action tools (`stack_deploy`, `stack_remove`) return the raw
+# CliResult dict and never raise; parsed-query tools (`stack_list`, `stack_ps`, `stack_services`)
 # return a parsed list and raise RuntimeError via `raise_on_cli_failure` on a non-zero exit.
 
 from docker_mcp.server import tool
@@ -92,7 +92,7 @@ def stack_deploy(
 
 
 @tool()
-def stack_ls(host: str | None = None) -> list:
+def stack_list(host: str | None = None) -> list:
     """
     List the stacks deployed to the swarm, parsed from `--format '{{json .}}'`.
 
@@ -149,7 +149,7 @@ def stack_services(stack_name: str, filters: list[str] | None = None, host: str 
 
 
 @tool()
-def stack_rm(
+def stack_remove(
     stack_names: list[str], detach: bool = True, timeout_seconds: float = _TIMEOUT_RM, host: str | None = None
 ) -> dict:
     """
@@ -165,7 +165,7 @@ def stack_rm(
     returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
     """
     if not stack_names:
-        raise ValueError("stack_rm requires at least one entry in stack_names.")
+        raise ValueError("stack_remove requires at least one entry in stack_names.")
     args = ["stack", "rm", f"--detach={'true' if detach else 'false'}"]
     args.extend(safe_positional(name, "stack name") for name in stack_names)
     return run_docker(args, timeout=timeout_seconds, host=host).to_dict()

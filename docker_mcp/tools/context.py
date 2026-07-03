@@ -11,7 +11,7 @@ from docker_mcp.tools._cli import parse_ndjson, raise_on_cli_failure, run_docker
 
 
 @tool()
-def context_ls() -> list:
+def context_list() -> list:
     """
     List Docker CLI contexts known to the host running this MCP server.
 
@@ -31,7 +31,7 @@ def context_inspect(name: str) -> dict:
     """
     Return the full configuration for a single Docker context.
 
-    args: name - Context name (use the `Name` field from `context_ls`)
+    args: name - Context name (use the `Name` field from `context_list`)
     returns: dict - The parsed `docker context inspect` entry for that context
     """
     result = run_docker(["context", "inspect", safe_positional(name, "context name")])
@@ -99,7 +99,7 @@ def context_use(name: str) -> dict:
 
 
 @tool()
-def context_rm(name: str, force: bool = False) -> dict:
+def context_remove(name: str, force: bool = False) -> dict:
     """
     Remove a Docker CLI context.
 

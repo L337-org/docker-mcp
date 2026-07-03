@@ -17,18 +17,18 @@ from docker_mcp.tools._utils import (
     join_bounded,
     stream_to_file,
 )
-from docker_mcp.tools.client import _get_client, guard_not_self
+from docker_mcp.tools.system import _get_client, guard_not_self
 
 
 class RestartPolicy(TypedDict, total=False):
-    """Restart policy for run_container, mirroring the `docker` module's expected dict shape."""
+    """Restart policy for container_run, mirroring the `docker` module's expected dict shape."""
 
     Name: Literal["no", "always", "on-failure", "unless-stopped"]
     MaximumRetryCount: int  # only meaningful with Name="on-failure"
 
 
 @tool()
-def run_container(
+def container_run(
     image: str,
     command: str | list | None = None,
     name: str | None = None,
@@ -95,7 +95,7 @@ def run_container(
             working_dir=working_dir,
             entrypoint=entrypoint,
             restart_policy=restart_policy,
-            labels=with_provenance(labels, "run_container"),
+            labels=with_provenance(labels, "container_run"),
             mem_limit=mem_limit,
             cpu_count=cpu_count,
         ),
@@ -120,7 +120,7 @@ def run_container(
 
 
 @tool()
-def create_container(
+def container_create(
     image: str, command: str | list | None = None, extra_kwargs: dict | None = None, host: str | None = None
 ) -> dict:
     """
@@ -133,7 +133,7 @@ def create_container(
     returns: dict - The created container's attrs
     """
     kwargs = dict(extra_kwargs or {})
-    labels = with_provenance(kwargs.get("labels"), "create_container")
+    labels = with_provenance(kwargs.get("labels"), "container_create")
     if labels is not None:
         kwargs["labels"] = labels
     container = _get_client(host).containers.create(image, command=command, **kwargs)
@@ -141,13 +141,13 @@ def create_container(
 
 
 @tool()
-def get_container(id_or_name: str, host: str | None = None) -> dict:
+def container_inspect(id_or_name: str, host: str | None = None) -> dict:
     """
     Return the full inspect detail for a single container.
 
     Use this when you need complete information about one container — config, state,
     network settings, mounts, environment variables, and resource limits. For a quick
-    overview of many containers use `list_containers` instead (returns a summary per
+    overview of many containers use `container_list` instead (returns a summary per
     container). For just logs or stats use `container_logs` / `container_stats`.
 
     args: id_or_name - Container id (full or short) or name
@@ -157,7 +157,7 @@ def get_container(id_or_name: str, host: str | None = None) -> dict:
 
 
 @tool()
-def list_containers(
+def container_list(
     all: bool = False,
     since: str | None = None,
     before: str | None = None,
@@ -195,12 +195,12 @@ def list_containers(
 
 
 @tool()
-def prune_containers(filters: dict | None = None, host: str | None = None) -> dict:
+def container_prune(filters: dict | None = None, host: str | None = None) -> dict:
     """
     Remove all stopped containers to reclaim disk space.
 
     Only removes containers that are not running — running containers are never affected.
-    Use `list_containers(all=True)` to preview what would be removed before calling this.
+    Use `container_list(all=True)` to preview what would be removed before calling this.
     Valid filter keys: `until` (RFC3339 timestamp or duration like "24h" — removes containers
     stopped before that point), `label` (key or key=value). For a broader cleanup of
     containers plus unused images, networks, and volumes see the `prune_managed` prompt.
@@ -212,14 +212,14 @@ def prune_containers(filters: dict | None = None, host: str | None = None) -> di
 
 
 @tool()
-def start_container(id_or_name: str, host: str | None = None) -> dict:
+def container_start(id_or_name: str, host: str | None = None) -> dict:
     """
     Start an existing stopped container.
 
     Use this to restart a container that was previously created or stopped without removing it.
-    To create and start a new container in one step use `run_container` instead. Calling on
+    To create and start a new container in one step use `container_run` instead. Calling on
     an already-running container has no effect (the daemon returns 304 and no error is
-    raised). To stop then start a running container use `restart_container`.
+    raised). To stop then start a running container use `container_restart`.
 
     args: id_or_name - Container id (full or short) or name
     returns: dict - The container's full attrs after starting
@@ -231,7 +231,7 @@ def start_container(id_or_name: str, host: str | None = None) -> dict:
 
 
 @tool()
-def stop_container(id_or_name: str, timeout: int = 10, host: str | None = None) -> dict:
+def container_stop(id_or_name: str, timeout: int = 10, host: str | None = None) -> dict:
     """
     Stop a container.
 
@@ -248,7 +248,7 @@ def stop_container(id_or_name: str, timeout: int = 10, host: str | None = None) 
 
 
 @tool()
-def restart_container(id_or_name: str, timeout: int = 10, host: str | None = None) -> dict:
+def container_restart(id_or_name: str, timeout: int = 10, host: str | None = None) -> dict:
     """
     Restart a container.
 
@@ -265,7 +265,7 @@ def restart_container(id_or_name: str, timeout: int = 10, host: str | None = Non
 
 
 @tool()
-def kill_container(id_or_name: str, signal: str | None = None, host: str | None = None) -> dict:
+def container_kill(id_or_name: str, signal: str | None = None, host: str | None = None) -> dict:
     """
     Send a signal to a container.
 
@@ -282,7 +282,7 @@ def kill_container(id_or_name: str, signal: str | None = None, host: str | None 
 
 
 @tool()
-def pause_container(id_or_name: str, host: str | None = None) -> dict:
+def container_pause(id_or_name: str, host: str | None = None) -> dict:
     """
     Pause all processes in a container.
 
@@ -297,7 +297,7 @@ def pause_container(id_or_name: str, host: str | None = None) -> dict:
 
 
 @tool()
-def unpause_container(id_or_name: str, host: str | None = None) -> dict:
+def container_unpause(id_or_name: str, host: str | None = None) -> dict:
     """
     Resume all processes in a paused container.
 
@@ -311,7 +311,7 @@ def unpause_container(id_or_name: str, host: str | None = None) -> dict:
 
 
 @tool()
-def remove_container(
+def container_remove(
     id_or_name: str, v: bool = False, link: bool = False, force: bool = False, host: str | None = None
 ) -> bool:
     """
@@ -370,7 +370,7 @@ def container_logs(
 
 
 @tool()
-def follow_container_logs(
+def container_logs_follow(
     id_or_name: str,
     limit_lines: int = 200,
     stdout: bool = True,
@@ -544,7 +544,7 @@ def container_top(id_or_name: str, ps_args: str | None = None, host: str | None 
 
 
 @tool()
-def exec_in_container(
+def container_exec(
     id_or_name: str,
     cmd: str | list,
     stdout: bool = True,
@@ -604,7 +604,7 @@ def exec_in_container(
 
 
 @tool()
-def commit_container(
+def container_commit(
     id_or_name: str,
     repository: str | None = None,
     tag: str | None = None,
@@ -661,7 +661,7 @@ def container_diff(id_or_name: str, host: str | None = None) -> list:
 
 
 @tool()
-def rename_container(id_or_name: str, name: str, host: str | None = None) -> dict:
+def container_rename(id_or_name: str, name: str, host: str | None = None) -> dict:
     """
     Rename a container.
 
@@ -677,7 +677,7 @@ def rename_container(id_or_name: str, name: str, host: str | None = None) -> dic
 
 
 @tool()
-def resize_container(id_or_name: str, height: int, width: int, host: str | None = None) -> bool:
+def container_resize(id_or_name: str, height: int, width: int, host: str | None = None) -> bool:
     """
     Resize the tty session of a container.
 
@@ -693,7 +693,7 @@ def resize_container(id_or_name: str, height: int, width: int, host: str | None 
 
 
 @tool()
-def update_container(id_or_name: str, updates: dict, host: str | None = None) -> dict:
+def container_update(id_or_name: str, updates: dict, host: str | None = None) -> dict:
     """
     Update resource limits on a container without recreating it.
 
@@ -717,7 +717,7 @@ def update_container(id_or_name: str, updates: dict, host: str | None = None) ->
 
 
 @tool()
-def wait_container(
+def container_wait(
     id_or_name: str,
     timeout: int | None = 600,
     condition: Literal["not-running", "next-exit", "removed"] = "not-running",
@@ -728,7 +728,7 @@ def wait_container(
 
     The default `timeout` is finite (600s) so the call can't block the MCP server indefinitely on
     a container that never reaches `condition`. When the timeout is exceeded a RuntimeError is
-    raised (poll `get_container` instead, or pass a larger `timeout`). Pass `timeout=None` to
+    raised (poll `container_inspect` instead, or pass a larger `timeout`). Pass `timeout=None` to
     restore the old unbounded behavior — only do so if you are sure the wait will complete.
 
     args:
@@ -743,7 +743,7 @@ def wait_container(
     except requests.exceptions.ReadTimeout as exc:
         raise RuntimeError(
             f"Container {id_or_name!r} did not reach condition {condition!r} within {timeout}s. "
-            f"Poll `get_container` for its current state, or call `wait_container` with a larger "
+            f"Poll `container_inspect` for its current state, or call `container_wait` with a larger "
             f"`timeout` (or `timeout=None` to wait indefinitely)."
         ) from exc
 
@@ -751,7 +751,7 @@ def wait_container(
 def _health_result(
     id_or_name: str, *, healthy: bool, health: str | None, status: str | None, start: float, timed_out: bool = False
 ) -> dict:
-    """Build the wait_for_container_healthy result snapshot from the current poll observation."""
+    """Build the container_wait_healthy result snapshot from the current poll observation."""
     return {
         "container": id_or_name,
         "healthy": healthy,
@@ -763,7 +763,7 @@ def _health_result(
 
 
 @tool()
-def wait_for_container_healthy(
+def container_wait_healthy(
     id_or_name: str,
     timeout: float = 120.0,
     poll_interval: float = 2.0,
@@ -772,7 +772,7 @@ def wait_for_container_healthy(
     """
     Poll a container until its healthcheck reports `healthy` (or it stops, or the timeout elapses).
 
-    Complements `wait_container` (which waits for *exit*): this waits for a running container to become
+    Complements `container_wait` (which waits for *exit*): this waits for a running container to become
     *healthy*. Re-inspects every `poll_interval`s, never blocks past `timeout` (no exception on timeout —
     the result carries `timed_out: true`).
 
@@ -819,11 +819,11 @@ def wait_for_container_healthy(
 
 
 @tool()
-def export_container(id_or_name: str, max_bytes: int = MAX_PAYLOAD_BYTES, host: str | None = None) -> bytes:
+def container_export(id_or_name: str, max_bytes: int = MAX_PAYLOAD_BYTES, host: str | None = None) -> bytes:
     """
     Export a container's filesystem as a tar archive, returned in band.
 
-    For anything but a small container prefer `export_container_to_file`, which streams to a host
+    For anything but a small container prefer `container_export_to_file`, which streams to a host
     path; the in-band bytes here are capped (default 32 MiB) because MCP base64-encodes them.
 
     args:
@@ -836,7 +836,7 @@ def export_container(id_or_name: str, max_bytes: int = MAX_PAYLOAD_BYTES, host: 
 
 
 @tool()
-def export_container_to_file(id_or_name: str, dest_path: str, overwrite: bool = False, host: str | None = None) -> dict:
+def container_export_to_file(id_or_name: str, dest_path: str, overwrite: bool = False, host: str | None = None) -> dict:
     """
     Export a container's filesystem as a tar archive written to a file on the server host.
 
@@ -855,13 +855,13 @@ def export_container_to_file(id_or_name: str, dest_path: str, overwrite: bool = 
 
 
 @tool()
-def get_container_archive(
+def container_archive_get(
     id_or_name: str, path: str, max_bytes: int = MAX_PAYLOAD_BYTES, host: str | None = None
 ) -> dict:
     """
     Retrieve a file or directory from a container as a tar archive, returned in band.
 
-    For large paths prefer `get_container_archive_to_file`, which streams to a host path; the in-band
+    For large paths prefer `container_archive_get_to_file`, which streams to a host path; the in-band
     bytes here are capped (default 32 MiB) because MCP base64-encodes them.
 
     args:
@@ -876,7 +876,7 @@ def get_container_archive(
 
 
 @tool()
-def get_container_archive_to_file(
+def container_archive_get_to_file(
     id_or_name: str, path: str, dest_path: str, overwrite: bool = False, host: str | None = None
 ) -> dict:
     """
@@ -899,11 +899,11 @@ def get_container_archive_to_file(
 
 
 @tool()
-def put_container_archive(id_or_name: str, path: str, data: bytes, host: str | None = None) -> bool:
+def container_archive_put(id_or_name: str, path: str, data: bytes, host: str | None = None) -> bool:
     """
     Upload a tar archive to a path inside a container.
 
-    For a tarball already on the server host, prefer `put_container_archive_from_file` — it streams
+    For a tarball already on the server host, prefer `container_archive_put_from_file` — it streams
     from disk instead of carrying the (base64-encoded) bytes through the MCP protocol.
 
     args:
@@ -917,12 +917,12 @@ def put_container_archive(id_or_name: str, path: str, data: bytes, host: str | N
 
 
 @tool()
-def put_container_archive_from_file(id_or_name: str, path: str, file_path: str, host: str | None = None) -> bool:
+def container_archive_put_from_file(id_or_name: str, path: str, file_path: str, host: str | None = None) -> bool:
     """
     Upload a tar archive from a file on the server host to a path inside a container.
 
     Streams the file straight to the daemon, so it handles large archives that would be impractical
-    to pass in band via `put_container_archive`. `file_path` is read by the server's user; `~` is expanded.
+    to pass in band via `container_archive_put`. `file_path` is read by the server's user; `~` is expanded.
 
     args:
         id_or_name - The container id or name

@@ -34,124 +34,124 @@ class ToolCategory(Enum):
 # without an entry here makes `tests/test_server.py::test_every_registered_tool_is_classified`
 # fail, so the taxonomy can't silently drift.
 TOOL_CATEGORIES: dict[str, ToolCategory] = {
-    # client / system
-    "ping": ToolCategory.READ_ONLY,
-    "version": ToolCategory.READ_ONLY,
-    "info": ToolCategory.READ_ONLY,
-    "df": ToolCategory.READ_ONLY,
-    "events": ToolCategory.READ_ONLY,
-    "list_hosts": ToolCategory.READ_ONLY,
-    "login": ToolCategory.MUTATING,
-    "logout": ToolCategory.MUTATING,
-    "close": ToolCategory.MUTATING,
-    "reconnect": ToolCategory.MUTATING,
+    # system
+    "system_ping": ToolCategory.READ_ONLY,
+    "system_version": ToolCategory.READ_ONLY,
+    "system_info": ToolCategory.READ_ONLY,
+    "system_df": ToolCategory.READ_ONLY,
+    "system_events": ToolCategory.READ_ONLY,
+    "host_list": ToolCategory.READ_ONLY,
+    "system_login": ToolCategory.MUTATING,
+    "system_logout": ToolCategory.MUTATING,
+    "system_close": ToolCategory.MUTATING,
+    "system_reconnect": ToolCategory.MUTATING,
     # containers
-    "run_container": ToolCategory.MUTATING,
-    "create_container": ToolCategory.MUTATING,
-    "get_container": ToolCategory.READ_ONLY,
-    "list_containers": ToolCategory.READ_ONLY,
-    "prune_containers": ToolCategory.DESTRUCTIVE,
-    "start_container": ToolCategory.MUTATING,
-    "stop_container": ToolCategory.MUTATING,
-    "restart_container": ToolCategory.MUTATING,
-    "kill_container": ToolCategory.DESTRUCTIVE,
-    "pause_container": ToolCategory.MUTATING,
-    "unpause_container": ToolCategory.MUTATING,
-    "remove_container": ToolCategory.DESTRUCTIVE,
+    "container_run": ToolCategory.MUTATING,
+    "container_create": ToolCategory.MUTATING,
+    "container_inspect": ToolCategory.READ_ONLY,
+    "container_list": ToolCategory.READ_ONLY,
+    "container_prune": ToolCategory.DESTRUCTIVE,
+    "container_start": ToolCategory.MUTATING,
+    "container_stop": ToolCategory.MUTATING,
+    "container_restart": ToolCategory.MUTATING,
+    "container_kill": ToolCategory.DESTRUCTIVE,
+    "container_pause": ToolCategory.MUTATING,
+    "container_unpause": ToolCategory.MUTATING,
+    "container_remove": ToolCategory.DESTRUCTIVE,
     "container_logs": ToolCategory.READ_ONLY,
-    "follow_container_logs": ToolCategory.READ_ONLY,
+    "container_logs_follow": ToolCategory.READ_ONLY,
     "container_stats": ToolCategory.READ_ONLY,
     "container_top": ToolCategory.READ_ONLY,
-    "exec_in_container": ToolCategory.MUTATING,
-    "commit_container": ToolCategory.MUTATING,
+    "container_exec": ToolCategory.MUTATING,
+    "container_commit": ToolCategory.MUTATING,
     "container_diff": ToolCategory.READ_ONLY,
-    "rename_container": ToolCategory.MUTATING,
-    "resize_container": ToolCategory.MUTATING,
-    "update_container": ToolCategory.MUTATING,
-    "wait_container": ToolCategory.READ_ONLY,
-    "wait_for_container_healthy": ToolCategory.READ_ONLY,
-    "export_container": ToolCategory.READ_ONLY,
-    "export_container_to_file": ToolCategory.MUTATING,  # writes a file on the server host
-    "get_container_archive": ToolCategory.READ_ONLY,
-    "get_container_archive_to_file": ToolCategory.MUTATING,  # writes a file on the server host
-    "put_container_archive": ToolCategory.MUTATING,
-    "put_container_archive_from_file": ToolCategory.MUTATING,
+    "container_rename": ToolCategory.MUTATING,
+    "container_resize": ToolCategory.MUTATING,
+    "container_update": ToolCategory.MUTATING,
+    "container_wait": ToolCategory.READ_ONLY,
+    "container_wait_healthy": ToolCategory.READ_ONLY,
+    "container_export": ToolCategory.READ_ONLY,
+    "container_export_to_file": ToolCategory.MUTATING,  # writes a file on the server host
+    "container_archive_get": ToolCategory.READ_ONLY,
+    "container_archive_get_to_file": ToolCategory.MUTATING,  # writes a file on the server host
+    "container_archive_put": ToolCategory.MUTATING,
+    "container_archive_put_from_file": ToolCategory.MUTATING,
     # images
-    "build_image": ToolCategory.MUTATING,
-    "get_image": ToolCategory.READ_ONLY,
-    "get_registry_data": ToolCategory.READ_ONLY,
-    "list_images": ToolCategory.READ_ONLY,
-    "pull_image": ToolCategory.MUTATING,
-    "push_image": ToolCategory.MUTATING,
-    "remove_image": ToolCategory.DESTRUCTIVE,
-    "search_images": ToolCategory.READ_ONLY,
-    "prune_images": ToolCategory.DESTRUCTIVE,
-    "load_image": ToolCategory.MUTATING,
-    "load_image_from_file": ToolCategory.MUTATING,
-    "save_image": ToolCategory.READ_ONLY,
-    "save_image_to_file": ToolCategory.MUTATING,  # writes a file on the server host
-    "tag_image": ToolCategory.MUTATING,
+    "image_build": ToolCategory.MUTATING,
+    "image_inspect": ToolCategory.READ_ONLY,
+    "image_registry_data": ToolCategory.READ_ONLY,
+    "image_list": ToolCategory.READ_ONLY,
+    "image_pull": ToolCategory.MUTATING,
+    "image_push": ToolCategory.MUTATING,
+    "image_remove": ToolCategory.DESTRUCTIVE,
+    "image_search": ToolCategory.READ_ONLY,
+    "image_prune": ToolCategory.DESTRUCTIVE,
+    "image_load": ToolCategory.MUTATING,
+    "image_load_from_file": ToolCategory.MUTATING,
+    "image_save": ToolCategory.READ_ONLY,
+    "image_save_to_file": ToolCategory.MUTATING,  # writes a file on the server host
+    "image_tag": ToolCategory.MUTATING,
     "image_history": ToolCategory.READ_ONLY,
     # networks
-    "create_network": ToolCategory.MUTATING,
-    "get_network": ToolCategory.READ_ONLY,
-    "list_networks": ToolCategory.READ_ONLY,
-    "prune_networks": ToolCategory.DESTRUCTIVE,
-    "remove_network": ToolCategory.DESTRUCTIVE,
-    "connect_network": ToolCategory.MUTATING,
-    "disconnect_network": ToolCategory.MUTATING,
+    "network_create": ToolCategory.MUTATING,
+    "network_inspect": ToolCategory.READ_ONLY,
+    "network_list": ToolCategory.READ_ONLY,
+    "network_prune": ToolCategory.DESTRUCTIVE,
+    "network_remove": ToolCategory.DESTRUCTIVE,
+    "network_connect": ToolCategory.MUTATING,
+    "network_disconnect": ToolCategory.MUTATING,
     # volumes
-    "create_volume": ToolCategory.MUTATING,
-    "get_volume": ToolCategory.READ_ONLY,
-    "list_volumes": ToolCategory.READ_ONLY,
-    "prune_volumes": ToolCategory.DESTRUCTIVE,
-    "remove_volume": ToolCategory.DESTRUCTIVE,
+    "volume_create": ToolCategory.MUTATING,
+    "volume_inspect": ToolCategory.READ_ONLY,
+    "volume_list": ToolCategory.READ_ONLY,
+    "volume_prune": ToolCategory.DESTRUCTIVE,
+    "volume_remove": ToolCategory.DESTRUCTIVE,
     # configs
-    "create_config": ToolCategory.MUTATING,
-    "get_config": ToolCategory.READ_ONLY,
-    "list_configs": ToolCategory.READ_ONLY,
-    "remove_config": ToolCategory.DESTRUCTIVE,
+    "config_create": ToolCategory.MUTATING,
+    "config_inspect": ToolCategory.READ_ONLY,
+    "config_list": ToolCategory.READ_ONLY,
+    "config_remove": ToolCategory.DESTRUCTIVE,
     # secrets
-    "create_secret": ToolCategory.MUTATING,
-    "get_secret": ToolCategory.READ_ONLY,
-    "list_secrets": ToolCategory.READ_ONLY,
-    "remove_secret": ToolCategory.DESTRUCTIVE,
+    "secret_create": ToolCategory.MUTATING,
+    "secret_inspect": ToolCategory.READ_ONLY,
+    "secret_list": ToolCategory.READ_ONLY,
+    "secret_remove": ToolCategory.DESTRUCTIVE,
     # nodes
-    "get_node": ToolCategory.READ_ONLY,
-    "list_nodes": ToolCategory.READ_ONLY,
-    "update_node": ToolCategory.MUTATING,
-    "remove_node": ToolCategory.DESTRUCTIVE,
+    "node_inspect": ToolCategory.READ_ONLY,
+    "node_list": ToolCategory.READ_ONLY,
+    "node_update": ToolCategory.MUTATING,
+    "node_remove": ToolCategory.DESTRUCTIVE,
     # services
-    "create_service": ToolCategory.MUTATING,
-    "get_service": ToolCategory.READ_ONLY,
-    "list_services": ToolCategory.READ_ONLY,
-    "update_service": ToolCategory.MUTATING,
-    "remove_service": ToolCategory.DESTRUCTIVE,
+    "service_create": ToolCategory.MUTATING,
+    "service_inspect": ToolCategory.READ_ONLY,
+    "service_list": ToolCategory.READ_ONLY,
+    "service_update": ToolCategory.MUTATING,
+    "service_remove": ToolCategory.DESTRUCTIVE,
     "service_tasks": ToolCategory.READ_ONLY,
     "service_logs": ToolCategory.READ_ONLY,
-    "scale_service": ToolCategory.MUTATING,
-    "force_update_service": ToolCategory.MUTATING,
-    "rollback_service": ToolCategory.MUTATING,
+    "service_scale": ToolCategory.MUTATING,
+    "service_force_update": ToolCategory.MUTATING,
+    "service_rollback": ToolCategory.MUTATING,
     # swarm
-    "init_swarm": ToolCategory.MUTATING,
-    "join_swarm": ToolCategory.MUTATING,
-    "leave_swarm": ToolCategory.DESTRUCTIVE,
-    "update_swarm": ToolCategory.MUTATING,
-    "reload_swarm": ToolCategory.READ_ONLY,
-    "unlock_swarm": ToolCategory.MUTATING,
-    "get_swarm_unlock_key": ToolCategory.READ_ONLY,
-    "get_swarm_join_tokens": ToolCategory.READ_ONLY,
-    "rotate_swarm_join_token": ToolCategory.MUTATING,
+    "swarm_init": ToolCategory.MUTATING,
+    "swarm_join": ToolCategory.MUTATING,
+    "swarm_leave": ToolCategory.DESTRUCTIVE,
+    "swarm_update": ToolCategory.MUTATING,
+    "swarm_inspect": ToolCategory.READ_ONLY,
+    "swarm_unlock": ToolCategory.MUTATING,
+    "swarm_unlock_key": ToolCategory.READ_ONLY,
+    "swarm_join_tokens": ToolCategory.READ_ONLY,
+    "swarm_join_token_rotate": ToolCategory.MUTATING,
     # plugins
-    "get_plugin": ToolCategory.READ_ONLY,
-    "install_plugin": ToolCategory.MUTATING,
-    "list_plugins": ToolCategory.READ_ONLY,
-    "configure_plugin": ToolCategory.MUTATING,
-    "disable_plugin": ToolCategory.MUTATING,
-    "enable_plugin": ToolCategory.MUTATING,
-    "push_plugin": ToolCategory.MUTATING,
-    "remove_plugin": ToolCategory.DESTRUCTIVE,
-    "upgrade_plugin": ToolCategory.MUTATING,
+    "plugin_inspect": ToolCategory.READ_ONLY,
+    "plugin_install": ToolCategory.MUTATING,
+    "plugin_list": ToolCategory.READ_ONLY,
+    "plugin_configure": ToolCategory.MUTATING,
+    "plugin_disable": ToolCategory.MUTATING,
+    "plugin_enable": ToolCategory.MUTATING,
+    "plugin_push": ToolCategory.MUTATING,
+    "plugin_remove": ToolCategory.DESTRUCTIVE,
+    "plugin_upgrade": ToolCategory.MUTATING,
     # compose
     "compose_up": ToolCategory.MUTATING,
     "compose_down": ToolCategory.DESTRUCTIVE,
@@ -165,7 +165,7 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "compose_start": ToolCategory.MUTATING,
     "compose_run": ToolCategory.MUTATING,
     "compose_exec": ToolCategory.MUTATING,
-    "compose_ls": ToolCategory.READ_ONLY,
+    "compose_list": ToolCategory.READ_ONLY,
     "compose_images": ToolCategory.READ_ONLY,
     "compose_port": ToolCategory.READ_ONLY,
     "compose_wait": ToolCategory.READ_ONLY,
@@ -176,30 +176,30 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "compose_unpause": ToolCategory.MUTATING,
     # stack (Compose-on-Swarm, CLI)
     "stack_deploy": ToolCategory.MUTATING,
-    "stack_ls": ToolCategory.READ_ONLY,
+    "stack_list": ToolCategory.READ_ONLY,
     "stack_ps": ToolCategory.READ_ONLY,
     "stack_services": ToolCategory.READ_ONLY,
-    "stack_rm": ToolCategory.DESTRUCTIVE,
+    "stack_remove": ToolCategory.DESTRUCTIVE,
     # context
-    "context_ls": ToolCategory.READ_ONLY,
+    "context_list": ToolCategory.READ_ONLY,
     "context_inspect": ToolCategory.READ_ONLY,
     "context_create": ToolCategory.MUTATING,
     "context_use": ToolCategory.MUTATING,
-    "context_rm": ToolCategory.DESTRUCTIVE,
+    "context_remove": ToolCategory.DESTRUCTIVE,
     # buildx
     "buildx_build": ToolCategory.MUTATING,
     "buildx_bake": ToolCategory.MUTATING,
     "buildx_imagetools_inspect": ToolCategory.READ_ONLY,
     "buildx_imagetools_create": ToolCategory.MUTATING,
-    "buildx_ls": ToolCategory.READ_ONLY,
-    "buildx_history_ls": ToolCategory.READ_ONLY,
+    "buildx_list": ToolCategory.READ_ONLY,
+    "buildx_history_list": ToolCategory.READ_ONLY,
     "buildx_history_inspect": ToolCategory.READ_ONLY,
     "buildx_inspect": ToolCategory.READ_ONLY,
     "buildx_du": ToolCategory.READ_ONLY,
     "buildx_prune": ToolCategory.DESTRUCTIVE,
     "buildx_create": ToolCategory.MUTATING,
     "buildx_use": ToolCategory.MUTATING,
-    "buildx_rm": ToolCategory.DESTRUCTIVE,
+    "buildx_remove": ToolCategory.DESTRUCTIVE,
     # scout
     "scout_cves": ToolCategory.READ_ONLY,
     "scout_quickview": ToolCategory.READ_ONLY,
@@ -207,17 +207,17 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "scout_compare": ToolCategory.READ_ONLY,
     "scout_sbom": ToolCategory.READ_ONLY,
     # registry (HTTPS, no daemon)
-    "registry_list_tags": ToolCategory.READ_ONLY,
-    "registry_inspect_manifest": ToolCategory.READ_ONLY,
-    "registry_get_config": ToolCategory.READ_ONLY,
-    "hub_list_tags": ToolCategory.READ_ONLY,
+    "registry_tags": ToolCategory.READ_ONLY,
+    "registry_manifest": ToolCategory.READ_ONLY,
+    "registry_image_config": ToolCategory.READ_ONLY,
+    "hub_tags": ToolCategory.READ_ONLY,
     "hub_repo_info": ToolCategory.READ_ONLY,
     "hub_rate_limit": ToolCategory.READ_ONLY,
 }
 
 # Destructive tools whose effect is idempotent — re-running has no additional effect (the targets
 # are already gone). Surfaced via ToolAnnotations.idempotentHint so clients can treat retries as safe.
-_IDEMPOTENT_TOOLS = frozenset({"prune_containers", "prune_images", "prune_networks", "prune_volumes", "buildx_prune"})
+_IDEMPOTENT_TOOLS = frozenset({"container_prune", "image_prune", "network_prune", "volume_prune", "buildx_prune"})
 
 # The optional per-call parameter that selects which configured host a daemon-targeting tool acts on.
 _HOST_PARAM = "host"
@@ -226,7 +226,7 @@ _HOST_PARAM = "host"
 # from the "host required for writes" rule and the (ro)-host refusal (you must be able to close/reconnect
 # a read-only host's client, and login/logout touch an in-process cache). The unknown-host check still
 # applies to them. They are MUTATING in TOOL_CATEGORIES but never mutate daemon state.
-_CONNECTION_CONTROL = frozenset({"close", "reconnect", "login", "logout"})
+_CONNECTION_CONTROL = frozenset({"system_close", "system_reconnect", "system_login", "system_logout"})
 
 
 # Read-only env switches, evaluated once at import (registration time):
@@ -383,7 +383,7 @@ _DOMAIN_BLURBS: dict[str, str] = {
     "context": "docker CLI contexts; CLI-backed",
     "registry": "OCI registries + Docker Hub over HTTPS; no daemon needed",
     "plugins": "plugin lifecycle (install/enable/disable/configure/upgrade/remove)",
-    "client": "ping, version, info, df (disk usage), events, login, logout, list_hosts (configured daemons)",
+    "system": "ping, version, info, df (disk usage), events, login, logout, host_list (configured daemons)",
 }
 
 # CLI- and swarm-tied caveats are only worth emitting when the relevant domains actually registered.
@@ -418,8 +418,8 @@ def build_instructions(registered_domains: set[str] | None = None) -> str:
     caveats = []
     if present & {"containers", "images"}:
         caveats.append(
-            "`*_to_file` tools (`export_container_to_file`, `save_image_to_file`, "
-            "`get_container_archive_to_file`) write to the host disk — prefer them over the streaming "
+            "`*_to_file` tools (`container_export_to_file`, `image_save_to_file`, "
+            "`container_archive_get_to_file`) write to the host disk — prefer them over the streaming "
             "variant when persisting output."
         )
     if present & {"containers", "networks", "volumes", "services"}:
@@ -545,7 +545,7 @@ def _slim_schema(node: Any) -> None:
 
 def _has_host_param(func: Callable) -> bool:
     """A tool is daemon-targeting iff its signature declares the `host` param (registry/hub/context
-    tools and list_hosts don't, so they're untouched by the host machinery)."""
+    tools and host_list don't, so they're untouched by the host machinery)."""
     return _HOST_PARAM in inspect.signature(func).parameters
 
 

@@ -15,12 +15,12 @@ from docker_mcp.tools.registry import (
     _select_platform_digest,
     _strip_tag_and_digest,
     _validate_bearer_realm,
-    hub_list_tags,
+    hub_tags,
     hub_rate_limit,
     hub_repo_info,
-    registry_get_config,
-    registry_inspect_manifest,
-    registry_list_tags,
+    registry_image_config,
+    registry_manifest,
+    registry_tags,
 )
 
 
@@ -180,7 +180,7 @@ def test_registry_list_tags_rejects_malicious_http_realm():
 
     with _mock_client(handler):
         with pytest.raises(RuntimeError, match="plaintext http"):
-            registry_list_tags("reg.example.com/foo/bar", username="u", password="p")
+            registry_tags("reg.example.com/foo/bar", username="u", password="p")
 
 
 # ---------- _next_link ----------
@@ -199,7 +199,7 @@ def test_next_link_none_input():
     assert _next_link(None) is None
 
 
-# ---------- registry_list_tags ----------
+# ---------- registry_tags ----------
 
 
 def _mock_client(transport_handler):
@@ -221,7 +221,7 @@ def test_registry_list_tags_single_page_anonymous():
         return httpx.Response(200, json={"name": "library/alpine", "tags": ["3.18", "3.19", "latest"]})
 
     with _mock_client(handler):
-        result = registry_list_tags("alpine")
+        result = registry_tags("alpine")
 
     assert result["name"] == "library/alpine"
     assert result["registry"] == "registry-1.docker.io"
@@ -251,7 +251,7 @@ def test_registry_list_tags_handles_bearer_challenge():
         return httpx.Response(200, json={"name": "foo/bar", "tags": ["v1"]})
 
     with _mock_client(handler):
-        result = registry_list_tags("reg.example.com/foo/bar")
+        result = registry_tags("reg.example.com/foo/bar")
 
     assert result["tags"] == ["v1"]
     assert calls == [
@@ -277,7 +277,7 @@ def test_registry_list_tags_follows_link_header_pagination():
         return next(pages)
 
     with _mock_client(handler):
-        result = registry_list_tags("alpine")
+        result = registry_tags("alpine")
 
     assert result["tags"] == ["a", "b", "c", "d"]
     assert result["truncated"] is False
@@ -288,7 +288,7 @@ def test_registry_list_tags_respects_limit():
         return httpx.Response(200, json={"tags": ["t1", "t2", "t3", "t4", "t5"]})
 
     with _mock_client(handler):
-        result = registry_list_tags("alpine", limit=3)
+        result = registry_tags("alpine", limit=3)
 
     assert result["tags"] == ["t1", "t2", "t3"]
     assert result["truncated"] is True
@@ -296,9 +296,9 @@ def test_registry_list_tags_respects_limit():
 
 def test_registry_list_tags_rejects_non_positive_limit():
     with pytest.raises(ValueError, match="limit must be >= 1"):
-        registry_list_tags("alpine", limit=0)
+        registry_tags("alpine", limit=0)
     with pytest.raises(ValueError, match="limit must be >= 1"):
-        registry_list_tags("alpine", limit=-5)
+        registry_tags("alpine", limit=-5)
 
 
 def test_registry_list_tags_raises_on_500():
@@ -307,10 +307,10 @@ def test_registry_list_tags_raises_on_500():
 
     with _mock_client(handler):
         with pytest.raises(httpx.HTTPStatusError):
-            registry_list_tags("alpine")
+            registry_tags("alpine")
 
 
-# ---------- registry_inspect_manifest ----------
+# ---------- registry_manifest ----------
 
 
 def test_registry_inspect_manifest_sets_accept_and_returns_metadata():
@@ -329,7 +329,7 @@ def test_registry_inspect_manifest_sets_accept_and_returns_metadata():
         )
 
     with _mock_client(handler):
-        result = registry_inspect_manifest("alpine", reference="3.19")
+        result = registry_manifest("alpine", reference="3.19")
 
     assert captured["path"] == "/v2/library/alpine/manifests/3.19"
     assert "application/vnd.oci.image.manifest.v1+json" in (captured["accept"] or "")
@@ -339,7 +339,7 @@ def test_registry_inspect_manifest_sets_accept_and_returns_metadata():
     assert result["manifest"]["schemaVersion"] == 2
 
 
-# ---------- hub_list_tags ----------
+# ---------- hub_tags ----------
 
 
 def test_hub_list_tags_normalizes_official_image_and_paginates():
@@ -359,7 +359,7 @@ def test_hub_list_tags_normalizes_official_image_and_paginates():
         return httpx.Response(200, json=body)
 
     with _mock_client(handler):
-        result = hub_list_tags("alpine")
+        result = hub_tags("alpine")
 
     assert seen_urls[0].startswith("https://hub.docker.com/v2/repositories/library/alpine/tags")
     assert [t["name"] for t in result["tags"]] == ["3.18", "3.19"]
@@ -374,7 +374,7 @@ def test_hub_list_tags_respects_limit():
         )
 
     with _mock_client(handler):
-        result = hub_list_tags("myorg/img", limit=3)
+        result = hub_tags("myorg/img", limit=3)
 
     assert [t["name"] for t in result["tags"]] == ["v0", "v1", "v2"]
     assert result["truncated"] is True
@@ -382,7 +382,7 @@ def test_hub_list_tags_respects_limit():
 
 def test_hub_list_tags_rejects_non_positive_limit():
     with pytest.raises(ValueError, match="limit must be >= 1"):
-        hub_list_tags("alpine", limit=0)
+        hub_tags("alpine", limit=0)
 
 
 # ---------- hub_repo_info ----------
@@ -425,7 +425,7 @@ def test_registry_list_tags_retries_once_on_short_retry_after():
         return httpx.Response(200, json={"tags": ["v1", "v2"]})
 
     with _mock_client(handler):
-        result = registry_list_tags("alpine")
+        result = registry_tags("alpine")
 
     assert result["tags"] == ["v1", "v2"]
     assert len(calls) == 2
@@ -437,7 +437,7 @@ def test_registry_list_tags_raises_when_retry_after_is_long():
 
     with _mock_client(handler):
         with pytest.raises(RuntimeError, match="rate-limited.*retry after ~3600s") as excinfo:
-            registry_list_tags("alpine")
+            registry_tags("alpine")
     # Default registry is Docker Hub — message should mention the Hub-specific cap.
     assert "Docker Hub" in str(excinfo.value)
 
@@ -448,7 +448,7 @@ def test_registry_list_tags_message_is_generic_for_non_hub_registry():
 
     with _mock_client(handler):
         with pytest.raises(RuntimeError, match="rate-limited") as excinfo:
-            registry_list_tags("ghcr.io/org/repo")
+            registry_tags("ghcr.io/org/repo")
     # GHCR is not Docker Hub — the Hub-specific guidance must not appear; the
     # registry-agnostic hint about authenticating should.
     msg = str(excinfo.value)
@@ -462,7 +462,7 @@ def test_registry_list_tags_raises_when_retry_after_missing():
 
     with _mock_client(handler):
         with pytest.raises(RuntimeError, match="rate-limited"):
-            registry_list_tags("alpine")
+            registry_tags("alpine")
 
 
 def test_registry_list_tags_raises_on_second_429_after_retry():
@@ -471,7 +471,7 @@ def test_registry_list_tags_raises_on_second_429_after_retry():
 
     with _mock_client(handler):
         with pytest.raises(RuntimeError, match="rate-limited"):
-            registry_list_tags("alpine")
+            registry_tags("alpine")
 
 
 def test_hub_list_tags_applies_429_policy():
@@ -484,7 +484,7 @@ def test_hub_list_tags_applies_429_policy():
         return httpx.Response(200, json={"next": None, "results": [{"name": "v1"}]})
 
     with _mock_client(handler):
-        result = hub_list_tags("alpine")
+        result = hub_tags("alpine")
 
     assert [t["name"] for t in result["tags"]] == ["v1"]
     assert len(calls) == 2
@@ -513,7 +513,7 @@ def test_registry_list_tags_retries_on_transient_502():
         return httpx.Response(200, json={"tags": ["v1", "v2"]})
 
     with _mock_client(handler):
-        result = registry_list_tags("alpine")
+        result = registry_tags("alpine")
 
     assert result["tags"] == ["v1", "v2"]
     assert len(calls) == 2
@@ -529,7 +529,7 @@ def test_registry_list_tags_gives_up_after_transient_5xx_retries():
     with _mock_client(handler):
         # A sustained outage is surfaced (not swallowed) via the caller's raise_for_status.
         with pytest.raises(httpx.HTTPStatusError):
-            registry_list_tags("alpine")
+            registry_tags("alpine")
 
     # Initial attempt + _TRANSIENT_MAX_RETRIES (2) = 3 total GETs.
     assert len(calls) == 3
@@ -545,7 +545,7 @@ def test_transient_retry_uses_default_backoff_when_no_retry_after():
         return httpx.Response(200, json={"tags": ["v1"]})
 
     with _mock_client(handler), patch("docker_mcp.tools.registry.time.sleep") as mock_sleep:
-        result = registry_list_tags("alpine")
+        result = registry_tags("alpine")
 
     from docker_mcp.tools.registry import _TRANSIENT_BACKOFF_SECONDS
 
@@ -566,7 +566,7 @@ def test_429_retry_then_transient_5xx_is_still_absorbed():
         return httpx.Response(200, json={"tags": ["v1"]})
 
     with _mock_client(handler):
-        result = registry_list_tags("alpine")
+        result = registry_tags("alpine")
 
     assert result["tags"] == ["v1"]
     assert len(calls) == 3
@@ -595,7 +595,7 @@ def test_bearer_token_fetch_retries_on_transient_5xx():
         return httpx.Response(200, json={"name": "foo/bar", "tags": ["v1"]})
 
     with _mock_client(handler):
-        result = registry_list_tags("reg.example.com/foo/bar")
+        result = registry_tags("reg.example.com/foo/bar")
 
     assert result["tags"] == ["v1"]
     # The token endpoint was retried after its transient 502, not failed.
@@ -706,14 +706,14 @@ def test_registry_list_tags_uses_env_credentials_for_token_auth(monkeypatch):
         return httpx.Response(200, json={"name": "foo/bar", "tags": ["v1"]})
 
     with _mock_client(handler):
-        result = registry_list_tags("reg.example.com/foo/bar")
+        result = registry_tags("reg.example.com/foo/bar")
     assert result["tags"] == ["v1"]
     # The env credentials were sent (basic auth) to the token endpoint without transiting tool args.
     assert saw_auth["header"].startswith("Basic ")
 
 
 def test_registry_inspect_manifest_uses_env_credentials_for_token_auth(monkeypatch):
-    # Same env-fallback flow as registry_list_tags, but through the manifest endpoint — both tools
+    # Same env-fallback flow as registry_tags, but through the manifest endpoint — both tools
     # share _env_credentials + _registry_get, and both must keep credentials out of tool arguments.
     monkeypatch.setenv("DOCKER_MCP_SERVER_REGISTRY_USERNAME", "envuser")
     monkeypatch.setenv("DOCKER_MCP_SERVER_REGISTRY_PASSWORD", "envpass")
@@ -736,7 +736,7 @@ def test_registry_inspect_manifest_uses_env_credentials_for_token_auth(monkeypat
         )
 
     with _mock_client(handler):
-        result = registry_inspect_manifest("reg.example.com/foo/bar", reference="v2")
+        result = registry_manifest("reg.example.com/foo/bar", reference="v2")
     assert result["manifest"] == {"schemaVersion": 2}
     assert result["digest"] == "sha256:d"
     assert saw_auth["header"].startswith("Basic ")
@@ -797,7 +797,7 @@ def test_parse_ratelimit_header_variants():
     assert _parse_ratelimit_header("garbage") == (None, None)
 
 
-# ---------- registry_get_config ----------
+# ---------- registry_image_config ----------
 
 
 def test_registry_get_config_single_platform_fetches_blob():
@@ -819,7 +819,7 @@ def test_registry_get_config_single_platform_fetches_blob():
         return httpx.Response(404)
 
     with _mock_client(handler):
-        result = registry_get_config("alpine", reference="3.19")
+        result = registry_image_config("alpine", reference="3.19")
     assert result["name"] == "library/alpine"
     assert result["registry"] == "registry-1.docker.io"
     assert result["platform"] is None  # single-platform image
@@ -848,7 +848,7 @@ def test_registry_get_config_selects_platform_from_index():
         return httpx.Response(404)
 
     with _mock_client(handler):
-        result = registry_get_config("alpine", platform="linux/arm64")
+        result = registry_image_config("alpine", platform="linux/arm64")
     assert result["platform"] == "linux/arm64"
     assert result["config_digest"] == "sha256:armcfg"
     assert result["config"]["architecture"] == "arm64"
@@ -876,7 +876,7 @@ def test_registry_get_config_reports_actual_variant_not_caller_input():
         return httpx.Response(404)
 
     with _mock_client(handler):
-        result = registry_get_config("alpine", platform="linux/arm64")
+        result = registry_image_config("alpine", platform="linux/arm64")
     assert result["platform"] == "linux/arm64/v8"
 
 
@@ -887,7 +887,7 @@ def test_registry_get_config_raises_when_no_config_descriptor():
 
     with _mock_client(handler):
         with pytest.raises(RuntimeError, match="no config descriptor"):
-            registry_get_config("alpine", reference="3.19")
+            registry_image_config("alpine", reference="3.19")
 
 
 # ---------- hub_rate_limit ----------
@@ -950,4 +950,4 @@ def test_registry_response_size_is_capped(monkeypatch):
 
     with _mock_client(handler):
         with pytest.raises(RuntimeError, match="refusing to buffer a response this large"):
-            registry_list_tags("alpine")
+            registry_tags("alpine")

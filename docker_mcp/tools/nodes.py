@@ -2,11 +2,11 @@
 
 from docker_mcp.server import tool
 from docker_mcp.tools._utils import drop_none
-from docker_mcp.tools.client import _get_client
+from docker_mcp.tools.system import _get_client
 
 
 @tool()
-def get_node(id_or_name: str, host: str | None = None) -> dict:
+def node_inspect(id_or_name: str, host: str | None = None) -> dict:
     """
     Get a swarm node by id or name.
 
@@ -17,7 +17,7 @@ def get_node(id_or_name: str, host: str | None = None) -> dict:
 
 
 @tool()
-def list_nodes(filters: dict | None = None, host: str | None = None) -> list:
+def node_list(filters: dict | None = None, host: str | None = None) -> list:
     """
     List swarm nodes.
 
@@ -28,7 +28,7 @@ def list_nodes(filters: dict | None = None, host: str | None = None) -> list:
 
 
 @tool()
-def update_node(id_or_name: str, node_spec: dict, host: str | None = None) -> bool:
+def node_update(id_or_name: str, node_spec: dict, host: str | None = None) -> bool:
     """
     Update a node's spec (availability, name, role, labels).
 
@@ -43,11 +43,11 @@ def update_node(id_or_name: str, node_spec: dict, host: str | None = None) -> bo
 
 
 @tool()
-def remove_node(node_id: str, force: bool = False, host: str | None = None) -> bool:
+def node_remove(node_id: str, force: bool = False, host: str | None = None) -> bool:
     """
     Remove a node from the swarm.
 
-    A node should normally be drained (`update_node` with Availability "drain") and have left the
+    A node should normally be drained (`node_update` with Availability "drain") and have left the
     swarm first, so its tasks reschedule cleanly. Removing an active/reachable node requires `force=True`.
 
     args:

@@ -3,11 +3,11 @@
 
 import pytest
 
-from docker_mcp.tools.context import context_inspect, context_ls
+from docker_mcp.tools.context import context_inspect, context_list
 
 
 def test_context_ls_returns_at_least_one_context():
-    contexts = context_ls()
+    contexts = context_list()
     assert isinstance(contexts, list)
     assert contexts, "expected at least one Docker context to be configured"
     # Every context entry has a Name key in the `--format '{{json .}}'` output.
@@ -15,7 +15,7 @@ def test_context_ls_returns_at_least_one_context():
 
 
 def test_context_inspect_current_context_returns_endpoint():
-    contexts = context_ls()
+    contexts = context_list()
     current = next((c for c in contexts if c.get("Current")), contexts[0])
     name = current["Name"]
     detail = context_inspect(name)

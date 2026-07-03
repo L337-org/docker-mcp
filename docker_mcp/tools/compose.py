@@ -791,7 +791,7 @@ def compose_unpause(
 
 
 @tool()
-def compose_ls(all: bool = False, host: str | None = None) -> list:
+def compose_list(all: bool = False, host: str | None = None) -> list:
     """
     List compose projects known to the daemon (across all directories).
 

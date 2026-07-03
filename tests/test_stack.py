@@ -5,9 +5,9 @@ import pytest
 from docker_mcp.tools._cli import CliResult
 from docker_mcp.tools.stack import (
     stack_deploy,
-    stack_ls,
+    stack_list,
     stack_ps,
-    stack_rm,
+    stack_remove,
     stack_services,
 )
 
@@ -83,14 +83,14 @@ def test_stack_deploy_rejects_flag_like_stack_name():
         stack_deploy("--rm", compose_files=["c.yml"])
 
 
-# ---------- stack_ls (parsed query: raises on non-zero) ----------
+# ---------- stack_list (parsed query: raises on non-zero) ----------
 
 
 def test_stack_ls_parses_ndjson():
     ndjson = '{"Name":"web","Services":"3"}\n{"Name":"db","Services":"1"}'
     with _patch_run() as run:
         run.return_value = _ok(stdout=ndjson)
-        result = stack_ls()
+        result = stack_list()
     assert [s["Name"] for s in result] == ["web", "db"]
     # JSON via the Go template, not the --format json shorthand (which needs docker >= ~v23).
     assert run.call_args.args[0] == ["stack", "ls", "--format", "{{json .}}"]
@@ -99,7 +99,7 @@ def test_stack_ls_parses_ndjson():
 def test_stack_ls_single_object_wrapped_in_list():
     with _patch_run() as run:
         run.return_value = _ok(stdout='{"Name":"web","Services":"3"}')
-        result = stack_ls()
+        result = stack_list()
     assert result == [{"Name": "web", "Services": "3"}]
 
 
@@ -107,7 +107,7 @@ def test_stack_ls_raises_on_failure():
     with _patch_run() as run:
         run.return_value = _fail("This node is not a swarm manager")
         with pytest.raises(RuntimeError, match="stack ls"):
-            stack_ls()
+            stack_list()
 
 
 # ---------- stack_ps / stack_services ----------
@@ -149,13 +149,13 @@ def test_stack_services_rejects_flag_like_name():
         stack_services("-x")
 
 
-# ---------- stack_rm (action tool) ----------
+# ---------- stack_remove (action tool) ----------
 
 
 def test_stack_rm_builds_args_for_multiple_stacks():
     with _patch_run() as run:
         run.return_value = _ok(stdout="Removing stack: web")
-        result = stack_rm(["web", "db"])
+        result = stack_remove(["web", "db"])
     assert result["returncode"] == 0
     argv = run.call_args.args[0]
     assert argv[:2] == ["stack", "rm"]
@@ -166,15 +166,15 @@ def test_stack_rm_builds_args_for_multiple_stacks():
 def test_stack_rm_detach_false():
     with _patch_run() as run:
         run.return_value = _ok()
-        stack_rm(["web"], detach=False)
+        stack_remove(["web"], detach=False)
     assert "--detach=false" in run.call_args.args[0]
 
 
 def test_stack_rm_requires_a_stack_name():
     with pytest.raises(ValueError, match="at least one"):
-        stack_rm([])
+        stack_remove([])
 
 
 def test_stack_rm_rejects_flag_like_name():
     with pytest.raises(ValueError, match="flag"):
-        stack_rm(["web", "-rf"])
+        stack_remove(["web", "-rf"])

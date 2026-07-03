@@ -6,8 +6,8 @@ from docker_mcp.tools._cli import CliResult
 from docker_mcp.tools.context import (
     context_create,
     context_inspect,
-    context_ls,
-    context_rm,
+    context_list,
+    context_remove,
     context_use,
 )
 
@@ -26,7 +26,7 @@ def test_context_ls_parses_json_lines():
         '{"Name":"remote","Description":"prod","DockerEndpoint":"tcp://x:2376","Current":false}\n'
     )
     with patch("docker_mcp.tools.context.run_docker", return_value=_ok(payload)) as run:
-        result = context_ls()
+        result = context_list()
     assert result == [
         {
             "Name": "default",
@@ -42,14 +42,14 @@ def test_context_ls_parses_json_lines():
 def test_context_ls_skips_blank_lines():
     payload = '{"Name":"a"}\n\n{"Name":"b"}\n'
     with patch("docker_mcp.tools.context.run_docker", return_value=_ok(payload)):
-        result = context_ls()
+        result = context_list()
     assert result == [{"Name": "a"}, {"Name": "b"}]
 
 
 def test_context_ls_raises_on_failure():
     with patch("docker_mcp.tools.context.run_docker", return_value=_fail("permission denied")):
         with pytest.raises(RuntimeError, match="permission denied"):
-            context_ls()
+            context_list()
 
 
 def test_context_inspect_returns_first_array_entry():
@@ -131,13 +131,13 @@ def test_context_use_invokes_correct_args():
 
 def test_context_rm_without_force():
     with patch("docker_mcp.tools.context.run_docker", return_value=_ok("remote\n")) as run:
-        context_rm("remote")
+        context_remove("remote")
     run.assert_called_once_with(["context", "rm", "remote"])
 
 
 def test_context_rm_with_force():
     with patch("docker_mcp.tools.context.run_docker", return_value=_ok("remote\n")) as run:
-        context_rm("remote", force=True)
+        context_remove("remote", force=True)
     run.assert_called_once_with(["context", "rm", "remote", "--force"])
 
 
@@ -151,4 +151,4 @@ def test_context_use_rejects_flag_like_name():
 
 def test_context_rm_rejects_flag_like_name():
     with pytest.raises(ValueError, match="parses as a flag"):
-        context_rm("-x")
+        context_remove("-x")

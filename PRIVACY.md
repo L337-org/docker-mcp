@@ -10,7 +10,7 @@ Its network activity is limited to the endpoints **you** direct it at:
 - **Your Docker daemon** — over the local socket, a TCP endpoint, or an `ssh://` host, as configured
   by `DOCKER_HOST` / your Docker context. This is the daemon you ask it to manage.
 - **Container registries and Docker Hub** — only when you invoke a tool that pulls, pushes, scans, or
-  queries an image (e.g. `pull_image`, `registry_list_tags`, `scout_cves`, `hub_repo_info`). These
+  queries an image (e.g. `image_pull`, `registry_tags`, `scout_cves`, `hub_repo_info`). These
   requests go directly to the registry you target, authenticated with credentials you supply; they
   are a normal part of the Docker operation you requested, not a data-collection mechanism.
 

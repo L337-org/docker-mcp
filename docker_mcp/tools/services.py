@@ -6,17 +6,17 @@ from typing import Literal, cast
 from docker_mcp.server import tool
 from docker_mcp.tools._labels import managed_filter, with_provenance
 from docker_mcp.tools._utils import MAX_PAYLOAD_BYTES, drop_none, join_bounded
-from docker_mcp.tools.client import _get_client
+from docker_mcp.tools.system import _get_client
 
 
 @tool()
-def create_service(
+def service_create(
     image: str, command: str | list | None = None, extra_kwargs: dict | None = None, host: str | None = None
 ) -> dict:
     """
     Create a Swarm service; requires a swarm manager node.
 
-    Use this instead of `run_container` when you need replicated or global scheduling,
+    Use this instead of `container_run` when you need replicated or global scheduling,
     rolling updates, or automatic restart across the swarm. Common `extra_kwargs` keys:
     `name` (str), `env` (list of "KEY=VAL"), `mode` ({"Replicated": {"Replicas": N}} or
     {"Global": {}}), `networks` (list of network names/ids), `endpoint_spec`
@@ -32,14 +32,14 @@ def create_service(
     """
     kwargs = dict(extra_kwargs or {})
     # Stamp the service-level `labels`; leave any caller `container_labels` untouched.
-    labels = with_provenance(kwargs.get("labels"), "create_service")
+    labels = with_provenance(kwargs.get("labels"), "service_create")
     if labels is not None:
         kwargs["labels"] = labels
     return _get_client(host).services.create(image, command=command, **kwargs).attrs
 
 
 @tool()
-def get_service(service_id: str, insert_defaults: bool | None = None, host: str | None = None) -> dict:
+def service_inspect(service_id: str, insert_defaults: bool | None = None, host: str | None = None) -> dict:
     """
     Get a swarm service by id or name.
 
@@ -52,7 +52,7 @@ def get_service(service_id: str, insert_defaults: bool | None = None, host: str 
 
 
 @tool()
-def list_services(filters: dict | None = None, managed_only: bool = False, host: str | None = None) -> list:
+def service_list(filters: dict | None = None, managed_only: bool = False, host: str | None = None) -> list:
     """
     List swarm services.
 
@@ -68,7 +68,7 @@ def list_services(filters: dict | None = None, managed_only: bool = False, host:
 
 
 @tool()
-def update_service(service_id: str, updates: dict, host: str | None = None) -> bool:
+def service_update(service_id: str, updates: dict, host: str | None = None) -> bool:
     """
     Update a swarm service's configuration.
 
@@ -83,7 +83,7 @@ def update_service(service_id: str, updates: dict, host: str | None = None) -> b
 
 
 @tool()
-def remove_service(service_id: str, host: str | None = None) -> bool:
+def service_remove(service_id: str, host: str | None = None) -> bool:
     """
     Stop and remove a swarm service.
 
@@ -160,7 +160,7 @@ def service_logs(
 
 
 @tool()
-def scale_service(service_id: str, replicas: int, host: str | None = None) -> bool:
+def service_scale(service_id: str, replicas: int, host: str | None = None) -> bool:
     """
     Scale a swarm service to a number of replicas.
 
@@ -173,7 +173,7 @@ def scale_service(service_id: str, replicas: int, host: str | None = None) -> bo
 
 
 @tool()
-def force_update_service(service_id: str, host: str | None = None) -> bool:
+def service_force_update(service_id: str, host: str | None = None) -> bool:
     """
     Force update a swarm service even if its config has not changed.
 
@@ -185,15 +185,15 @@ def force_update_service(service_id: str, host: str | None = None) -> bool:
 
 
 @tool()
-def rollback_service(service_id: str, host: str | None = None) -> dict:
+def service_rollback(service_id: str, host: str | None = None) -> dict:
     """
     Roll a swarm service back to its previous spec (the docker `service rollback` equivalent).
 
-    Re-applies the service's `PreviousSpec` — the spec from before the most recent `update_service` /
-    `scale_service` / `force_update_service`. Raises ValueError if the service has no PreviousSpec
+    Re-applies the service's `PreviousSpec` — the spec from before the most recent `service_update` /
+    `service_scale` / `service_force_update`. Raises ValueError if the service has no PreviousSpec
     (it has never been updated, or was already rolled back). The high-level SDK exposes no rollback,
     so this reads the current version and previous spec via the low-level APIClient and submits them
-    with `update_service`.
+    with the low-level `update_service` API call.
 
     args: service_id - The service id or name
     returns: dict - The daemon response (a dict with a "Warnings" key)

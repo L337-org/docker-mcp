@@ -1,11 +1,11 @@
 # library of mcp tools relating to plugin management
 
 from docker_mcp.server import tool
-from docker_mcp.tools.client import _get_client
+from docker_mcp.tools.system import _get_client
 
 
 @tool()
-def get_plugin(name: str, host: str | None = None) -> dict:
+def plugin_inspect(name: str, host: str | None = None) -> dict:
     """
     Get an installed plugin by name.
 
@@ -16,15 +16,15 @@ def get_plugin(name: str, host: str | None = None) -> dict:
 
 
 @tool()
-def install_plugin(remote_name: str, local_name: str | None = None, host: str | None = None) -> dict:
+def plugin_install(remote_name: str, local_name: str | None = None, host: str | None = None) -> dict:
     """
     Install a plugin from Docker Hub.
 
     `remote_name` is a Docker Hub reference in `author/name:tag` form, e.g.
     `vieux/sshfs:latest`. The daemon handles permission grants non-interactively.
-    After installation use `get_plugin` to confirm the plugin's enabled state, then call
-    `enable_plugin` to activate it if needed, and optionally `configure_plugin` first if
-    it requires settings. Use `list_plugins` to list all plugins, or `remove_plugin` to
+    After installation use `plugin_inspect` to confirm the plugin's enabled state, then call
+    `plugin_enable` to activate it if needed, and optionally `plugin_configure` first if
+    it requires settings. Use `plugin_list` to list all plugins, or `plugin_remove` to
     uninstall.
 
     args:
@@ -36,7 +36,7 @@ def install_plugin(remote_name: str, local_name: str | None = None, host: str | 
 
 
 @tool()
-def list_plugins(host: str | None = None) -> list:
+def plugin_list(host: str | None = None) -> list:
     """
     List installed plugins.
 
@@ -46,14 +46,14 @@ def list_plugins(host: str | None = None) -> list:
 
 
 @tool()
-def configure_plugin(name: str, options: dict, host: str | None = None) -> bool:
+def plugin_configure(name: str, options: dict, host: str | None = None) -> bool:
     """
     Set runtime configuration options on an installed plugin.
 
-    Use `get_plugin` first to see which keys the plugin exposes under `Settings.Env`; pass
+    Use `plugin_inspect` first to see which keys the plugin exposes under `Settings.Env`; pass
     those same keys as a plain dict, e.g. `{"DEBUG": "1", "SOCKET": "/run/x.sock"}`. The
-    plugin must be disabled before reconfiguring — call `disable_plugin` first if it is
-    currently active, then `enable_plugin` afterwards to apply the new settings.
+    plugin must be disabled before reconfiguring — call `plugin_disable` first if it is
+    currently active, then `plugin_enable` afterwards to apply the new settings.
 
     args:
         name - Plugin name or id (e.g. "vieux/sshfs:latest")
@@ -65,14 +65,14 @@ def configure_plugin(name: str, options: dict, host: str | None = None) -> bool:
 
 
 @tool()
-def disable_plugin(name: str, force: bool = False, host: str | None = None) -> bool:
+def plugin_disable(name: str, force: bool = False, host: str | None = None) -> bool:
     """
     Disable a plugin so it stops intercepting Docker API calls; the plugin remains installed.
 
     A disabled plugin cannot be used by new containers but existing containers that already
     have it attached are unaffected. Use `force=True` to disable even if active containers
     are still using it — this may cause those containers to lose access to plugin-provided
-    resources (e.g. a volume driver). Re-enable with `enable_plugin`.
+    resources (e.g. a volume driver). Re-enable with `plugin_enable`.
 
     args:
         name - Plugin name or id
@@ -84,13 +84,13 @@ def disable_plugin(name: str, force: bool = False, host: str | None = None) -> b
 
 
 @tool()
-def enable_plugin(name: str, timeout: int = 0, host: str | None = None) -> bool:
+def plugin_enable(name: str, timeout: int = 0, host: str | None = None) -> bool:
     """
     Activate an installed plugin so Docker routes relevant API calls through it.
 
     Activates a plugin that is currently disabled — either freshly installed or previously
-    disabled via `disable_plugin`. If the plugin exposes configuration (check via
-    `get_plugin`), call `configure_plugin` while it is still disabled before enabling it.
+    disabled via `plugin_disable`. If the plugin exposes configuration (check via
+    `plugin_inspect`), call `plugin_configure` while it is still disabled before enabling it.
     `timeout` controls how long Docker waits for the plugin process to become healthy;
     0 means wait indefinitely.
 
@@ -104,14 +104,14 @@ def enable_plugin(name: str, timeout: int = 0, host: str | None = None) -> bool:
 
 
 @tool()
-def push_plugin(name: str, host: str | None = None) -> dict:
+def plugin_push(name: str, host: str | None = None) -> dict:
     """
     Push a locally built or pulled plugin image to a remote registry.
 
-    The daemon must already be authenticated with the target registry — call `login` first if
+    The daemon must already be authenticated with the target registry — call `system_login` first if
     needed. `name` must include the registry host for any registry other than Docker Hub,
     e.g. "registry.example.com/myplugin:1.0". The plugin must already exist locally
-    (installed via `install_plugin` or built externally with `docker plugin create`).
+    (installed via `plugin_install` or built externally with `docker plugin create`).
 
     args: name - Plugin name including tag, e.g. "myorg/myplugin:latest"
     returns: dict - Push progress/status events returned by the daemon
@@ -120,7 +120,7 @@ def push_plugin(name: str, host: str | None = None) -> dict:
 
 
 @tool()
-def remove_plugin(name: str, force: bool = False, host: str | None = None) -> bool:
+def plugin_remove(name: str, force: bool = False, host: str | None = None) -> bool:
     """
     Remove a plugin.
 
@@ -134,7 +134,7 @@ def remove_plugin(name: str, force: bool = False, host: str | None = None) -> bo
 
 
 @tool()
-def upgrade_plugin(name: str, remote: str | None = None, host: str | None = None) -> bool:
+def plugin_upgrade(name: str, remote: str | None = None, host: str | None = None) -> bool:
     """
     Upgrade a plugin.
 

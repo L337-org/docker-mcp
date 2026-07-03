@@ -1,13 +1,13 @@
 from unittest.mock import MagicMock, patch
 
 from docker_mcp.tools.networks import (
-    connect_network,
-    create_network,
-    disconnect_network,
-    get_network,
-    list_networks,
-    prune_networks,
-    remove_network,
+    network_connect,
+    network_create,
+    network_disconnect,
+    network_inspect,
+    network_list,
+    network_prune,
+    network_remove,
 )
 
 
@@ -15,12 +15,12 @@ def _patch():
     return patch("docker_mcp.tools.networks._get_client")
 
 
-def test_create_network():
+def test_network_create():
     network = MagicMock()
     network.attrs = {"Id": "net1"}
     with _patch() as mock_client:
         mock_client.return_value.networks.create.return_value = network
-        result = create_network("mynet", driver="bridge", labels={"a": "b"})
+        result = network_create("mynet", driver="bridge", labels={"a": "b"})
     assert result == {"Id": "net1"}
     args, kwargs = mock_client.return_value.networks.create.call_args
     assert args == ("mynet",)
@@ -30,20 +30,20 @@ def test_create_network():
     assert kwargs["labels"]["docker-mcp-server.managed"] == "true"
 
 
-def test_get_network():
+def test_network_inspect():
     network = MagicMock()
     network.attrs = {"Id": "net1"}
     with _patch() as mock_client:
         mock_client.return_value.networks.get.return_value = network
-        assert get_network("mynet") == {"Id": "net1"}
+        assert network_inspect("mynet") == {"Id": "net1"}
 
 
-def test_list_networks():
+def test_network_list():
     network = MagicMock()
     network.attrs = {"Id": "net1"}
     with _patch() as mock_client:
         mock_client.return_value.networks.list.return_value = [network]
-        result = list_networks(filters={"driver": "bridge"})
+        result = network_list(filters={"driver": "bridge"})
     assert result == [{"Id": "net1"}]
     kwargs = mock_client.return_value.networks.list.call_args.kwargs
     assert kwargs["filters"] == {"driver": "bridge"}
@@ -52,31 +52,31 @@ def test_list_networks():
 def test_list_networks_managed_only_injects_label_filter():
     with _patch() as mock_client:
         mock_client.return_value.networks.list.return_value = []
-        list_networks(managed_only=True, filters={"driver": "bridge"})
+        network_list(managed_only=True, filters={"driver": "bridge"})
     kwargs = mock_client.return_value.networks.list.call_args.kwargs
     assert kwargs["filters"]["driver"] == "bridge"
     assert kwargs["filters"]["label"] == "docker-mcp-server.managed=true"
 
 
-def test_prune_networks():
+def test_network_prune():
     with _patch() as mock_client:
         mock_client.return_value.networks.prune.return_value = {"NetworksDeleted": ["net1"]}
-        assert prune_networks() == {"NetworksDeleted": ["net1"]}
+        assert network_prune() == {"NetworksDeleted": ["net1"]}
 
 
-def test_remove_network():
+def test_network_remove():
     network = MagicMock()
     with _patch() as mock_client:
         mock_client.return_value.networks.get.return_value = network
-        assert remove_network("mynet") is True
+        assert network_remove("mynet") is True
     network.remove.assert_called_once()
 
 
-def test_connect_network():
+def test_network_connect():
     network = MagicMock()
     with _patch() as mock_client:
         mock_client.return_value.networks.get.return_value = network
-        assert connect_network("mynet", "web", aliases=["api"]) is True
+        assert network_connect("mynet", "web", aliases=["api"]) is True
     network.connect.assert_called_once_with(
         "web",
         aliases=["api"],
@@ -88,9 +88,9 @@ def test_connect_network():
     )
 
 
-def test_disconnect_network():
+def test_network_disconnect():
     network = MagicMock()
     with _patch() as mock_client:
         mock_client.return_value.networks.get.return_value = network
-        assert disconnect_network("mynet", "web", force=True) is True
+        assert network_disconnect("mynet", "web", force=True) is True
     network.disconnect.assert_called_once_with("web", force=True)

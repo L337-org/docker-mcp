@@ -6,8 +6,8 @@ import uuid
 
 import pytest
 
-from docker_mcp.tools.client import info
-from docker_mcp.tools.stack import stack_deploy, stack_ls, stack_ps, stack_rm, stack_services
+from docker_mcp.tools.system import system_info
+from docker_mcp.tools.stack import stack_deploy, stack_list, stack_ps, stack_remove, stack_services
 
 # A minimal stack: one alpine service that sleeps. `deploy.replicas` is what makes it a swarm service.
 _STACK_YAML = """\
@@ -22,7 +22,7 @@ services:
 
 @pytest.fixture(scope="module", autouse=True)
 def _require_swarm_manager():
-    swarm = info().get("Swarm", {})
+    swarm = system_info().get("Swarm", {})
     if not swarm.get("ControlAvailable"):
         pytest.skip("Docker daemon is not a swarm manager; skipping stack integration tests")
     yield
@@ -38,13 +38,13 @@ def deployed_stack(tmp_path):
     assert result["returncode"] == 0, result["stderr"]
     yield name
     # Best-effort teardown; ignore failures so a missing stack doesn't mask the real assertion.
-    stack_rm([name])
+    stack_remove([name])
 
 
 def test_stack_lifecycle(deployed_stack):
     name = deployed_stack
     # The stack appears in the list.
-    assert any(s.get("Name") == name for s in stack_ls())
+    assert any(s.get("Name") == name for s in stack_list())
     # Its single service is present.
     services = stack_services(name)
     assert any(svc.get("Name", "").startswith(name) for svc in services)

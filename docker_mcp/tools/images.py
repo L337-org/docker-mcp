@@ -2,11 +2,11 @@
 
 from docker_mcp.server import tool
 from docker_mcp.tools._utils import MAX_PAYLOAD_BYTES, drop_none, host_read_path, join_bounded, stream_to_file
-from docker_mcp.tools.client import _get_client
+from docker_mcp.tools.system import _get_client
 
 
 @tool()
-def build_image(
+def image_build(
     path: str | None = None,
     tag: str | None = None,
     quiet: bool = False,
@@ -90,7 +90,7 @@ def build_image(
 
 
 @tool()
-def get_image(name: str, host: str | None = None) -> dict:
+def image_inspect(name: str, host: str | None = None) -> dict:
     """
     Get an image by name or id.
 
@@ -101,7 +101,7 @@ def get_image(name: str, host: str | None = None) -> dict:
 
 
 @tool()
-def get_registry_data(name: str, auth_config: dict | None = None, host: str | None = None) -> dict:
+def image_registry_data(name: str, auth_config: dict | None = None, host: str | None = None) -> dict:
     """
     Get registry data for an image without pulling it.
 
@@ -118,7 +118,7 @@ def get_registry_data(name: str, auth_config: dict | None = None, host: str | No
 
 
 @tool()
-def list_images(
+def image_list(
     name: str | None = None, all: bool = False, filters: dict | None = None, host: str | None = None
 ) -> list:
     """
@@ -134,7 +134,7 @@ def list_images(
 
 
 @tool()
-def pull_image(
+def image_pull(
     repository: str,
     tag: str | None = None,
     all_tags: bool = False,
@@ -158,7 +158,7 @@ def pull_image(
 
 
 @tool()
-def push_image(
+def image_push(
     repository: str, tag: str | None = None, auth_config: dict | None = None, host: str | None = None
 ) -> str:
     """
@@ -181,12 +181,12 @@ def push_image(
 
 
 @tool()
-def remove_image(image: str, force: bool = False, noprune: bool = False, host: str | None = None) -> bool:
+def image_remove(image: str, force: bool = False, noprune: bool = False, host: str | None = None) -> bool:
     """
     Remove a local image by name or id.
 
     Fails without `force` if the image is tagged by multiple names (untag first with
-    `tag_image`) or if stopped containers reference it. Running containers always block
+    `image_tag`) or if stopped containers reference it. Running containers always block
     removal regardless of `force`. `noprune` keeps untagged parent layers that would
     otherwise be removed as a side-effect; leave False unless you need to preserve
     the parent layers for another purpose.
@@ -202,12 +202,12 @@ def remove_image(image: str, force: bool = False, noprune: bool = False, host: s
 
 
 @tool()
-def search_images(term: str, limit: int | None = None, host: str | None = None) -> list:
+def image_search(term: str, limit: int | None = None, host: str | None = None) -> list:
     """
     Search Docker Hub for public images matching a term.
 
     Searches Docker Hub only — not GHCR, ECR, or other registries. For listing tags on a
-    specific image from any OCI registry use `registry_list_tags` instead. Each result dict
+    specific image from any OCI registry use `registry_tags` instead. Each result dict
     includes `name`, `description`, `star_count`, `is_official`, and `is_automated`.
 
     args:
@@ -219,7 +219,7 @@ def search_images(term: str, limit: int | None = None, host: str | None = None) 
 
 
 @tool()
-def prune_images(filters: dict | None = None, host: str | None = None) -> dict:
+def image_prune(filters: dict | None = None, host: str | None = None) -> dict:
     """
     Remove unused local images to reclaim disk space.
 
@@ -236,11 +236,11 @@ def prune_images(filters: dict | None = None, host: str | None = None) -> dict:
 
 
 @tool()
-def load_image(data: bytes, host: str | None = None) -> list:
+def image_load(data: bytes, host: str | None = None) -> list:
     """
-    Load an image from a tarball produced by save_image.
+    Load an image from a tarball produced by image_save.
 
-    For a tarball already on the host running this server, prefer `load_image_from_file` — it streams
+    For a tarball already on the host running this server, prefer `image_load_from_file` — it streams
     from disk instead of carrying the (base64-encoded) bytes through the MCP protocol.
 
     args: data - Tarball contents
@@ -250,14 +250,14 @@ def load_image(data: bytes, host: str | None = None) -> list:
 
 
 @tool()
-def load_image_from_file(file_path: str, host: str | None = None) -> list:
+def image_load_from_file(file_path: str, host: str | None = None) -> list:
     """
     Load an image from a tar archive on the host running this MCP server.
 
     Streams the file straight to the daemon, so it handles arbitrarily large images that would be
-    impractical to pass in band via `load_image`. The path is read by the server's user; `~` is expanded.
+    impractical to pass in band via `image_load`. The path is read by the server's user; `~` is expanded.
 
-    args: file_path - Path to a tarball produced by `docker save` / `save_image_to_file`
+    args: file_path - Path to a tarball produced by `docker save` / `image_save_to_file`
     returns: list - A list of loaded image attrs dicts
     """
     path = host_read_path(file_path)
@@ -266,11 +266,11 @@ def load_image_from_file(file_path: str, host: str | None = None) -> list:
 
 
 @tool()
-def save_image(name: str, named: bool = False, max_bytes: int = MAX_PAYLOAD_BYTES, host: str | None = None) -> bytes:
+def image_save(name: str, named: bool = False, max_bytes: int = MAX_PAYLOAD_BYTES, host: str | None = None) -> bytes:
     """
     Save an image as a tar archive, returned in band.
 
-    For anything but a small image prefer `save_image_to_file`, which streams to a host path; the
+    For anything but a small image prefer `image_save_to_file`, which streams to a host path; the
     in-band bytes here are capped (default 32 MiB) because MCP base64-encodes them into the agent's context.
 
     args:
@@ -284,7 +284,7 @@ def save_image(name: str, named: bool = False, max_bytes: int = MAX_PAYLOAD_BYTE
 
 
 @tool()
-def save_image_to_file(
+def image_save_to_file(
     name: str, dest_path: str, named: bool = False, overwrite: bool = False, host: str | None = None
 ) -> dict:
     """
@@ -306,7 +306,7 @@ def save_image_to_file(
 
 
 @tool()
-def tag_image(name: str, repository: str, tag: str | None = None, force: bool = False, host: str | None = None) -> bool:
+def image_tag(name: str, repository: str, tag: str | None = None, force: bool = False, host: str | None = None) -> bool:
     """
     Tag an image into a repository.
 
@@ -330,7 +330,7 @@ def image_history(name: str, host: str | None = None) -> list:
     includes `Id` (layer digest or "<missing>" for imported layers), `Created` (unix
     timestamp), `CreatedBy` (the Dockerfile command that produced the layer, e.g. a RUN or
     COPY), `Size` (bytes added by that layer), and `Comment`. For full image metadata use
-    `get_image` instead.
+    `image_inspect` instead.
 
     args: name - Image name (with optional tag/digest) or id
     returns: list - Layer history entries, newest first

@@ -13,7 +13,7 @@ from docker_mcp.tools.compose import (
     compose_images,
     compose_kill,
     compose_logs,
-    compose_ls,
+    compose_list,
     compose_pause,
     compose_port,
     compose_ps,
@@ -320,19 +320,19 @@ def test_compose_exec_with_index_workdir_user_env():
     assert args[args.index("--env") + 1] == "DEBUG=1"
 
 
-# ---------- compose_ls ----------
+# ---------- compose_list ----------
 
 
 def test_compose_ls_parses_array():
     body = '[{"Name":"demo","Status":"running(2)"}]'
     with patch("docker_mcp.tools.compose.run_docker", return_value=_ok(body)):
-        result = compose_ls()
+        result = compose_list()
     assert result == [{"Name": "demo", "Status": "running(2)"}]
 
 
 def test_compose_ls_all_flag():
     with patch("docker_mcp.tools.compose.run_docker", return_value=_ok("[]")) as run:
-        compose_ls(all=True)
+        compose_list(all=True)
     args = run.call_args.args[0]
     assert "--all" in args
 
@@ -340,7 +340,7 @@ def test_compose_ls_all_flag():
 def test_compose_ls_raises_on_failure():
     with patch("docker_mcp.tools.compose.run_docker", return_value=_fail("daemon unreachable")):
         with pytest.raises(RuntimeError, match="daemon unreachable"):
-            compose_ls()
+            compose_list()
 
 
 # ---------- compose_stop / compose_start ----------

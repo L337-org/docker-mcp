@@ -60,7 +60,7 @@ def buildx_build(
     """
     Build an image with BuildKit via `docker buildx build`.
 
-    Replaces the legacy `build_image` tool when you need any of: multi-platform output
+    Replaces the legacy `image_build` tool when you need any of: multi-platform output
     (`platforms`), modern cache export (`cache_from`/`cache_to`), SBOM or provenance
     attestations, build secrets, or multi-stage builds with `target`. Always runs with
     `--progress=plain` so output is captured rather than redrawn on a TTY.
@@ -304,7 +304,7 @@ def buildx_imagetools_create(
 
 
 @tool()
-def buildx_ls(host: str | None = None) -> list:
+def buildx_list(host: str | None = None) -> list:
     """
     List builder instances.
 
@@ -318,7 +318,7 @@ def buildx_ls(host: str | None = None) -> list:
 
 
 @tool()
-def buildx_history_ls(builder: str | None = None, host: str | None = None) -> list:
+def buildx_history_list(builder: str | None = None, host: str | None = None) -> list:
     """
     List recent build records (BuildKit build history), parsed from `--format '{{json .}}'`.
 
@@ -344,10 +344,10 @@ def buildx_history_inspect(ref: str = "", builder: str | None = None, host: str 
     Inspect a single build record by ref, parsed from `--format json`.
 
     Returns the full record for one build — duration, materials, attestations, error (if any) — for
-    debugging a failed or slow build found via `buildx_history_ls`. Requires buildx >= v0.13.
+    debugging a failed or slow build found via `buildx_history_list`. Requires buildx >= v0.13.
 
     args:
-        ref - Build record ref. Pass the `ref` field from `buildx_history_ls` directly — it
+        ref - Build record ref. Pass the `ref` field from `buildx_history_list` directly — it
                    reports a qualified "<builder>/<node>/<id>", but `history inspect` only accepts the
                    bare id, so this reduces it to the id and (unless `builder` is given) targets the
                    builder named in the ref. Empty/omitted inspects the most recent build; the `^N`
@@ -387,7 +387,7 @@ def buildx_inspect(name: str | None = None, bootstrap: bool = False, host: str |
         name - Builder name (defaults to the active builder)
         bootstrap - Boot the builder if it isn't already running
     returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}.
-                    stdout is human-readable; parse with the agent or call buildx_ls for JSON.
+                    stdout is human-readable; parse with the agent or call buildx_list for JSON.
     """
     args: list[str] = ["inspect"]
     if bootstrap:
@@ -522,12 +522,12 @@ def buildx_use(name: str, default: bool = False, global_default: bool = False, h
 
     Without `default` or `global_default` the switch applies only to the current CLI
     session. `default` persists the choice for the current Docker context; `global_default`
-    persists across all Docker contexts. Use `buildx_ls` to see available builders and their
+    persists across all Docker contexts. Use `buildx_list` to see available builders and their
     current status. To avoid switching the global default, pass a specific builder name
     directly via `buildx_build`'s `builder` parameter instead.
 
     args:
-        name - Builder name to activate (from `buildx_ls`)
+        name - Builder name to activate (from `buildx_list`)
         default - Persist as default builder for the current Docker context
         global_default - Persist as default builder across all Docker contexts
     returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
@@ -542,7 +542,7 @@ def buildx_use(name: str, default: bool = False, global_default: bool = False, h
 
 
 @tool()
-def buildx_rm(
+def buildx_remove(
     name: str | None = None,
     all_inactive: bool = False,
     keep_state: bool = False,
@@ -562,10 +562,10 @@ def buildx_rm(
     returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
     """
     if not name and not all_inactive:
-        raise ValueError("buildx_rm requires either `name` or `all_inactive=True`")
+        raise ValueError("buildx_remove requires either `name` or `all_inactive=True`")
     if name and all_inactive:
         raise ValueError(
-            "buildx_rm: `name` and `all_inactive=True` are mutually exclusive — pass `name` to "
+            "buildx_remove: `name` and `all_inactive=True` are mutually exclusive — pass `name` to "
             "remove a specific builder, or `all_inactive=True` to sweep every inactive one."
         )
     args: list[str] = ["rm"]

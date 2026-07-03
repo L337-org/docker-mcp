@@ -31,7 +31,7 @@ def main():
         print(version("docker-mcp-server"))
         return
 
-    from docker_mcp.tools.client import startup_preflight
+    from docker_mcp.tools.system import startup_preflight
 
     startup_preflight()
     mcp.run(transport="stdio")
