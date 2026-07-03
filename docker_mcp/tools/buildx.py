@@ -224,7 +224,9 @@ def buildx_imagetools_inspect(
     Replaces `docker manifest inspect`. The standalone `docker manifest` command is in
     maintenance mode and lacks support for OCI image indexes, attestations, and
     annotations — `buildx imagetools inspect` is the path forward and handles both
-    single-platform manifests and multi-platform manifest lists / OCI indexes.
+    single-platform manifests and multi-platform manifest lists / OCI indexes. Uses the docker
+    CLI's credential store; `registry_manifest` answers the same question over direct HTTPS
+    with no daemon or plugin.
 
     args:
         image - Image reference, e.g. "alpine:3.19" or "ghcr.io/org/repo@sha256:..."

@@ -542,7 +542,7 @@ def container_exec(
     host: str | None = None,
 ) -> dict:
     """
-    Run a command inside a running container.
+    Run a command inside a running container (for a compose service, prefer `compose_exec`).
 
     Security: when any element of `cmd` is agent-controlled, use an exec-form argv list that does not
     invoke a shell (e.g. `["python", "-V"]`, `["ls", path]`). A string `cmd`, or a shell form like

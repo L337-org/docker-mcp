@@ -445,7 +445,9 @@ def registry_manifest(
     Fetch a repository's manifest without pulling.
 
     May return a single-platform image manifest or a multi-platform manifest list / OCI image
-    index, depending on what the registry serves for that tag.
+    index, depending on what the registry serves for that tag. Talks HTTPS directly — no daemon
+    or CLI needed. Alternatives for the same question: `buildx_imagetools_inspect` (uses the
+    docker CLI and its credential store) and `image_registry_data` (asks the daemon).
 
     args:
         repository - Image/repository ref, e.g. "ghcr.io/org/repo"; `:tag`/`@digest` is stripped — pass via `reference`

@@ -496,7 +496,7 @@ def compose_exec(
     host: str | None = None,
 ) -> dict:
     """
-    Run a command inside an already-running compose service container.
+    Run a command inside an already-running compose service container (see also `container_exec`).
 
     Always passes `-T` (no TTY). Pass an exec-form argv (e.g. `["python", "-V"]`); a
     `["sh", "-c", "..."]` form interprets shell metacharacters in untrusted substrings.
