@@ -105,7 +105,10 @@ def image_inspect(id_or_name: str, host: str | None = None) -> dict:
 @tool()
 def image_registry_data(repository: str, auth_config: dict | None = None, host: str | None = None) -> dict:
     """
-    Get registry data for an image without pulling it.
+    Get registry data for an image without pulling it, via the daemon's distribution endpoint.
+
+    Uses the daemon (and its cached credentials) to resolve the remote descriptor and platform
+    list. For direct registry access without a daemon use `registry_manifest`.
 
     Security: `auth_config` carries registry credentials, which many MCP clients log verbatim. Prefer
     `docker login` on the host so the `docker` module reuses credentials cached in
@@ -144,7 +147,7 @@ def image_pull(
     host: str | None = None,
 ) -> dict | list:
     """
-    Pull an image of the given name.
+    Pull an image from a registry to the daemon's local store.
 
     args:
         repository - The image repository
