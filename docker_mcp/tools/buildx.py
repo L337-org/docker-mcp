@@ -7,6 +7,7 @@
 from docker_mcp.server import tool
 from docker_mcp.tools._cli import (
     CliResult,
+    filter_args,
     parse_json_or_ndjson,
     parse_ndjson,
     raise_on_cli_failure,
@@ -423,8 +424,7 @@ def buildx_du(builder: str | None = None, host: str | None = None) -> list:
 @tool()
 def buildx_prune(
     all: bool = False,
-    filter: dict | None = None,
-    keep_storage: str | None = None,
+    filters: dict | None = None,
     reserved_space: str | None = None,
     max_used_space: str | None = None,
     min_free_space: str | None = None,
@@ -440,8 +440,7 @@ def buildx_prune(
 
     args:
         all - Include internal/frontend images
-        filter - Filter values (e.g. {"until": "24h", "type": "exec.cachemount"})
-        keep_storage - DEPRECATED; older buildx flag. Use `reserved_space` instead.
+        filters - Filter by attributes (e.g. {"until": "24h", "type": "exec.cachemount"})
         reserved_space - Amount of disk to always keep (e.g. "10GB")
         max_used_space - Maximum disk space the cache may use (e.g. "20GB")
         min_free_space - Target amount of free disk after pruning (e.g. "5GB")
@@ -452,10 +451,7 @@ def buildx_prune(
     args: list[str] = ["prune", "--force"]
     if all:
         args.append("--all")
-    for key, value in (filter or {}).items():
-        args.extend(["--filter", f"{key}={value}"])
-    if keep_storage is not None:
-        args.extend(["--keep-storage", keep_storage])
+    args.extend(filter_args(filters))
     if reserved_space is not None:
         args.extend(["--reserved-space", reserved_space])
     if max_used_space is not None:

@@ -211,7 +211,7 @@ Multi-platform notes for new shell-out tools:
 CLI-backed tools follow one of two error styles depending on what they return:
 
 - **Action tools** (`compose_up`, `buildx_build`, `context_use`, …) return the raw `{"returncode", "stdout", "stderr", "truncated"}` dict from `CliResult.to_dict()` and never raise on a non-zero exit — stderr is informative, and the agent decides what to do with a failure.
-- **Parsed-query tools** (`context_list`, `buildx_list`, `buildx_du`, `compose_list`) return a parsed list/dict and therefore *cannot* return a useful partial result on failure — they raise `RuntimeError` via `_cli.py:raise_on_cli_failure`. (`compose_ps` is the hybrid: it returns `{"services": [...], "raw": <CliResult dict>}` so the caller gets both.)
+- **Parsed-query tools** (`context_list`, `buildx_list`, `buildx_du`, `compose_list`) return a parsed list/dict and therefore *cannot* return a useful partial result on failure — they raise `RuntimeError` via `_cli.py:raise_on_cli_failure`. (`compose_ps` and `compose_config` are the sanctioned hybrids: they return the parsed view plus `raw` — callers want both the structure and the CLI's warnings — and never raise.)
 
 New CLI tools should pick the style matching their return shape rather than mixing them.
 

@@ -104,6 +104,7 @@ noun-form (`container_logs`, `registry_tags`).
 | `remove_service` | `service_remove` |
 | `scale_service` | `service_scale` |
 | `rollback_service` | `service_rollback` |
+| `service_tasks` | `service_ps` |
 
 **swarm:**
 
@@ -117,7 +118,7 @@ noun-form (`container_logs`, `registry_tags`).
 | `reload_swarm` | `swarm_inspect` |
 | `get_swarm_unlock_key` | `swarm_unlock_key` |
 | `get_swarm_join_tokens` | `swarm_join_tokens` |
-| `rotate_swarm_join_token` | `swarm_join_token_rotate` |
+| `rotate_swarm_join_token` | removed — use `swarm_update(rotate_worker_token=..., rotate_manager_token=...)` then `swarm_join_tokens` |
 
 **plugins:**
 
@@ -180,10 +181,21 @@ All other `compose_*`, `stack_*`, `context_*`, `buildx_*`, and `scout_*` names a
   `image`); `name`/`names` for name-only resources (was `volume_id`, `stack_name`,
   `stack_names`); `repository` for remote repo refs (was `image` on `registry_*`, `name` on
   `image_registry_data`/`image_list`).
-- `timeout` → `timeout_seconds` everywhere (`container_stop`, `container_restart`,
-  `plugin_enable`).
+- `timeout` → `timeout_seconds` everywhere (`plugin_enable`); in `container_stop` /
+  `container_restart` the stop-grace period is `stop_timeout_seconds` (matching
+  `compose_stop`/`compose_restart` — `timeout_seconds` always means the call's own bound).
 - `container_remove(v=...)` → `volumes`.
 - `buildx_imagetools_create(files=...)` → `descriptor_files`.
+- `plugin_install(remote_name=...)` → `remote` (matching `plugin_upgrade`).
+- `node_update(node_spec=...)` → `spec` (replacement semantics — omitted keys are cleared).
+- `buildx_prune`: `filter` → `filters`; the deprecated `keep_storage` is removed (use
+  `reserved_space`).
+- `stack_ps`/`stack_services` `filters` take the same dict shape as the SDK tools
+  (`{"name": "web"}`, list values repeat the filter) instead of a `list[str]` of
+  `--filter` expressions — one `filters` contract across the surface.
+- Logs `tail` is `int | "all"` on all three logs tools and **defaults to a bounded 200**
+  (1.x defaulted `container_logs`/`service_logs` to `"all"`; pass `tail="all"` for the old
+  behavior). `compose_logs`'s `0`-means-all sentinel is gone.
 
 ## Environment variables
 

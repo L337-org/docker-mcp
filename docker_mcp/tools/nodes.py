@@ -28,17 +28,21 @@ def node_list(filters: dict | None = None, host: str | None = None) -> list:
 
 
 @tool()
-def node_update(id_or_name: str, node_spec: dict, host: str | None = None) -> bool:
+def node_update(id_or_name: str, spec: dict, host: str | None = None) -> bool:
     """
-    Update a node's spec (availability, name, role, labels).
+    Replace a node's spec (availability, name, role, labels).
+
+    Replacement, not a merge: `spec` becomes the node's entire spec, and omitted keys are cleared.
+    Fetch the current spec via `node_inspect` (its `Spec` key), modify it, and resubmit the whole
+    dict — e.g. sending just {"Availability": "drain"} would also wipe the node's role and labels.
 
     args:
         id_or_name - The node id or name
-        node_spec - The new node spec
+        spec - The complete new node spec (see description — omitted keys are cleared)
     returns: bool - True after the update
     """
     node = _get_client(host).nodes.get(id_or_name)
-    node.update(node_spec)
+    node.update(spec)
     return True
 
 

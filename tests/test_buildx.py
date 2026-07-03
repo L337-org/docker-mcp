@@ -291,7 +291,7 @@ def test_buildx_prune_filter_and_space_flags():
     with patch("docker_mcp.tools.buildx.run_docker", return_value=_ok()) as run:
         buildx_prune(
             all=True,
-            filter={"until": "24h", "type": "exec.cachemount"},
+            filters={"until": "24h", "type": "exec.cachemount"},
             reserved_space="10GB",
             max_used_space="20GB",
             min_free_space="5GB",

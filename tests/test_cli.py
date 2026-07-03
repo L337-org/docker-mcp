@@ -508,3 +508,25 @@ def test_apply_host_env_platform_default_strips_ambient(monkeypatch):
     cli_module._apply_host_env(env, "box")
     assert "DOCKER_HOST" not in env
     assert "DOCKER_CONTEXT" not in env
+
+
+# ---------- filter_args ----------
+
+
+def test_filter_args_renders_dict_as_repeated_filter_flags():
+    from docker_mcp.tools._cli import filter_args
+
+    assert filter_args({"name": "web"}) == ["--filter", "name=web"]
+    assert filter_args(None) == []
+
+
+def test_filter_args_list_value_repeats_the_filter():
+    from docker_mcp.tools._cli import filter_args
+
+    assert filter_args({"label": ["a=1", "b=2"]}) == ["--filter", "label=a=1", "--filter", "label=b=2"]
+
+
+def test_filter_args_lowercases_booleans():
+    from docker_mcp.tools._cli import filter_args
+
+    assert filter_args({"dangling": True}) == ["--filter", "dangling=true"]

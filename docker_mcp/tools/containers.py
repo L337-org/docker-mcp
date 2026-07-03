@@ -232,35 +232,35 @@ def container_start(id_or_name: str, host: str | None = None) -> dict:
 
 
 @tool()
-def container_stop(id_or_name: str, timeout_seconds: int = 10, host: str | None = None) -> dict:
+def container_stop(id_or_name: str, stop_timeout_seconds: int = 10, host: str | None = None) -> dict:
     """
     Stop a container.
 
     args:
         id_or_name - The container id or name
-        timeout_seconds - Seconds to wait before forcing termination
+        stop_timeout_seconds - Seconds to wait for graceful stop before SIGKILL
     returns: dict - The container's attrs after stop
     """
     container = _get_client(host).containers.get(id_or_name)
     guard_not_self(container, host=host)
-    container.stop(timeout=timeout_seconds)
+    container.stop(timeout=stop_timeout_seconds)
     container.reload()
     return container.attrs
 
 
 @tool()
-def container_restart(id_or_name: str, timeout_seconds: int = 10, host: str | None = None) -> dict:
+def container_restart(id_or_name: str, stop_timeout_seconds: int = 10, host: str | None = None) -> dict:
     """
     Restart a container.
 
     args:
         id_or_name - The container id or name
-        timeout_seconds - Seconds to wait before forcing restart
+        stop_timeout_seconds - Seconds to wait for graceful stop before SIGKILL and restart
     returns: dict - The container's attrs after restart
     """
     container = _get_client(host).containers.get(id_or_name)
     guard_not_self(container, host=host)
-    container.restart(timeout=timeout_seconds)
+    container.restart(timeout=stop_timeout_seconds)
     container.reload()
     return container.attrs
 
@@ -337,7 +337,7 @@ def container_logs(
     stdout: bool = True,
     stderr: bool = True,
     timestamps: bool = False,
-    tail: int | Literal["all"] = "all",
+    tail: int | Literal["all"] = 200,
     since: float | None = None,
     until: float | None = None,
     follow: bool = False,
@@ -361,7 +361,7 @@ def container_logs(
         stdout - Include stdout
         stderr - Include stderr
         timestamps - Include timestamps
-        tail - Number of lines from the end, or the literal "all"
+        tail - Number of lines from the end (default 200), or the literal "all" for everything
         since - Only return logs created after this unix timestamp
         until - Only return logs created before this unix timestamp (snapshot mode only)
         follow - Follow the live log stream instead of returning a snapshot

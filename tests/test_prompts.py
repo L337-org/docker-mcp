@@ -198,10 +198,10 @@ def test_audit_docker_contexts_reports_host_registry_then_contexts():
 
 def test_audit_swarm_health_covers_nodes_services_and_tasks():
     out = audit_swarm_health()
-    for tool in ("node_list", "service_list", "service_tasks", "service_logs"):
+    for tool in ("node_list", "service_list", "service_ps", "service_logs"):
         assert tool in out
     # Node enumeration should precede the per-service task drill-down.
-    assert out.index("node_list") < out.index("service_tasks")
+    assert out.index("node_list") < out.index("service_ps")
     # Read-only audit: it must not invoke node_remove, only mention it as a follow-up.
     assert "do not call it" in out.lower() or "do not change anything" in out.lower()
 

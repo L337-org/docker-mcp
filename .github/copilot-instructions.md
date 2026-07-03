@@ -133,7 +133,7 @@ Any tool wrapping a `docker` CLI feature MUST go through `docker_mcp/tools/_cli.
 
 - Wrap every user-supplied **positional** value in `safe_positional(value, "what")` — a value starting with `-` would otherwise be parsed by the docker CLI as a flag (argument injection). The only exception is an argv that is *meant* to be arbitrary (the trailing command of `compose_exec` / `compose_run`).
 - Always pass an explicit `timeout=` to `run_docker` (generous for build/pull, short for queries).
-- Error convention (intentional — do not "unify"): **action tools** return the raw `{"returncode", "stdout", "stderr", "truncated"}` dict and never raise on a non-zero exit; **parsed-query tools** (`context_list`, `buildx_list`/`du`, `compose_list`) raise `RuntimeError` via `raise_on_cli_failure` because they cannot return a useful partial parse.
+- Error convention (intentional — do not "unify"): **action tools** return the raw `{"returncode", "stdout", "stderr", "truncated"}` dict and never raise on a non-zero exit; **parsed-query tools** (`context_list`, `buildx_list`/`du`, `compose_list`) raise `RuntimeError` via `raise_on_cli_failure` because they cannot return a useful partial parse; `compose_ps`/`compose_config` are the sanctioned hybrids (parsed view plus `raw`, never raise).
 
 ### Tool function format
 

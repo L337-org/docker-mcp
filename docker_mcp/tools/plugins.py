@@ -16,11 +16,11 @@ def plugin_inspect(name: str, host: str | None = None) -> dict:
 
 
 @tool()
-def plugin_install(remote_name: str, local_name: str | None = None, host: str | None = None) -> dict:
+def plugin_install(remote: str, local_name: str | None = None, host: str | None = None) -> dict:
     """
     Install a plugin from Docker Hub.
 
-    `remote_name` is a Docker Hub reference in `author/name:tag` form, e.g.
+    `remote` is a Docker Hub reference in `author/name:tag` form, e.g.
     `vieux/sshfs:latest`. The daemon handles permission grants non-interactively.
     After installation use `plugin_inspect` to confirm the plugin's enabled state, then call
     `plugin_enable` to activate it if needed, and optionally `plugin_configure` first if
@@ -28,11 +28,11 @@ def plugin_install(remote_name: str, local_name: str | None = None, host: str | 
     uninstall.
 
     args:
-        remote_name - Docker Hub plugin reference, e.g. "vieux/sshfs:latest"
-        local_name - Alias to refer to the plugin locally; defaults to remote_name
+        remote - Docker Hub plugin reference, e.g. "vieux/sshfs:latest"
+        local_name - Alias to refer to the plugin locally; defaults to remote
     returns: dict - The installed plugin's attrs
     """
-    return _get_client(host).plugins.install(remote_name, local_name=local_name).attrs
+    return _get_client(host).plugins.install(remote, local_name=local_name).attrs
 
 
 @tool()

@@ -1,6 +1,5 @@
 from unittest.mock import MagicMock, patch
 
-import pytest
 
 from docker_mcp.tools.swarm import (
     swarm_join_tokens,
@@ -9,7 +8,6 @@ from docker_mcp.tools.swarm import (
     swarm_join,
     swarm_leave,
     swarm_inspect,
-    swarm_join_token_rotate,
     swarm_unlock,
     swarm_update,
 )
@@ -95,20 +93,11 @@ def test_get_swarm_join_tokens_tolerates_missing_tokens():
         assert swarm_join_tokens() == {"Worker": None, "Manager": None}
 
 
-def test_rotate_swarm_join_token_rotates_then_rereads():
-    swarm = MagicMock()
-    swarm.attrs = {"JoinTokens": {"Worker": "new-worker", "Manager": "old-manager"}}
+def test_swarm_update_rotates_tokens_via_flags():
+    # Rotation lives on swarm_update (the docker-py swarm.update flags); fetch fresh tokens
+    # afterwards with swarm_join_tokens.
     with _patch() as mock_client:
-        mock_client.return_value.swarm = swarm
-        result = swarm_join_token_rotate(rotate_worker=True)
-    assert result == {"Worker": "new-worker", "Manager": "old-manager"}
-    swarm.update.assert_called_once_with(rotate_worker_token=True, rotate_manager_token=False)
-    swarm.reload.assert_called_once()
-
-
-def test_rotate_swarm_join_token_requires_a_target():
-    with _patch() as mock_client:
-        with pytest.raises(ValueError, match="nothing to rotate"):
-            swarm_join_token_rotate()
-    # Guard fires before any daemon call.
-    mock_client.return_value.swarm.update.assert_not_called()
+        assert swarm_update(rotate_worker_token=True) is True
+    mock_client.return_value.swarm.update.assert_called_once_with(
+        rotate_worker_token=True, rotate_manager_token=False, rotate_manager_unlock_key=False
+    )
