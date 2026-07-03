@@ -7,12 +7,12 @@ import httpx
 import pytest
 
 from docker_mcp.tools.registry import (
-    hub_list_tags,
+    hub_tags,
     hub_rate_limit,
     hub_repo_info,
-    registry_get_config,
-    registry_inspect_manifest,
-    registry_list_tags,
+    registry_image_config,
+    registry_manifest,
+    registry_tags,
 )
 
 
@@ -58,7 +58,7 @@ def _call_or_skip(fn, *args, **kwargs):
 
 
 def test_registry_list_tags_alpine_public():
-    result = _call_or_skip(registry_list_tags, "alpine", limit=20)
+    result = _call_or_skip(registry_tags, "alpine", limit=20)
     assert result["registry"] == "registry-1.docker.io"
     assert result["name"] == "library/alpine"
     assert result["tags"], "expected at least one tag for library/alpine"
@@ -66,14 +66,14 @@ def test_registry_list_tags_alpine_public():
 
 
 def test_registry_inspect_manifest_alpine_latest():
-    result = _call_or_skip(registry_inspect_manifest, "alpine", reference="latest")
+    result = _call_or_skip(registry_manifest, "alpine", reference="latest")
     assert result["digest"].startswith("sha256:")
     assert result["media_type"]
     assert isinstance(result["manifest"], dict)
 
 
 def test_hub_list_tags_alpine_returns_metadata():
-    result = _call_or_skip(hub_list_tags, "alpine", limit=10)
+    result = _call_or_skip(hub_tags, "alpine", limit=10)
     assert result["name"] == "library/alpine"
     assert result["tags"]
     entry = result["tags"][0]
@@ -90,7 +90,7 @@ def test_hub_repo_info_alpine_has_pull_count():
 
 
 def test_registry_get_config_alpine_amd64():
-    result = _call_or_skip(registry_get_config, "alpine", reference="latest", platform="linux/amd64")
+    result = _call_or_skip(registry_image_config, "alpine", reference="latest", platform="linux/amd64")
     assert result["config_digest"].startswith("sha256:")
     # alpine publishes a multi-platform index, so a platform should have been selected.
     assert result["platform"] == "linux/amd64"

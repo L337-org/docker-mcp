@@ -11,7 +11,7 @@ fix is available.
 ## Threat model and operational risks
 
 The trust boundary, credential-handling guidance, and known risks
-(privileged containers, host bind mounts, `exec_in_container`,
+(privileged containers, host bind mounts, `container_exec`,
 `compose_exec` / `compose_run`, container archive paths, destructive
 operations, secret material in tool traffic — registry credentials,
 swarm secrets/configs, and swarm join/unlock tokens (the manager join

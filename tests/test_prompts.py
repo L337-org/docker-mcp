@@ -49,14 +49,14 @@ def test_deploy_container_lists_steps_in_order():
     out = deploy_container("nginx:1.27", "web")
     assert "nginx:1.27" in out
     assert "web" in out
-    assert out.index("pull_image") < out.index("run_container")
-    assert "list_containers" in out
+    assert out.index("image_pull") < out.index("container_run")
+    assert "container_list" in out
 
 
 def test_troubleshoot_container_covers_logs_and_state():
     out = troubleshoot_container("api-1")
     assert "api-1" in out
-    for tool in ("get_container", "container_logs", "container_stats", "exec_in_container"):
+    for tool in ("container_inspect", "container_logs", "container_stats", "container_exec"):
         assert tool in out
 
 
@@ -104,27 +104,27 @@ def test_migrate_container_preserves_config_with_rename_rollback():
     assert "myorg/api:v2" in out
     # New flow keeps the old container as a rollback: capture -> stop -> rename to -old -> run new
     # under the original name, and only remove the old one last.
-    assert out.index("get_container") < out.index("stop_container")
-    assert out.index("stop_container") < out.index("rename_container")
-    assert out.index("rename_container") < out.index("run_container")
-    assert out.index("run_container") < out.rindex("remove_container")
+    assert out.index("container_inspect") < out.index("container_stop")
+    assert out.index("container_stop") < out.index("container_rename")
+    assert out.index("container_rename") < out.index("container_run")
+    assert out.index("container_run") < out.rindex("container_remove")
     assert "api-1-old" in out
     assert "rollback" in out.lower()
 
 
 def test_clean_environment_default_scope_skips_volumes():
     out = clean_environment()
-    assert "prune_containers" in out
-    assert "prune_images" in out
+    assert "container_prune" in out
+    assert "image_prune" in out
     assert "buildx_prune" in out  # build cache is often the biggest reclaimable chunk
-    assert "prune_volumes" not in out
+    assert "volume_prune" not in out
     # Opens and closes with df for a before/after delta.
-    assert out.count("`df`") >= 2
+    assert out.count("`system_df`") >= 2
 
 
 def test_clean_environment_all_scope_includes_volumes_with_warning():
     out = clean_environment("all")
-    assert "prune_volumes" in out
+    assert "volume_prune" in out
     assert "confirm" in out.lower()
 
 
@@ -133,16 +133,16 @@ def test_prune_managed_scopes_every_step_to_the_managed_label():
     assert "docker-mcp-server.managed=true" in out
     # Inventory across the managed-aware list tools — including volumes, so a volume prune is never
     # confirmed blind — before removing anything.
-    for tool in ("list_containers", "list_networks", "list_volumes", "list_services"):
+    for tool in ("container_list", "network_list", "volume_list", "service_list"):
         assert tool in out
     assert "managed_only=True" in out
-    # Default does not *remove* volumes (prune_volumes only appears with include_volumes).
-    assert "prune_volumes" not in out
+    # Default does not *remove* volumes (volume_prune only appears with include_volumes).
+    assert "volume_prune" not in out
 
 
 def test_prune_managed_include_volumes_adds_volume_step_with_confirmation():
     out = prune_managed(include_volumes=True)
-    assert "prune_volumes" in out
+    assert "volume_prune" in out
     assert "docker-mcp-server.managed=true" in out
     assert "confirm" in out.lower()
 
@@ -150,7 +150,7 @@ def test_prune_managed_include_volumes_adds_volume_step_with_confirmation():
 def test_inspect_stack_filters_by_label_across_resource_types():
     out = inspect_stack("com.example.app=web")
     assert "com.example.app=web" in out
-    for tool in ("list_containers", "list_networks", "list_volumes"):
+    for tool in ("container_list", "network_list", "volume_list"):
         assert tool in out
     assert "do not modify" in out.lower()
 
@@ -158,7 +158,7 @@ def test_inspect_stack_filters_by_label_across_resource_types():
 def test_plan_compose_stack_requires_plan_before_actions():
     out = plan_compose_stack("wordpress with mysql")
     assert "wordpress with mysql" in out
-    assert out.index("plan") < out.index("create_network")
+    assert out.index("plan") < out.index("network_create")
     assert "approve" in out.lower()
 
 
@@ -190,27 +190,27 @@ def test_troubleshoot_compose_project_gathers_state_first():
 
 def test_audit_docker_contexts_reports_host_registry_then_contexts():
     out = audit_docker_contexts()
-    assert "list_hosts" in out  # the host registry is reported first
-    assert "context_ls" in out
-    assert out.index("list_hosts") < out.index("context_ls")
+    assert "host_list" in out  # the host registry is reported first
+    assert "context_list" in out
+    assert out.index("host_list") < out.index("context_list")
     assert "info" in out
 
 
 def test_audit_swarm_health_covers_nodes_services_and_tasks():
     out = audit_swarm_health()
-    for tool in ("list_nodes", "list_services", "service_tasks", "service_logs"):
+    for tool in ("node_list", "service_list", "service_tasks", "service_logs"):
         assert tool in out
     # Node enumeration should precede the per-service task drill-down.
-    assert out.index("list_nodes") < out.index("service_tasks")
-    # Read-only audit: it must not invoke remove_node, only mention it as a follow-up.
+    assert out.index("node_list") < out.index("service_tasks")
+    # Read-only audit: it must not invoke node_remove, only mention it as a follow-up.
     assert "do not call it" in out.lower() or "do not change anything" in out.lower()
 
 
 def test_find_latest_image_tag_uses_registry_tools():
     out = find_latest_image_tag("ghcr.io/org/repo")
     assert "ghcr.io/org/repo" in out
-    assert "registry_list_tags" in out
-    assert "registry_inspect_manifest" in out
+    assert "registry_tags" in out
+    assert "registry_manifest" in out
     assert "hub_repo_info" in out
     assert "do not pull" in out.lower()
 
@@ -218,7 +218,7 @@ def test_find_latest_image_tag_uses_registry_tools():
 def test_plan_multiarch_build_uses_buildx_and_emulation_warning():
     out = plan_multiarch_build("ghcr.io/org/app:v1", platforms="linux/amd64,linux/arm64")
     assert "ghcr.io/org/app:v1" in out
-    assert "buildx_ls" in out
+    assert "buildx_list" in out
     assert "buildx_imagetools_inspect" in out
     assert "buildx_build" in out
     assert "linux/amd64" in out and "linux/arm64" in out
@@ -255,7 +255,7 @@ def test_recommend_base_image_uses_recommendations_and_verifies_with_compare():
     assert "scout_recommendations" in out
     assert "scout_compare" in out
     # Manifest verification step must use buildx_imagetools_inspect (accepts a full ref),
-    # not registry_inspect_manifest (which strips tag/digest from `image`).
+    # not registry_manifest (which strips tag/digest from `image`).
     assert "buildx_imagetools_inspect" in out
 
 
@@ -302,8 +302,8 @@ def test_review_dockerfile_reads_docs_and_covers_security():
 
 def test_audit_container_security_inspects_hostconfig_risks():
     out = audit_container_security()
-    assert "list_containers" in out
-    assert "get_container" in out
+    assert "container_list" in out
+    assert "container_inspect" in out
     for risk in ("Privileged", "docker.sock", "host", "CapAdd"):
         assert risk in out
     # Read-only audit.
@@ -314,16 +314,16 @@ def test_debug_container_networking_compares_networks_and_tests():
     out = debug_container_networking("web", "db")
     assert "web" in out
     assert "db" in out
-    assert "get_container" in out
-    assert "connect_network" in out
-    assert "exec_in_container" in out
+    assert "container_inspect" in out
+    assert "network_connect" in out
+    assert "container_exec" in out
     # Should distinguish DNS from connection failure.
     assert "dns" in out.lower()
 
 
 def test_investigate_disk_usage_breaks_down_by_bucket():
     out = investigate_disk_usage()
-    for tool in ("df", "list_images", "image_history", "buildx_du", "list_volumes"):
+    for tool in ("df", "image_list", "image_history", "buildx_du", "volume_list"):
         assert tool in out
     # Diagnosis only — defers actual pruning to clean_environment.
     assert "clean_environment" in out
@@ -334,8 +334,8 @@ def test_backup_volume_uses_archive_api_not_stdout_tar():
     assert "pgdata" in out
     assert "/backups/pg.tar" in out
     # Single coherent approach: the Docker archive API, not piping tar to stdout.
-    assert "get_container_archive_to_file" in out
-    assert "remove_container" in out  # helper is cleaned up
+    assert "container_archive_get_to_file" in out
+    assert "container_remove" in out  # helper is cleaned up
     # The archive-root caveat that lets backup/restore round-trip must be stated.
     assert "data/" in out
 
@@ -344,12 +344,12 @@ def test_restore_volume_confirms_clears_and_uses_root_path():
     out = restore_volume("pgdata", "/backups/pg.tar")
     assert "pgdata" in out
     assert "/backups/pg.tar" in out
-    assert "put_container_archive_from_file" in out
-    assert "create_volume" in out
+    assert "container_archive_put_from_file" in out
+    assert "volume_create" in out
     # Existing volume => always confirm (can't tell whether it holds data without mounting).
     assert "confirm" in out.lower()
     # Must clear stale files before extracting, and extract at "/" (not /data) to avoid nesting.
-    assert "exec_in_container" in out
+    assert "container_exec" in out
     assert 'path="/"' in out
 
 
@@ -364,7 +364,7 @@ def test_deploy_swarm_stack_validates_swarm_then_deploys_and_verifies():
     assert out.index("stack_deploy") < out.index("stack_services")
     assert "stack_ps" in out
     # Mentions teardown but does not invoke it.
-    assert "stack_rm" in out
+    assert "stack_remove" in out
     assert "do not call it" in out.lower()
 
 
@@ -383,7 +383,7 @@ def _set_multi(monkeypatch):
 
 def test_survey_hosts_explains_model_and_per_host_sweep():
     out = survey_hosts()
-    assert "list_hosts" in out or "docker-mcp://hosts" in out
+    assert "host_list" in out or "docker-mcp://hosts" in out
     assert "host=<name>" in out
     assert "docker://{host}/containers" in out
     assert "read-only" in out.lower() and "require" in out.lower()

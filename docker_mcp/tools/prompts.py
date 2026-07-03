@@ -68,12 +68,12 @@ def deploy_container(image: str, name: str) -> str:
     """
     return (
         f"Deploy the image `{image}` as a container named `{name}` using the docker MCP tools. Follow this order:\n"
-        f"1. Call `pull_image` to ensure the image is present locally.\n"
+        f"1. Call `image_pull` to ensure the image is present locally.\n"
         f"2. Decide whether the workload needs a dedicated network or named volume; create them with "
-        f"`create_network` / `create_volume` if so.\n"
-        f"3. Call `run_container` with sensible defaults: `detach=True`, a restart policy, and any port or volume "
+        f"`network_create` / `volume_create` if so.\n"
+        f"3. Call `container_run` with sensible defaults: `detach=True`, a restart policy, and any port or volume "
         f"mappings the image requires.\n"
-        f"4. Verify the container reached the running state with `list_containers` and `container_logs`.\n"
+        f"4. Verify the container reached the running state with `container_list` and `container_logs`.\n"
         f"Report the final container ID and any resources you created. Stop and ask before destroying existing "
         f"resources that share the same name."
     )
@@ -89,11 +89,11 @@ def troubleshoot_container(container: str) -> str:
     """
     return (
         f"Diagnose what is wrong with container `{container}`:\n"
-        f"1. Use `get_container` to read its current state, exit code, and restart count.\n"
+        f"1. Use `container_inspect` to read its current state, exit code, and restart count.\n"
         f"2. Use `container_logs` (with `tail=200`) to capture recent stdout/stderr.\n"
         f"3. If the container is running, use `container_stats` for CPU/memory pressure and `container_top` "
         f"for the process tree.\n"
-        f"4. If a config file or process check is needed, use `exec_in_container`.\n"
+        f"4. If a config file or process check is needed, use `container_exec`.\n"
         f"Summarize the root cause in one paragraph, then propose a concrete fix (config change, image bump, "
         f"resource limit) before making any changes."
     )
@@ -145,7 +145,7 @@ def triage_incident(window_minutes: int = 30) -> str:
     """
     Generate a symptom-first incident-triage plan that narrows from the whole host to a suspect.
 
-    The on-call entry point: start from what just changed (`events`) and the current fleet state
+    The on-call entry point: start from what just changed (`system_events`) and the current fleet state
     (`docker://containers`), narrow to the likely culprit, then hand off to `troubleshoot_container`.
 
     args: window_minutes - How far back to pull the daemon event log (default 30)
@@ -155,9 +155,9 @@ def triage_incident(window_minutes: int = 30) -> str:
         f"Triage a docker incident on this host. Work from what changed in the last {window_minutes} "
         "minutes toward a single suspect. This is diagnosis — change nothing:\n"
         "1. Pull the recent daemon event log so you have a timeline of what broke and when. The "
-        "`events` tool's `since` takes an absolute timestamp (a Unix epoch integer or an RFC3339 "
+        "`system_events` tool's `since` takes an absolute timestamp (a Unix epoch integer or an RFC3339 "
         f"string), not a relative duration — compute the timestamp for {window_minutes} minutes ago "
-        f"and pass it: `events(since=<unix epoch for {window_minutes} minutes ago>, "
+        f"and pass it: `system_events(since=<unix epoch for {window_minutes} minutes ago>, "
         'filters={"type": "container"}, limit=200)`. Scan for `die`, `oom`, `kill`, '
         "`health_status: unhealthy`, and tight `start`/`die` cycles (a crash loop).\n"
         "2. Read the MCP resource `docker://containers` for current state. Reconcile it with the event "
@@ -165,7 +165,7 @@ def triage_incident(window_minutes: int = 30) -> str:
         "non-zero `exit_code` is the prime suspect.\n"
         "3. Separate cause from symptom. A host under memory or disk pressure takes down healthy "
         "containers too — read `docker-stats://{name}` for the running set to spot a resource hog, and "
-        "call `df` if you suspect the daemon itself is out of disk. If many unrelated containers failed "
+        "call `system_df` if you suspect the daemon itself is out of disk. If many unrelated containers failed "
         "at once, suspect the host or daemon, not any one container.\n"
         "4. For the prime suspect, read `docker-logs://{name}` for the error that preceded the first "
         "`die` in the timeline.\n"
@@ -189,18 +189,18 @@ def migrate_container(container: str, new_image: str) -> str:
     return (
         f"Migrate container `{container}` to image `{new_image}` without losing its configuration, "
         f"keeping the old container as an instant rollback until the new one is proven healthy:\n"
-        f"1. Use `get_container` to capture the current name, env vars, mounts, ports, network, and restart "
+        f"1. Use `container_inspect` to capture the current name, env vars, mounts, ports, network, and restart "
         f"policy. Show this captured config back to the user before changing anything.\n"
-        f"2. Use `pull_image` to fetch `{new_image}`.\n"
-        f"3. Use `stop_container` on `{container}`, then `rename_container` it to `{container}-old` "
+        f"2. Use `image_pull` to fetch `{new_image}`.\n"
+        f"3. Use `container_stop` on `{container}`, then `container_rename` it to `{container}-old` "
         f"(instead of removing it) so the original name is free and the old container survives as a "
         f"rollback target.\n"
-        f"4. Use `run_container` to start a new container under the original name `{container}` with the "
+        f"4. Use `container_run` to start a new container under the original name `{container}` with the "
         f"captured config but the new image.\n"
-        f"5. Verify with `list_containers` and `container_logs` that the replacement is healthy. If it is "
-        f"NOT, roll back: `stop_container`/`remove_container` the new one and `rename_container` "
-        f"`{container}-old` back to `{container}`, then `start_container`.\n"
-        f"6. Only once the replacement is confirmed healthy, `remove_container` `{container}-old`. Ask "
+        f"5. Verify with `container_list` and `container_logs` that the replacement is healthy. If it is "
+        f"NOT, roll back: `container_stop`/`container_remove` the new one and `container_rename` "
+        f"`{container}-old` back to `{container}`, then `container_start`.\n"
+        f"6. Only once the replacement is confirmed healthy, `container_remove` `{container}-old`. Ask "
         f"the user before this final removal — it discards the rollback path."
     )
 
@@ -215,27 +215,27 @@ def clean_environment(scope: str = "stopped") -> str:
     """
     base = (
         "Reclaim docker disk usage safely:\n"
-        "1. Use `df` to capture current disk usage as a before snapshot. Note the `BuildCache` total — "
+        "1. Use `system_df` to capture current disk usage as a before snapshot. Note the `BuildCache` total — "
         "on a machine that builds images it is frequently the single largest reclaimable chunk, and "
-        "neither `prune_containers` nor `prune_images` touches it.\n"
-        "2. Use `prune_containers` to remove stopped containers.\n"
-        "3. Use `prune_images` (without `filters={'dangling': False}`) to remove dangling images only.\n"
+        "neither `container_prune` nor `image_prune` touches it.\n"
+        "2. Use `container_prune` to remove stopped containers.\n"
+        "3. Use `image_prune` (without `filters={'dangling': False}`) to remove dangling images only.\n"
         "4. Use `buildx_prune` to reclaim BuildKit build cache. It always runs with `--force`; if the "
-        "`df` from step 1 showed a large `BuildCache`, this is where most of the space comes back. "
+        "`system_df` from step 1 showed a large `BuildCache`, this is where most of the space comes back. "
         "Mention that an immediately-following rebuild will be slower with a cold cache.\n"
     )
     if scope == "all":
         base += (
-            "5. Use `prune_networks` to remove unused user-defined networks.\n"
-            "6. Use `prune_volumes` ONLY after explicitly confirming with the user — volumes can hold "
+            "5. Use `network_prune` to remove unused user-defined networks.\n"
+            "6. Use `volume_prune` ONLY after explicitly confirming with the user — volumes can hold "
             "irreplaceable data.\n"
         )
     base += (
         "If the goal is to clean up only what was created through this server (rather than every unused "
-        "resource), prefer `list_containers(managed_only=True)` — or filter on the "
+        "resource), prefer `container_list(managed_only=True)` — or filter on the "
         "`docker-mcp-server.managed=true` label — to scope the inventory before removing anything.\n"
     )
-    base += "Finish with `df` again and report the before/after delta and total space reclaimed."
+    base += "Finish with `system_df` again and report the before/after delta and total space reclaimed."
     return base
 
 
@@ -253,21 +253,21 @@ def prune_managed(include_volumes: bool = False) -> str:
     base = (
         "Remove only the docker resources THIS server created — everything stamped with the "
         "`docker-mcp-server.managed=true` label — and leave all other resources alone:\n"
-        "1. Inventory first, and show it before removing anything: `list_containers(all=True, "
-        "managed_only=True)`, `list_networks(managed_only=True)`, `list_volumes(managed_only=True)`, "
-        "`list_services(managed_only=True)` (services only on a swarm manager). Always include volumes "
+        "1. Inventory first, and show it before removing anything: `container_list(all=True, "
+        "managed_only=True)`, `network_list(managed_only=True)`, `volume_list(managed_only=True)`, "
+        "`service_list(managed_only=True)` (services only on a swarm manager). Always include volumes "
         "in the inventory even when not removing them, so the user can see what would be affected before "
         "confirming any volume prune. Report what you found as a table; if it's empty, stop and say so.\n"
-        "2. Remove managed containers. `prune_containers(filters={'label': "
+        "2. Remove managed containers. `container_prune(filters={'label': "
         "'docker-mcp-server.managed=true'})` clears the *stopped* ones; a still-*running* managed "
         "container is left untouched by prune, so stop and remove those explicitly only after "
-        "confirming with the user (`stop_container` then `remove_container`).\n"
-        "3. Remove managed user-defined networks with `prune_networks(filters={'label': "
+        "confirming with the user (`container_stop` then `container_remove`).\n"
+        "3. Remove managed user-defined networks with `network_prune(filters={'label': "
         "'docker-mcp-server.managed=true'})`.\n"
     )
     if include_volumes:
         base += (
-            "4. Remove managed volumes with `prune_volumes(filters={'label': "
+            "4. Remove managed volumes with `volume_prune(filters={'label': "
             "'docker-mcp-server.managed=true'})` — but ONLY after explicitly confirming with the user, "
             "since a volume may hold irreplaceable data even if this server created it.\n"
         )
@@ -277,7 +277,7 @@ def prune_managed(include_volumes: bool = False) -> str:
             "left in place and can be removed by re-running with include_volumes=True.\n"
         )
     base += (
-        "Note: managed swarm services would need `remove_service` per service from the step-1 inventory "
+        "Note: managed swarm services would need `service_remove` per service from the step-1 inventory "
         "(there is no service prune). Finish by re-running the step-1 inventory to confirm the managed "
         "footprint is gone, and report what was removed."
     )
@@ -294,9 +294,9 @@ def inspect_stack(label: str) -> str:
     """
     return (
         f"Enumerate every docker resource carrying the label `{label}`:\n"
-        f"1. `list_containers(all=True, filters={{'label': '{label}'}})` for containers.\n"
-        f"2. `list_networks(filters={{'label': '{label}'}})` for networks.\n"
-        f"3. `list_volumes(filters={{'label': '{label}'}})` for volumes.\n"
+        f"1. `container_list(all=True, filters={{'label': '{label}'}})` for containers.\n"
+        f"2. `network_list(filters={{'label': '{label}'}})` for networks.\n"
+        f"3. `volume_list(filters={{'label': '{label}'}})` for volumes.\n"
         f"Render the result as a single table grouped by resource type, with name, ID, and creation time. "
         f"Do not modify anything."
     )
@@ -316,10 +316,10 @@ def plan_compose_stack(description: str) -> str:
         f"- Each container (image, name, role, exposed ports)\n"
         f"- Networks (name, driver, which containers attach)\n"
         f"- Volumes (name, mount path inside each container)\n"
-        f"- Any required env vars or secrets (use `create_secret` for swarm, env for plain containers)\n"
+        f"- Any required env vars or secrets (use `secret_create` for swarm, env for plain containers)\n"
         f"- Startup order if dependencies exist\n\n"
         f"Wait for the user to approve the plan, then create the resources in dependency order using "
-        f"`create_network`, `create_volume`, `pull_image`, and `run_container`. End with `list_containers` "
+        f"`network_create`, `volume_create`, `image_pull`, and `container_run`. End with `container_list` "
         f"showing the running stack."
     )
 
@@ -389,16 +389,16 @@ def audit_docker_contexts() -> str:
     """
     return (
         "Audit what daemon(s) this server targets — its own host registry first, then the host's Docker contexts:\n"
-        "1. Call `list_hosts` (or read `docker-mcp://hosts`) for the hosts configured via DOCKER_MCP_SERVER_HOSTS:\n"
+        "1. Call `host_list` (or read `docker-mcp://hosts`) for the hosts configured via DOCKER_MCP_SERVER_HOSTS:\n"
         "   each `name`, resolved `url`, `read_only`/`tls` flags, and which is the `default` (used when a\n"
         "   tool's `host` is omitted). With a single host this is just the one resolved daemon. These URLs are\n"
         "   resolved (auto/local/context) and pinned at server startup — a later `docker context use` does not\n"
         "   move them; restart to re-resolve.\n"
-        "2. Call `context_ls` and present the table of contexts (name, current, daemon endpoint, description).\n"
+        "2. Call `context_list` and present the table of contexts (name, current, daemon endpoint, description).\n"
         "3. Highlight which context is `Current=true`. That's the one the docker CLI uses by default, but note\n"
         "   it only affects a host configured as `auto`/`local` — an explicit URL or a multi-host registry pins\n"
         "   its own endpoint and ignores the ambient context.\n"
-        "4. Call `info` (pass `host=<name>` to pick a host when several are configured) and report `Name`,\n"
+        "4. Call `system_info` (pass `host=<name>` to pick a host when several are configured) and report `Name`,\n"
         "   `ServerVersion`, and `OperatingSystem`. Compare against the host's resolved `url` / the current\n"
         "   context's `DockerEndpoint`.\n"
         "5. If the configured hosts or contexts point at different daemons, ask the user whether the intended\n"
@@ -415,11 +415,11 @@ def audit_swarm_health() -> str:
     """
     return (
         "Audit the health of this docker swarm. Do not change anything — this is read-only:\n"
-        "1. Call `list_nodes` and flag any node whose `Status.State` is not `ready` or whose "
+        "1. Call `node_list` and flag any node whose `Status.State` is not `ready` or whose "
         "`Spec.Availability` is `drain`/`pause`. Note manager nodes (`Spec.Role == manager`) and "
         "whether `ManagerStatus.Reachability` is `reachable` — an unreachable manager threatens "
         "quorum. Call out if you have an even number of managers or only one (no fault tolerance).\n"
-        "2. Call `list_services`. For each service, compare desired vs running replicas: read the "
+        "2. Call `service_list`. For each service, compare desired vs running replicas: read the "
         "mode from `Spec.Mode` (Replicated count vs Global), then call `service_tasks(service_id, "
         "filters={'desired-state': 'running'})` to drop tasks the orchestrator has already retired, "
         "and count how many of the returned tasks have `Status.State == 'running'`. The filter keys "
@@ -430,7 +430,7 @@ def audit_swarm_health() -> str:
         "`starting` (a crash loop). Pull `Status.Err` and `Status.Message` off the failing task.\n"
         "4. For a service that is crash-looping, call `service_logs(service_id, tail=200, "
         "timestamps=True)` and surface the last error.\n"
-        "5. If a node is drained and should be removed, note that `remove_node` (force only if it is "
+        "5. If a node is drained and should be removed, note that `node_remove` (force only if it is "
         "still reachable) is the follow-up — but do not call it as part of this audit.\n"
         "Summarize as a table: nodes (state/availability/role/reachability) and services (desired vs "
         "running, status). End with a one-paragraph health verdict and the single most urgent fix."
@@ -447,12 +447,12 @@ def find_latest_image_tag(image: str) -> str:
     """
     return (
         f"Find the most appropriate tag for `{image}` without pulling it:\n"
-        f'1. Call `registry_list_tags(image="{image}", limit=200)` to enumerate available tags.\n'
+        f'1. Call `registry_tags(image="{image}", limit=200)` to enumerate available tags.\n'
         f"2. Filter out floating tags (`latest`, `edge`, `nightly`) and pre-release suffixes (`-rc`, `-beta`, "
         f"`-alpha`). Pick the highest stable semantic-version tag.\n"
-        f'3. Call `registry_inspect_manifest(image="{image}", reference=<picked-tag>)` to confirm the tag '
+        f'3. Call `registry_manifest(image="{image}", reference=<picked-tag>)` to confirm the tag '
         f"exists and capture the digest. If the response is an OCI image index, list the supported platforms.\n"
-        f'4. Call `registry_get_config(image="{image}", reference=<picked-tag>)` to read the image config '
+        f'4. Call `registry_image_config(image="{image}", reference=<picked-tag>)` to read the image config '
         f"without pulling — surface the labels (e.g. `org.opencontainers.image.source`/`revision`), the "
         f"exposed ports, entrypoint, and user so the user can vet what the tag actually contains. If step 3 "
         f"showed the tag is a multi-platform index, pass `platform=<one of the platforms it listed>` "
@@ -478,7 +478,7 @@ def plan_multiarch_build(image: str, platforms: str = "linux/amd64,linux/arm64",
     platforms_list = ", ".join(f'"{p.strip()}"' for p in platforms.split(",") if p.strip())
     return (
         f"Build and push `{image}` for multiple platforms ({platforms}) using buildx:\n"
-        f"1. Call `buildx_ls` and confirm a non-`docker` driver is active (the default `docker` driver "
+        f"1. Call `buildx_list` and confirm a non-`docker` driver is active (the default `docker` driver "
         f"cannot do multi-platform; you need `docker-container` or another buildx driver). If only `docker` "
         f"is available, call `buildx_create(name='multi', driver='docker-container', use=True, bootstrap=True)`.\n"
         f'2. Call `buildx_imagetools_inspect(image="<base-image>", raw=True)` on each `FROM` reference to '
@@ -562,7 +562,7 @@ def recommend_base_image(image: str) -> str:
         f"3. Verify the candidate exists on the registry and supports the platforms you build for: call "
         f"`buildx_imagetools_inspect(image=<candidate>, raw=True)` (which accepts a full ref like "
         f"`python:3.13-slim`) and check the platforms list in the returned manifest. Avoid "
-        f"`registry_inspect_manifest` here — its `image` argument strips any `:tag`/`@digest`, so a full "
+        f"`registry_manifest` here — its `image` argument strips any `:tag`/`@digest`, so a full "
         f"candidate ref would need to be split into separate `image` and `reference` arguments.\n"
         f"Report the recommended base, the CVEs it resolves, the CVEs it introduces (if any), and the "
         f"single-line Dockerfile change required. Do not modify any Dockerfile."
@@ -701,8 +701,8 @@ def audit_container_security() -> str:
         "Audit the security posture of running containers. This is read-only — do not change anything. "
         "For background on why these settings matter, the MCP resource `docker-docs://engine-security` "
         "covers the daemon's trust model.\n"
-        "1. Call `list_containers` (running only) to get the set to audit.\n"
-        "2. For each container, call `get_container` and inspect its `HostConfig` / `Config`, flagging:\n"
+        "1. Call `container_list` (running only) to get the set to audit.\n"
+        "2. For each container, call `container_inspect` and inspect its `HostConfig` / `Config`, flagging:\n"
         "   - `Privileged: true` — the container can do almost anything the host can; the highest-"
         "severity finding.\n"
         "   - A bind mount of the Docker socket (`/var/run/docker.sock`) — equivalent to root on the "
@@ -733,18 +733,18 @@ def debug_container_networking(source: str, target: str) -> str:
     return (
         f"Diagnose why container `{source}` cannot reach `{target}`. Work from the most common cause "
         f"(not on a shared network) outward:\n"
-        f"1. Call `get_container` on both and compare `NetworkSettings.Networks`. If they share no "
+        f"1. Call `container_inspect` on both and compare `NetworkSettings.Networks`. If they share no "
         f"user-defined network, that is almost certainly the problem — containers on the default bridge "
         f"cannot resolve each other by name; they must share a user-defined network. Recommend "
-        f"`connect_network` to attach them to a common one.\n"
+        f"`network_connect` to attach them to a common one.\n"
         f"2. If they DO share a network, note the DNS alias `{target}` should resolve to (the service/"
         f"container name or a network alias on that shared network).\n"
-        f"3. From inside `{source}`, use `exec_in_container` to test, preferring an exec-form argv: "
+        f"3. From inside `{source}`, use `container_exec` to test, preferring an exec-form argv: "
         f"resolve DNS (e.g. `['getent', 'hosts', '{target}']`) and test the port "
         f"(`['nc', '-z', '-w', '2', '{target}', '<port>']` if `nc` exists). Distinguish a DNS failure "
         f"(name doesn't resolve) from a connection failure (resolves but refused/timed out).\n"
         f"4. If DNS resolves but the connection is refused, check that `{target}` actually listens on "
-        f"that port and on `0.0.0.0` rather than `127.0.0.1` — use `get_container` for its exposed "
+        f"that port and on `0.0.0.0` rather than `127.0.0.1` — use `container_inspect` for its exposed "
         f"ports and `container_logs` to confirm the service started.\n"
         f"5. Distinguish container-to-container reachability from host-published ports: a missing "
         f"`-p`/`ports` mapping only affects access from the host, not between containers on a shared "
@@ -764,14 +764,14 @@ def investigate_disk_usage() -> str:
     return (
         "Find out WHAT is consuming docker disk space before reclaiming any of it — this is read-only "
         "diagnosis, not cleanup:\n"
-        "1. Call `df` for the top-line split across Images, Containers, Local Volumes, and Build Cache. "
+        "1. Call `system_df` for the top-line split across Images, Containers, Local Volumes, and Build Cache. "
         "Identify which bucket dominates — the fix differs for each.\n"
-        "2. If Images dominate: call `list_images` and sort by size. For the largest, call "
+        "2. If Images dominate: call `image_list` and sort by size. For the largest, call "
         "`image_history` to see which layers are heavy (a fat `COPY`, an un-cleaned package cache) and "
         "whether several images share base layers (so the on-disk cost is less than the sum of sizes).\n"
         "3. If Build Cache dominates: call `buildx_du` for the cache breakdown. This is reclaimable with "
-        "`buildx_prune` and is invisible to `prune_images`.\n"
-        "4. If Local Volumes dominate: call `list_volumes` and cross-reference with `list_containers"
+        "`buildx_prune` and is invisible to `image_prune`.\n"
+        "4. If Local Volumes dominate: call `volume_list` and cross-reference with `container_list"
         "(all=True)` to spot dangling volumes no container references — but do NOT assume a dangling "
         "volume is junk; it may hold data whose container is gone.\n"
         "5. If Containers dominate: look for stopped containers with large writable layers (`container_"
@@ -796,20 +796,20 @@ def backup_volume(volume: str, dest_path: str) -> str:
         f"Back up the contents of volume `{volume}` to `{dest_path}` on the server host. Docker has no "
         f"native volume-export API, so mount the volume into a throwaway container and pull its "
         f"filesystem out through the Docker archive API:\n"
-        f'1. Confirm the volume exists with `get_volume("{volume}")`.\n'
+        f'1. Confirm the volume exists with `volume_inspect("{volume}")`.\n'
         f"2. Quiesce writers if integrity matters: if a running container has `{volume}` mounted and is "
         f"writing to it, a hot copy can be inconsistent — note which containers use it (cross-reference "
-        f"`list_containers`) and offer to `stop_container` them first, or warn that the backup is "
+        f"`container_list`) and offer to `container_stop` them first, or warn that the backup is "
         f"crash-consistent only.\n"
-        f"3. Create a helper container with the volume mounted at `/data`, e.g. `create_container` from "
+        f"3. Create a helper container with the volume mounted at `/data`, e.g. `container_create` from "
         f"`alpine` with `{volume}` mounted at `/data`. It does not need to run — the archive API reads "
         f"the volume through the mount whether or not the container is started; no `tar` binary in the "
         f"image is required.\n"
-        f'4. Call `get_container_archive_to_file(<helper>, path="/data", dest_path="{dest_path}")` to '
+        f'4. Call `container_archive_get_to_file(<helper>, path="/data", dest_path="{dest_path}")` to '
         f"write the volume contents as a tar to `{dest_path}` (a path on the host running this MCP "
         f"server, written as the server's user). The archive is rooted at `data/` (the API names the "
         f"tar after the path's last component) — `restore_volume` relies on that, so don't repackage it.\n"
-        f"5. Remove the helper container with `remove_container`, and restart anything you stopped in "
+        f"5. Remove the helper container with `container_remove`, and restart anything you stopped in "
         f"step 2.\n"
         f"Report the archive path and size. `restore_volume` is the exact inverse."
     )
@@ -829,22 +829,22 @@ def restore_volume(volume: str, source_path: str) -> str:
         f"Restore the contents of `{source_path}` into volume `{volume}`. This is the inverse of "
         f"`backup_volume` and is destructive to whatever `{volume}` currently holds — confirm with the "
         f"user before overwriting:\n"
-        f"1. Check whether `{volume}` already exists with `get_volume`. There is no way to tell whether "
+        f"1. Check whether `{volume}` already exists with `volume_inspect`. There is no way to tell whether "
         f"a volume holds data without mounting it, so if the volume already exists, STOP and confirm the "
-        f'overwrite regardless. If it does not exist, `create_volume("{volume}")`.\n'
+        f'overwrite regardless. If it does not exist, `volume_create("{volume}")`.\n'
         f"2. Ensure no running container is using `{volume}` — restoring underneath a live writer "
-        f"corrupts state. Use `list_containers` to check and offer to `stop_container` them first.\n"
+        f"corrupts state. Use `container_list` to check and offer to `container_stop` them first.\n"
         f"3. Create AND start a helper container from `alpine` with `{volume}` mounted read-write at "
         f'`/data` (e.g. command `["sleep", "3600"]` so it stays up for the exec).\n'
-        f'4. Clear stale files first with `exec_in_container(<helper>, ["sh", "-c", "rm -rf /data/* '
+        f'4. Clear stale files first with `container_exec(<helper>, ["sh", "-c", "rm -rf /data/* '
         f'/data/.[!.]* /data/..?* 2>/dev/null || true"])` — otherwise files not present in the archive '
         f"survive the restore.\n"
-        f'5. Call `put_container_archive_from_file(<helper>, path="/", file_path="{source_path}")`. Use '
+        f'5. Call `container_archive_put_from_file(<helper>, path="/", file_path="{source_path}")`. Use '
         f'`path="/"`, not `/data`: a `backup_volume` archive is rooted at `data/`, so extracting it at '
         f"the root lands the contents back in `/data` (extracting at `/data` would nest them in "
         f"`/data/data`). `{source_path}` is read from the host running this MCP server.\n"
-        f"6. Remove the helper with `remove_container` and restart anything you stopped.\n"
-        f'Verify with `exec_in_container(<helper>, ["ls", "/data"])` (before removing it) or a quick '
+        f"6. Remove the helper with `container_remove` and restart anything you stopped.\n"
+        f'Verify with `container_exec(<helper>, ["ls", "/data"])` (before removing it) or a quick '
         f"`alpine ls` helper, confirming the expected files are present. Report what was restored."
     )
 
@@ -861,9 +861,9 @@ def deploy_swarm_stack(stack_name: str, compose_file: str) -> str:
     """
     return (
         f"Deploy `{compose_file}` to the swarm as stack `{stack_name}` and verify it converges:\n"
-        f"1. Confirm the daemon is a swarm manager before anything else — call `info` and check "
+        f"1. Confirm the daemon is a swarm manager before anything else — call `system_info` and check "
         f"`Swarm.LocalNodeState == 'active'` and `Swarm.ControlAvailable == true`. `docker stack` only "
-        f"works against a manager; if it isn't one, stop and tell the user (init with `init_swarm` or "
+        f"works against a manager; if it isn't one, stop and tell the user (init with `swarm_init` or "
         f"point `DOCKER_HOST` at a manager).\n"
         f'2. Sanity-check the Compose file first: call `compose_config(files=["{compose_file}"], '
         f'format="json")` to render it and surface what will be created. Flag anything risky — services '
@@ -878,7 +878,7 @@ def deploy_swarm_stack(stack_name: str, compose_file: str) -> str:
         f'`stack_ps(stack_name="{stack_name}", filters=["desired-state=running"])` and look for tasks '
         f"stuck in `rejected`/`failed` — pull the task error.\n"
         f"5. Re-running `stack_deploy` with the same name updates the stack in place, so iterate on the "
-        f"Compose file and redeploy rather than removing first. Mention `stack_rm` as the teardown, but "
+        f"Compose file and redeploy rather than removing first. Mention `stack_remove` as the teardown, but "
         f"do not call it.\n"
         f"Report the per-service desired-vs-running replica counts and any task errors."
     )
@@ -900,9 +900,9 @@ def survey_hosts() -> str:
     """
     return (
         "Survey every Docker host this server is configured for. Change nothing on any host:\n"
-        "1. Read `docker-mcp://hosts` (or call `list_hosts`) for the configured hosts: each `name`, "
+        "1. Read `docker-mcp://hosts` (or call `host_list`) for the configured hosts: each `name`, "
         "resolved `url`, `read_only`, `tls`, and which is the `default`.\n"
-        "2. For each host, ping it and read `info` with `host=<name>`: report reachability, ServerVersion, "
+        "2. For each host, ping it and read `system_info` with `host=<name>`: report reachability, ServerVersion, "
         "OperatingSystem, and container/image counts. A host may be unreachable — note it and move on; the "
         "others are independent.\n"
         "3. For each reachable host, read its container index — the default host's is `docker:///containers`, "

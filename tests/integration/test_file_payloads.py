@@ -7,8 +7,8 @@ from pathlib import Path
 import pytest
 from docker.errors import DockerException
 
-from docker_mcp.tools.containers import create_container, export_container_to_file, remove_container
-from docker_mcp.tools.images import get_image, load_image_from_file, pull_image, save_image_to_file
+from docker_mcp.tools.containers import container_create, container_export_to_file, container_remove
+from docker_mcp.tools.images import image_inspect, image_load_from_file, image_pull, image_save_to_file
 
 _IMAGE = "alpine:3"
 
@@ -17,7 +17,7 @@ _IMAGE = "alpine:3"
 def _require_alpine():
     # These tests need a small real image; skip cleanly if it can't be pulled (e.g. offline / rate-limited).
     try:
-        pull_image("alpine", tag="3")
+        image_pull("alpine", tag="3")
     except DockerException as exc:
         pytest.skip(f"could not pull {_IMAGE}: {exc}")
     yield
@@ -25,25 +25,25 @@ def _require_alpine():
 
 def test_save_to_file_then_load_round_trip(tmp_path: Path):
     dest = tmp_path / "alpine.tar"
-    result = save_image_to_file(_IMAGE, str(dest))
+    result = image_save_to_file(_IMAGE, str(dest))
     assert result["path"] == str(dest)
     assert result["bytes_written"] > 0
     # The stream-to-file write matches what landed on disk.
     assert dest.stat().st_size == result["bytes_written"]
 
-    loaded = load_image_from_file(str(dest))
+    loaded = image_load_from_file(str(dest))
     assert isinstance(loaded, list)
     # The image is still addressable after the save/load round-trip.
-    assert get_image(_IMAGE)["Id"]
+    assert image_inspect(_IMAGE)["Id"]
 
 
-def test_export_container_to_file(tmp_path: Path):
+def test_container_export_to_file(tmp_path: Path):
     name = f"docker-mcp-it-{uuid.uuid4().hex[:8]}"
-    create_container(_IMAGE, command="true", extra_kwargs={"name": name})
+    container_create(_IMAGE, command="true", extra_kwargs={"name": name})
     try:
         dest = tmp_path / "ct.tar"
-        result = export_container_to_file(name, str(dest))
+        result = container_export_to_file(name, str(dest))
         assert result["bytes_written"] > 0
         assert dest.stat().st_size == result["bytes_written"]
     finally:
-        remove_container(name, force=True)
+        container_remove(name, force=True)

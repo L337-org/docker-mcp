@@ -3,16 +3,16 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from docker_mcp.tools.services import (
-    create_service,
-    force_update_service,
-    get_service,
-    list_services,
-    remove_service,
-    rollback_service,
-    scale_service,
+    service_create,
+    service_force_update,
+    service_inspect,
+    service_list,
+    service_remove,
+    service_rollback,
+    service_scale,
     service_logs,
     service_tasks,
-    update_service,
+    service_update,
 )
 
 
@@ -20,12 +20,12 @@ def _patch():
     return patch("docker_mcp.tools.services._get_client")
 
 
-def test_create_service():
+def test_service_create():
     service = MagicMock()
     service.attrs = {"ID": "svc1"}
     with _patch() as mock_client:
         mock_client.return_value.services.create.return_value = service
-        result = create_service("nginx", command="nginx", extra_kwargs={"name": "web"})
+        result = service_create("nginx", command="nginx", extra_kwargs={"name": "web"})
     assert result == {"ID": "svc1"}
     args, kwargs = mock_client.return_value.services.create.call_args
     assert args == ("nginx",)
@@ -33,7 +33,7 @@ def test_create_service():
     assert kwargs["name"] == "web"
     # service-level labels carry the provenance stamp (on by default)
     assert kwargs["labels"]["docker-mcp-server.managed"] == "true"
-    assert kwargs["labels"]["docker-mcp-server.tool"] == "create_service"
+    assert kwargs["labels"]["docker-mcp-server.tool"] == "service_create"
 
 
 def test_create_service_does_not_stamp_container_labels():
@@ -41,51 +41,51 @@ def test_create_service_does_not_stamp_container_labels():
     service.attrs = {"ID": "svc1"}
     with _patch() as mock_client:
         mock_client.return_value.services.create.return_value = service
-        create_service("nginx", extra_kwargs={"container_labels": {"app": "web"}})
+        service_create("nginx", extra_kwargs={"container_labels": {"app": "web"}})
     kwargs = mock_client.return_value.services.create.call_args.kwargs
     # container_labels is left untouched; provenance only goes on the service-level labels
     assert kwargs["container_labels"] == {"app": "web"}
     assert "docker-mcp-server.managed" in kwargs["labels"]
 
 
-def test_get_service():
+def test_service_inspect():
     service = MagicMock()
     service.attrs = {"ID": "svc1"}
     with _patch() as mock_client:
         mock_client.return_value.services.get.return_value = service
-        assert get_service("svc1", insert_defaults=True) == {"ID": "svc1"}
+        assert service_inspect("svc1", insert_defaults=True) == {"ID": "svc1"}
     mock_client.return_value.services.get.assert_called_once_with("svc1", insert_defaults=True)
 
 
-def test_list_services():
+def test_service_list():
     service = MagicMock()
     service.attrs = {"ID": "svc1"}
     with _patch() as mock_client:
         mock_client.return_value.services.list.return_value = [service]
-        assert list_services() == [{"ID": "svc1"}]
+        assert service_list() == [{"ID": "svc1"}]
 
 
 def test_list_services_managed_only_injects_label_filter():
     with _patch() as mock_client:
         mock_client.return_value.services.list.return_value = []
-        list_services(managed_only=True)
+        service_list(managed_only=True)
     kwargs = mock_client.return_value.services.list.call_args.kwargs
     assert kwargs["filters"]["label"] == "docker-mcp-server.managed=true"
 
 
-def test_update_service():
+def test_service_update():
     service = MagicMock()
     with _patch() as mock_client:
         mock_client.return_value.services.get.return_value = service
-        assert update_service("svc1", {"image": "nginx:1.25"}) is True
+        assert service_update("svc1", {"image": "nginx:1.25"}) is True
     service.update.assert_called_once_with(image="nginx:1.25")
 
 
-def test_remove_service():
+def test_service_remove():
     service = MagicMock()
     with _patch() as mock_client:
         mock_client.return_value.services.get.return_value = service
-        assert remove_service("svc1") is True
+        assert service_remove("svc1") is True
     service.remove.assert_called_once()
 
 
@@ -125,20 +125,20 @@ def test_service_logs_coerces_str_chunks():
         assert service_logs("svc1") == "already-text\n"
 
 
-def test_scale_service():
+def test_service_scale():
     service = MagicMock()
     service.scale.return_value = True
     with _patch() as mock_client:
         mock_client.return_value.services.get.return_value = service
-        assert scale_service("svc1", 5) is True
+        assert service_scale("svc1", 5) is True
     service.scale.assert_called_once_with(5)
 
 
-def test_force_update_service():
+def test_service_force_update():
     service = MagicMock()
     with _patch() as mock_client:
         mock_client.return_value.services.get.return_value = service
-        assert force_update_service("svc1") is True
+        assert service_force_update("svc1") is True
     service.force_update.assert_called_once()
 
 
@@ -157,7 +157,7 @@ def test_rollback_service_reapplies_previous_spec_at_current_version():
         api = mock_client.return_value.api
         api.inspect_service.return_value = info
         api.update_service.return_value = {"Warnings": None}
-        assert rollback_service("svc1") == {"Warnings": None}
+        assert service_rollback("svc1") == {"Warnings": None}
     args, kwargs = api.update_service.call_args
     assert args == ("svc1", 42)  # current version index, so the daemon accepts the update
     assert kwargs["task_template"] == previous["TaskTemplate"]
@@ -175,5 +175,5 @@ def test_rollback_service_without_previous_spec_raises():
         api = mock_client.return_value.api
         api.inspect_service.return_value = info
         with pytest.raises(ValueError, match="no PreviousSpec"):
-            rollback_service("svc1")
+            service_rollback("svc1")
     api.update_service.assert_not_called()

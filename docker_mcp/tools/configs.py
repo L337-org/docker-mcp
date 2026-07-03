@@ -3,11 +3,11 @@
 from docker_mcp.server import tool
 from docker_mcp.tools._labels import with_provenance
 from docker_mcp.tools._utils import drop_none
-from docker_mcp.tools.client import _get_client
+from docker_mcp.tools.system import _get_client
 
 
 @tool()
-def create_config(
+def config_create(
     name: str, data: bytes, labels: dict | None = None, templating: dict | None = None, host: str | None = None
 ) -> dict:
     """
@@ -15,10 +15,10 @@ def create_config(
 
     Configs store non-sensitive configuration files (nginx.conf, app.yaml, etc.) and mount
     them into service containers at a specified path. Unlike secrets, config data is not
-    encrypted at rest — use `create_secret` for credentials or keys. `data` is raw bytes;
+    encrypted at rest — use `secret_create` for credentials or keys. `data` is raw bytes;
     encode strings first (e.g. `"my config".encode()`). Once created, a config is immutable:
     to update it, create a new config with a new name and update the service to reference it,
-    then remove the old config with `remove_config`.
+    then remove the old config with `config_remove`.
 
     args:
         name - Unique config name within the swarm
@@ -30,13 +30,13 @@ def create_config(
     kwargs: dict = {
         "name": name,
         "data": data,
-        **drop_none(labels=with_provenance(labels, "create_config"), templating=templating),
+        **drop_none(labels=with_provenance(labels, "config_create"), templating=templating),
     }
     return _get_client(host).configs.create(**kwargs).attrs
 
 
 @tool()
-def get_config(config_id: str, host: str | None = None) -> dict:
+def config_inspect(config_id: str, host: str | None = None) -> dict:
     """
     Get a swarm config by id.
 
@@ -47,7 +47,7 @@ def get_config(config_id: str, host: str | None = None) -> dict:
 
 
 @tool()
-def list_configs(filters: dict | None = None, host: str | None = None) -> list:
+def config_list(filters: dict | None = None, host: str | None = None) -> list:
     """
     List swarm configs.
 
@@ -58,7 +58,7 @@ def list_configs(filters: dict | None = None, host: str | None = None) -> list:
 
 
 @tool()
-def remove_config(config_id: str, host: str | None = None) -> bool:
+def config_remove(config_id: str, host: str | None = None) -> bool:
     """
     Remove a swarm config.
 

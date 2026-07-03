@@ -327,5 +327,5 @@ def is_multi() -> bool:
 
 
 def registry() -> dict[str, Host]:
-    """A copy of the pinned registry, for list_hosts / the docker-mcp://hosts resource."""
+    """A copy of the pinned registry, for host_list / the docker-mcp://hosts resource."""
     return dict(_registry)

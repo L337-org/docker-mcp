@@ -3,11 +3,11 @@
 from docker_mcp.server import tool
 from docker_mcp.tools._labels import managed_filter, with_provenance
 from docker_mcp.tools._utils import drop_none
-from docker_mcp.tools.client import _get_client
+from docker_mcp.tools.system import _get_client
 
 
 @tool()
-def create_volume(
+def volume_create(
     name: str | None = None,
     driver: str | None = None,
     driver_opts: dict | None = None,
@@ -34,13 +34,13 @@ def create_volume(
     returns: dict - The created volume's attrs
     """
     kwargs = drop_none(
-        name=name, driver=driver, driver_opts=driver_opts, labels=with_provenance(labels, "create_volume")
+        name=name, driver=driver, driver_opts=driver_opts, labels=with_provenance(labels, "volume_create")
     )
     return _get_client(host).volumes.create(**kwargs).attrs
 
 
 @tool()
-def get_volume(volume_id: str, host: str | None = None) -> dict:
+def volume_inspect(volume_id: str, host: str | None = None) -> dict:
     """
     Get a volume by name.
 
@@ -51,7 +51,7 @@ def get_volume(volume_id: str, host: str | None = None) -> dict:
 
 
 @tool()
-def list_volumes(filters: dict | None = None, managed_only: bool = False, host: str | None = None) -> list:
+def volume_list(filters: dict | None = None, managed_only: bool = False, host: str | None = None) -> list:
     """
     List volumes.
 
@@ -67,7 +67,7 @@ def list_volumes(filters: dict | None = None, managed_only: bool = False, host: 
 
 
 @tool()
-def prune_volumes(filters: dict | None = None, host: str | None = None) -> dict:
+def volume_prune(filters: dict | None = None, host: str | None = None) -> dict:
     """
     Remove unused volumes.
 
@@ -78,7 +78,7 @@ def prune_volumes(filters: dict | None = None, host: str | None = None) -> dict:
 
 
 @tool()
-def remove_volume(volume_id: str, force: bool = False, host: str | None = None) -> bool:
+def volume_remove(volume_id: str, force: bool = False, host: str | None = None) -> bool:
     """
     Remove a volume.
 

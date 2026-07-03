@@ -11,7 +11,7 @@ from docker_mcp.tools.compose import (
     compose_config,
     compose_down,
     compose_images,
-    compose_ls,
+    compose_list,
     compose_pause,
     compose_ps,
     compose_top,
@@ -115,7 +115,7 @@ def test_compose_ls_after_up_includes_project(compose_project):
         project_name=compose_project["name"],
         timeout_seconds=120.0,
     )
-    projects = compose_ls()
+    projects = compose_list()
     names = {p.get("Name") for p in projects}
     assert compose_project["name"] in names
 

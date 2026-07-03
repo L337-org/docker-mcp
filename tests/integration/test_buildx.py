@@ -10,9 +10,9 @@ from docker_mcp.tools.buildx import (
     buildx_build,
     buildx_du,
     buildx_history_inspect,
-    buildx_history_ls,
+    buildx_history_list,
     buildx_imagetools_inspect,
-    buildx_ls,
+    buildx_list,
 )
 
 # A minimal Dockerfile that produces a tiny image without pulling anything large.
@@ -38,7 +38,7 @@ def build_context(tmp_path: Path) -> Path:
 
 
 def test_buildx_ls_lists_at_least_one_builder():
-    builders = buildx_ls()
+    builders = buildx_list()
     assert isinstance(builders, list)
     assert builders, "expected at least one buildx builder to be configured"
     assert all("Name" in b for b in builders)
@@ -83,7 +83,7 @@ def test_buildx_history_ls_and_inspect_after_build(build_context: Path):
     )
     assert build["returncode"] == 0, build["stderr"]
     try:
-        records = buildx_history_ls()
+        records = buildx_history_list()
     except RuntimeError as exc:
         if "unknown" in str(exc).lower() or "history" in str(exc).lower():
             pytest.skip(f"buildx history not supported on this buildx version: {exc}")

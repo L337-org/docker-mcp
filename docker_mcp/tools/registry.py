@@ -95,7 +95,7 @@ def _parse_image_ref(image: str) -> tuple[str, str]:
     Split an image reference into (registry_host, repository_path).
 
     Any `:tag` or `@digest` suffix is stripped — pass tag/digest separately via the
-    `reference` parameter of `registry_inspect_manifest`.
+    `reference` parameter of `registry_manifest`.
 
     Docker Hub conventions:
       "alpine"             -> ("registry-1.docker.io", "library/alpine")
@@ -257,7 +257,7 @@ def _raise_rate_limited(resp: httpx.Response, url: str) -> NoReturn:
         guidance = (
             " Docker Hub caps anonymous pulls at ~100 requests / 6h per IP — "
             "authenticate with `docker login` (for SDK-backed tools) or pass "
-            "`username`/`password` to `registry_list_tags` to raise the limit."
+            "`username`/`password` to `registry_tags` to raise the limit."
         )
     else:
         guidance = (
@@ -380,7 +380,7 @@ def _next_link(link_header: str | None) -> str | None:
 
 
 @tool()
-def registry_list_tags(
+def registry_tags(
     image: str,
     username: str | None = None,
     password: str | None = None,
@@ -435,7 +435,7 @@ def registry_list_tags(
 
 
 @tool()
-def registry_inspect_manifest(
+def registry_manifest(
     image: str,
     reference: str = "latest",
     username: str | None = None,
@@ -475,7 +475,7 @@ def registry_inspect_manifest(
 
 
 @tool()
-def registry_get_config(
+def registry_image_config(
     image: str,
     reference: str = "latest",
     platform: str = "linux/amd64",
@@ -486,7 +486,7 @@ def registry_get_config(
     Fetch and parse an image's config blob from a registry without pulling.
 
     Answers "what's inside this image?" — env vars, entrypoint/cmd, workdir, exposed ports, user,
-    labels, layer history (what `registry_inspect_manifest` only points at via `config.digest`).
+    labels, layer history (what `registry_manifest` only points at via `config.digest`).
     Resolves in up to three hops: manifest -> (if multi-platform) the `platform` entry's manifest
     -> the config blob.
 
@@ -617,13 +617,13 @@ def _hub_normalize(repository: str) -> str:
 
 
 @tool()
-def hub_list_tags(repository: str, limit: int = 100) -> dict:
+def hub_tags(repository: str, limit: int = 100) -> dict:
     """
     List tags on a Docker Hub repository with Hub-specific metadata.
 
-    Hits the Hub UI API (hub.docker.com) for richer per-tag data than `registry_list_tags` —
+    Hits the Hub UI API (hub.docker.com) for richer per-tag data than `registry_tags` —
     last pushed date, per-platform sizes, digest. Public repos only: sends no auth and does NOT
-    read `~/.docker/config.json`; private repos return 404/401 (use `registry_list_tags` against
+    read `~/.docker/config.json`; private repos return 404/401 (use `registry_tags` against
     registry-1.docker.io with credentials).
 
     args:
@@ -695,7 +695,7 @@ def hub_rate_limit(username: str | None = None, password: str | None = None) -> 
 
     Sends a HEAD to the `ratelimitpreview/test` manifest (a HEAD isn't metered as a pull, so the
     check costs no budget) and reads the RateLimit-Limit / RateLimit-Remaining headers. Call it
-    before a large `compose_pull` / `pull_image` to avoid hitting the cap mid-deploy. Credentials
+    before a large `compose_pull` / `image_pull` to avoid hitting the cap mid-deploy. Credentials
     raise the limit and switch metering from per-IP to per-account; falls back to
     DOCKER_MCP_SERVER_REGISTRY_USERNAME / DOCKER_MCP_SERVER_REGISTRY_PASSWORD, does NOT read `~/.docker/config.json`.
     Plans with no limit return no headers — reported as `"unlimited": true`.

@@ -1,4 +1,4 @@
-# library of mcp tools relating to client management
+# library of mcp tools relating to the system domain: daemon info/auth and client connection control
 
 import os
 import sys
@@ -190,7 +190,7 @@ def _get_client(host: str | None = None) -> docker.DockerClient:
 
 
 @tool()
-def ping(host: str | None = None) -> bool:
+def system_ping(host: str | None = None) -> bool:
     """
     Check that the Docker server is responsive.
 
@@ -200,7 +200,7 @@ def ping(host: str | None = None) -> bool:
 
 
 @tool()
-def version(host: str | None = None) -> dict:
+def system_version(host: str | None = None) -> dict:
     """
     Return Docker server version information.
 
@@ -210,7 +210,7 @@ def version(host: str | None = None) -> dict:
 
 
 @tool()
-def info(host: str | None = None) -> dict:
+def system_info(host: str | None = None) -> dict:
     """
     Return system-wide Docker information.
 
@@ -220,7 +220,7 @@ def info(host: str | None = None) -> dict:
 
 
 @tool()
-def df(host: str | None = None) -> dict:
+def system_df(host: str | None = None) -> dict:
     """
     Return Docker disk usage information.
 
@@ -230,7 +230,7 @@ def df(host: str | None = None) -> dict:
 
 
 @tool()
-def list_hosts() -> list[dict]:
+def host_list() -> list[dict]:
     """
     List the Docker hosts configured via DOCKER_MCP_SERVER_HOSTS.
 
@@ -255,7 +255,7 @@ def list_hosts() -> list[dict]:
 
 
 @tool()
-def login(
+def system_login(
     username: str,
     password: str,
     email: str | None = None,
@@ -292,15 +292,15 @@ def login(
 
 
 @tool()
-def logout(registry: str | None = None, host: str | None = None) -> dict:
+def system_logout(registry: str | None = None, host: str | None = None) -> dict:
     """
     Clear cached registry credentials from this server's in-memory Docker client.
 
-    docker-py / the Engine have no true logout: `login` validates against the registry (the daemon's
+    docker-py / the Engine have no true logout: `system_login` validates against the registry (the daemon's
     `/auth` is stateless) and caches credentials in-process. This drops that in-memory cache; it does
     NOT contact the daemon or touch the host's `~/.docker/config.json`. With no `registry`, clears
-    every cached credential; pass one to clear just that entry (key must match `login`; Docker Hub is
-    cached under "docker.io"). `close`/`reconnect` also clear it by discarding the client.
+    every cached credential; pass one to clear just that entry (key must match `system_login`; Docker Hub
+    is cached under "docker.io"). `system_close`/`system_reconnect` also clear it by discarding the client.
 
     Reaches into a private docker-py attribute (`api._auth_configs`); degrades to clearing nothing if
     that internal shape changes.
@@ -327,7 +327,7 @@ def logout(registry: str | None = None, host: str | None = None) -> dict:
 
 
 @tool()
-def events(
+def system_events(
     since: str | None = None,
     until: str | None = None,
     filters: dict | None = None,
@@ -372,11 +372,11 @@ def events(
 
 
 @tool()
-def close(host: str | None = None) -> bool:
+def system_close(host: str | None = None) -> bool:
     """
     Close and drop pooled Docker client connection(s); each is rebuilt lazily on next use.
 
-    Use this to force a stale or errored connection to be discarded. Prefer `reconnect` when you
+    Use this to force a stale or errored connection to be discarded. Prefer `system_reconnect` when you
     want to immediately re-establish the connection rather than wait for the next tool call to
     trigger a lazy rebuild. Closing all clients does not affect running containers.
 
@@ -393,7 +393,7 @@ def close(host: str | None = None) -> bool:
 
 
 @tool()
-def reconnect(host: str | None = None) -> dict:
+def system_reconnect(host: str | None = None) -> dict:
     """
     Rebuild a pooled Docker client from its configured endpoint, to recover a wedged connection.
 
@@ -402,7 +402,7 @@ def reconnect(host: str | None = None) -> dict:
     change a daemon, edit DOCKER_MCP_SERVER_HOSTS and restart.
 
     args: host - host label to rebuild, or None for the default host
-    returns: dict - the rebuilt host's version info (same shape as `version`), confirming connectivity
+    returns: dict - the rebuilt host's version info (same shape as `system_version`), confirming connectivity
     """
     resolved = _resolve_host(host)
     label = resolved.label

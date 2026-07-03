@@ -54,7 +54,7 @@ The image defaults `DOCKER_HOST` to `unix:///var/run/docker.sock`, so mounting y
 
 ## Host filesystem access
 
-Inside a container, the file-path tools (`save_image_to_file`, `load_image_from_file`, `export_container_to_file`, the container-archive `*_to_file` / `*_from_file` variants, and compose `project_dir` / `files`) resolve paths *inside the container*. Bind-mount any directory you want to exchange files through — using the **same path inside and out** keeps host and container paths identical:
+Inside a container, the file-path tools (`image_save_to_file`, `image_load_from_file`, `container_export_to_file`, the container-archive `*_to_file` / `*_from_file` variants, and compose `project_dir` / `files`) resolve paths *inside the container*. Bind-mount any directory you want to exchange files through — using the **same path inside and out** keeps host and container paths identical:
 
 ```
 -v $HOME/docker-work:$HOME/docker-work
@@ -67,7 +67,7 @@ If you call one of these tools with a path that isn't on a bind mount, the serve
 Set these in the client's `env` block. Three switches restrict which tools are registered at startup (a disabled tool never appears in the client's tool list):
 
 - **`DOCKER_MCP_SERVER_READONLY`** — register only read-only tools.
-- **`DOCKER_MCP_SERVER_NO_DESTRUCTIVE`** — everything except destructive tools (`remove_*`, `prune_*`, `kill_container`, `compose_down`, …).
+- **`DOCKER_MCP_SERVER_NO_DESTRUCTIVE`** — everything except destructive tools (`remove_*`, `prune_*`, `container_kill`, `compose_down`, …).
 - **`DOCKER_MCP_SERVER_DISABLE`** — comma-separated *domains* to drop wholesale (e.g. `swarm,services,nodes,configs,secrets` for a single-host server).
 
 The older `DOCKER_MCP_*` spellings of these variables still work as deprecated aliases (the canonical `DOCKER_MCP_SERVER_*` name wins when both are set).

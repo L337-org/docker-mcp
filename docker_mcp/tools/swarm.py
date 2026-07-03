@@ -2,11 +2,11 @@
 
 from docker_mcp.server import tool
 from docker_mcp.tools._utils import drop_none
-from docker_mcp.tools.client import _get_client
+from docker_mcp.tools.system import _get_client
 
 
 @tool()
-def init_swarm(
+def swarm_init(
     advertise_addr: str | None = None,
     listen_addr: str = "0.0.0.0:2377",
     force_new_cluster: bool = False,
@@ -56,7 +56,7 @@ def init_swarm(
 
 
 @tool()
-def join_swarm(
+def swarm_join(
     remote_addrs: list,
     join_token: str,
     listen_addr: str = "0.0.0.0:2377",
@@ -85,7 +85,7 @@ def join_swarm(
 
 
 @tool()
-def leave_swarm(force: bool = False, host: str | None = None) -> bool:
+def swarm_leave(force: bool = False, host: str | None = None) -> bool:
     """
     Leave the current swarm.
 
@@ -96,7 +96,7 @@ def leave_swarm(force: bool = False, host: str | None = None) -> bool:
 
 
 @tool()
-def update_swarm(
+def swarm_update(
     rotate_worker_token: bool = False,
     rotate_manager_token: bool = False,
     rotate_manager_unlock_key: bool = False,
@@ -107,9 +107,9 @@ def update_swarm(
 
     Must be called on a swarm manager node. Token rotation invalidates the old join token
     immediately — nodes that have not yet joined using the old token must use the new one.
-    Existing joined nodes are unaffected. Use `get_swarm_join_tokens` to retrieve the new
+    Existing joined nodes are unaffected. Use `swarm_join_tokens` to retrieve the new
     tokens after rotation. Rotating the unlock key requires all managers to be re-unlocked
-    on restart with the new key; retrieve it immediately via `get_swarm_unlock_key`.
+    on restart with the new key; retrieve it immediately via `swarm_unlock_key`.
 
     args:
         rotate_worker_token - Issue a new worker join token, invalidating the current one
@@ -125,7 +125,7 @@ def update_swarm(
 
 
 @tool()
-def reload_swarm(host: str | None = None) -> dict:
+def swarm_inspect(host: str | None = None) -> dict:
     """
     Reload the swarm and return its current attrs.
 
@@ -137,26 +137,26 @@ def reload_swarm(host: str | None = None) -> dict:
 
 
 @tool()
-def unlock_swarm(key: str, host: str | None = None) -> bool:
+def swarm_unlock(key: str, host: str | None = None) -> bool:
     """
     Unlock a manager node that is locked after restart due to autolock being enabled.
 
-    When autolock is enabled (via `init_swarm` or `update_swarm`), manager nodes require
+    When autolock is enabled (via `swarm_init` or `swarm_update`), manager nodes require
     the unlock key after every restart before they can rejoin the swarm and resume
     scheduling. Must be called on the locked manager node directly. Retrieve the current
-    unlock key with `get_swarm_unlock_key` from any unlocked manager — store it securely
+    unlock key with `swarm_unlock_key` from any unlocked manager — store it securely
     when enabling autolock. A locked node cannot serve API requests and cannot return its
     own key while locked; other unlocked managers in the swarm can still serve the key.
     Once unlocked the manager resumes automatically.
 
-    args: key - The swarm unlock key (from `get_swarm_unlock_key`)
+    args: key - The swarm unlock key (from `swarm_unlock_key`)
     returns: bool - True after the swarm is unlocked
     """
     return _get_client(host).swarm.unlock(key)
 
 
 @tool()
-def get_swarm_unlock_key(host: str | None = None) -> dict:
+def swarm_unlock_key(host: str | None = None) -> dict:
     """
     Return the swarm unlock key.
 
@@ -172,11 +172,11 @@ def _read_join_tokens(swarm: object) -> dict:
 
 
 @tool()
-def get_swarm_join_tokens(host: str | None = None) -> dict:
+def swarm_join_tokens(host: str | None = None) -> dict:
     """
     Return the swarm's worker and manager join tokens.
 
-    These are the tokens a new node passes to `join_swarm` — without one, `join_swarm` cannot be
+    These are the tokens a new node passes to `swarm_join` — without one, `swarm_join` cannot be
     called, so this closes the init -> join loop. The tokens are secret bearer credentials (anyone
     holding the manager token can join as a manager); treat the result as sensitive and avoid logging
     it. Reads `swarm.attrs["JoinTokens"]` after a reload, so it always reflects the current tokens.
@@ -189,7 +189,7 @@ def get_swarm_join_tokens(host: str | None = None) -> dict:
 
 
 @tool()
-def rotate_swarm_join_token(rotate_worker: bool = False, rotate_manager: bool = False, host: str | None = None) -> dict:
+def swarm_join_token_rotate(rotate_worker: bool = False, rotate_manager: bool = False, host: str | None = None) -> dict:
     """
     Rotate the worker and/or manager join token, then return the fresh tokens.
 

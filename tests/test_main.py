@@ -11,7 +11,7 @@ def test_version_flag_prints_and_exits(capsys, monkeypatch):
     monkeypatch.setattr("sys.argv", ["docker-mcp-server", "--version"])
     with (
         patch.object(docker_mcp.mcp, "run") as mock_run,
-        patch("docker_mcp.tools.client.startup_preflight") as mock_preflight,
+        patch("docker_mcp.tools.system.startup_preflight") as mock_preflight,
     ):
         docker_mcp.main()
     mock_run.assert_not_called()
@@ -26,7 +26,7 @@ def test_main_without_version_flag_runs_server():
     """Without --version, main() still runs preflight then serves on stdio."""
     with (
         patch.object(docker_mcp.mcp, "run") as mock_run,
-        patch("docker_mcp.tools.client.startup_preflight") as mock_preflight,
+        patch("docker_mcp.tools.system.startup_preflight") as mock_preflight,
     ):
         docker_mcp.main()
     mock_preflight.assert_called_once()

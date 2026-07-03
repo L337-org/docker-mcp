@@ -9,13 +9,13 @@ from docker_mcp.tools.buildx import (
     buildx_create,
     buildx_du,
     buildx_history_inspect,
-    buildx_history_ls,
+    buildx_history_list,
     buildx_imagetools_create,
     buildx_imagetools_inspect,
     buildx_inspect,
-    buildx_ls,
+    buildx_list,
     buildx_prune,
-    buildx_rm,
+    buildx_remove,
     buildx_use,
 )
 
@@ -228,7 +228,7 @@ def test_buildx_imagetools_create_requires_sources_or_files():
         buildx_imagetools_create(target="org/app:v1", sources=[])
 
 
-# ---------- buildx_ls / buildx_du / buildx_inspect ----------
+# ---------- buildx_list / buildx_du / buildx_inspect ----------
 
 
 def test_buildx_ls_parses_ndjson():
@@ -237,7 +237,7 @@ def test_buildx_ls_parses_ndjson():
         '{"Name":"remote","Driver":"docker-container","Current":false}\n'
     )
     with patch("docker_mcp.tools.buildx.run_docker", return_value=_ok(body)) as run:
-        result = buildx_ls()
+        result = buildx_list()
     args = run.call_args.args[0]
     assert args == ["buildx", "ls", "--format", "{{json .}}"]
     assert result == [
@@ -249,14 +249,14 @@ def test_buildx_ls_parses_ndjson():
 def test_buildx_ls_raises_on_failure():
     with patch("docker_mcp.tools.buildx.run_docker", return_value=_fail("daemon error")):
         with pytest.raises(RuntimeError, match="daemon error"):
-            buildx_ls()
+            buildx_list()
 
 
 def test_buildx_ls_drops_partial_record_when_truncated():
     body = '{"Name":"default","Current":true}\n{"Name":"remote",'  # second record cut off
     truncated_result = CliResult(returncode=0, stdout=body, stderr="", truncated=True)
     with patch("docker_mcp.tools.buildx.run_docker", return_value=truncated_result):
-        result = buildx_ls()
+        result = buildx_list()
     assert result == [{"Name": "default", "Current": True}]
 
 
@@ -304,7 +304,7 @@ def test_buildx_prune_filter_and_space_flags():
     assert args[args.index("--min-free-space") + 1] == "5GB"
 
 
-# ---------- buildx_create / buildx_use / buildx_rm ----------
+# ---------- buildx_create / buildx_use / buildx_remove ----------
 
 
 def test_buildx_create_driver_opts_repeat():
@@ -340,17 +340,17 @@ def test_buildx_use_with_default_flags():
 
 def test_buildx_rm_requires_target():
     with pytest.raises(ValueError, match="`name` or `all_inactive=True`"):
-        buildx_rm()
+        buildx_remove()
 
 
 def test_buildx_rm_rejects_name_and_all_inactive_together():
     with pytest.raises(ValueError, match="mutually exclusive"):
-        buildx_rm(name="builder-x", all_inactive=True)
+        buildx_remove(name="builder-x", all_inactive=True)
 
 
 def test_buildx_rm_all_inactive():
     with patch("docker_mcp.tools.buildx.run_docker", return_value=_ok()) as run:
-        buildx_rm(all_inactive=True, keep_state=True)
+        buildx_remove(all_inactive=True, keep_state=True)
     args = run.call_args.args[0]
     assert args[:2] == ["buildx", "rm"]
     assert "--all-inactive" in args
@@ -359,7 +359,7 @@ def test_buildx_rm_all_inactive():
 
 def test_buildx_rm_named_with_force():
     with patch("docker_mcp.tools.buildx.run_docker", return_value=_ok()) as run:
-        buildx_rm(name="builder-x", force=True)
+        buildx_remove(name="builder-x", force=True)
     args = run.call_args.args[0]
     assert "--force" in args
     assert args[-1] == "builder-x"
@@ -383,13 +383,13 @@ def test_buildx_imagetools_create_rejects_flag_like_source():
         buildx_imagetools_create(target="me/img:latest", sources=["ok/img:amd64", "--bad"])
 
 
-# ---------- buildx_history_ls / buildx_history_inspect ----------
+# ---------- buildx_history_list / buildx_history_inspect ----------
 
 
 def test_buildx_history_ls_parses_ndjson():
     ndjson = '{"ref":"a1","name":"build-a","status":"Completed"}\n{"ref":"b2","name":"build-b","status":"Error"}'
     with patch("docker_mcp.tools.buildx.run_docker", return_value=_ok(ndjson)) as run:
-        result = buildx_history_ls()
+        result = buildx_history_list()
     assert [r["ref"] for r in result] == ["a1", "b2"]
     argv = run.call_args.args[0]
     assert argv[:3] == ["buildx", "history", "ls"]
@@ -398,7 +398,7 @@ def test_buildx_history_ls_parses_ndjson():
 
 def test_buildx_history_ls_passes_builder():
     with patch("docker_mcp.tools.buildx.run_docker", return_value=_ok("")) as run:
-        buildx_history_ls(builder="mybuilder")
+        buildx_history_list(builder="mybuilder")
     argv = run.call_args.args[0]
     assert "--builder" in argv and "mybuilder" in argv
 
@@ -406,7 +406,7 @@ def test_buildx_history_ls_passes_builder():
 def test_buildx_history_ls_raises_on_failure():
     with patch("docker_mcp.tools.buildx.run_docker", return_value=_fail('unknown command "history"')):
         with pytest.raises(RuntimeError, match="buildx history ls"):
-            buildx_history_ls()
+            buildx_history_list()
 
 
 def test_buildx_history_inspect_parses_json_object():

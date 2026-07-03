@@ -1,7 +1,7 @@
 # library of MCP tools for managing docker
 
 from docker_mcp.tools.buildx import *
-from docker_mcp.tools.client import *
+from docker_mcp.tools.system import *
 from docker_mcp.tools.compose import *
 from docker_mcp.tools.configs import *
 from docker_mcp.tools.containers import *

@@ -3,11 +3,11 @@
 from docker_mcp.server import tool
 from docker_mcp.tools._labels import managed_filter, with_provenance
 from docker_mcp.tools._utils import drop_none
-from docker_mcp.tools.client import _get_client
+from docker_mcp.tools.system import _get_client
 
 
 @tool()
-def create_network(
+def network_create(
     name: str,
     driver: str | None = None,
     options: dict | None = None,
@@ -46,7 +46,7 @@ def create_network(
             options=options,
             ipam=ipam,
             check_duplicate=check_duplicate,
-            labels=with_provenance(labels, "create_network"),
+            labels=with_provenance(labels, "network_create"),
             attachable=attachable,
             scope=scope,
             ingress=ingress,
@@ -56,7 +56,7 @@ def create_network(
 
 
 @tool()
-def get_network(network_id: str, host: str | None = None) -> dict:
+def network_inspect(network_id: str, host: str | None = None) -> dict:
     """
     Get a network by id or name.
 
@@ -67,7 +67,7 @@ def get_network(network_id: str, host: str | None = None) -> dict:
 
 
 @tool()
-def list_networks(
+def network_list(
     names: list | None = None,
     ids: list | None = None,
     filters: dict | None = None,
@@ -94,7 +94,7 @@ def list_networks(
 
 
 @tool()
-def prune_networks(filters: dict | None = None, host: str | None = None) -> dict:
+def network_prune(filters: dict | None = None, host: str | None = None) -> dict:
     """
     Remove networks that have no active container endpoints.
 
@@ -109,7 +109,7 @@ def prune_networks(filters: dict | None = None, host: str | None = None) -> dict
 
 
 @tool()
-def remove_network(network_id: str, host: str | None = None) -> bool:
+def network_remove(network_id: str, host: str | None = None) -> bool:
     """
     Remove a network.
 
@@ -121,7 +121,7 @@ def remove_network(network_id: str, host: str | None = None) -> bool:
 
 
 @tool()
-def connect_network(
+def network_connect(
     network_id: str,
     container: str,
     aliases: list | None = None,
@@ -139,7 +139,7 @@ def connect_network(
     `aliases` sets extra DNS names for this container within the network (other containers
     can reach it by those names in addition to its container name). `ipv4_address` /
     `ipv6_address` assign a specific IP on the network; omit to let the driver assign one.
-    `links` is a legacy feature (deprecated; prefer DNS aliases). Use `disconnect_network`
+    `links` is a legacy feature (deprecated; prefer DNS aliases). Use `network_disconnect`
     to undo.
 
     args:
@@ -167,7 +167,7 @@ def connect_network(
 
 
 @tool()
-def disconnect_network(network_id: str, container: str, force: bool = False, host: str | None = None) -> bool:
+def network_disconnect(network_id: str, container: str, force: bool = False, host: str | None = None) -> bool:
     """
     Disconnect a container from a network.
 

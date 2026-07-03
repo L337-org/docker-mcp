@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 from docker.errors import DockerException
 
-from docker_mcp.tools.client import ping
+from docker_mcp.tools.system import system_ping
 
 _INTEGRATION_DIR = Path(__file__).parent
 
@@ -25,6 +25,6 @@ def pytest_collection_modifyitems(items):
 @pytest.fixture(autouse=True, scope="module")
 def skip_if_no_daemon():
     try:
-        ping()
+        system_ping()
     except (DockerException, RuntimeError) as exc:
         pytest.skip(f"Docker daemon not reachable: {exc}")
