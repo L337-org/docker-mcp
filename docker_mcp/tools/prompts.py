@@ -73,7 +73,10 @@ def deploy_container(image: str, name: str) -> str:
         f"`network_create` / `volume_create` if so.\n"
         f"3. Call `container_run` with sensible defaults: `detach=True`, a restart policy, and any port or volume "
         f"mappings the image requires.\n"
-        f"4. Verify the container reached the running state with `container_list` and `container_logs`.\n"
+        f'4. Call `container_wait(id_or_name=name, until="healthy")` to confirm it started successfully. '
+        f"`met=True` means the image's HEALTHCHECK passed; `health: null` with `met=False` just means the image "
+        f'has no HEALTHCHECK (not that something is wrong) — check `status == "running"` instead. Follow up '
+        f"with `container_logs` if anything looks off.\n"
         f"Report the final container ID and any resources you created. Stop and ask before destroying existing "
         f"resources that share the same name."
     )
@@ -197,9 +200,11 @@ def migrate_container(container: str, new_image: str) -> str:
         f"rollback target.\n"
         f"4. Use `container_run` to start a new container under the original name `{container}` with the "
         f"captured config but the new image.\n"
-        f"5. Verify with `container_list` and `container_logs` that the replacement is healthy. If it is "
-        f"NOT, roll back: `container_stop`/`container_remove` the new one and `container_rename` "
-        f"`{container}-old` back to `{container}`, then `container_start`.\n"
+        f'5. Call `container_wait(id_or_name="{container}", until="healthy")` to confirm the replacement is '
+        f'healthy — `health: null` means no HEALTHCHECK is defined (not unhealthy); treat `status == "running"` '
+        f'as success in that case. If it instead comes back `health == "unhealthy"`, or the container exited '
+        f"before becoming healthy, roll back: `container_stop`/`container_remove` the new one and "
+        f"`container_rename` `{container}-old` back to `{container}`, then `container_start`.\n"
         f"6. Only once the replacement is confirmed healthy, `container_remove` `{container}-old`. Ask "
         f"the user before this final removal — it discards the rollback path."
     )

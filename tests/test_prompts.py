@@ -50,7 +50,10 @@ def test_deploy_container_lists_steps_in_order():
     assert "nginx:1.27" in out
     assert "web" in out
     assert out.index("image_pull") < out.index("container_run")
-    assert "container_list" in out
+    assert out.index("container_run") < out.index("container_wait")
+    assert "container_logs" in out
+    # health:null (no HEALTHCHECK) must not be conflated with unhealthy
+    assert "no HEALTHCHECK" in out
 
 
 def test_troubleshoot_container_covers_logs_and_state():
@@ -107,9 +110,12 @@ def test_migrate_container_preserves_config_with_rename_rollback():
     assert out.index("container_inspect") < out.index("container_stop")
     assert out.index("container_stop") < out.index("container_rename")
     assert out.index("container_rename") < out.index("container_run")
-    assert out.index("container_run") < out.rindex("container_remove")
+    assert out.index("container_run") < out.index("container_wait")
+    assert out.index("container_wait") < out.rindex("container_remove")
     assert "api-1-old" in out
     assert "rollback" in out.lower()
+    # health:null (no HEALTHCHECK) must not be conflated with unhealthy
+    assert "not unhealthy" in out
 
 
 def test_clean_environment_default_scope_skips_volumes():
