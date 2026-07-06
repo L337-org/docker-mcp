@@ -756,7 +756,9 @@ def container_wait(
     input, including adversarial ones. Pass `regex=True` to match `pattern` as a regular expression
     (via `re.search`) instead; only do this with patterns you trust, since a regex with catastrophic
     backtracking run against attacker-influenced log content can exhaust CPU (ReDoS). Checks stdout
-    and stderr, most recent lines first within each poll.
+    and stderr, most recent lines first within each poll. If the container exits/dies before the
+    pattern ever appears, returns promptly with `met=false` (not `timed_out`) — no further logs can
+    arrive, so there's nothing to keep polling for.
 
     args:
         id_or_name - The container id or name
@@ -772,7 +774,8 @@ def container_wait(
     returns: dict - {"container", "until", "met", "timed_out", "status_code", "error", "health",
                      "status", "matched_line", "waited_seconds"}; stop modes fill status_code/error,
                      "healthy" fills health ("starting"/"healthy"/"unhealthy", or null with no
-                     healthcheck) and status, "log-match" fills matched_line when met.
+                     healthcheck) and status, "log-match" fills matched_line when met and status if
+                     the container exited without matching.
     """
     if timeout_seconds < 0:
         raise ValueError(f"timeout_seconds must be >= 0, got {timeout_seconds}.")
@@ -831,9 +834,14 @@ def container_wait(
         for line in reversed(text.splitlines()):
             if matcher(line):
                 return _wait_result(id_or_name, until, met=True, start=start, matched_line=line)
+        container.reload()
+        status = (container.attrs.get("State", {}) or {}).get("Status")
+        if status in ("exited", "dead"):
+            # Stopped without ever matching — no further logs will arrive, don't poll to the timeout.
+            return _wait_result(id_or_name, until, met=False, start=start, status=status)
         remaining = deadline - time.monotonic()
         if remaining <= 0:
-            return _wait_result(id_or_name, until, met=False, start=start, timed_out=True)
+            return _wait_result(id_or_name, until, met=False, start=start, timed_out=True, status=status)
         # Bound the sleep by the time left so a large poll_interval can't push past the timeout.
         time.sleep(min(poll_interval, remaining))
 

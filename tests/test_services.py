@@ -258,6 +258,24 @@ def test_read_service_task_summary_global_mode_desired_is_task_count():
     assert summary["desired_tasks"] == 2  # no fixed target: len(returned tasks)
 
 
+def test_read_service_task_summary_replicated_without_replicas_falls_back_to_task_count():
+    # Replicas is optional in the daemon's own schema (no documented default) — a Replicated
+    # service that omits it must not surface desired_tasks=None (which would later blow up
+    # service_wait's `running_tasks >= desired_tasks` comparison with a TypeError).
+    service = MagicMock()
+    service.name = "web"
+    service.attrs = {"Spec": {"Mode": {"Replicated": {}}}}
+    service.tasks.return_value = [
+        {"ID": "t1", "Status": {"State": "running"}},
+        {"ID": "t2", "Status": {"State": "running"}},
+    ]
+    with _patch() as mock_client:
+        mock_client.return_value.services.get.return_value = service
+        summary = _read_service_task_summary("svc1")
+    assert summary["desired_tasks"] == 2
+    assert isinstance(summary["desired_tasks"], int)
+
+
 def _task_service(mode_spec, tasks, update_status=None):
     s = MagicMock()
     s.attrs = {"Spec": {"Mode": mode_spec}, **({"UpdateStatus": update_status} if update_status else {})}
@@ -381,3 +399,19 @@ def test_service_wait_rejects_negative_timeout():
 def test_service_wait_rejects_nonpositive_poll_interval():
     with pytest.raises(ValueError, match="poll_interval"):
         service_wait("web", poll_interval=0)
+
+
+def test_service_wait_rejects_negative_replicas():
+    # A negative override must not make `running_tasks >= desired` trivially true.
+    with pytest.raises(ValueError, match="replicas"):
+        service_wait("web", replicas=-1)
+
+
+def test_service_wait_accepts_zero_replicas():
+    # 0 is a legitimate scale target (pausing a service) and must not be rejected.
+    svc = _task_service({"Replicated": {"Replicas": 0}}, [])
+    with _patch() as mock_client:
+        mock_client.return_value.services.get.return_value = svc
+        result = service_wait("web", replicas=0, timeout_seconds=5)
+    assert result["met"] is True
+    assert result["desired_tasks"] == 0

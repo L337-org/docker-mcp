@@ -45,7 +45,12 @@ def _read_service_task_summary(id_or_name: str, host: str | None = None) -> dict
     mode = (attrs.get("Spec", {}) or {}).get("Mode", {}) or {}
     tasks = service.tasks(filters={"desired-state": "running"})
     running = sum(1 for t in tasks if (t.get("Status") or {}).get("State") == "running")
-    desired = mode["Replicated"].get("Replicas") if "Replicated" in mode else len(tasks)
+    # `Replicas` is optional in the daemon's own schema (no documented default), so a Replicated
+    # service could in principle omit it — fall back to the observed task count in that case too,
+    # the same fallback already used for every non-Replicated mode.
+    desired = mode.get("Replicated", {}).get("Replicas") if "Replicated" in mode else None
+    if desired is None:
+        desired = len(tasks)
     failed_tasks = [
         {
             "id": t.get("ID"),
@@ -352,6 +357,8 @@ def service_wait(
         raise ValueError(f"timeout_seconds must be >= 0, got {timeout_seconds}.")
     if poll_interval <= 0:
         raise ValueError(f"poll_interval must be > 0, got {poll_interval}.")
+    if replicas is not None and replicas < 0:
+        raise ValueError(f"replicas must be >= 0, got {replicas}.")
     start = time.monotonic()
     deadline = start + timeout_seconds
     while True:

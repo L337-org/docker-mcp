@@ -653,6 +653,23 @@ def test_container_wait_log_match_times_out():
     assert result["matched_line"] is None
 
 
+def test_container_wait_log_match_returns_promptly_when_container_exits_unmatched():
+    # A container that exits without ever printing the pattern must not poll to the full
+    # timeout — there are no further logs coming, so this should return immediately.
+    container = _log_container(b"still waiting\n")
+    container.attrs = {"State": {"Status": "exited"}}
+    with _patch() as mock_client, patch("docker_mcp.tools.containers.time.sleep") as sleep:
+        mock_client.return_value.containers.get.return_value = container
+        started = time.monotonic()
+        result = container_wait("web", until="log-match", pattern="READY", timeout_seconds=60)
+        elapsed = time.monotonic() - started
+    assert result["met"] is False
+    assert result["timed_out"] is False
+    assert result["status"] == "exited"
+    sleep.assert_not_called()
+    assert elapsed < 2.0, f"should return promptly on exit, not poll toward the 60s timeout ({elapsed:.2f}s)"
+
+
 def test_container_wait_log_match_requires_pattern():
     with pytest.raises(ValueError, match="pattern"):
         container_wait("web", until="log-match")
