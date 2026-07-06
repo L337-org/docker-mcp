@@ -49,9 +49,13 @@ def config_inspect(id_or_name: str, host: str | None = None) -> dict:
 @tool()
 def config_list(filters: dict | None = None, host: str | None = None) -> list:
     """
-    List swarm configs.
+    List swarm configs; requires a swarm manager.
 
-    args: filters - Filter by attributes (e.g. id, name, label)
+    Unlike secrets, config attrs include the actual config data (`Spec.Data`, base64-encoded)
+    since configs are not treated as sensitive. Valid filter keys: `id`, `name`, `names`,
+    `label` (key or key=value).
+
+    args: filters - Narrow the list; omit to return every config
     returns: list - A list of config attrs dicts
     """
     return [c.attrs for c in _get_client(host).configs.list(**drop_none(filters=filters))]

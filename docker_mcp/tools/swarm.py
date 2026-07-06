@@ -21,19 +21,28 @@ def swarm_init(
     host: str | None = None,
 ) -> str:
     """
-    Initialize a new swarm on this Engine.
+    Initialize a new swarm, making this Engine its first manager node.
+
+    Fails if the Engine is already part of a swarm — call `swarm_leave` first to reset it.
+    `advertise_addr` only needs setting when the host has multiple network interfaces or is
+    behind NAT (otherwise it is auto-detected); it must be reachable by every other node
+    that will join. To add more nodes afterwards, retrieve join tokens with
+    `swarm_join_tokens` and call `swarm_join` on each one. Set `autolock_managers=True` to
+    require the unlock key (`swarm_unlock_key`) on every manager restart — store that key
+    securely immediately, since it is only shown once autolock is enabled.
 
     args:
         advertise_addr - Externally reachable address advertised to other nodes
         listen_addr - Listen address used for inter-manager communication
-        force_new_cluster - Force a new cluster from current state
+        force_new_cluster - Force a new single-node cluster from this node's current state
+                             (disaster recovery when a majority of managers is lost)
         default_addr_pool - IP address pools for swarm overlay networks
         subnet_size - Subnet size for the IP pool
         data_path_addr - Address to use for data path traffic
         data_path_port - Port number for data path traffic
         name - Name of the swarm
         labels - Labels to set on the swarm
-        autolock_managers - Encrypt manager keys at rest
+        autolock_managers - Require the unlock key after every manager restart
         log_driver - Default log driver configuration
     returns: str - The node id of the newly created swarm manager
     """
@@ -65,14 +74,22 @@ def swarm_join(
     host: str | None = None,
 ) -> bool:
     """
-    Join an existing swarm.
+    Join this Engine to an existing swarm as a worker or manager.
+
+    Fails if the Engine is already part of a swarm. Whether this node joins as a worker or
+    a manager is determined entirely by which token is passed — `join_token` must be one of
+    the two tokens from `swarm_join_tokens`, called against any existing manager. `advertise_addr`
+    only needs setting when this host has multiple network interfaces or is behind NAT
+    (otherwise it is auto-detected from the interface used to reach `remote_addrs`); it must
+    be reachable by every other node in the swarm.
 
     args:
-        remote_addrs - Addresses of swarm managers to connect to
-        join_token - The swarm join token
+        remote_addrs - Address(es) of existing swarm managers to connect to
+        join_token - The worker or manager join token (from `swarm_join_tokens`) — determines
+                     the role this node joins as
         listen_addr - Listen address for inter-manager communication
-        advertise_addr - Advertised address
-        data_path_addr - Data path address
+        advertise_addr - Externally reachable address advertised to other nodes
+        data_path_addr - Address to use for data path traffic
     returns: bool - True after the engine joins the swarm
     """
     kwargs: dict = {
@@ -159,9 +176,15 @@ def swarm_unlock(key: str, host: str | None = None) -> bool:
 @tool()
 def swarm_unlock_key(host: str | None = None) -> dict:
     """
-    Return the swarm unlock key.
+    Return the swarm's current unlock key.
 
-    returns: dict - The unlock key info
+    The key only serves a purpose when autolock is enabled (see `swarm_init`'s /
+    `swarm_update`'s `autolock_managers` / `rotate_manager_unlock_key`). Must be called
+    against an unlocked manager — a locked manager cannot serve API requests, including
+    this one. Feed the result's key to `swarm_unlock` to unlock a manager after restart.
+    Treat the key as a sensitive credential.
+
+    returns: dict - {"UnlockKey": <the current unlock key>}
     """
     return _get_client(host).swarm.get_unlock_key()
 

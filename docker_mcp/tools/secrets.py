@@ -31,10 +31,16 @@ def secret_create(
 @tool()
 def secret_inspect(id_or_name: str, host: str | None = None) -> dict:
     """
-    Get a swarm secret by id or name.
+    Get a swarm secret's metadata by id or name; requires a swarm manager.
+
+    The returned attrs never include the secret's actual data (`Spec.Data` is write-only —
+    the daemon accepts it on `secret_create` but never returns it back, by design). Use this
+    to check a secret's `CreatedAt`, `Labels`, or which driver created it, not to read its
+    contents. To see which services reference it, inspect each service's spec via
+    `service_inspect` (there is no server-side filter for "services using this secret").
 
     args: id_or_name - The secret id or name
-    returns: dict - The secret's attrs
+    returns: dict - The secret's attrs, excluding the actual secret data
     """
     return _get_client(host).secrets.get(id_or_name).attrs
 
@@ -42,10 +48,14 @@ def secret_inspect(id_or_name: str, host: str | None = None) -> dict:
 @tool()
 def secret_list(filters: dict | None = None, host: str | None = None) -> list:
     """
-    List swarm secrets.
+    List swarm secrets' metadata; requires a swarm manager.
 
-    args: filters - Filter by attributes (e.g. id, name, label)
-    returns: list - A list of secret attrs dicts
+    Like `secret_inspect`, results never include secret data, only metadata (name, id,
+    labels, timestamps). Valid filter keys: `id`, `name`, `names`, `label` (key or
+    key=value).
+
+    args: filters - Narrow the list; omit to return every secret
+    returns: list - A list of secret attrs dicts (data-free)
     """
     return [s.attrs for s in _get_client(host).secrets.list(**drop_none(filters=filters))]
 

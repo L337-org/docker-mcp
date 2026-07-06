@@ -125,13 +125,21 @@ def container_create(
     image: str, command: str | list | None = None, extra_kwargs: dict | None = None, host: str | None = None
 ) -> dict:
     """
-    Create a container without starting it.
+    Create a container from an image without starting it.
+
+    Use this when you need to configure a container (with `extra_kwargs`) before its first
+    start, or want creation and start as separate observable steps. For the common case of
+    create-then-start-immediately use `container_run` instead — it does both in one call.
+    Start the created container with `container_start`. Common `extra_kwargs` keys: `name`
+    (str), `environment` (list of "KEY=VAL" or dict), `ports` (dict, e.g.
+    `{"80/tcp": 8080}`), `volumes` (dict, e.g. `{"/host/path": {"bind": "/container/path",
+    "mode": "rw"}}`), `labels` (dict).
 
     args:
-        image - The image to use
-        command - The command to run when started
-        extra_kwargs - Additional keyword arguments forwarded to ContainerCollection.create
-    returns: dict - The created container's attrs
+        image - Image to create the container from, e.g. "nginx:alpine"
+        command - Override the image's default command; string or list of strings
+        extra_kwargs - Additional docker-py ContainerCollection.create keyword arguments
+    returns: dict - The created container's attrs (not yet running)
     """
     kwargs = dict(extra_kwargs or {})
     labels = with_provenance(kwargs.get("labels"), "container_create")
@@ -285,7 +293,12 @@ def container_kill(id_or_name: str, signal: str | None = None, host: str | None 
 @tool()
 def container_pause(id_or_name: str, host: str | None = None) -> dict:
     """
-    Pause all processes in a container.
+    Suspend all processes in a container using the kernel freezer cgroup.
+
+    Unlike sending SIGSTOP, the freezer cgroup suspends processes without their being able
+    to observe or intercept the suspension. A paused container keeps its resources (memory,
+    open file descriptors) but consumes no CPU. Resume with `container_unpause` —
+    `container_exec` fails against a paused container until it is unpaused.
 
     args: id_or_name - The container id or name
     returns: dict - The container's attrs after pause

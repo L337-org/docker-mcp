@@ -385,6 +385,7 @@ Connecting this server to an AI agent grants it the same level of access as a lo
 | Official MCP Registry | [io.github.GavinLucas/docker-mcp-server](https://registry.modelcontextprotocol.io/v0.1/servers/io.github.GavinLucas%2Fdocker-mcp-server/versions) |
 | Glama | [docker-mcp-server](https://glama.ai/mcp/servers/GavinLucas/docker-mcp) |
 | mcp.so | [docker-mcp-server](https://mcp.so/server/docker-mcp-server/GavinLucas) |
+| awesome-mcp-servers | [punkpeye/awesome-mcp-servers](https://github.com/punkpeye/awesome-mcp-servers#cloud-platforms) |
 
 ## Privacy Policy
 

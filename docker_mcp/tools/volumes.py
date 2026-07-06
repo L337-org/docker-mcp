@@ -69,10 +69,16 @@ def volume_list(filters: dict | None = None, managed_only: bool = False, host: s
 @tool()
 def volume_prune(filters: dict | None = None, host: str | None = None) -> dict:
     """
-    Remove unused volumes.
+    Remove volumes not referenced by any container, running or stopped.
 
-    args: filters - Filters to apply
-    returns: dict - Information on deleted volumes and reclaimed space
+    A volume used by even one stopped container is not "unused" and survives the prune —
+    remove the container first (or use `container_prune`, then this) to reclaim its
+    volumes. Valid filter keys: `label` (key or key=value), `all` ("true" as a string —
+    without it only anonymous volumes are eligible, matching `docker volume prune`'s
+    default). Use `volume_list` first to see what currently exists.
+
+    args: filters - Narrow which unused volumes to remove; omit to remove all anonymous ones
+    returns: dict - {"VolumesDeleted": [...], "SpaceReclaimed": <bytes>}
     """
     return _get_client(host).volumes.prune(filters=filters)
 
@@ -80,11 +86,16 @@ def volume_prune(filters: dict | None = None, host: str | None = None) -> dict:
 @tool()
 def volume_remove(name: str, force: bool = False, host: str | None = None) -> bool:
     """
-    Remove a volume.
+    Remove a single volume by name.
+
+    Fails if any container, running or stopped, still references the volume — remove or
+    recreate those containers first, or pass `force=True` to remove it anyway (the
+    containers keep their reference but lose the underlying data). For bulk cleanup of
+    volumes with no container references at all, use `volume_prune` instead.
 
     args:
-        name - The volume name
-        force - Force removal
+        name - Volume name to remove
+        force - Remove even if a container still references the volume
     returns: bool - True after removal
     """
     _get_client(host).volumes.get(name).remove(force=force)

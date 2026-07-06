@@ -58,10 +58,15 @@ def network_create(
 @tool()
 def network_inspect(id_or_name: str, host: str | None = None) -> dict:
     """
-    Get a network by id or name.
+    Return the full inspect detail for a single network.
+
+    Includes the connected containers (`Containers`, keyed by container id, with each
+    entry's assigned IP), IPAM config, and driver options. For a quick overview of many
+    networks use `network_list` instead — its default (non-`greedy`) response omits the
+    per-network `Containers` detail for speed.
 
     args: id_or_name - The network id or name
-    returns: dict - The network's attrs
+    returns: dict - Full network inspect attrs (equivalent to `docker network inspect`)
     """
     return _get_client(host).networks.get(id_or_name).attrs
 
@@ -78,11 +83,17 @@ def network_list(
     """
     List networks.
 
+    Valid filter keys: `driver` (driver name), `label` (key or key=value), `type`
+    ("custom" or "builtin"). `names`/`ids` are a separate shorthand for filtering by exact
+    name/id, applied in addition to `filters`. Set `greedy` to fetch each network's attrs
+    individually (adds the connected-containers detail that `network_inspect` returns, at
+    the cost of one extra daemon call per network) — leave it False for a fast summary list.
+
     args:
-        names - Filter by network names
-        ids - Filter by network ids
-        filters - Additional filters
-        greedy - Fetch extended details per network
+        names - Filter by exact network names
+        ids - Filter by exact network ids
+        filters - Additional server-side filters; see description for valid keys
+        greedy - Fetch extended per-network details (including connected containers)
         managed_only - Only return networks created by this MCP server (filters on the
                              docker-mcp-server.managed label); combines with any `filters` given
     returns: list - A list of network attrs dicts
@@ -111,7 +122,12 @@ def network_prune(filters: dict | None = None, host: str | None = None) -> dict:
 @tool()
 def network_remove(id_or_name: str, host: str | None = None) -> bool:
     """
-    Remove a network.
+    Remove a single custom network by id or name.
+
+    Fails if any container is still attached (disconnect with `network_disconnect` or stop
+    the containers first). Built-in networks (`bridge`, `host`, `none`) can never be removed
+    and return an error regardless of attachment state. For bulk cleanup of every unused
+    custom network at once use `network_prune` instead.
 
     args: id_or_name - The network id or name
     returns: bool - True after removal

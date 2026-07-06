@@ -173,12 +173,19 @@ def service_logs(
 @tool()
 def service_scale(id_or_name: str, replicas: int, host: str | None = None) -> bool:
     """
-    Scale a swarm service to a number of replicas.
+    Set the desired replica count for a Replicated-mode swarm service.
+
+    Only applies to services in `Replicated` mode; a `Global` service runs one task per
+    eligible node and has no replica count to set. The swarm scheduler places or removes
+    tasks asynchronously to converge on the new count — this call returns once the update
+    is accepted, not once every task is running. Check progress with `service_ps` or
+    `service_inspect`. For any other spec change (image, env, resources) use
+    `service_update` instead.
 
     args:
         id_or_name - The service id or name
-        replicas - The desired number of replicas
-    returns: bool - True after scaling
+        replicas - The desired number of running task replicas
+    returns: bool - True once the scale request is accepted
     """
     return _get_client(host).services.get(id_or_name).scale(replicas)
 

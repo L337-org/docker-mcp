@@ -94,10 +94,17 @@ def image_build(
 @tool()
 def image_inspect(id_or_name: str, host: str | None = None) -> dict:
     """
-    Get an image by name or id.
+    Return the full inspect detail for a single local image.
 
-    args: id_or_name - The image name or id
-    returns: dict - The image's attrs
+    Includes config (env, entrypoint, exposed ports), size, layer digests (`RootFS.Layers`),
+    and all tags/digests referencing it (`RepoTags`/`RepoDigests`). For a quick overview of
+    many images use `image_list` instead. For the per-layer build history (which command
+    produced each layer) use `image_history`. Only inspects images already present locally —
+    for a remote image's manifest without pulling it use `image_registry_data` or
+    `registry_manifest`.
+
+    args: id_or_name - Image name (with optional tag/digest) or id
+    returns: dict - Full image inspect attrs (equivalent to `docker inspect` on an image)
     """
     return _get_client(host).images.get(id_or_name).attrs
 
