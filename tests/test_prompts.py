@@ -210,6 +210,11 @@ def test_audit_swarm_health_covers_nodes_services_and_tasks():
     assert out.index("node_list") < out.index("service_ps")
     # Read-only audit: it must not invoke node_remove, only mention it as a follow-up.
     assert "do not call it" in out.lower() or "do not change anything" in out.lower()
+    # Points at the wait tools as the follow-up for mid-convergence findings, without becoming a
+    # blocking call itself — the audit stays read-only/instantaneous.
+    assert "node_wait" in out
+    assert "service_wait" in out
+    assert "this audit itself stays read-only" in out.lower()
 
 
 def test_find_latest_image_tag_uses_registry_tools():

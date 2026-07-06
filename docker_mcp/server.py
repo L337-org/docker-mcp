@@ -114,6 +114,7 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "node_list": ToolCategory.READ_ONLY,
     "node_update": ToolCategory.MUTATING,
     "node_remove": ToolCategory.DESTRUCTIVE,
+    "node_wait": ToolCategory.READ_ONLY,
     # services
     "service_create": ToolCategory.MUTATING,
     "service_inspect": ToolCategory.READ_ONLY,

@@ -1,6 +1,8 @@
 from unittest.mock import MagicMock, patch
 
-from docker_mcp.tools.nodes import node_inspect, node_list, node_remove, node_update
+import pytest
+
+from docker_mcp.tools.nodes import node_inspect, node_list, node_remove, node_update, node_wait
 
 
 def _patch():
@@ -59,3 +61,70 @@ def test_remove_node_force():
         mock_client.return_value.nodes.get.return_value = node
         assert node_remove("n1", force=True) is True
     node.remove.assert_called_once_with(force=True)
+
+
+def _reloading_node(*states: dict) -> MagicMock:
+    """A mock node whose attrs advance through `states` on each reload() call."""
+    node = MagicMock()
+    node.attrs = states[0]
+    seq = {"i": 0}
+
+    def _reload():
+        node.attrs = states[min(seq["i"], len(states) - 1)]
+        seq["i"] += 1
+
+    node.reload.side_effect = _reload
+    return node
+
+
+def test_node_wait_ready_returns_when_ready():
+    node = _reloading_node({"Status": {"State": "ready"}, "Spec": {"Availability": "active"}})
+    with _patch() as mock_client:
+        mock_client.return_value.nodes.get.return_value = node
+        result = node_wait("n1", until="ready", timeout_seconds=5)
+    assert result["met"] is True
+    assert result["state"] == "ready"
+    assert result["availability"] == "active"
+    assert result["timed_out"] is False
+    node.reload.assert_called()
+
+
+def test_node_wait_polls_through_down_to_ready():
+    node = _reloading_node(
+        {"Status": {"State": "down"}, "Spec": {"Availability": "active"}},
+        {"Status": {"State": "ready"}, "Spec": {"Availability": "active"}},
+    )
+    with _patch() as mock_client, patch("docker_mcp.tools.nodes.time.sleep") as sleep:
+        mock_client.return_value.nodes.get.return_value = node
+        result = node_wait("n1", until="ready", timeout_seconds=10, poll_interval=0.01)
+    assert result["met"] is True
+    assert node.reload.call_count == 2
+    sleep.assert_called_once()
+
+
+def test_node_wait_times_out():
+    node = _reloading_node({"Status": {"State": "down"}, "Spec": {"Availability": "active"}})
+    with _patch() as mock_client:
+        mock_client.return_value.nodes.get.return_value = node
+        result = node_wait("n1", until="ready", timeout_seconds=0.0)
+    assert result["met"] is False
+    assert result["timed_out"] is True
+    assert result["state"] == "down"
+
+
+def test_node_wait_sleep_bounded_by_timeout():
+    node = _reloading_node({"Status": {"State": "down"}, "Spec": {"Availability": "active"}})
+    with _patch() as mock_client:
+        mock_client.return_value.nodes.get.return_value = node
+        result = node_wait("n1", until="ready", timeout_seconds=0.05, poll_interval=100)
+    assert result["timed_out"] is True
+
+
+def test_node_wait_rejects_negative_timeout():
+    with pytest.raises(ValueError, match="timeout_seconds"):
+        node_wait("n1", timeout_seconds=-1)
+
+
+def test_node_wait_rejects_nonpositive_poll_interval():
+    with pytest.raises(ValueError, match="poll_interval"):
+        node_wait("n1", poll_interval=0)

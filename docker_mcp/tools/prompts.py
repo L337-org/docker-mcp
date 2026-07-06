@@ -438,7 +438,10 @@ def audit_swarm_health() -> str:
         "5. If a node is drained and should be removed, note that `node_remove` (force only if it is "
         "still reachable) is the follow-up — but do not call it as part of this audit.\n"
         "Summarize as a table: nodes (state/availability/role/reachability) and services (desired vs "
-        "running, status). End with a one-paragraph health verdict and the single most urgent fix."
+        "running, status). End with a one-paragraph health verdict and the single most urgent fix. "
+        "If anything looks mid-convergence (a node that just joined, a service you'd expect to still "
+        "be scaling or rolling out), mention `node_wait` / `service_wait` as the way to block on it "
+        "settling, rather than re-running this audit on a timer — but this audit itself stays read-only."
     )
 
 
