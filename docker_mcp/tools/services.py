@@ -1,5 +1,6 @@
 # library of mcp tools relating to swarm service management
 
+import time
 from collections.abc import Iterable
 from typing import Literal, cast
 
@@ -287,3 +288,93 @@ def service_rollback(id_or_name: str, host: str | None = None) -> dict:
         endpoint_spec=previous.get("EndpointSpec"),
         fetch_current_spec=False,
     )
+
+
+def _service_wait_result(
+    id_or_name: str,
+    until: str,
+    *,
+    met: bool,
+    start: float,
+    timed_out: bool = False,
+    running_tasks: int | None = None,
+    desired_tasks: int | None = None,
+    failed_tasks: list | None = None,
+    update_state: str | None = None,
+) -> dict:
+    """Build the unified service_wait result snapshot — the same shape for every `until` mode."""
+    return {
+        "service": id_or_name,
+        "until": until,
+        "met": met,
+        "timed_out": timed_out,
+        "running_tasks": running_tasks,
+        "desired_tasks": desired_tasks,
+        "failed_tasks": failed_tasks if failed_tasks is not None else [],
+        "update_state": update_state,
+        "waited_seconds": round(time.monotonic() - start, 2),
+    }
+
+
+@tool()
+def service_wait(
+    id_or_name: str,
+    until: Literal["running", "update-converged"] = "running",
+    replicas: int | None = None,
+    timeout_seconds: float = 600.0,
+    poll_interval: float = 2.0,
+    host: str | None = None,
+) -> dict:
+    """
+    Block until a swarm service's tasks converge, or a rolling update finishes.
+
+    One contract for both modes: never raises on timeout — the result always carries `met` and
+    `timed_out`. "running" polls task state via the same task-counting logic as
+    `service-tasks://{id_or_name}` (not the unconfirmed daemon `ServiceStatus` field) until running
+    tasks reach the desired count (Replicated mode) or every returned task is running (Global mode,
+    which has no fixed target). "update-converged" polls `UpdateStatus.State` until it reaches a
+    terminal value (`completed` or `rollback_completed`); if the service has never been updated (no
+    `UpdateStatus` at all), returns promptly with `met=false` — there's nothing to converge to, same
+    as `container_wait`'s no-healthcheck case.
+
+    args:
+        id_or_name - The service id or name
+        until - Condition to wait for: "running" (default) or "update-converged"
+        replicas - "running" mode only: override the desired replica count (e.g. right after a
+                   same-turn `service_scale` call, before polling reflects the new target)
+        timeout_seconds - Max seconds to wait before returning with timed_out=true (default 600)
+        poll_interval - Seconds between re-checks (default 2, > 0); capped by the time left so a
+                        large value can't push the total wait past the timeout
+    returns: dict - {"service", "until", "met", "timed_out", "running_tasks", "desired_tasks",
+                     "failed_tasks", "update_state", "waited_seconds"}
+    """
+    if timeout_seconds < 0:
+        raise ValueError(f"timeout_seconds must be >= 0, got {timeout_seconds}.")
+    if poll_interval <= 0:
+        raise ValueError(f"poll_interval must be > 0, got {poll_interval}.")
+    start = time.monotonic()
+    deadline = start + timeout_seconds
+    while True:
+        summary = _read_service_task_summary(id_or_name, host=host)
+        desired = replicas if (replicas is not None and until == "running") else summary["desired_tasks"]
+        common = {
+            "running_tasks": summary["running_tasks"],
+            "desired_tasks": desired,
+            "failed_tasks": summary["failed_tasks"],
+            "update_state": summary["update_state"],
+        }
+        if until == "running":
+            if summary["running_tasks"] >= desired:
+                return _service_wait_result(id_or_name, until, met=True, start=start, **common)
+        else:  # "update-converged"
+            update_state = summary["update_state"]
+            if update_state is None:
+                # No UpdateStatus at all: nothing to converge to, don't poll to the timeout.
+                return _service_wait_result(id_or_name, until, met=False, start=start, **common)
+            if update_state in ("completed", "rollback_completed"):
+                return _service_wait_result(id_or_name, until, met=True, start=start, **common)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return _service_wait_result(id_or_name, until, met=False, start=start, timed_out=True, **common)
+        # Bound the sleep by the time left so a large poll_interval can't block past the timeout.
+        time.sleep(min(poll_interval, remaining))

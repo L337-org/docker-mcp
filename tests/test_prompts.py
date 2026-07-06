@@ -369,6 +369,7 @@ def test_deploy_swarm_stack_validates_swarm_then_deploys_and_verifies():
     # Validate the compose file before mutating, then verify convergence after.
     assert out.index("compose_config") < out.index("stack_deploy")
     assert out.index("stack_deploy") < out.index("stack_services")
+    assert out.index("stack_services") < out.index("service_wait")
     assert "stack_ps" in out
     # Mentions teardown but does not invoke it.
     assert "stack_remove" in out

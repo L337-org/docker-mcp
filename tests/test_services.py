@@ -14,6 +14,7 @@ from docker_mcp.tools.services import (
     service_logs,
     service_ps,
     service_update,
+    service_wait,
 )
 
 
@@ -255,3 +256,128 @@ def test_read_service_task_summary_global_mode_desired_is_task_count():
     assert summary["mode"] == "global"
     assert summary["running_tasks"] == 1
     assert summary["desired_tasks"] == 2  # no fixed target: len(returned tasks)
+
+
+def _task_service(mode_spec, tasks, update_status=None):
+    s = MagicMock()
+    s.attrs = {"Spec": {"Mode": mode_spec}, **({"UpdateStatus": update_status} if update_status else {})}
+    s.tasks.return_value = tasks
+    return s
+
+
+def test_service_wait_running_already_converged_returns_immediately():
+    svc = _task_service(
+        {"Replicated": {"Replicas": 2}},
+        [{"ID": "t1", "Status": {"State": "running"}}, {"ID": "t2", "Status": {"State": "running"}}],
+    )
+    with _patch() as mock_client, patch("docker_mcp.tools.services.time.sleep") as sleep:
+        mock_client.return_value.services.get.return_value = svc
+        result = service_wait("web", until="running", timeout_seconds=5)
+    assert result["met"] is True
+    assert result["timed_out"] is False
+    assert result["running_tasks"] == 2
+    assert result["desired_tasks"] == 2
+    sleep.assert_not_called()
+
+
+def test_service_wait_running_polls_through_scale_up():
+    early = _task_service({"Replicated": {"Replicas": 3}}, [{"ID": "t1", "Status": {"State": "running"}}])
+    converged = _task_service(
+        {"Replicated": {"Replicas": 3}},
+        [{"ID": "t1", "Status": {"State": "running"}}] * 3,
+    )
+    with _patch() as mock_client, patch("docker_mcp.tools.services.time.sleep") as sleep:
+        mock_client.return_value.services.get.side_effect = [early, converged]
+        result = service_wait("web", until="running", timeout_seconds=10, poll_interval=0.01)
+    assert result["met"] is True
+    assert result["running_tasks"] == 3
+    sleep.assert_called_once()
+
+
+def test_service_wait_running_replicas_override():
+    svc = _task_service(
+        {"Replicated": {"Replicas": 1}},  # daemon spec not yet reflecting a same-turn scale
+        [{"ID": "t1", "Status": {"State": "running"}}] * 3,
+    )
+    with _patch() as mock_client:
+        mock_client.return_value.services.get.return_value = svc
+        result = service_wait("web", until="running", replicas=3, timeout_seconds=5)
+    assert result["met"] is True
+    assert result["desired_tasks"] == 3
+
+
+def test_service_wait_running_times_out():
+    svc = _task_service({"Replicated": {"Replicas": 3}}, [{"ID": "t1", "Status": {"State": "running"}}])
+    with _patch() as mock_client:
+        mock_client.return_value.services.get.return_value = svc
+        result = service_wait("web", until="running", timeout_seconds=0.0)
+    assert result["met"] is False
+    assert result["timed_out"] is True
+
+
+def test_service_wait_surfaces_failed_tasks():
+    svc = _task_service(
+        {"Replicated": {"Replicas": 2}},
+        [
+            {"ID": "t1", "Status": {"State": "running"}},
+            {"ID": "t2", "NodeID": "n1", "Status": {"State": "rejected", "Err": "no suitable node"}},
+        ],
+    )
+    with _patch() as mock_client:
+        mock_client.return_value.services.get.return_value = svc
+        result = service_wait("web", until="running", timeout_seconds=0.0)
+    assert result["failed_tasks"] == [
+        {"id": "t2", "node_id": "n1", "state": "rejected", "err": "no suitable node", "message": None}
+    ]
+
+
+def test_service_wait_update_converged_no_update_status_returns_promptly():
+    svc = _task_service({"Replicated": {"Replicas": 1}}, [{"ID": "t1", "Status": {"State": "running"}}])
+    with _patch() as mock_client, patch("docker_mcp.tools.services.time.sleep") as sleep:
+        mock_client.return_value.services.get.return_value = svc
+        result = service_wait("web", until="update-converged", timeout_seconds=5)
+    assert result["met"] is False
+    assert result["timed_out"] is False
+    assert result["update_state"] is None
+    sleep.assert_not_called()  # nothing to converge to; don't poll to the timeout
+
+
+def test_service_wait_update_converged_polls_through_updating():
+    updating = _task_service(
+        {"Replicated": {"Replicas": 1}},
+        [{"ID": "t1", "Status": {"State": "running"}}],
+        update_status={"State": "updating"},
+    )
+    completed = _task_service(
+        {"Replicated": {"Replicas": 1}},
+        [{"ID": "t1", "Status": {"State": "running"}}],
+        update_status={"State": "completed"},
+    )
+    with _patch() as mock_client, patch("docker_mcp.tools.services.time.sleep") as sleep:
+        mock_client.return_value.services.get.side_effect = [updating, completed]
+        result = service_wait("web", until="update-converged", timeout_seconds=10, poll_interval=0.01)
+    assert result["met"] is True
+    assert result["update_state"] == "completed"
+    sleep.assert_called_once()
+
+
+def test_service_wait_update_converged_rollback_completed_is_terminal():
+    svc = _task_service(
+        {"Replicated": {"Replicas": 1}},
+        [{"ID": "t1", "Status": {"State": "running"}}],
+        update_status={"State": "rollback_completed"},
+    )
+    with _patch() as mock_client:
+        mock_client.return_value.services.get.return_value = svc
+        result = service_wait("web", until="update-converged", timeout_seconds=5)
+    assert result["met"] is True
+
+
+def test_service_wait_rejects_negative_timeout():
+    with pytest.raises(ValueError, match="timeout_seconds"):
+        service_wait("web", timeout_seconds=-1)
+
+
+def test_service_wait_rejects_nonpositive_poll_interval():
+    with pytest.raises(ValueError, match="poll_interval"):
+        service_wait("web", poll_interval=0)

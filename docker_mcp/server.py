@@ -124,6 +124,7 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "service_logs": ToolCategory.READ_ONLY,
     "service_scale": ToolCategory.MUTATING,
     "service_rollback": ToolCategory.MUTATING,
+    "service_wait": ToolCategory.READ_ONLY,
     # swarm
     "swarm_init": ToolCategory.MUTATING,
     "swarm_join": ToolCategory.MUTATING,

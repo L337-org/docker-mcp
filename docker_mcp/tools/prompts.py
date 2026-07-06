@@ -878,10 +878,11 @@ def deploy_swarm_stack(stack_name: str, compose_file: str) -> str:
         f'3. Deploy with `stack_deploy(name="{stack_name}", compose_files=["{compose_file}"])`. Add '
         f"`with_registry_auth=True` if any image is private, and `prune=True` only if the user wants "
         f"services removed when they leave the Compose file. Check the returned `returncode`/`stderr`.\n"
-        f'4. Verify convergence: `stack_services(name="{stack_name}")` and confirm each service\'s '
-        f"running replicas match its desired count. For any under-replicated service, "
-        f'`stack_ps(name="{stack_name}", filters=["desired-state=running"])` and look for tasks '
-        f"stuck in `rejected`/`failed` — pull the task error.\n"
+        f'4. Verify convergence: call `stack_services(name="{stack_name}")` to get each service\'s full '
+        f'name (`{stack_name}_<service>`), then `service_wait(id_or_name=<full-name>, until="running")` '
+        f"per service to block until it converges instead of polling by hand. For any that comes back "
+        f"`met=False`/`timed_out=True`, its `failed_tasks` already lists the stuck task ids/errors — or "
+        f'call `stack_ps(name="{stack_name}", filters=["desired-state=running"])` for the same view.\n'
         f"5. Re-running `stack_deploy` with the same name updates the stack in place, so iterate on the "
         f"Compose file and redeploy rather than removing first. Mention `stack_remove` as the teardown, but "
         f"do not call it.\n"

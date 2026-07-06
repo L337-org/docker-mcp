@@ -176,6 +176,12 @@ jobs:
           docker buildx version
           docker scout version 2>/dev/null || echo "scout not installed; scout integration tests will skip"
 
+      - name: Initialize a single-node swarm
+        # Needed for service_wait / node_wait integration tests (skip_if_no_swarm), which
+        # otherwise skip cleanly on a non-swarm daemon. No teardown needed — the runner is
+        # ephemeral and torn down after the job.
+        run: docker swarm init
+
       - name: Optional Docker Hub login to dodge anonymous rate limits
         # Opt-in: set DOCKERHUB_USER / DOCKERHUB_TOKEN as repo secrets to authenticate.
         # Without them, the job runs anonymous and the existing skip-on-pull-failure
