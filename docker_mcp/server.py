@@ -206,6 +206,8 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "hub_tags": ToolCategory.READ_ONLY,
     "hub_repo_info": ToolCategory.READ_ONLY,
     "hub_rate_limit": ToolCategory.READ_ONLY,
+    # docs (no domain — always registered, see _NO_DOMAIN_TOOLS)
+    "docs_lookup": ToolCategory.READ_ONLY,
 }
 
 # Destructive tools whose effect is idempotent — re-running has no additional effect (the targets
@@ -249,7 +251,7 @@ class ToolRecord:
     """What the `@tool()` decorator saw for one tool: its taxonomy and whether it actually registered."""
 
     name: str
-    domain: str
+    domain: str | None
     category: ToolCategory
     registered: bool
 
@@ -290,8 +292,20 @@ def is_domain_disabled(domain: str | None) -> bool:
     return domain is not None and domain in DISABLED_DOMAINS
 
 
-def _domain_for(func: Callable) -> str:
-    """Derive a tool's domain from its defining module: docker_mcp.tools.containers -> 'containers'."""
+# Tools with no domain at all — never gated by DOCKER_MCP_SERVER_DISABLE, since their value doesn't
+# correspond to a specific Docker feature area being enabled/disabled. Mirrors `@prompt(domain=None)`'s
+# identical "cross-cutting, always available" semantics for prompts (see `docs_lookup` in resources.py).
+_NO_DOMAIN_TOOLS: frozenset[str] = frozenset({"docs_lookup"})
+
+
+def _domain_for(func: Callable) -> str | None:
+    """Derive a tool's domain from its defining module: docker_mcp.tools.containers -> 'containers'.
+
+    Returns None for `_NO_DOMAIN_TOOLS` members, which then never get gated by
+    DOCKER_MCP_SERVER_DISABLE (see `_domain_enabled`'s call sites).
+    """
+    if func.__name__ in _NO_DOMAIN_TOOLS:
+        return None
     return (func.__module__ or "").rsplit(".", 1)[-1]
 
 
@@ -315,8 +329,10 @@ def tool_catalog() -> dict[str, Any]:
     switches registered. Drives the `docker-mcp://tool-catalog` resource so a client can see the blast
     radius of each tool — and which whole domains a server has disabled — before calling anything.
     """
-    records = sorted(_tool_registry.values(), key=lambda r: (r.domain, r.name))
-    domains = sorted({r.domain for r in records})
+    # `r.domain or ""` only affects sort order — the stored/reported domain stays None for the
+    # handful of `_NO_DOMAIN_TOOLS` (e.g. docs_lookup), sorting before every named domain.
+    records = sorted(_tool_registry.values(), key=lambda r: (r.domain or "", r.name))
+    domains = sorted({r.domain for r in records}, key=lambda d: d or "")
     domain_summary = [
         {
             "domain": d,
@@ -436,7 +452,8 @@ def build_instructions(registered_domains: set[str] | None = None) -> str:
         "",
         "The registered surface changes with env switches; read the `docker-mcp://tool-catalog` resource for "
         "the live tool/domain/category list and which switches are active. Docs are under "
-        "`docker-docs://contents`. For multi-step jobs (deploy, troubleshoot, prune, audit, migrate, "
+        "`docker-docs://contents`, or call `docs_lookup` if your client can't read resources. For "
+        "multi-step jobs (deploy, troubleshoot, prune, audit, migrate, "
         "multi-arch build, volume backup/restore) prefer the matching MCP prompt.",
     ]
     return "\n".join(lines)
@@ -672,8 +689,8 @@ def tool(**kwargs: Any) -> Callable[[Callable], Callable]:
         name = func.__name__
         domain = _domain_for(func)
         category = TOOL_CATEGORIES.get(name, ToolCategory.MUTATING)
-        registered = _should_register(category, readonly=READONLY, no_destructive=NO_DESTRUCTIVE) and _domain_enabled(
-            domain, DISABLED_DOMAINS
+        registered = _should_register(category, readonly=READONLY, no_destructive=NO_DESTRUCTIVE) and (
+            domain is None or _domain_enabled(domain, DISABLED_DOMAINS)
         )
         _seen_tool_names.add(name)
         _tool_registry[name] = ToolRecord(name=name, domain=domain, category=category, registered=registered)

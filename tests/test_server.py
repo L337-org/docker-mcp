@@ -11,6 +11,7 @@ import docker_mcp._hosts as _hosts
 from docker_mcp._hosts import parse_registry
 from docker_mcp.server import (
     TOOL_CATEGORIES,
+    _NO_DOMAIN_TOOLS,
     _SCHEMA_NAME_MAPS,
     ToolCategory,
     _annotations_for,
@@ -339,12 +340,20 @@ def test_domain_enabled_respects_disabled_set():
 
 
 def test_every_registered_tool_has_a_domain():
-    # The registry records a domain for every tool, derived from its defining module.
+    # The registry records a domain for every tool, derived from its defining module — except the
+    # handful of intentionally domain-less _NO_DOMAIN_TOOLS (e.g. docs_lookup), which never gate on
+    # DOCKER_MCP_SERVER_DISABLE at all.
     assert set(_tool_registry) == set(TOOL_CATEGORIES)
-    assert all(rec.domain for rec in _tool_registry.values())
+    assert all(rec.domain or rec.name in _NO_DOMAIN_TOOLS for rec in _tool_registry.values())
     # Sanity-check a couple of known module -> domain mappings.
     assert _tool_registry["container_list"].domain == "containers"
     assert _tool_registry["compose_up"].domain == "compose"
+
+
+def test_no_domain_tools_have_no_domain_and_always_register():
+    for name in _NO_DOMAIN_TOOLS:
+        assert _tool_registry[name].domain is None
+        assert _tool_registry[name].registered is True
 
 
 # ---------- tool catalog ----------
@@ -356,7 +365,7 @@ def test_tool_catalog_lists_every_tool_with_taxonomy():
     assert names == set(TOOL_CATEGORIES)
     for entry in catalog["tools"]:
         assert entry["category"] == TOOL_CATEGORIES[entry["name"]].value
-        assert entry["domain"]
+        assert entry["domain"] or entry["name"] in _NO_DOMAIN_TOOLS
         # No switches set in the test environment, so every tool registered.
         assert entry["registered"] is True
 
@@ -445,6 +454,14 @@ def test_disable_env_drops_whole_domains_end_to_end():
     assert names == set(TOOL_CATEGORIES) - dropped
 
 
+def test_disable_env_cannot_drop_a_no_domain_tool_end_to_end():
+    # docs_lookup has no domain at all — not even an (obviously wrong) attempt to disable it by
+    # its own name, or every real domain at once, removes it.
+    assert "docs_lookup" in _registered_names(["DOCKER_MCP_SERVER_DISABLE=docs"])
+    all_domains = ",".join(sorted({rec.domain for rec in _tool_registry.values() if rec.domain is not None}))
+    assert "docs_lookup" in _registered_names([f"DOCKER_MCP_SERVER_DISABLE={all_domains}"])
+
+
 def test_disable_env_normalizes_whitespace_and_case_end_to_end():
     names = _registered_names(["DOCKER_MCP_SERVER_DISABLE= Compose , SCOUT "])
     assert names == set(TOOL_CATEGORIES) - _names_by_domain("compose", "scout")
@@ -488,8 +505,9 @@ def test_instructions_drop_cli_and_swarm_caveats_when_those_domains_are_absent()
 
 def test_instructions_default_to_the_live_registered_surface():
     # No argument -> reads _tool_registry; with everything registered, every domain blurb appears.
+    # _NO_DOMAIN_TOOLS (domain=None) are excluded — they never get a per-domain router line.
     text = build_instructions()
-    present = {rec.domain for rec in _tool_registry.values() if rec.registered}
+    present = {rec.domain for rec in _tool_registry.values() if rec.registered and rec.domain is not None}
     for domain in present:
         assert f"- {domain} —" in text
 
@@ -544,7 +562,8 @@ def test_router_domain_lines_track_registered_domains_under_every_switch():
         ["DOCKER_MCP_SERVER_DISABLE=swarm,scout"],
         ["DOCKER_MCP_SERVER_READONLY=1", "DOCKER_MCP_SERVER_DISABLE=registry"],
     ):
-        expected = {_tool_registry[name].domain for name in _registered_names(env)}
+        # _NO_DOMAIN_TOOLS (domain=None) are excluded — they never get a per-domain router line.
+        expected = {_tool_registry[name].domain for name in _registered_names(env)} - {None}
         assert _router_domain_lines(_live_instructions(env)) == expected, env
 
 

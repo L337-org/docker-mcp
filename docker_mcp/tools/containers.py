@@ -80,7 +80,8 @@ def container_run(
         stdin_open - Keep STDIN open
         mem_limit - Memory limit
         cpu_count - Number of CPUs
-        extra_kwargs - Additional keyword arguments forwarded to ContainerCollection.run
+        extra_kwargs - Additional keyword arguments forwarded to ContainerCollection.run (call
+                       `docs_lookup(section="containers")` for the full accepted set)
     returns: dict | str - Container attrs when detach=True, otherwise stdout/stderr as a string
     """
     kwargs: dict = {
@@ -134,7 +135,8 @@ def container_create(
     Start the created container with `container_start`. Common `extra_kwargs` keys: `name`
     (str), `environment` (list of "KEY=VAL" or dict), `ports` (dict, e.g.
     `{"80/tcp": 8080}`), `volumes` (dict, e.g. `{"/host/path": {"bind": "/container/path",
-    "mode": "rw"}}`), `labels` (dict).
+    "mode": "rw"}}`), `labels` (dict). For anything else docker-py's `ContainerCollection.create`
+    accepts, call `docs_lookup(section="containers")` rather than guessing a key name.
 
     args:
         image - Image to create the container from, e.g. "nginx:alpine"

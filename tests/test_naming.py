@@ -32,6 +32,7 @@ _APPROVED_PREFIXES = (
     "hub",
     "system",
     "host",
+    "docs",
 )
 
 _NAME_PATTERN = re.compile(rf"^({'|'.join(_APPROVED_PREFIXES)})_[a-z0-9_]+$")

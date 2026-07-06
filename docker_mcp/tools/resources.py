@@ -5,7 +5,7 @@ import json
 import httpx
 
 import docker_mcp._hosts as _hosts
-from docker_mcp.server import is_domain_disabled, mcp, register_resource_domains, tool_catalog
+from docker_mcp.server import is_domain_disabled, mcp, register_resource_domains, tool, tool_catalog
 from docker_mcp.tools._utils import package_version
 from docker_mcp.tools.system import _get_client, host_list
 from docker_mcp.tools.containers import _read_log_tail, _read_stats_summary
@@ -16,6 +16,32 @@ DOCKER_DOCS_BASE_URL = "https://docker-py.readthedocs.io/en/stable"
 # Bounded wait for a docs fetch — a stalled readthedocs connection must not hang the resource read.
 _DOCS_TIMEOUT = 30.0
 _USER_AGENT = f"docker-mcp-server/{package_version()}"
+
+# Cap on the (decoded) bytes we'll buffer from a single docs fetch. These are fixed, known-good
+# doc URLs (not agent-pointed like registry.py's targets), but a compromised/redesigned upstream
+# page could still serve something huge, and docs_lookup makes this path directly tool-callable —
+# bound it the same way registry.py bounds registry responses (mirrors `_read_capped_response`).
+_MAX_DOCS_RESPONSE_BYTES = 16 * 1024 * 1024  # 16 MiB
+
+
+def _read_capped_docs_response(url: str) -> bytes:
+    """Stream a docs page bounded by `_MAX_DOCS_RESPONSE_BYTES`, raising if it's exceeded."""
+    with httpx.stream(
+        "GET", url, timeout=_DOCS_TIMEOUT, follow_redirects=True, headers={"User-Agent": _USER_AGENT}
+    ) as resp:
+        resp.raise_for_status()
+        chunks: list[bytes] = []
+        total = 0
+        for chunk in resp.iter_bytes():
+            total += len(chunk)
+            if total > _MAX_DOCS_RESPONSE_BYTES:
+                raise RuntimeError(
+                    f"Docs response from {url} exceeded the {_MAX_DOCS_RESPONSE_BYTES}-byte limit; "
+                    f"refusing to buffer a response this large."
+                )
+            chunks.append(chunk)
+        return b"".join(chunks)
+
 
 # Sections served from the docker-py SDK documentation. Each maps to
 # DOCKER_DOCS_BASE_URL/<section>.html for backwards compatibility.
@@ -516,6 +542,30 @@ def get_docs_section(section: str) -> str:
             f"DOCKER_MCP_SERVER_DISABLE. Read docker-docs://contents for the sections this server exposes."
         )
     url = _section_url(section)
-    resp = httpx.get(url, timeout=_DOCS_TIMEOUT, follow_redirects=True, headers={"User-Agent": _USER_AGENT})
-    resp.raise_for_status()
-    return resp.content.decode("utf-8", errors="replace")
+    return _read_capped_docs_response(url).decode("utf-8", errors="replace")
+
+
+@tool()
+def docs_lookup(section: str | None = None) -> str:
+    """
+    Look up Docker SDK/CLI/registry reference documentation by section.
+
+    A tool-callable mirror of the docker-docs:// resources, for clients that can't read MCP
+    resources (e.g. Claude Desktop, Cursor). Always registered regardless of
+    DOCKER_MCP_SERVER_DISABLE — looking something up costs nothing and isn't tied to any single
+    Docker feature area — but an individual section still refuses if the domain it documents is
+    disabled, matching the equivalent `docker-docs://{section}` resource exactly.
+
+    Omit `section` to list every available section with its source URL (same as
+    `docker-docs://contents`); pass a `section` name to fetch that page's content (same as
+    `docker-docs://{section}`). Most useful before constructing an `extra_kwargs`-style passthrough
+    dict for a tool like `container_run`/`container_create`/`service_create` (their docstrings only
+    list common keys, not every key docker-py accepts), or before writing Compose/Dockerfile/buildx
+    bake-file syntax, which no tool generates.
+
+    args: section - Section name (from a no-argument call's index); omit to list all sections instead
+    returns: str - JSON section index (no `section`) or that section's raw HTML/Markdown content
+    """
+    if section is None:
+        return list_docs_sections()
+    return get_docs_section(section)

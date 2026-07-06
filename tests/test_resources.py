@@ -15,6 +15,8 @@ from docker_mcp.tools.resources import (
     DOCKER_DOCS_BASE_URL,
     EXTERNAL_SECTIONS,
     SDK_SECTIONS,
+    _MAX_DOCS_RESPONSE_BYTES,
+    docs_lookup,
     get_container_logs_resource,
     get_container_stats_resource,
     get_docs_section,
@@ -55,39 +57,53 @@ def test_list_docs_sections_returns_json_with_sdk_and_external_sections():
 
 
 def _docs_response(body: bytes) -> MagicMock:
+    """Build a mock `httpx.stream(...)` context manager yielding `body` as a single chunk."""
     response = MagicMock()
-    response.content = body
     response.raise_for_status.return_value = None
-    return response
+    response.iter_bytes.return_value = [body] if body else []
+    ctx = MagicMock()
+    ctx.__enter__.return_value = response
+    ctx.__exit__.return_value = None
+    return ctx
 
 
 def test_get_docs_section_fetches_sdk_section_at_base_url():
     with patch(
-        "docker_mcp.tools.resources.httpx.get", return_value=_docs_response(b"<html>containers</html>")
-    ) as mock_get:
+        "docker_mcp.tools.resources.httpx.stream", return_value=_docs_response(b"<html>containers</html>")
+    ) as mock_stream:
         result = get_docs_section("containers")
     assert result == "<html>containers</html>"
-    args, kwargs = mock_get.call_args
-    assert args[0] == f"{DOCKER_DOCS_BASE_URL}/containers.html"
+    args, kwargs = mock_stream.call_args
+    assert args == ("GET", f"{DOCKER_DOCS_BASE_URL}/containers.html")
     # A bounded timeout is mandatory — a stalled fetch must not hang the resource read.
     assert kwargs["timeout"] == 30.0
 
 
 def test_get_docs_section_fetches_external_section_at_absolute_url():
     with patch(
-        "docker_mcp.tools.resources.httpx.get", return_value=_docs_response(b"<html>compose</html>")
-    ) as mock_get:
+        "docker_mcp.tools.resources.httpx.stream", return_value=_docs_response(b"<html>compose</html>")
+    ) as mock_stream:
         result = get_docs_section("compose")
     assert result == "<html>compose</html>"
-    assert mock_get.call_args.args[0] == EXTERNAL_SECTIONS["compose"]
+    assert mock_stream.call_args.args == ("GET", EXTERNAL_SECTIONS["compose"])
 
 
 def test_get_docs_section_raises_for_status():
     response = MagicMock()
-    response.content = b""
+    response.iter_bytes.return_value = []
     response.raise_for_status.side_effect = httpx.HTTPStatusError("404", request=MagicMock(), response=MagicMock())
-    with patch("docker_mcp.tools.resources.httpx.get", return_value=response):
+    ctx = MagicMock()
+    ctx.__enter__.return_value = response
+    ctx.__exit__.return_value = None
+    with patch("docker_mcp.tools.resources.httpx.stream", return_value=ctx):
         with pytest.raises(httpx.HTTPStatusError):
+            get_docs_section("containers")
+
+
+def test_get_docs_section_rejects_a_response_over_the_byte_cap():
+    ctx = _docs_response(b"x" * (_MAX_DOCS_RESPONSE_BYTES + 1))
+    with patch("docker_mcp.tools.resources.httpx.stream", return_value=ctx):
+        with pytest.raises(RuntimeError, match="exceeded the .*-byte limit"):
             get_docs_section("containers")
 
 
@@ -142,10 +158,33 @@ def test_get_docs_section_refuses_a_disabled_section(monkeypatch):
 def test_get_docs_section_still_serves_enabled_sections_when_another_is_disabled(monkeypatch):
     monkeypatch.setattr("docker_mcp.server.DISABLED_DOMAINS", frozenset({"scout"}))
     with patch(
-        "docker_mcp.tools.resources.httpx.get", return_value=_docs_response(b"<html>containers</html>")
-    ) as mock_get:
+        "docker_mcp.tools.resources.httpx.stream", return_value=_docs_response(b"<html>containers</html>")
+    ) as mock_stream:
         assert get_docs_section("containers") == "<html>containers</html>"
-    assert mock_get.call_args.args[0] == f"{DOCKER_DOCS_BASE_URL}/containers.html"
+    assert mock_stream.call_args.args == ("GET", f"{DOCKER_DOCS_BASE_URL}/containers.html")
+
+
+# ---------- docs_lookup: tool-callable mirror of the docker-docs:// resources ----------
+
+
+def test_docs_lookup_with_no_section_mirrors_list_docs_sections():
+    assert docs_lookup() == list_docs_sections()
+
+
+def test_docs_lookup_with_section_mirrors_get_docs_section():
+    with patch(
+        "docker_mcp.tools.resources.httpx.stream", return_value=_docs_response(b"<html>containers</html>")
+    ) as mock_stream:
+        assert docs_lookup("containers") == "<html>containers</html>"
+    assert mock_stream.call_args.args == ("GET", f"{DOCKER_DOCS_BASE_URL}/containers.html")
+
+
+def test_docs_lookup_still_refuses_a_disabled_section(monkeypatch):
+    # The tool itself is un-disablable, but an individual section still respects its own domain's
+    # DOCKER_MCP_SERVER_DISABLE state, exactly like the docker-docs://{section} resource.
+    monkeypatch.setattr("docker_mcp.server.DISABLED_DOMAINS", frozenset({"scout"}))
+    with pytest.raises(ValueError, match="disabled via DOCKER_MCP_SERVER_DISABLE"):
+        docs_lookup("scout")
 
 
 # ---------- container observability resources (docker://containers, docker-logs://, docker-stats://) ----------

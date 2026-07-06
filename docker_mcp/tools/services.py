@@ -86,7 +86,9 @@ def service_create(
     {"Global": {}}), `networks` (list of network names/ids), `endpoint_spec`
     ({"Ports": [{"PublishedPort": 80, "TargetPort": 8080}]}), `labels` (dict),
     `restart_policy` ({"Condition": "on-failure", "MaxAttempts": 3}),
-    `resources` ({"Limits": {"NanoCPUs": 500000000, "MemoryBytes": 134217728}}).
+    `resources` ({"Limits": {"NanoCPUs": 500000000, "MemoryBytes": 134217728}}). For anything else
+    docker-py's `ServiceCollection.create` accepts, call `docs_lookup(section="services")` rather
+    than guessing a key name.
 
     args:
         image - Image to run service tasks from (e.g. "nginx:alpine")

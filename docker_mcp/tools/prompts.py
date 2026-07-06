@@ -32,7 +32,8 @@ def lookup_docker_docs(section: str) -> str:
     returns: str - A prompt instructing the agent to read the docker-docs resource and summarize the API
     """
     return (
-        f"Read the MCP resource `docker-docs://{section}` and summarize the public methods, their signatures, "
+        f"Read the MCP resource `docker-docs://{section}` (or, if your client can't read MCP resources, call "
+        f'`docs_lookup(section="{section}")` instead) and summarize the public methods, their signatures, '
         f"and return types. Highlight anything that is easy to misuse (parameters that look similar, surprising "
         f"defaults, methods that return iterators vs. lists). Do not assume any method exists unless it is "
         f"present in that resource."
@@ -49,7 +50,8 @@ def verify_docker_method(method: str, section: str) -> str:
     returns: str - A prompt instructing the agent to confirm the method's signature from the docs
     """
     return (
-        f"Read the MCP resource `docker-docs://{section}` and confirm whether `{method}` exists. "
+        f"Read the MCP resource `docker-docs://{section}` (or, if your client can't read MCP resources, call "
+        f'`docs_lookup(section="{section}")` instead) and confirm whether `{method}` exists. '
         f"If it does, quote its full signature, list each parameter with its type, and describe the return value. "
         f"If it does not exist, say so explicitly and suggest the closest documented alternative."
     )
@@ -678,8 +680,9 @@ def review_dockerfile(dockerfile_path: str) -> str:
     return (
         f"Review the Dockerfile at `{dockerfile_path}`. First read the authoritative docs so the review "
         f"reflects current guidance, not memory: read the MCP resources `docker-docs://dockerfile` "
-        f"(instruction reference) and `docker-docs://build-best-practices`. Then read the Dockerfile and "
-        f"check for:\n"
+        f"(instruction reference) and `docker-docs://build-best-practices` — or, if your client can't read "
+        f'MCP resources, call `docs_lookup(section="dockerfile")` / `docs_lookup(section="build-best-practices")` '
+        f"instead. Then read the Dockerfile and check for:\n"
         f"1. Unpinned/floating base images (`FROM image:latest` or no tag) — recommend a specific tag or "
         f"a digest pin for reproducibility.\n"
         f"2. No `USER` directive (the image runs as root) — recommend creating and switching to a "
@@ -710,6 +713,7 @@ def audit_container_security() -> str:
     return (
         "Audit the security posture of running containers. This is read-only — do not change anything. "
         "For background on why these settings matter, the MCP resource `docker-docs://engine-security` "
+        '(or `docs_lookup(section="engine-security")` if your client can\'t read MCP resources) '
         "covers the daemon's trust model.\n"
         "1. Call `container_list` (running only) to get the set to audit.\n"
         "2. For each container, call `container_inspect` and inspect its `HostConfig` / `Config`, flagging:\n"

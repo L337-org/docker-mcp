@@ -37,12 +37,15 @@ def test_lookup_docker_docs_references_resource_uri():
     out = lookup_docker_docs("containers")
     assert "docker-docs://containers" in out
     assert "summarize" in out.lower()
+    # Falls back to the tool-callable mirror for clients that can't read MCP resources.
+    assert 'docs_lookup(section="containers")' in out
 
 
 def test_verify_docker_method_includes_method_and_section():
     out = verify_docker_method("containers.run", "containers")
     assert "containers.run" in out
     assert "docker-docs://containers" in out
+    assert 'docs_lookup(section="containers")' in out
 
 
 def test_deploy_container_lists_steps_in_order():
@@ -309,6 +312,9 @@ def test_review_dockerfile_reads_docs_and_covers_security():
     # Must point the agent at the authoritative references rather than relying on memory.
     assert "docker-docs://dockerfile" in out
     assert "docker-docs://build-best-practices" in out
+    # Falls back to the tool-callable mirror for clients that can't read MCP resources.
+    assert 'docs_lookup(section="dockerfile")' in out
+    assert 'docs_lookup(section="build-best-practices")' in out
     # Core checks.
     for needle in ("USER", "HEALTHCHECK", "secret", "latest"):
         assert needle.lower() in out.lower()
@@ -318,6 +324,7 @@ def test_audit_container_security_inspects_hostconfig_risks():
     out = audit_container_security()
     assert "container_list" in out
     assert "container_inspect" in out
+    assert 'docs_lookup(section="engine-security")' in out
     for risk in ("Privileged", "docker.sock", "host", "CapAdd"):
         assert risk in out
     # Read-only audit.
