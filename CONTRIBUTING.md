@@ -1,6 +1,6 @@
 # Contributing to docker-mcp-server
 
-Contributions are welcome. The project values a tight mapping between the Docker SDK's public surface and the MCP tools we expose.
+Contributions are welcome. The project values a tight mapping between the Docker SDK's public surface and the MCP tools we expose. By participating, you're expected to uphold the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## Before you start
 

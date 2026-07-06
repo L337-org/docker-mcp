@@ -28,6 +28,7 @@ DOCKERHUB.md
 CLAUDE.md
 SECURITY.md
 CONTRIBUTING.md
+CODE_OF_CONDUCT.md
 
 # Caches and VCS.
 __pycache__/
