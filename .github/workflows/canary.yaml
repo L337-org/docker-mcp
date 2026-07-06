@@ -42,6 +42,11 @@ jobs:
 
       - name: Set up uv
         uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          # Pinned (matching the Dockerfile's uv image tag) so this step never needs the
+          # live "resolve latest" fetch to raw.githubusercontent.com — that network call
+          # failed transiently on 2026-07-06 and blocked an unrelated PR (#130).
+          version: "0.11.21"
 
       - name: Resolve runtime deps as wheels-only for each platform
         # --only-binary :all: makes resolution fail if any dependency lacks a wheel for the
@@ -103,6 +108,9 @@ jobs:
           # repo — so disable the repo-keyed cache and the empty-workdir warning it triggers.
           enable-cache: false
           ignore-empty-workdir: true
+          # Pinned (matching the Dockerfile's uv image tag) so this step never needs the
+          # live "resolve latest" fetch to raw.githubusercontent.com.
+          version: "0.11.21"
 
       - name: Import smoke (full tool-registration path, no daemon needed)
         run: uv run --no-project --python 3.14 --with docker-mcp-server python -c "import docker_mcp"
