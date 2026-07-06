@@ -439,6 +439,7 @@ def registry_tag_wait(
     tag: str,
     username: str | None = None,
     password: str | None = None,
+    limit: int = 1000,
     timeout_seconds: float = 600.0,
     poll_interval: float = 5.0,
 ) -> dict:
@@ -451,15 +452,16 @@ def registry_tag_wait(
     wait tool, this has no `host` argument — registry tools talk HTTPS directly to the registry, not
     a Docker daemon.
 
-    Caveat: `registry_tags` paginates up to 50 pages (or `limit` tags, default 1000); if `tag` would
-    only appear beyond that window it is never found, even once it exists. Raise `limit` if you expect
-    a very large tag list.
+    Caveat: `registry_tags` paginates up to 50 pages (or `limit` tags, whichever comes first); if
+    `tag` would only appear beyond that window it is never found, even once it exists. Raise `limit`
+    if you expect a very large tag list.
 
     args:
         repository - Image/repository ref, e.g. "alpine", "ghcr.io/org/repo"; any `:tag`/`@digest` is stripped
         tag - The exact tag name to wait for
         username - Optional registry username (overrides DOCKER_MCP_SERVER_REGISTRY_USERNAME)
         password - Optional registry password/token (overrides DOCKER_MCP_SERVER_REGISTRY_PASSWORD)
+        limit - Max tags to scan per poll (default 1000, >= 1); forwarded to `registry_tags`
         timeout_seconds - Max seconds to wait before returning with timed_out=true (default 600)
         poll_interval - Seconds between re-checks (default 5, > 0); capped by the time left so a
                         large value can't push the total wait past the timeout
@@ -472,7 +474,7 @@ def registry_tag_wait(
     start = time.monotonic()
     deadline = start + timeout_seconds
     while True:
-        result = registry_tags(repository, username=username, password=password)
+        result = registry_tags(repository, username=username, password=password, limit=limit)
         if tag in result["tags"]:
             return {
                 "repository": repository,

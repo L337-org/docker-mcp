@@ -951,6 +951,13 @@ def test_registry_tag_wait_already_present_returns_immediately():
     sleep.assert_not_called()
 
 
+def test_registry_tag_wait_forwards_limit_to_registry_tags():
+    with patch("docker_mcp.tools.registry.registry_tags") as mock_tags:
+        mock_tags.return_value = {"tags": ["1.0"]}
+        registry_tag_wait("alpine", "9.9", limit=5, timeout_seconds=0.0)
+    mock_tags.assert_called_once_with("alpine", username=None, password=None, limit=5)
+
+
 def test_registry_tag_wait_polls_until_tag_appears():
     responses = iter(
         [

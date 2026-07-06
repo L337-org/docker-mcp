@@ -358,7 +358,6 @@ def list_service_resources() -> str:
     """
     Index every swarm service with the resource URIs for reading its logs and task/rollout status.
 
-    args: (none)
     returns: str - JSON object {"services": [{id, name, image, mode, desired_replicas, logs, tasks}, ...]}
     """
     return _render_services_index(None)
@@ -481,7 +480,6 @@ def list_node_resources() -> str:
     Index only — no per-node child resource. Watch this to notice a node flapping between
     ready/down, or an unexpected availability/role change, without re-querying `node_list`.
 
-    args: (none)
     returns: str - JSON object {"nodes": [{id, hostname, state, availability, role, manager_reachability}, ...]}
     """
     return _render_nodes_index(None)
