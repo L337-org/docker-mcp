@@ -3,6 +3,7 @@
 import os
 import sys
 import threading
+import urllib.parse
 from pathlib import Path
 
 import docker
@@ -20,6 +21,7 @@ from docker_mcp._hosts import (
     resolve_auto,
 )
 from docker_mcp.server import tool
+from docker_mcp.tools._ssh_proxy import parse_ssh_url
 from docker_mcp.tools._utils import classify_host_kernel, close_stream_quietly, env_flag, in_container
 
 # One lazily-built docker-py client per configured host label (the pool). FastMCP runs sync tools
@@ -114,13 +116,52 @@ def _close_client_quietly(client: docker.DockerClient) -> None:
         pass
 
 
+def _ensure_ssh_port(url: str) -> str:
+    """
+    Work around a docker-py bug for an `ssh://` URL with no explicit port: `docker.utils.parse_host()`
+    hardcodes port 22 into the URL *before* `SSHHTTPAdapter._create_paramiko_client` ever runs, so that
+    adapter's own `~/.ssh/config` `Port` fallback (which only fires while the port is still unset) never
+    triggers — a non-22 `Port` in `~/.ssh/config` is silently ignored. We splice in the configured port
+    ourselves first, reusing the exact `~/.ssh/config` lookup `_ssh_proxy.parse_ssh_url` already does for
+    the CLI-backed tools, so both tool families honor a non-default SSH port the same way.
+
+    args: url: str - a DOCKER_HOST/host URL; only `ssh://` URLs with no explicit port are affected
+    returns: str - `url` unchanged, or with the `~/.ssh/config` port spliced into the netloc
+    """
+    if not url.startswith("ssh://"):
+        return url
+    parsed = urllib.parse.urlparse(url)
+    try:
+        has_port = parsed.port is not None
+    except ValueError:
+        # A malformed port (e.g. "ssh://host:abc") — leave url untouched so docker-py's own
+        # validation raises its clearer error instead of this helper failing first.
+        return url
+    if has_port:
+        return url
+    try:
+        # parse_ssh_url raises ValueError on a missing hostname (e.g. "ssh://" or "ssh://@") or a
+        # non-integer `Port` in ~/.ssh/config — leave url untouched in either case rather than
+        # raising a bare ValueError here instead of the connection error docker-py would produce.
+        target = parse_ssh_url(url)
+    except ValueError:
+        return url
+    if target.port is None:
+        return url
+    return urllib.parse.urlunparse(parsed._replace(netloc=f"{parsed.netloc}:{target.port}"))
+
+
 def _build_default_client() -> docker.DockerClient:
     """Client for DOCKER_HOST when set (via from_env, honoring its TLS env), else the resolved endpoint.
 
     auto/local resolution lives in docker_mcp._hosts now (the pure registry layer); resolve_auto() is
     the relocated _resolve_default_base_url().
     """
-    if os.environ.get("DOCKER_HOST"):
+    docker_host = os.environ.get("DOCKER_HOST")
+    if docker_host:
+        fixed = _ensure_ssh_port(docker_host)
+        if fixed != docker_host:
+            return docker.from_env(environment={**os.environ, "DOCKER_HOST": fixed})
         return docker.from_env()
     base_url = resolve_auto()
     return docker.DockerClient(base_url=base_url) if base_url else docker.from_env()
@@ -164,9 +205,8 @@ def _build_client(host: Host) -> docker.DockerClient:
     tls = _tls_config_for(host)
     if host.url is None:
         return docker.DockerClient(tls=tls) if tls is not None else docker.DockerClient()
-    return (
-        docker.DockerClient(base_url=host.url, tls=tls) if tls is not None else docker.DockerClient(base_url=host.url)
-    )
+    url = _ensure_ssh_port(host.url)
+    return docker.DockerClient(base_url=url, tls=tls) if tls is not None else docker.DockerClient(base_url=url)
 
 
 def _get_client(host: str | None = None) -> docker.DockerClient:
