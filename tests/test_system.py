@@ -594,11 +594,20 @@ def test_ensure_ssh_port_leaves_malformed_port_for_docker_py_to_reject(monkeypat
 
 
 def test_ensure_ssh_port_leaves_hostless_url_for_docker_py_to_reject(monkeypatch):
-    # No hostname (e.g. "ssh://" or "ssh://@") would make parse_ssh_url raise ValueError — must not
-    # propagate out of this helper; leave docker-py's own validation to reject the malformed url.
-    monkeypatch.setattr(system_module, "parse_ssh_url", MagicMock(side_effect=AssertionError("should not be called")))
+    # No hostname (e.g. "ssh://" or "ssh://@") makes the real parse_ssh_url raise ValueError — must
+    # not propagate out of this helper; leave docker-py's own validation to reject the malformed url.
+    monkeypatch.setattr("os.path.exists", lambda _path: False)  # no ~/.ssh/config lookup needed
     assert system_module._ensure_ssh_port("ssh://") == "ssh://"
     assert system_module._ensure_ssh_port("ssh://@") == "ssh://@"
+
+
+def test_ensure_ssh_port_leaves_url_alone_when_ssh_config_port_is_malformed(tmp_path, monkeypatch):
+    # A non-integer `Port` in ~/.ssh/config makes parse_ssh_url raise ValueError (int() failure) —
+    # must not propagate out of this helper; leave docker-py's own validation to surface the error.
+    config = tmp_path / "config"
+    config.write_text("Host example.com\n    Port notanumber\n")
+    monkeypatch.setattr("os.path.expanduser", lambda p: str(config) if p == "~/.ssh/config" else p)
+    assert system_module._ensure_ssh_port("ssh://bob@example.com") == "ssh://bob@example.com"
 
 
 def test_ensure_ssh_port_splices_in_ssh_config_port(tmp_path, monkeypatch):

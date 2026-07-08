@@ -137,11 +137,15 @@ def _ensure_ssh_port(url: str) -> str:
         # A malformed port (e.g. "ssh://host:abc") — leave url untouched so docker-py's own
         # validation raises its clearer error instead of this helper failing first.
         return url
-    if has_port or not parsed.hostname:
-        # No hostname (e.g. "ssh://" or "ssh://@") is invalid — leave it for docker-py's own
-        # validation to reject rather than propagating parse_ssh_url's ValueError from here.
+    if has_port:
         return url
-    target = parse_ssh_url(url)
+    try:
+        # parse_ssh_url raises ValueError on a missing hostname (e.g. "ssh://" or "ssh://@") or a
+        # non-integer `Port` in ~/.ssh/config — leave url untouched in either case rather than
+        # raising a bare ValueError here instead of the connection error docker-py would produce.
+        target = parse_ssh_url(url)
+    except ValueError:
+        return url
     if target.port is None:
         return url
     return urllib.parse.urlunparse(parsed._replace(netloc=f"{parsed.netloc}:{target.port}"))
