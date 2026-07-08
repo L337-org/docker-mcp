@@ -586,6 +586,13 @@ def test_ensure_ssh_port_leaves_explicit_port_alone(monkeypatch):
     assert system_module._ensure_ssh_port("ssh://bob@example.com:1234") == "ssh://bob@example.com:1234"
 
 
+def test_ensure_ssh_port_leaves_malformed_port_for_docker_py_to_reject(monkeypatch):
+    # A non-numeric port makes urlparse's .port property raise ValueError — must not propagate out of
+    # this helper; leave the url untouched so docker-py's own validation is what surfaces the error.
+    monkeypatch.setattr(system_module, "parse_ssh_url", MagicMock(side_effect=AssertionError("should not be called")))
+    assert system_module._ensure_ssh_port("ssh://bob@example.com:abc") == "ssh://bob@example.com:abc"
+
+
 def test_ensure_ssh_port_splices_in_ssh_config_port(tmp_path, monkeypatch):
     config = tmp_path / "config"
     config.write_text("Host example.com\n    Port 1234\n")

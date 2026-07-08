@@ -131,7 +131,13 @@ def _ensure_ssh_port(url: str) -> str:
     if not url.startswith("ssh://"):
         return url
     parsed = urllib.parse.urlparse(url)
-    if parsed.port is not None:
+    try:
+        has_port = parsed.port is not None
+    except ValueError:
+        # A malformed port (e.g. "ssh://host:abc") — leave url untouched so docker-py's own
+        # validation raises its clearer error instead of this helper failing first.
+        return url
+    if has_port:
         return url
     target = parse_ssh_url(url)
     if target.port is None:
