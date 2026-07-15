@@ -2,7 +2,7 @@ name: 'Publish Homebrew formula'
 
 # On each GitHub Release: downloads pre-built macOS wheels for arm64 and x86_64 from PyPI (using
 # the frozen lockfile so versions are pinned), packages each set into a wheelhouse tarball, attaches
-# both to the release, then pushes an updated Formula/docker-mcp-server.rb to GavinLucas/homebrew-tap.
+# both to the release, then pushes an updated Formula/docker-mcp-server.rb to L337-org/homebrew-tap.
 #
 # Runs on ubuntu-latest. Both wheelhouses are built via cross-platform pip downloads:
 #   arm64:   --platform macosx_<floor>_arm64  +  --platform macosx_<floor>_universal2
@@ -23,8 +23,11 @@ name: 'Publish Homebrew formula'
 # guardrail; do not remove it.
 #
 # Requires the repository secret TAP_GITHUB_TOKEN: a fine-grained PAT with Contents read+write on
-# GavinLucas/homebrew-tap. Create it at github.com/settings/tokens and add it as a secret on this
-# repo under Settings → Secrets → Actions.
+# L337-org/homebrew-tap, issued with **L337-org as the resource owner** (a fine-grained PAT scoped
+# to a personal account cannot access org repos, and org settings must allow fine-grained PAT
+# access). Create it at github.com/settings/tokens and add it as a secret on this repo under
+# Settings → Secrets → Actions. The pre-transfer token (resource owner GavinLucas) is invalid for
+# the moved tap — re-issue before re-enabling this channel.
 #
 # workflow_dispatch lets you backfill a release that predates this workflow (supply the tag, e.g.
 # v1.9.2). The release must already exist and docker-mcp-server must be live on PyPI for that version.
@@ -206,7 +209,7 @@ jobs:
           GH_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          git clone "https://x-access-token:${GH_TOKEN}@github.com/GavinLucas/homebrew-tap.git" tap
+          git clone "https://x-access-token:${GH_TOKEN}@github.com/L337-org/homebrew-tap.git" tap
           cd tap
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
