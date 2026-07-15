@@ -2,7 +2,7 @@
   "manifest_version": "0.4",
   "name": "docker-mcp-server",
   "display_name": "Docker MCP Server",
-  "version": "2.1.1",
+  "version": "2.1.2",
   "description": "Manage Docker through the Docker SDK for Python and the docker CLI: containers, images, networks, volumes, Compose, Swarm, Buildx, Scout, and OCI registries, exposed as MCP tools.",
   "long_description": "Manage one or more Docker daemons through your AI agent — containers, images, networks, volumes, Compose, Swarm, Buildx, Scout, and OCI registries, exposed as MCP tools.\n\nDiscovery is automatic for your local socket with no configuration required. Or point it at additional remote daemons over TCP, TLS, or SSH (and mark any of them read-only to monitor without the risk of accidental changes). It also surfaces logs and stats as resources for triage. Read-only / no-destructive / disabled-domain switches let you register a restricted tool surface.\n\nAnswer questions like: ‘why did my local container crash?’, ‘is my production system under memory pressure?’, ‘what differences are there between my staging and production systems?’\n\nRuns entirely on your machine and sends no telemetry — see the Privacy Policy.",
   "author": {

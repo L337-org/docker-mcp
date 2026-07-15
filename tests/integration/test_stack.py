@@ -56,8 +56,9 @@ def test_stack_lifecycle(deployed_stack):
         try:
             tasks = stack_ps(name)
             break
-        except RuntimeError:
-            if time.monotonic() > deadline:
+        except RuntimeError as exc:
+            # Only the transient no-tasks-yet case is retryable; anything else is a real failure.
+            if "nothing found in stack" not in str(exc) or time.monotonic() > deadline:
                 raise
             time.sleep(2)
     assert isinstance(tasks, list)
