@@ -15,7 +15,7 @@ name: Release
 # channel actually converged so a partial release is loud instead of silent.
 #
 # PyPI Trusted Publishing pins the WORKFLOW FILENAME: the trusted publisher on PyPI must list
-# `publish.yaml` (owner GavinLucas, repo docker-mcp). If the pypi job fails with an OIDC
+# `publish.yaml` (owner L337-org, repo docker-mcp). If the pypi job fails with an OIDC
 # `invalid-publisher` error, that registration is missing — add it on PyPI, then re-run.
 #
 # Partial-failure semantics: no rollback is attempted (PyPI files are immutable anyway). The
@@ -55,6 +55,16 @@ jobs:
       tag: ${{ steps.resolve.outputs.tag }}
       version: ${{ steps.resolve.outputs.version }}
     steps:
+      - name: Assert canonical repository owner
+        # The GHCR path, MCP Registry name, and PyPI trusted publisher are all pinned to the
+        # L337-org identity. Publishing from anywhere else (a fork, or the window between the
+        # identity sweep landing and the repo transfer) would half-publish — PyPI first, then
+        # fail on GHCR/registry. Fail fast before anything ships; every other job needs preflight.
+        if: github.repository_owner != 'L337-org'
+        run: |
+          echo "::error::This pipeline publishes the L337-org identity but is running in ${GITHUB_REPOSITORY}. Refusing to publish."
+          exit 1
+
       - name: Resolve tag and version
         id: resolve
         env:
@@ -160,7 +170,7 @@ jobs:
     # Publishes the container images:
     #   full     -> docker-mcp-server:latest    + :<version>
     #   no-scout -> docker-mcp-server:no-scout   + :<version>-no-scout
-    # Images go to GHCR (ghcr.io/gavinlucas/docker-mcp-server) always, and are mirrored to Docker
+    # Images go to GHCR (ghcr.io/l337-org/docker-mcp-server) always, and are mirrored to Docker
     # Hub (docker.io/gavinlucas/docker-mcp-server) when the DOCKERHUB_USER / DOCKERHUB_TOKEN repo
     # secrets are set. The Hub mirror is opt-in: with the secrets unset the Hub login/tags steps
     # are skipped and only GHCR is pushed, so a release never fails for lack of Hub credentials.
@@ -202,7 +212,7 @@ jobs:
           VERSION: ${{ needs.preflight.outputs.version }}
         run: |
           # GHCR always; mirror to Docker Hub only when the credentials are present (see header).
-          registries="ghcr.io/gavinlucas/docker-mcp-server"
+          registries="ghcr.io/l337-org/docker-mcp-server"
           if [ -n "$DOCKERHUB_USER" ] && [ -n "$DOCKERHUB_TOKEN" ]; then
             registries="$registries docker.io/gavinlucas/docker-mcp-server"
           fi
@@ -254,9 +264,9 @@ jobs:
           # match `name` in server.json so the registry can verify we own this image (see the
           # registry job below). image.version is the v-stripped version, matching the image tags.
           labels: |
-            org.opencontainers.image.source=https://github.com/GavinLucas/docker-mcp
+            org.opencontainers.image.source=https://github.com/L337-org/docker-mcp
             org.opencontainers.image.version=${{ needs.preflight.outputs.version }}
-            io.modelcontextprotocol.server.name=io.github.GavinLucas/docker-mcp-server
+            io.modelcontextprotocol.server.name=io.github.L337-org/docker-mcp-server
           build-args: |
             INSTALL_CLI=${{ matrix.install_cli }}
             INSTALL_SCOUT=${{ matrix.install_scout }}
@@ -341,7 +351,7 @@ jobs:
     # Publishes server.json to the official MCP Registry (registry.modelcontextprotocol.io). The
     # registry stores only metadata — it points at the artifacts the sibling jobs above publish —
     # and verifies we own each listed package via a marker that must equal server.json's `name`
-    # (io.github.GavinLucas/docker-mcp-server):
+    # (io.github.L337-org/docker-mcp-server):
     #   - pypi  -> the `<!-- mcp-name: ... -->` comment in README.md (PyPI long-description)
     #   - oci   -> the io.modelcontextprotocol.server.name image label (set in the images job)
     #   - mcpb  -> the .mcpb release-asset URL (must contain "mcp") + a matching fileSha256
@@ -393,9 +403,9 @@ jobs:
             .version = $v
             | (.packages[] | select(.registryType == "pypi") | .version) = $v
             | (.packages[] | select(.registryType == "oci")  | .identifier)
-                = "ghcr.io/gavinlucas/docker-mcp-server:\($v)"
+                = "ghcr.io/l337-org/docker-mcp-server:\($v)"
             | (.packages[] | select(.registryType == "mcpb") | .identifier)
-                = "https://github.com/GavinLucas/docker-mcp/releases/download/\($tag)/docker-mcp-server-\($v).mcpb"
+                = "https://github.com/L337-org/docker-mcp/releases/download/\($tag)/docker-mcp-server-\($v).mcpb"
             | (.packages[] | select(.registryType == "mcpb") | .fileSha256) = $sha
           ' server.json > server.tmp && mv server.tmp server.json
           echo "--- server.json ---"; cat server.json
@@ -481,7 +491,7 @@ jobs:
           for tag in "${VERSION}" "${VERSION}-no-scout"; do
             ok=""
             for i in $(seq 1 5); do
-              if docker buildx imagetools inspect "ghcr.io/gavinlucas/docker-mcp-server:${tag}" >/dev/null 2>&1; then
+              if docker buildx imagetools inspect "ghcr.io/l337-org/docker-mcp-server:${tag}" >/dev/null 2>&1; then
                 echo "GHCR OK: :${tag}"; ok=1; break
               fi
               echo "::notice::GHCR tag :${tag} not readable yet (attempt $i/5); waiting 15s"
@@ -512,7 +522,7 @@ jobs:
       - name: Verify the MCP Registry lists the version
         run: |
           set -euo pipefail
-          url="https://registry.modelcontextprotocol.io/v0/servers?search=io.github.GavinLucas/docker-mcp-server"
+          url="https://registry.modelcontextprotocol.io/v0/servers?search=io.github.L337-org/docker-mcp-server"
           for i in $(seq 1 5); do
             if curl -fsS "$url" | jq -e --arg v "$VERSION" \
                 '.servers[] | select(.server.version == $v)' >/dev/null; then

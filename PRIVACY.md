@@ -24,4 +24,4 @@ results surfaced to the model. This policy covers only the behaviour of docker-m
 ## Contact
 
 Questions about this policy: open an issue at
-<https://github.com/GavinLucas/docker-mcp/issues>.
+<https://github.com/L337-org/docker-mcp/issues>.

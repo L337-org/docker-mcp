@@ -1,8 +1,8 @@
-# This file is maintained automatically by publish-homebrew.yaml in GavinLucas/docker-mcp.
+# This file is maintained automatically by publish-homebrew.yaml in L337-org/docker-mcp.
 # Do not edit by hand — changes will be overwritten on the next release.
 class DockerMcpServer < Formula
   desc "MCP server for managing Docker via the Docker SDK for Python"
-  homepage "https://github.com/GavinLucas/docker-mcp"
+  homepage "https://github.com/L337-org/docker-mcp"
   version "${VERSION}"
   license "MIT"
 
@@ -17,11 +17,11 @@ class DockerMcpServer < Formula
 
   on_macos do
     on_arm do
-      url "https://github.com/GavinLucas/docker-mcp/releases/download/${TAG}/docker-mcp-server-${VERSION}-wheelhouse-macos-arm64.tar.gz"
+      url "https://github.com/L337-org/docker-mcp/releases/download/${TAG}/docker-mcp-server-${VERSION}-wheelhouse-macos-arm64.tar.gz"
       sha256 "${SHA_ARM64}"
     end
     on_intel do
-      url "https://github.com/GavinLucas/docker-mcp/releases/download/${TAG}/docker-mcp-server-${VERSION}-wheelhouse-macos-x86_64.tar.gz"
+      url "https://github.com/L337-org/docker-mcp/releases/download/${TAG}/docker-mcp-server-${VERSION}-wheelhouse-macos-x86_64.tar.gz"
       sha256 "${SHA_X86_64}"
     end
   end

@@ -9,17 +9,17 @@
     "name": "Gavin Lucas",
     "url": "https://github.com/GavinLucas"
   },
-  "homepage": "https://github.com/GavinLucas/docker-mcp",
-  "documentation": "https://github.com/GavinLucas/docker-mcp#readme",
-  "support": "https://github.com/GavinLucas/docker-mcp/issues",
+  "homepage": "https://github.com/L337-org/docker-mcp",
+  "documentation": "https://github.com/L337-org/docker-mcp#readme",
+  "support": "https://github.com/L337-org/docker-mcp/issues",
   "license": "MIT",
   "icon": "assets/icon.png",
   "repository": {
     "type": "git",
-    "url": "https://github.com/GavinLucas/docker-mcp"
+    "url": "https://github.com/L337-org/docker-mcp"
   },
   "keywords": ["docker", "containers", "compose", "swarm", "buildx", "scout", "devops", "mcp"],
-  "privacy_policies": ["https://github.com/GavinLucas/docker-mcp/blob/main/PRIVACY.md"],
+  "privacy_policies": ["https://github.com/L337-org/docker-mcp/blob/main/PRIVACY.md"],
   "server": {
     "type": "uv",
     "entry_point": "mcpb_run.py",

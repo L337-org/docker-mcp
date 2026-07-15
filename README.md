@@ -1,10 +1,10 @@
-<img src="https://raw.githubusercontent.com/GavinLucas/docker-mcp/main/assets/icon.png" align="left" width="72" height="72" alt="">
+<img src="https://raw.githubusercontent.com/L337-org/docker-mcp/main/assets/icon.png" align="left" width="72" height="72" alt="">
 
 # docker-mcp-server
 
 [![docker-mcp MCP server](https://glama.ai/mcp/servers/GavinLucas/docker-mcp/badges/score.svg)](https://glama.ai/mcp/servers/GavinLucas/docker-mcp)
 
-<!-- mcp-name: io.github.GavinLucas/docker-mcp-server -->
+<!-- mcp-name: io.github.L337-org/docker-mcp-server -->
 
 More than just a fully featured [MCP](https://modelcontextprotocol.io) server that lets AI agents manage Docker — containers, images, networks, volumes, swarm services, secrets, configs, nodes, plugins, etc., it helps you create workflows to easily manage your Docker environments.
 
@@ -51,7 +51,7 @@ To pin a specific version, append `==<version>` to the package name (e.g. `docke
       "command": "uvx",
       "args": [
         "--from",
-        "git+https://github.com/GavinLucas/docker-mcp.git",
+        "git+https://github.com/L337-org/docker-mcp.git",
         "docker-mcp-server"
       ],
       "env": {}
@@ -65,7 +65,7 @@ To pin a specific revision, append `@<tag-or-commit>` to the git URL.
 ### Install as a Desktop Extension (.mcpb)
 
 For [Claude Desktop](https://claude.com/download), a one-click bundle is attached to each
-[GitHub Release](https://github.com/GavinLucas/docker-mcp/releases) as
+[GitHub Release](https://github.com/L337-org/docker-mcp/releases) as
 `docker-mcp-server-<version>.mcpb` (with a matching `.sha256`). Download it and drag it into
 **Settings → Extensions**, or use **Settings → Extensions → Advanced settings → Install extension…**
 and pick the file. The install dialog surfaces a **Docker host(s)** field and the read-only /
@@ -82,7 +82,7 @@ Docker context; set one endpoint (`ssh://user@host`) for a remote daemon, or lis
 Running the server as a container removes the Python / uv / git prerequisites entirely — the only
 thing the host needs is Docker, which you already have. Prebuilt multi-arch images (linux/amd64 +
 linux/arm64) are published on each release to **Docker Hub** (`gavinlucas/docker-mcp-server`) and
-**GHCR** (`ghcr.io/gavinlucas/docker-mcp-server`) — the two are identical. Point your MCP client at
+**GHCR** (`ghcr.io/l337-org/docker-mcp-server`) — the two are identical. Point your MCP client at
 `docker run`:
 
 ```json
@@ -103,14 +103,14 @@ linux/arm64) are published on each release to **Docker Hub** (`gavinlucas/docker
 
 `-i` is required (the server speaks MCP over stdio); `--rm` cleans up when the client disconnects. To
 pin a version, replace `:latest` with a release tag (e.g. `:1.5.1`). To pull from GHCR instead, use
-`ghcr.io/gavinlucas/docker-mcp-server:latest`.
+`ghcr.io/l337-org/docker-mcp-server:latest`.
 
-> **Image renamed.** As of 1.5.0 the image is published to `ghcr.io/gavinlucas/docker-mcp-server`
-> (matching the PyPI name). The old `ghcr.io/gavinlucas/docker-mcp` image is frozen at 1.4.0 and no
-> longer updated — point new pulls at `…/docker-mcp-server`.
+> **Image renamed.** As of 1.5.0 the image is published as `docker-mcp-server` (matching the PyPI
+> name). The old `ghcr.io/gavinlucas/docker-mcp` image is frozen at 1.4.0 and no longer updated —
+> point new pulls at `ghcr.io/l337-org/docker-mcp-server`.
 
 **Image variants.** Two variants are published to both registries (`gavinlucas/docker-mcp-server` on
-Docker Hub and `ghcr.io/gavinlucas/docker-mcp-server` on GHCR), both built from one `Dockerfile`. The
+Docker Hub and `ghcr.io/l337-org/docker-mcp-server` on GHCR), both built from one `Dockerfile`. The
 CLI-backed domains (Compose, Stack, Buildx, Scout, Context) shell out to the `docker` CLI and its
 plugins.
 
@@ -333,7 +333,7 @@ All of these go in the `env` block of the server entry in your MCP client config
       "command": "uvx",
       "args": [
         "--from",
-        "git+https://github.com/GavinLucas/docker-mcp.git",
+        "git+https://github.com/L337-org/docker-mcp.git",
         "docker-mcp-server"
       ],
       "env": {
@@ -351,7 +351,7 @@ Swap `DOCKER_MCP_SERVER_READONLY` for `DOCKER_MCP_SERVER_NO_DESTRUCTIVE` to allo
 ```bash
 claude mcp add docker-mcp-server-readonly \
   --env DOCKER_MCP_SERVER_READONLY=1 \
-  -- uvx --from git+https://github.com/GavinLucas/docker-mcp.git docker-mcp-server
+  -- uvx --from git+https://github.com/L337-org/docker-mcp.git docker-mcp-server
 ```
 
 ## Security considerations
@@ -379,10 +379,10 @@ Connecting this server to an AI agent grants it the same level of access as a lo
 | Channel | Link |
 |---------|------|
 | PyPI | [docker-mcp-server](https://pypi.org/project/docker-mcp-server/) |
-| GHCR (container) | [ghcr.io/gavinlucas/docker-mcp-server](https://github.com/GavinLucas/docker-mcp/pkgs/container/docker-mcp-server) |
+| GHCR (container) | [ghcr.io/l337-org/docker-mcp-server](https://github.com/L337-org/docker-mcp/pkgs/container/docker-mcp-server) |
 | Docker Hub (container) | [gavinlucas/docker-mcp-server](https://hub.docker.com/r/gavinlucas/docker-mcp-server) |
-| Desktop Extension (.mcpb) | [GitHub Releases](https://github.com/GavinLucas/docker-mcp/releases) |
-| Official MCP Registry | [io.github.GavinLucas/docker-mcp-server](https://registry.modelcontextprotocol.io/v0.1/servers/io.github.GavinLucas%2Fdocker-mcp-server/versions) |
+| Desktop Extension (.mcpb) | [GitHub Releases](https://github.com/L337-org/docker-mcp/releases) |
+| Official MCP Registry | [io.github.L337-org/docker-mcp-server](https://registry.modelcontextprotocol.io/v0.1/servers/io.github.L337-org%2Fdocker-mcp-server/versions) |
 | Glama | [docker-mcp-server](https://glama.ai/mcp/servers/GavinLucas/docker-mcp) |
 | mcp.so | [docker-mcp-server](https://mcp.so/server/docker-mcp-server/GavinLucas) |
 | awesome-mcp-servers | [punkpeye/awesome-mcp-servers](https://github.com/punkpeye/awesome-mcp-servers#cloud-platforms) |
@@ -391,8 +391,8 @@ Connecting this server to an AI agent grants it the same level of access as a lo
 
 docker-mcp-server collects no data, sends no telemetry, and has no author-operated backend. It runs
 locally and talks only to the Docker daemon and container registries **you** point it at, as part of
-the operations you request. The full statement is in [PRIVACY.md](https://github.com/GavinLucas/docker-mcp/blob/main/PRIVACY.md).
+the operations you request. The full statement is in [PRIVACY.md](https://github.com/L337-org/docker-mcp/blob/main/PRIVACY.md).
 
 ## Contributing
 
-Contributions are welcome. The project values a tight mapping between the Docker SDK's public surface and the MCP tools we expose. See [CONTRIBUTING.md](https://github.com/GavinLucas/docker-mcp/blob/main/CONTRIBUTING.md) for the project layout, tool conventions, the checklist for adding a new tool module, and local development setup.
+Contributions are welcome. The project values a tight mapping between the Docker SDK's public surface and the MCP tools we expose. See [CONTRIBUTING.md](https://github.com/L337-org/docker-mcp/blob/main/CONTRIBUTING.md) for the project layout, tool conventions, the checklist for adding a new tool module, and local development setup.

@@ -4,7 +4,7 @@
 
 If you believe you have found a security issue in `docker-mcp`, please open a
 private vulnerability report via GitHub's
-[security advisory flow](https://github.com/GavinLucas/docker-mcp/security/advisories/new)
+[security advisory flow](https://github.com/L337-org/docker-mcp/security/advisories/new)
 rather than filing a public issue. That keeps the discussion private until a
 fix is available.
 

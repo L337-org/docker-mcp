@@ -185,4 +185,4 @@ It reads the version from `pyproject.toml`, creates `dist/` if needed, writes a 
 
 ## Reporting issues
 
-Bug reports and feature requests have templates that you can choose when you [`create an issue`](https://github.com/GavinLucas/docker-mcp/issues/new/choose). Please select the correct issue type and follow the template.
+Bug reports and feature requests have templates that you can choose when you [`create an issue`](https://github.com/L337-org/docker-mcp/issues/new/choose). Please select the correct issue type and follow the template.

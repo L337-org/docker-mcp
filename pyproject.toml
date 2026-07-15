@@ -45,9 +45,9 @@ docker-mcp = "docker_mcp:main"
 docker-mcp-server = "docker_mcp:main"
 
 [project.urls]
-Homepage = "https://github.com/GavinLucas/docker-mcp"
-Repository = "https://github.com/GavinLucas/docker-mcp"
-Issues = "https://github.com/GavinLucas/docker-mcp/issues"
+Homepage = "https://github.com/L337-org/docker-mcp"
+Repository = "https://github.com/L337-org/docker-mcp"
+Issues = "https://github.com/L337-org/docker-mcp/issues"
 
 [build-system]
 requires = ["hatchling"]

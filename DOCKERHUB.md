@@ -4,11 +4,11 @@ More than just a fully featured [MCP](https://modelcontextprotocol.io) server th
 
 It can manage multiple Docker daemons, e.g. both your local dev environment and also a remote production environment over TCP, TLS or SSH in a single session. It can also be configured to mark some daemons as read-only, so that you can monitor them without the risk of making accidental changes. It also exposes things like logs and stats as resources so that you can easily monitor and triage your environments with a few prompts.
 
-The server runs entirely on your machine and sends no telemetry. You are entirely in control — see the [Privacy Policy](https://github.com/GavinLucas/docker-mcp#privacy-policy).
+The server runs entirely on your machine and sends no telemetry. You are entirely in control — see the [Privacy Policy](https://github.com/L337-org/docker-mcp#privacy-policy).
 
-This image is the container distribution of the project. **Full documentation, configuration, and source are on GitHub: <https://github.com/GavinLucas/docker-mcp>.**
+This image is the container distribution of the project. **Full documentation, configuration, and source are on GitHub: <https://github.com/L337-org/docker-mcp>.**
 
-> The same images are published to GHCR as [`ghcr.io/gavinlucas/docker-mcp-server`](https://github.com/GavinLucas/docker-mcp/pkgs/container/docker-mcp-server) — identical content, so use whichever registry you prefer.
+> The same images are published to GHCR as [`ghcr.io/l337-org/docker-mcp-server`](https://github.com/L337-org/docker-mcp/pkgs/container/docker-mcp-server) — identical content, so use whichever registry you prefer.
 
 ## Quick start
 
@@ -72,14 +72,14 @@ Set these in the client's `env` block. Three switches restrict which tools are r
 
 `DOCKER_HOST` / `DOCKER_TLS_VERIFY` / `DOCKER_CERT_PATH` retarget the daemon (e.g. `-e DOCKER_HOST=tcp://remote-host:2375`).
 
-See the [full configuration reference](https://github.com/GavinLucas/docker-mcp#configuration) for the complete list and examples.
+See the [full configuration reference](https://github.com/L337-org/docker-mcp#configuration) for the complete list and examples.
 
 ## Security
 
-Connecting this server to an AI agent grants it the same access as a local Docker CLI session against the configured daemon — the daemon's socket is effectively root-equivalent on its host. Prefer pointing it at a daemon dedicated to workloads the agent may touch (a dev VM, a remote sandbox, Docker Desktop, a rootless install) rather than your production socket. See the [Security considerations](https://github.com/GavinLucas/docker-mcp#security-considerations) on GitHub before enabling the server.
+Connecting this server to an AI agent grants it the same access as a local Docker CLI session against the configured daemon — the daemon's socket is effectively root-equivalent on its host. Prefer pointing it at a daemon dedicated to workloads the agent may touch (a dev VM, a remote sandbox, Docker Desktop, a rootless install) rather than your production socket. See the [Security considerations](https://github.com/L337-org/docker-mcp#security-considerations) on GitHub before enabling the server.
 
 ## Links
 
-- **Source, full docs & issues:** <https://github.com/GavinLucas/docker-mcp>
-- **Also on PyPI** (run without a container): `uvx docker-mcp-server` — see the [README](https://github.com/GavinLucas/docker-mcp#using-the-server).
+- **Source, full docs & issues:** <https://github.com/L337-org/docker-mcp>
+- **Also on PyPI** (run without a container): `uvx docker-mcp-server` — see the [README](https://github.com/L337-org/docker-mcp#using-the-server).
 - **License & contributing:** see the GitHub repository.
