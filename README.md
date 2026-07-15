@@ -2,7 +2,7 @@
 
 # docker-mcp-server
 
-[![docker-mcp MCP server](https://glama.ai/mcp/servers/GavinLucas/docker-mcp/badges/score.svg)](https://glama.ai/mcp/servers/GavinLucas/docker-mcp)
+[![docker-mcp MCP server](https://glama.ai/mcp/servers/L337-org/docker-mcp/badges/score.svg)](https://glama.ai/mcp/servers/L337-org/docker-mcp)
 
 <!-- mcp-name: io.github.L337-org/docker-mcp-server -->
 
@@ -383,7 +383,7 @@ Connecting this server to an AI agent grants it the same level of access as a lo
 | Docker Hub (container) | [gavinlucas/docker-mcp-server](https://hub.docker.com/r/gavinlucas/docker-mcp-server) |
 | Desktop Extension (.mcpb) | [GitHub Releases](https://github.com/L337-org/docker-mcp/releases) |
 | Official MCP Registry | [io.github.L337-org/docker-mcp-server](https://registry.modelcontextprotocol.io/v0.1/servers/io.github.L337-org%2Fdocker-mcp-server/versions) |
-| Glama | [docker-mcp-server](https://glama.ai/mcp/servers/GavinLucas/docker-mcp) |
+| Glama | [docker-mcp-server](https://glama.ai/mcp/servers/L337-org/docker-mcp) |
 | mcp.so | [docker-mcp-server](https://mcp.so/server/docker-mcp-server/GavinLucas) |
 | awesome-mcp-servers | [punkpeye/awesome-mcp-servers](https://github.com/punkpeye/awesome-mcp-servers#cloud-platforms) |
 
