@@ -282,7 +282,7 @@ ssh = [
 
 [[package]]
 name = "docker-mcp-server"
-version = "2.1.2"
+version = "2.1.3"
 source = { editable = "." }
 dependencies = [
     { name = "cryptography", marker = "platform_machine == 'x86_64' and sys_platform == 'darwin'" },
