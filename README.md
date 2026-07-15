@@ -105,9 +105,9 @@ linux/arm64) are published on each release to **Docker Hub** (`gavinlucas/docker
 pin a version, replace `:latest` with a release tag (e.g. `:1.5.1`). To pull from GHCR instead, use
 `ghcr.io/l337-org/docker-mcp-server:latest`.
 
-> **Image renamed.** As of 1.5.0 the image is published to `ghcr.io/l337-org/docker-mcp-server`
-> (matching the PyPI name). The old `ghcr.io/gavinlucas/docker-mcp` image is frozen at 1.4.0 and no
-> longer updated — point new pulls at `…/docker-mcp-server`.
+> **Image renamed.** As of 1.5.0 the image is published as `docker-mcp-server` (matching the PyPI
+> name). The old `ghcr.io/gavinlucas/docker-mcp` image is frozen at 1.4.0 and no longer updated —
+> point new pulls at `ghcr.io/l337-org/docker-mcp-server`.
 
 **Image variants.** Two variants are published to both registries (`gavinlucas/docker-mcp-server` on
 Docker Hub and `ghcr.io/l337-org/docker-mcp-server` on GHCR), both built from one `Dockerfile`. The

@@ -55,6 +55,16 @@ jobs:
       tag: ${{ steps.resolve.outputs.tag }}
       version: ${{ steps.resolve.outputs.version }}
     steps:
+      - name: Assert canonical repository owner
+        # The GHCR path, MCP Registry name, and PyPI trusted publisher are all pinned to the
+        # L337-org identity. Publishing from anywhere else (a fork, or the window between the
+        # identity sweep landing and the repo transfer) would half-publish — PyPI first, then
+        # fail on GHCR/registry. Fail fast before anything ships; every other job needs preflight.
+        if: github.repository_owner != 'L337-org'
+        run: |
+          echo "::error::This pipeline publishes the L337-org identity but is running in ${GITHUB_REPOSITORY}. Refusing to publish."
+          exit 1
+
       - name: Resolve tag and version
         id: resolve
         env:

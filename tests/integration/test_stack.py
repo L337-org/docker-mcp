@@ -2,6 +2,7 @@
 # We never init a swarm here (that would mutate the host); the module skips cleanly when the daemon
 # isn't already a manager. run with: uv run pytest -m integration
 
+import time
 import uuid
 
 import pytest
@@ -48,5 +49,15 @@ def test_stack_lifecycle(deployed_stack):
     # Its single service is present.
     services = stack_services(name)
     assert any(svc.get("Name", "").startswith(name) for svc in services)
-    # stack_ps returns a list of tasks (may be empty for a beat while the task schedules).
-    assert isinstance(stack_ps(name), list)
+    # stack_ps returns a list of tasks. `docker stack ps` exits 1 ("nothing found in stack")
+    # until the scheduler has created the first task, so poll briefly before asserting.
+    deadline = time.monotonic() + 60
+    while True:
+        try:
+            tasks = stack_ps(name)
+            break
+        except RuntimeError:
+            if time.monotonic() > deadline:
+                raise
+            time.sleep(2)
+    assert isinstance(tasks, list)
