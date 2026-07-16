@@ -24,8 +24,8 @@ def volume_create(
     Common `driver_opts` for the default `local` driver: bind-mount an existing host path
     with `{"type": "none", "device": "/host/path", "o": "bind"}`, or mount an NFS share
     with `{"type": "nfs", "device": "server:/export", "o": "addr=server,rw"}`. Third-party
-    drivers (e.g. `rexray`, `convoy`) accept their own option keys. Enumerate with `volume_list`;
-    reclaim unused volumes with `volume_prune`. Created volumes are stamped with provenance
+    drivers (e.g. `rexray`, `convoy`) accept their own option keys. List existing volumes with
+    `volume_list`; reclaim unused ones with `volume_prune`. Created volumes are stamped with provenance
     labels.
 
     args:
@@ -62,7 +62,7 @@ def volume_list(filters: dict | None = None, managed_only: bool = False, host: s
     List volumes.
 
     Volumes are addressed by name only — feed a Name to `volume_inspect` for detail or
-    `volume_remove` / `volume_prune` to clean up. filters={"dangling": True} finds volumes no
+    `volume_remove` / `volume_prune` to clean up. filters={"dangling": True} finds volumes that no
     container references.
 
     args:
