@@ -56,7 +56,12 @@ def container_run(
     host: str | None = None,
 ) -> dict | str:
     """
-    Run a container from an image.
+    Run a container from an image (create and start in one call, like `docker run`).
+
+    Use `container_create` to prepare a container without starting it, or `container_exec` to run
+    a command in a container that already exists. With detach=False the call blocks until the
+    container exits and returns its output, so long-running images need detach=True. Created
+    containers are stamped with provenance labels.
 
     args:
         image - The image to run
@@ -181,10 +186,13 @@ def container_list(
     host: str | None = None,
 ) -> list:
     """
-    List containers.
+    List containers on the daemon (running only by default).
+
+    Pass all=True to include stopped containers. For a compose project `compose_ps` groups
+    containers by service; for swarm services use `service_ps` (tasks may live on other nodes).
 
     args:
-        all - Show all containers, including stopped ones
+        all - Show all containers, including stopped ones (default False: running only)
         since - Only show containers created after this id or name
         before - Only show containers created before this id or name
         limit - Maximum number of results
@@ -193,7 +201,9 @@ def container_list(
         ignore_removed - Ignore containers removed during listing
         managed_only - Only return containers created by this MCP server (filters on the
                              docker-mcp-server.managed label); combines with any `filters` given
-    returns: list - A list of container attrs dicts
+    returns: list - One dict per container: full inspect payloads by default (each match is
+        inspected, like `container_inspect`); sparse=True skips the per-container inspect calls
+        and returns the daemon's abridged list entries instead
     """
     if managed_only:
         filters = managed_filter(filters)
@@ -234,7 +244,7 @@ def container_start(id_or_name: str, host: str | None = None) -> dict:
     raised). To stop then start a running container use `container_restart`.
 
     args: id_or_name - Container id (full or short) or name
-    returns: dict - The container's full attrs after starting
+    returns: dict - The container's full inspect payload after starting
     """
     container = _get_client(host).containers.get(id_or_name)
     container.start()
@@ -268,12 +278,17 @@ def container_stop(id_or_name: str, stop_timeout_seconds: int = 10, host: str | 
 @tool()
 def container_restart(id_or_name: str, stop_timeout_seconds: int = 10, host: str | None = None) -> dict:
     """
-    Restart a container.
+    Restart a container: stop then start again in one call.
+
+    The container receives its configured stop signal (`STOPSIGNAL`, default SIGTERM), SIGKILL
+    after stop_timeout_seconds, and is then started. Use `container_stop`/`container_start` to do
+    the halves separately. When the server runs containerized it refuses to restart its own
+    container.
 
     args:
         id_or_name - The container id or name
-        stop_timeout_seconds - Seconds to wait for graceful stop before SIGKILL and restart
-    returns: dict - The container's attrs after restart
+        stop_timeout_seconds - Seconds between the stop signal and SIGKILL (default 10)
+    returns: dict - The container's full inspect payload after the restart
     """
     container = _get_client(host).containers.get(id_or_name)
     guard_not_self(container, host=host)
@@ -296,7 +311,7 @@ def container_kill(id_or_name: str, signal: str | None = None, host: str | None 
     args:
         id_or_name - The container id or name
         signal - Signal name or number as a string (e.g. "SIGHUP", "9"); default SIGKILL
-    returns: dict - The container's attrs after the signal
+    returns: dict - The container's full inspect payload after the signal
     """
     container = _get_client(host).containers.get(id_or_name)
     guard_not_self(container, host=host)
@@ -316,7 +331,7 @@ def container_pause(id_or_name: str, host: str | None = None) -> dict:
     `container_exec` fails against a paused container until it is unpaused.
 
     args: id_or_name - The container id or name
-    returns: dict - The container's attrs after pause
+    returns: dict - The container's full inspect payload after pause (State.Paused true)
     """
     container = _get_client(host).containers.get(id_or_name)
     guard_not_self(container, host=host)
@@ -347,13 +362,18 @@ def container_remove(
     id_or_name: str, volumes: bool = False, link: bool = False, force: bool = False, host: str | None = None
 ) -> bool:
     """
-    Remove a container.
+    Remove a container, deleting its writable layer.
+
+    The image is untouched (`image_remove` deletes images); named volumes are never removed —
+    volumes=True only covers anonymous ones. A running container is refused unless force=True,
+    which kills it first. When the server runs containerized it refuses to remove its own
+    container.
 
     args:
         id_or_name - The container id or name
-        volumes - Also remove anonymous volumes (the CLI's `--volumes`)
+        volumes - Also remove anonymous volumes (the CLI's `--volumes`); named volumes persist
         link - Remove the specified link
-        force - Force remove a running container
+        force - Kill a running container before removing it (default False: running is an error)
     returns: bool - True after removal completes
     """
     container = _get_client(host).containers.get(id_or_name)
@@ -601,7 +621,8 @@ def container_exec(
         environment - Environment variables
         workdir - Working directory inside the container
         demux - Return stdout and stderr separately
-    returns: dict - Mapping with exit_code and output keys
+    returns: dict - {"exit_code", "output"}; output is combined stdout+stderr, or a
+        [stdout, stderr] pair with demux=True
     """
     container = _get_client(host).containers.get(id_or_name)
     result = container.exec_run(
@@ -641,7 +662,8 @@ def container_commit(
     Snapshot a container's current filesystem state as a new image.
 
     Useful for capturing a debugging state or saving manual changes made inside a container.
-    For repeatable builds use a Dockerfile instead. The container is paused by default during
+    For repeatable builds use `image_build` with a Dockerfile instead; publish the result with
+    `image_tag` + `image_push`. The container is paused by default during
     the snapshot to ensure filesystem consistency — set `pause=False` only if the container
     cannot be paused. `changes` accepts Dockerfile instructions to apply on top of the
     snapshot, e.g. `["CMD [\"python\", \"app.py\"]", "ENV FOO=bar"]`.
@@ -655,7 +677,7 @@ def container_commit(
         pause - Pause the container during commit for consistency (default True)
         changes - Dockerfile instructions (CMD, ENV, EXPOSE, etc.) to apply to the image
         conf - Additional image configuration overrides as a dict
-    returns: dict - The new image's attrs
+    returns: dict - The new image's full inspect payload (Id is the new image id)
     """
     container = _get_client(host).containers.get(id_or_name)
     image = container.commit(
@@ -698,7 +720,7 @@ def container_rename(id_or_name: str, name: str, host: str | None = None) -> dic
     args:
         id_or_name - The container id or name
         name - The new name; must not be in use by any other container
-    returns: dict - The container's attrs after the rename
+    returns: dict - The container's full inspect payload after the rename
     """
     container = _get_client(host).containers.get(id_or_name)
     container.rename(name)
@@ -717,12 +739,13 @@ def container_update(id_or_name: str, updates: dict, host: str | None = None) ->
     default 1024), `cpu_period` / `cpu_quota` (microseconds for CFS throttling),
     `cpuset_cpus` (e.g. "0-1"), `restart_policy` (dict with `Name` such as
     "on-failure"/"always"/"unless-stopped" and optional `MaximumRetryCount`). To change
-    image, env, or volumes the container must be recreated.
+    image, env, or volumes the container must be recreated (`container_remove` +
+    `container_run`).
 
     args:
         id_or_name - Container id or name to update
         updates - Resource fields to update; see description for valid keys
-    returns: dict - The container's full attrs after the update
+    returns: dict - The container's full inspect payload after the update
     """
     container = _get_client(host).containers.get(id_or_name)
     container.update(**updates)
@@ -779,7 +802,8 @@ def container_wait(
     reached) and `timed_out`. The stop conditions ("not-running"/"next-exit"/"removed") use the
     daemon's blocking wait and fill `status_code`/`error` (the container's exit info); "healthy" polls
     the container's HEALTHCHECK every `poll_interval`s and fills `health`/`status`; "log-match" polls
-    recent logs every `poll_interval`s for `pattern` and fills `matched_line`.
+    recent logs every `poll_interval`s for `pattern` and fills `matched_line`. For a compose
+    project use `compose_wait`; for swarm services use `service_wait`.
 
     Health semantics: with no HEALTHCHECK defined, once the container is `running` the tool returns
     promptly with `health: null` and `met: false` (false = "not confirmed healthy", not "unhealthy" —
@@ -891,7 +915,9 @@ def container_export(
     """
     Export a container's filesystem as a tar archive: to a file on the server host, or in band.
 
-    With `dest_path` the archive streams straight to disk (no byte cap), so it handles large
+    The tar is a flat filesystem snapshot with no image metadata or layers — use `image_save` for
+    an archive `image_load` can restore, and `container_archive_get` for a single file or
+    directory. With `dest_path` the archive streams straight to disk (no byte cap), so it handles large
     containers — the file is written by the server's user, `~` is expanded, and an existing file is
     refused unless `overwrite=True`. Without `dest_path` the tar bytes are returned in band, capped
     at `max_bytes` (default 32 MiB) because MCP base64-encodes them — a fallback for when no
@@ -939,7 +965,9 @@ def container_archive_get_to_file(
     """
     Retrieve a file or directory from a container as a tar archive written to a file on the server host.
 
-    Streams straight to disk (no in-band byte cap). The file is written by the server's user; `~` is
+    File-writing variant of `container_archive_get` — prefer it for anything large, since in-band
+    bytes are base64-encoded by MCP. For the whole filesystem use `container_export`. Streams
+    straight to disk (no in-band byte cap). The file is written by the server's user; `~` is
     expanded and an existing file is refused unless `overwrite=True`.
 
     args:
@@ -966,6 +994,7 @@ def container_archive_put(
     """
     Upload a tar archive to a path inside a container, from in-band bytes or a file on the server host.
 
+    Inverse of `container_archive_get`: the archive is extracted at `path` inside the container.
     Pass exactly one of `data` (tar bytes in band) or `from_file` (a path on the server host, streamed
     straight to the daemon — preferred for large archives, since in-band bytes are base64-encoded by
     MCP). `from_file` is read by the server's user; `~` is expanded.

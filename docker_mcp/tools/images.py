@@ -61,7 +61,7 @@ def image_build(
         platform - Target platform, e.g. "linux/amd64" (single platform only; use buildx for multi)
         isolation - Windows isolation technology ("default", "process", "hyperv")
         use_config_proxy - Forward proxy env vars from Docker client config to build
-    returns: dict - The built image's attrs
+    returns: dict - The built image's full inspect payload (as `docker inspect`)
     """
     kwargs: dict = {
         "quiet": quiet,
@@ -124,7 +124,8 @@ def image_registry_data(repository: str, auth_config: dict | None = None, host: 
     args:
         repository - Image reference
         auth_config - Optional registry authentication config
-    returns: dict - Registry data attrs
+    returns: dict - {"Descriptor", "Platforms"} — the OCI descriptor and the platforms available
+        for the reference
     """
     return _get_client(host).images.get_registry_data(repository, auth_config=auth_config).attrs
 
@@ -134,13 +135,18 @@ def image_list(
     repository: str | None = None, all: bool = False, filters: dict | None = None, host: str | None = None
 ) -> list:
     """
-    List images on the server.
+    List images in the daemon's local store.
+
+    Local only — for a registry's contents use `registry_tags` / `hub_tags`, and `image_search`
+    to find images on Docker Hub. Dangling (untagged) build leftovers show with
+    filters={"dangling": True}.
 
     args:
         repository - Only show images of this repository
         all - Show intermediate image layers
         filters - Filter by attributes (label, dangling, before, since, etc.)
-    returns: list - A list of image attrs dicts
+    returns: list - One summary dict per image ({"Id", "RepoTags", "RepoDigests", "Created",
+        "Size", "Labels", ...}); use `image_inspect` for a full inspect payload
     """
     return [i.attrs for i in _get_client(host).images.list(name=repository, all=all, filters=filters)]
 
@@ -155,6 +161,10 @@ def image_pull(
 ) -> dict | list:
     """
     Pull an image from a registry to the daemon's local store.
+
+    Private repositories need credentials — `system_login` (or `docker login` on the host) first.
+    Use `image_load` for tarballs, and `registry_manifest` / `image_registry_data` to inspect a
+    remote image without pulling it.
 
     args:
         repository - The image repository
@@ -175,6 +185,10 @@ def image_push(
 ) -> str:
     """
     Push an image or repository to a registry.
+
+    The local image must already bear the target name — `image_tag` it with the
+    registry-qualified `repository[:tag]` first; a bare name pushes to Docker Hub. Private
+    registries need credentials (`system_login`, or `docker login` on the host).
 
     Security: `auth_config` carries registry credentials, which many MCP clients log verbatim. Prefer
     `docker login` on the host so the `docker` module reuses credentials cached in
@@ -219,13 +233,13 @@ def image_search(term: str, limit: int | None = None, host: str | None = None) -
     Search Docker Hub for public images matching a term.
 
     Searches Docker Hub only — not GHCR, ECR, or other registries. For listing tags on a
-    specific image from any OCI registry use `registry_tags` instead. Each result dict
-    includes `name`, `description`, `star_count`, `is_official`, and `is_automated`.
+    specific image from any OCI registry use `registry_tags` instead.
 
     args:
         term - Search keyword, e.g. "nginx" or "python"
         limit - Maximum number of results to return (Docker Hub default is 25)
-    returns: list - List of matching image dicts from Docker Hub
+    returns: list - Result dicts: {"name", "description", "star_count", "is_official",
+        "is_automated"}
     """
     return _get_client(host).images.search(term=term, limit=limit)
 
@@ -250,16 +264,17 @@ def image_prune(filters: dict | None = None, host: str | None = None) -> dict:
 @tool()
 def image_load(data: bytes | None = None, from_file: str | None = None, host: str | None = None) -> list:
     """
-    Load an image from a tarball produced by image_save, from in-band bytes or a file on the server host.
+    Load an image from a tarball produced by `image_save`, from in-band bytes or a file on the server host.
 
-    Pass exactly one of `data` (tarball bytes in band) or `from_file` (a path on the server host,
+    Counterpart of `image_save`; when the image lives in a registry, `image_pull` is the normal
+    route. Pass exactly one of `data` (tarball bytes in band) or `from_file` (a path on the server host,
     streamed straight to the daemon — preferred for anything but small images, since in-band bytes are
     base64-encoded by MCP). `from_file` is read by the server's user; `~` is expanded.
 
     args:
         data - Tarball contents; exactly one of data/from_file
         from_file - Path to a tarball produced by `docker save` / `image_save`; exactly one of data/from_file
-    returns: list - A list of loaded image attrs dicts
+    returns: list - One full inspect payload per loaded image
     """
     if (data is None) == (from_file is None):
         raise ValueError("Pass exactly one of `data` (in-band tarball bytes) or `from_file` (a server-host path).")
@@ -282,8 +297,10 @@ def image_save(
     """
     Save an image as a tar archive: to a file on the server host, or in band.
 
-    With `dest_path` the archive streams straight to disk (no byte cap), so it handles large images —
-    the file is written by the server's user, `~` is expanded, and an existing file is refused unless
+    The archive keeps layers, tags, and metadata so `image_load` can restore it — different from
+    `container_export`, which flattens one container's filesystem. With `dest_path` the archive
+    streams straight to disk (no byte cap), so it handles large images — the file is written by
+    the server's user, `~` is expanded, and an existing file is refused unless
     `overwrite=True`. Without `dest_path` the tar bytes are returned in band, capped at `max_bytes`
     (default 32 MiB) because MCP base64-encodes them — a fallback for when no writable host path
     exists (e.g. a containerized server without a bind mount).
@@ -308,12 +325,16 @@ def image_tag(
     id_or_name: str, repository: str, tag: str | None = None, force: bool = False, host: str | None = None
 ) -> bool:
     """
-    Tag an image into a repository.
+    Tag an image into a repository (add a name to an existing local image).
+
+    The image id stays the same and no data is copied — a tag is an alias. Typical flow: tag with
+    the registry-qualified name, then `image_push`. `image_remove` on a tag merely untags while
+    other names remain.
 
     args:
         id_or_name - The source image name or id
-        repository - Target repository name
-        tag - Optional tag for the new image
+        repository - Target repository name (registry-qualified for pushing, e.g. "ghcr.io/o/r")
+        tag - Optional tag for the new image (default "latest")
         force - Force the tag
     returns: bool - True if the image was tagged
     """
