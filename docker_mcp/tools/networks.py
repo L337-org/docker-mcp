@@ -101,7 +101,8 @@ def network_list(
         greedy - Fetch extended per-network details (including connected containers)
         managed_only - Only return networks created by this MCP server (filters on the
                              docker-mcp-server.managed label); combines with any `filters` given
-    returns: list - One network summary dict ({"Id", "Name", "Driver", "Scope", ...}) per network
+    returns: list - One dict ({"Id", "Name", "Driver", "Scope", ...}) per network: summary attrs
+        by default, full inspect attrs (adding "Containers") when greedy=True
     """
     if managed_only:
         filters = managed_filter(filters)

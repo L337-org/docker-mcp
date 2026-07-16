@@ -163,9 +163,9 @@ def container_inspect(id_or_name: str, host: str | None = None) -> dict:
     Return the full inspect detail for a single container.
 
     Use this when you need complete information about one container — config, state,
-    network settings, mounts, environment variables, and resource limits. For a quick
-    overview of many containers use `container_list` instead (returns a summary per
-    container). For just logs or stats use `container_logs` / `container_stats`.
+    network settings, mounts, environment variables, and resource limits. To enumerate many
+    containers use `container_list` instead (same payload per container by default; abridged
+    with sparse=True). For just logs or stats use `container_logs` / `container_stats`.
 
     args: id_or_name - Container id (full or short) or name
     returns: dict - Full container inspect attrs (equivalent to `docker inspect`)
