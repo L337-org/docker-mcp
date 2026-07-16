@@ -205,9 +205,12 @@ touches — do not demand rewrites of untouched legacy docstrings.
    ("name - The volume name") — it scores 2/5 on the rubric. Canonical shared-param prefixes in
    `tests/test_naming.py` still apply — tool-specific detail is appended after the canonical
    prefix, not reworded.
-4. **`returns:` names the shape, not just the type** — for dict/list returns the load-bearing keys
-   must be listed (`{"Titles", "Processes"}`); flag a bare "dict - The X's attrs" on a
-   new/modified tool.
+4. **`returns:` names the shape, not just the type.** For computed or partial returns the
+   load-bearing keys must be listed (`{"Titles", "Processes"}`). For a full engine inspect
+   document, key enumeration is NOT wanted — an arbitrary subset of hundreds of keys is noise; the
+   line should identify the document ("full inspect payload, as `docker inspect`"), optionally
+   plus one or two keys a caller typically wants. Flag the shapeless "dict - The X's attrs" on a
+   new/modified tool, which identifies neither form.
 5. **Front-loaded and terse** — the description is paid for in every session's context.
 6. **Every factual claim must be verifiable** against the docker-py docs / Engine API spec (Docker
    SDK Policy below). Flag claims that contradict them — especially identifier semantics ("name or
