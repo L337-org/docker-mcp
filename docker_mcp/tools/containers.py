@@ -916,7 +916,7 @@ def container_export(
     Export a container's filesystem as a tar archive: to a file on the server host, or in band.
 
     The tar is a flat filesystem snapshot with no image metadata or layers — use `image_save` for
-    an archive `image_load` can restore, and `container_archive_get` for a single file or
+    an archive that `image_load` can restore, and `container_archive_get` for a single file or
     directory. With `dest_path` the archive streams straight to disk (no byte cap), so it handles large
     containers — the file is written by the server's user, `~` is expanded, and an existing file is
     refused unless `overwrite=True`. Without `dest_path` the tar bytes are returned in band, capped
