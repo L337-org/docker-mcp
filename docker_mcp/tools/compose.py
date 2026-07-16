@@ -150,8 +150,8 @@ def compose_ps(
     List containers in a compose project, parsed from `--format json`.
 
     Container-level view of one project (state, health, publishers); `compose_list` enumerates
-    projects, and `container_list` covers non-compose containers. Never raises: on a non-zero
-    exit `services` is empty — inspect `raw.stderr`.
+    projects, and `container_list` covers non-compose containers. Does not raise on a non-zero
+    CLI exit: `services` comes back empty — inspect `raw.stderr`.
 
     args:
         project_dir - Dir with the compose file (default: server cwd)
@@ -240,7 +240,8 @@ def compose_config(
     Render the canonical compose configuration after merges, profiles, and variable substitution.
 
     Use it to validate compose files and see exactly what the CLI will run before `compose_up`.
-    Never raises: on a failed render `config` may be None — inspect `raw.stderr`.
+    Does not raise on a non-zero CLI exit: on a failed render `config` may be None — inspect
+    `raw.stderr`.
 
     args:
         project_dir - Dir with the compose file (default: server cwd)
