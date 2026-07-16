@@ -305,8 +305,12 @@ legacy docstrings are cleaned opportunistically, not churned):
    prefixes in `tests/test_naming.py` still apply — append tool-specific detail after the
    canonical prefix rather than rewording it.
 4. **`returns:` names the shape, not just the type.** There is no output schema, so this line is
-   all an agent gets: for dict/list returns name the load-bearing keys (`{"Titles", "Processes"}`;
-   `{"LayersSize", "Images", "Containers", "Volumes", "BuildCache"}`), never just "the attrs".
+   all an agent gets. For computed or partial returns, name the load-bearing keys (`{"Titles",
+   "Processes"}`; `{"LayersSize", "Images", "Containers", "Volumes", "BuildCache"}`). For a full
+   engine inspect document, do NOT enumerate an arbitrary subset of its hundreds of keys — say
+   what document it is ("full inspect payload, as `docker inspect`"), optionally plus the one or
+   two keys a caller typically wants from it. What stays banned is the shapeless "dict - The X's
+   attrs", which identifies neither form.
 5. **Front-load and stay terse** — the description is paid for in every session's context; every
    sentence must earn its place.
 6. **Verify every factual claim** against the live docker-py docs / Engine API spec per the Docker
