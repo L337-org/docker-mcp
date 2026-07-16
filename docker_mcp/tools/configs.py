@@ -25,7 +25,7 @@ def config_create(
         data - Raw bytes content of the config file
         labels - Labels to set on the config
         templating - Templating driver config (e.g. {"Name": "golang"} for Go template syntax)
-    returns: dict - The created config's attrs including its id
+    returns: dict - The created config's attrs ({"ID", "Version", "CreatedAt", "Spec", ...})
     """
     kwargs: dict = {
         "name": name,
@@ -57,10 +57,10 @@ def config_list(filters: dict | None = None, host: str | None = None) -> list:
 
     Unlike secrets, config attrs include the actual config data (`Spec.Data`, base64-encoded)
     since configs are not treated as sensitive. Valid filter keys: `id`, `name`, `names`,
-    `label` (key or key=value).
+    `label` (key or key=value). Fetch a single config by id/name with `config_inspect`.
 
     args: filters - Narrow the list; omit to return every config
-    returns: list - A list of config attrs dicts
+    returns: list - One full config document ({"ID", "Spec", ...}) per config
     """
     return [c.attrs for c in _get_client(host).configs.list(**drop_none(filters=filters))]
 
@@ -69,6 +69,9 @@ def config_list(filters: dict | None = None, host: str | None = None) -> list:
 def config_remove(id_or_name: str, host: str | None = None) -> bool:
     """
     Remove a swarm config.
+
+    Requires a swarm manager, and fails while any service still references the config — update or
+    remove those services first. The last step of the rotation flow described in `config_create`.
 
     args: id_or_name - The config id or name
     returns: bool - True after removal

@@ -106,6 +106,10 @@ def swarm_leave(force: bool = False, host: str | None = None) -> bool:
     """
     Leave the current swarm.
 
+    The daemon's service tasks are rescheduled to the remaining nodes. A manager refuses to leave
+    without force=True, since leaving can break raft quorum. The departed node lingers as "down"
+    in `node_list` until a manager runs `node_remove`.
+
     args: force - Force leave even if the node is a manager
     returns: bool - True after leaving the swarm
     """
@@ -146,6 +150,9 @@ def swarm_update(
 def swarm_inspect(host: str | None = None) -> dict:
     """
     Inspect the swarm this daemon belongs to (id, spec, join-token config, CA info).
+
+    Works on a manager node only. Cluster-level configuration — for per-node state use
+    `node_list`; for the tokens new nodes need, `swarm_join_tokens`.
 
     returns: dict - The swarm's attrs, as returned by the daemon's swarm inspect endpoint
     """

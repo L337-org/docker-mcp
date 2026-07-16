@@ -94,7 +94,7 @@ def service_create(
         image - Image to run service tasks from (e.g. "nginx:alpine")
         command - Override the image's default command; string or list of strings
         extra_kwargs - Additional docker-py ServiceCollection.create keyword arguments
-    returns: dict - The created service's attrs
+    returns: dict - The created service's full document ({"ID", "Version", "Spec", ...})
     """
     kwargs = dict(extra_kwargs or {})
     # Stamp the service-level `labels`; leave any caller `container_labels` untouched.
@@ -109,10 +109,15 @@ def service_inspect(id_or_name: str, insert_defaults: bool | None = None, host: 
     """
     Get a swarm service by id or name.
 
+    Must run against a swarm manager. Returns the desired-state spec and rollout status — for the
+    actually-running tasks use `service_ps`, or the `service-tasks://{id_or_name}` resource for a
+    computed rollout summary.
+
     args:
         id_or_name - The service id or name
         insert_defaults - Merge default values into the output
-    returns: dict - The service's attrs
+    returns: dict - The full service document ({"ID", "Version", "Spec", "Endpoint", ...};
+        "UpdateStatus" during a rolling update)
     """
     return _get_client(host).services.get(id_or_name, insert_defaults=insert_defaults).attrs
 
@@ -122,11 +127,14 @@ def service_list(filters: dict | None = None, managed_only: bool = False, host: 
     """
     List swarm services.
 
+    Must run against a swarm manager. One entry per service (the desired state); `service_ps`
+    lists a service's tasks, and `stack_services` groups services by stack.
+
     args:
         filters - Filter by attributes (id, name, label, mode)
         managed_only - Only return services created by this MCP server (filters on the
                              docker-mcp-server.managed label); combines with any `filters` given
-    returns: list - A list of service attrs dicts
+    returns: list - One full service document ({"ID", "Spec", ...}) per service
     """
     if managed_only:
         filters = managed_filter(filters)
@@ -163,6 +171,9 @@ def service_update(id_or_name: str, updates: dict | None = None, force: bool = F
 def service_remove(id_or_name: str, host: str | None = None) -> bool:
     """
     Stop and remove a swarm service.
+
+    Requires a swarm manager. Deletes the service definition and shuts down its tasks — no
+    confirmation, no undo. To stop work but keep the definition, `service_scale` to 0 replicas.
 
     args: id_or_name - The service id or name
     returns: bool - True after the service is removed
@@ -210,7 +221,9 @@ def service_logs(
     following would block forever and grow unbounded. Collection is capped at `max_bytes` (ValueError
     if exceeded) so a noisy service can't OOM the server. The default is a bounded `tail=200`;
     `tail="all"` returns the whole buffer, which can be huge on long-running services and exceed
-    the agent's context — prefer an integer, or `since`, to constrain output.
+    the agent's context — prefer an integer, or `since`, to constrain output. Logs aggregate
+    across all the service's tasks — `container_logs` reads a single container, and the
+    `service-logs://{id_or_name}` resource is the resource-flavored equivalent of this tool.
 
     args:
         id_or_name - The service id or name

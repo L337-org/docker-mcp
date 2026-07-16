@@ -24,14 +24,16 @@ def volume_create(
     Common `driver_opts` for the default `local` driver: bind-mount an existing host path
     with `{"type": "none", "device": "/host/path", "o": "bind"}`, or mount an NFS share
     with `{"type": "nfs", "device": "server:/export", "o": "addr=server,rw"}`. Third-party
-    drivers (e.g. `rexray`, `convoy`) accept their own option keys.
+    drivers (e.g. `rexray`, `convoy`) accept their own option keys. Enumerate with `volume_list`;
+    reclaim unused volumes with `volume_prune`. Created volumes are stamped with provenance
+    labels.
 
     args:
         name - Volume name; auto-generated if omitted (creates an anonymous volume)
         driver - Volume driver to use (default: "local")
         driver_opts - Driver-specific options dict
         labels - Labels to set on the volume
-    returns: dict - The created volume's attrs
+    returns: dict - The created volume's attrs ({"Name", "Driver", "Mountpoint", "Labels", ...})
     """
     kwargs = drop_none(
         name=name, driver=driver, driver_opts=driver_opts, labels=with_provenance(labels, "volume_create")
@@ -59,11 +61,15 @@ def volume_list(filters: dict | None = None, managed_only: bool = False, host: s
     """
     List volumes.
 
+    Volumes are addressed by name only — feed a Name to `volume_inspect` for detail or
+    `volume_remove` / `volume_prune` to clean up. filters={"dangling": True} finds volumes no
+    container references.
+
     args:
         filters - Filter by attributes (e.g. dangling, name, label)
         managed_only - Only return volumes created by this MCP server (filters on the
                              docker-mcp-server.managed label); combines with any `filters` given
-    returns: list - A list of volume attrs dicts
+    returns: list - One volume document ({"Name", "Driver", "Mountpoint", ...}) per volume
     """
     if managed_only:
         filters = managed_filter(filters)

@@ -28,8 +28,11 @@ def node_list(filters: dict | None = None, host: str | None = None) -> list:
     """
     List swarm nodes.
 
+    Must run against a swarm manager. The fleet view of membership, role, and state; drill into
+    one node with `node_inspect`, or read the `docker://nodes` resource for a computed summary.
+
     args: filters - Filter by attributes (id, name, membership, role)
-    returns: list - A list of node attrs dicts
+    returns: list - One full node document per node (Spec, Status, ManagerStatus for managers)
     """
     return [n.attrs for n in _get_client(host).nodes.list(**drop_none(filters=filters))]
 
@@ -108,7 +111,8 @@ def node_wait(
     Common uses: `until="ready"` after a newly joined node, or `until="down"` while draining a
     node before removal. Does not track task placement — for "has this drained node's workload
     fully moved off", inspect the relevant services' tasks directly; no single cheap call spans
-    every service in the swarm, so that check isn't built into this tool.
+    every service in the swarm, so that check isn't built into this tool. `service_wait` covers
+    service convergence; `node_list` shows every node's state at once.
 
     args:
         id_or_name - The node id or name

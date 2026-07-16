@@ -233,6 +233,10 @@ def system_ping(host: str | None = None) -> bool:
     """
     Check that the Docker server is responsive.
 
+    The cheapest daemon health check. A failure here usually means connection config rather than
+    daemon load — `system_reconnect` rebuilds a wedged client, `host_list` shows the configured
+    endpoints. For daemon details use `system_version` / `system_info`.
+
     returns: bool - True if the daemon responded successfully
     """
     return _get_client(host).ping()
@@ -243,7 +247,10 @@ def system_version(host: str | None = None) -> dict:
     """
     Return Docker server version information.
 
-    returns: dict - Version information from the Docker daemon
+    Engine version, API level, and per-component versions — the first thing to check for feature
+    availability. `system_info` reports runtime state (counts, drivers, swarm role) instead.
+
+    returns: dict - {"Version", "ApiVersion", "MinAPIVersion", "Os", "Arch", "Components", ...}
     """
     return _get_client(host).version()
 
@@ -251,9 +258,12 @@ def system_version(host: str | None = None) -> dict:
 @tool()
 def system_info(host: str | None = None) -> dict:
     """
-    Return system-wide Docker information.
+    Return system-wide Docker information, like `docker info`.
 
-    returns: dict - System information from the Docker daemon
+    Daemon runtime state: container/image counts, storage and logging drivers, swarm role, and
+    daemon warnings. Use `system_version` for version/API level and `system_df` for disk usage.
+
+    returns: dict - {"Containers", "Images", "Driver", "ServerVersion", "Swarm", "Warnings", ...}
     """
     return _get_client(host).info()
 
@@ -280,7 +290,9 @@ def host_list() -> list[dict]:
     List the Docker hosts configured via DOCKER_MCP_SERVER_HOSTS.
 
     With a single host (or the var unset) this is the one resolved daemon; with several it is the set the
-    `host` argument selects from. The `default` entry is the one used when `host` is omitted.
+    `host` argument selects from. The `default` entry is the one used when `host` is omitted; pass a
+    `name` as the `host` argument of daemon-backed tools (`system_ping(host=...)` checks one
+    entry). The `docker-mcp://hosts` resource mirrors this tool.
 
     returns: list[dict] - one per host: name; url (resolved daemon URL, null = docker-py platform
         default); read_only; tls (whether a per-host cert dir is configured); default (the omitted-host fallback)
@@ -314,7 +326,8 @@ def system_login(
 
     Security: the password is sent as a tool argument, which many MCP clients log verbatim. Prefer
     running `docker login` once on the host so the `docker` module reuses the credentials cached in
-    `~/.docker/config.json`, and avoid calling this tool from an agent loop.
+    `~/.docker/config.json`, and avoid calling this tool from an agent loop. Credentials let
+    `image_pull` / `image_push` reach private repositories; `system_logout` clears them.
 
     args:
         username - Registry username
@@ -323,7 +336,7 @@ def system_login(
         registry - URL to the registry (defaults to Docker Hub)
         reauth - Force re-authentication even if valid credentials exist
         dockercfg_path - Path to a custom dockercfg file
-    returns: dict - The server response from the login request
+    returns: dict - The login response ({"Status", "IdentityToken"} on success)
     """
     return _get_client(host).login(
         username=username,
@@ -449,7 +462,8 @@ def system_reconnect(host: str | None = None) -> dict:
     Validates the rebuilt client before swapping in (and only then closes the old one), so a failed
     rebuild leaves the working client in place. Rebuilds the default host's client when `host` is
     omitted. It CANNOT retarget to a different daemon — to add or change a daemon, edit
-    DOCKER_MCP_SERVER_HOSTS and restart.
+    DOCKER_MCP_SERVER_HOSTS and restart. `system_close` closes pooled clients without rebuilding;
+    `host_list` shows the configured endpoints.
 
     returns: dict - the rebuilt host's version info (same shape as `system_version`), confirming connectivity
     """

@@ -391,7 +391,9 @@ def registry_tags(
     Works against Docker Hub, GHCR, ECR, GAR, and any OCI-compliant registry; anonymous if no
     credentials are passed. Talks directly to the registry over HTTPS and does NOT read
     `~/.docker/config.json` — for private registries prefer the DOCKER_MCP_SERVER_REGISTRY_USERNAME /
-    DOCKER_MCP_SERVER_REGISTRY_PASSWORD env vars (keeps secrets out of tool args, which clients often log).
+    DOCKER_MCP_SERVER_REGISTRY_PASSWORD env vars (keeps secrets out of tool args, which clients
+    often log). Fetch one tag's manifest with `registry_manifest`; `hub_tags` adds Hub-specific
+    tag metadata (sizes, push dates).
 
     args:
         repository - Image/repository ref, e.g. "alpine", "ghcr.io/org/repo"; any `:tag`/`@digest` is stripped
@@ -733,7 +735,8 @@ def hub_repo_info(repository: str) -> dict:
     Fetch Docker Hub metadata for a repository.
 
     Public repos only: sends no auth and does NOT read the local Docker credential store;
-    private repos return 404/401.
+    private repos return 404/401. Hub-only metadata (stars, pulls, description) — use
+    `registry_tags` for tag lists on any OCI registry and `hub_tags` for Hub tag details.
 
     args: repository - Hub repository, e.g. "library/alpine" or "myorg/myimage"
     returns: dict - The Hub /v2/repositories/<repo>/ response (description, star_count,

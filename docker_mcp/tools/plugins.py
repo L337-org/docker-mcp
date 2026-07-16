@@ -34,7 +34,7 @@ def plugin_install(remote: str, local_name: str | None = None, host: str | None 
     args:
         remote - Docker Hub plugin reference, e.g. "vieux/sshfs:latest"
         local_name - Alias to refer to the plugin locally; defaults to remote
-    returns: dict - The installed plugin's attrs
+    returns: dict - The installed plugin's attrs ({"Id", "Name", "Enabled", "Settings", "Config"})
     """
     return _get_client(host).plugins.install(remote, local_name=local_name).attrs
 

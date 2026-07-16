@@ -101,7 +101,7 @@ def network_list(
         greedy - Fetch extended per-network details (including connected containers)
         managed_only - Only return networks created by this MCP server (filters on the
                              docker-mcp-server.managed label); combines with any `filters` given
-    returns: list - A list of network attrs dicts
+    returns: list - One network summary dict ({"Id", "Name", "Driver", "Scope", ...}) per network
     """
     if managed_only:
         filters = managed_filter(filters)
@@ -116,7 +116,8 @@ def network_prune(filters: dict | None = None, host: str | None = None) -> dict:
 
     Built-in networks (bridge, host, none) are never removed. Only networks with zero
     connected containers are eligible. Valid filter keys: `until` (RFC3339 timestamp or
-    duration — removes networks created before that point), `label` (key or key=value).
+    duration — removes networks created before that point), `label` (key or key=value). Use
+    `network_remove` to delete one specific network instead.
 
     args: filters - Narrow which networks to remove; omit to remove all unused custom networks
     returns: dict - {"NetworksDeleted": [...]}
