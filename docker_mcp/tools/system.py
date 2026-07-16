@@ -337,7 +337,7 @@ def system_login(
         registry - URL to the registry (defaults to Docker Hub)
         reauth - Force re-authentication even if valid credentials exist
         dockercfg_path - Path to a custom dockercfg file
-    returns: dict - The login response ({"Status", "IdentityToken"} on success)
+    returns: dict - The login response: {"Status"} always; "IdentityToken" only when the registry issues one
     """
     return _get_client(host).login(
         username=username,
