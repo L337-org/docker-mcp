@@ -384,7 +384,7 @@ Connecting this server to an AI agent grants it the same level of access as a lo
 | Desktop Extension (.mcpb) | [GitHub Releases](https://github.com/L337-org/docker-mcp/releases) |
 | Official MCP Registry | [io.github.L337-org/docker-mcp-server](https://registry.modelcontextprotocol.io/v0.1/servers/io.github.L337-org%2Fdocker-mcp-server/versions) |
 | Glama | [docker-mcp-server](https://glama.ai/mcp/servers/L337-org/docker-mcp) |
-| mcp.so | [docker-mcp-server](https://mcp.so/server/docker-mcp-server/GavinLucas) |
+| mcp.so | [docker-mcp-server](https://mcp.so/servers/docker-1ae67d) |
 | awesome-mcp-servers | [punkpeye/awesome-mcp-servers](https://github.com/punkpeye/awesome-mcp-servers#cloud-platforms) |
 
 ## Privacy Policy
