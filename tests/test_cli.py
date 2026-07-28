@@ -794,20 +794,28 @@ def test_remote_stage_and_exec_stages_a_path_outside_the_tree(monkeypatch, tmp_p
 
 
 def test_remote_stage_and_exec_leaves_a_value_that_names_no_local_path(monkeypatch, tmp_path):
-    # Nothing to stage and nothing to rewrite: the remote CLI reports it, exactly as the local one would.
+    """
+    Nothing to stage and nothing to rewrite, so both backends report the path the caller passed.
+
+    The in-tree case matters as much as the out-of-tree one: rewriting a missing `/proj/missing.yml` to
+    `missing.yml` would make the remote CLI complain about a name the caller never wrote, where the
+    local backend would have echoed the absolute path back.
+    """
     _pin_hosts(monkeypatch, "prod=ssh://ops@prod")
     project = tmp_path / "project"
     project.mkdir()
+    outside = "/nowhere/missing.yml"
+    inside = str(project / "missing.yml")
     session = _FakeSession()
     with _stage_patched(session):
         cli_module.remote_stage_and_exec(
             "prod",
-            ["compose", "-f", "/nowhere/missing.yml", "up"],
+            ["compose", "-f", outside, "-f", inside, "up"],
             cwd=project,
             timeout=60.0,
-            path_values=["/nowhere/missing.yml"],
+            path_values=[outside, inside],
         )
-    assert session.calls[0]["argv"] == ["docker", "compose", "-f", "/nowhere/missing.yml", "up"]
+    assert session.calls[0]["argv"] == ["docker", "compose", "-f", outside, "-f", inside, "up"]
     assert session.files == []
 
 

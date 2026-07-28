@@ -534,8 +534,12 @@ def _reconcile_path_tokens(
     Three cases, in order: a relative path inside the staged tree needs nothing (the remote cwd *is*
     that tree); an absolute path inside it is rewritten relative, because the local absolute path means
     nothing remotely even though the file was copied; anything else is staged on its own and rewritten
-    to where it landed. A value that names no local path is left alone so the remote CLI reports it,
-    which is the same thing the local backend would do.
+    to where it landed.
+
+    A value naming nothing that exists locally is left alone in every one of those cases, including the
+    in-tree one. There is nothing to reconcile it with, and rewriting it would make the remote CLI
+    complain about `missing.yml` where the local backend would have named the absolute path the caller
+    actually passed — a worse error for no gain.
 
     Replacement is by whole token, so a value coinciding with an unrelated argument (a service named
     exactly like an out-of-tree file path) would be rewritten too — accepted, being both unlikely and
@@ -562,6 +566,8 @@ def _reconcile_path_tokens(
             inside = absolute.resolve().is_relative_to(resolved_base)
         except OSError:  # an unresolvable path is not something we can stage; let the remote say so
             continue
+        if not absolute.exists():
+            continue  # nothing to reconcile; both backends then report the path the caller passed
         if inside:
             relative = absolute.resolve().relative_to(resolved_base).as_posix()
             if relative != value:
