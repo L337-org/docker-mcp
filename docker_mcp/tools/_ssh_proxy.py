@@ -38,15 +38,6 @@ from typing import IO, Protocol, cast
 
 import paramiko
 
-# docker-py's context-tarring helpers, reused so a staged build context honours `.dockerignore`
-# exactly as an SDK-driven build would. Neither is covered by docker-py's published API docs (nothing
-# documents `docker.utils`), so this is a soft dependency on stable-for-years internals: both have
-# been re-exported from `docker.utils` since 2.x and are what `APIClient.build` itself calls. Verified
-# against the installed docker==7.1.0 — `tar(path, exclude=None, dockerfile=None, fileobj=None,
-# gzip=False)` returns a rewound file object, and `exclude_paths(root, patterns, dockerfile=None)`
-# mutates `patterns`, hence the fresh list at every call site.
-from docker.utils import exclude_paths, tar as docker_context_tar
-
 from docker_mcp._hosts import is_ssh_url
 
 logger = logging.getLogger(__name__)
@@ -1173,6 +1164,39 @@ def _tar_local_tree(root: Path) -> IO[bytes]:
     return archive
 
 
+def _load_context_tar_helpers():
+    """
+    Import docker-py's context-tarring helpers on first use, not at module import.
+
+    They are reused so a staged build context honours `.dockerignore` exactly as an SDK-driven build
+    would — `APIClient.build` calls the same two — but nothing documents `docker.utils`, so this is a
+    soft dependency on internals. At module scope that risk lands in the wrong place: every tool module
+    imports this one, so an upstream rename would stop the whole server from starting even for a session
+    that never stages anything (verified by deleting `docker.utils.tar` in a live interpreter: a
+    module-level `from docker.utils import tar` then raises ImportError and takes startup with it).
+    Importing here confines it to the one call that needs them, as an actionable error.
+
+    Signatures verified against docker==7.1.0: `tar(path, exclude=None, dockerfile=None, fileobj=None,
+    gzip=False)` returns a rewound file object, and `exclude_paths(root, patterns, dockerfile=None)`
+    *mutates* `patterns`, hence the fresh copy at each call site. A silently changed *meaning* is not
+    detectable here — only absence is.
+
+    returns: tuple - (tar, exclude_paths) from docker.utils
+    raises: RuntimeError - the installed docker-py does not provide them
+    """
+    try:
+        from docker.utils import exclude_paths, tar
+    except ImportError as exc:
+        raise RuntimeError(
+            f"Cannot stage a build context onto the remote host: the installed docker-py does not provide the "
+            f"context-tarring helpers this needs ({exc}). `docker.utils.tar` / `docker.utils.exclude_paths` "
+            f"have been stable for years but are not part of docker-py's published API, so a release can drop "
+            f"them. Until this is updated, either install the docker CLI on this host (the local-CLI path "
+            f"needs no staging) or pin docker-py to a release that still provides them."
+        ) from exc
+    return tar, exclude_paths
+
+
 def _read_dockerignore(context_dir: Path) -> list[str]:
     """
     Read `.dockerignore` into the pattern list docker-py's tarring helpers expect.
@@ -1359,6 +1383,7 @@ class RemoteStagingSession:
         source = Path(context_dir).expanduser()
         if not source.is_dir():
             raise ValueError(f"Cannot stage the build context {str(source)!r} onto the remote host: not a directory.")
+        context_tar, exclude_paths = _load_context_tar_helpers()
         patterns = _read_dockerignore(source)
         # Both helpers mutate the pattern list they are given (each appends a `!<dockerfile>`
         # negation), so each gets its own copy.
@@ -1369,7 +1394,7 @@ class RemoteStagingSession:
         # fileobj passed it is always the former, and `create_archive` rewinds it before returning.
         archive = cast(
             IO[bytes],
-            docker_context_tar(
+            context_tar(
                 source,
                 exclude=list(patterns),
                 # The tuple form docker-py builds internally: (path relative to the context, contents).

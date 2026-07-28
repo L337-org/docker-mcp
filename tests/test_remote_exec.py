@@ -1444,3 +1444,24 @@ def test_tar_skips_entries_that_cannot_be_recreated_remotely(tmp_path):
             names = {name.removeprefix("./") for name in bundle.getnames()}
     assert "pipe" not in names
     assert "docker-compose.yml" in names
+
+
+def test_missing_docker_py_helpers_fail_only_the_call_that_needs_them(tmp_path, monkeypatch):
+    """
+    The context-tarring helpers are undocumented docker-py internals, so a release can rename them
+    away. That must not stop the server from importing — every tool module imports `_ssh_proxy`, so a
+    module-level `from docker.utils import tar` would take startup down with it (confirmed against a
+    live interpreter) — which is why the import sits inside the one method that uses them.
+
+    Deleting the attribute is the faithful simulation: the module still imports (docker-py's own
+    package needs it), only the name is gone.
+    """
+    import docker.utils
+
+    monkeypatch.delattr(docker.utils, "tar")
+    host = ScriptedHost()
+    with _staging(host) as session:
+        with pytest.raises(RuntimeError, match="does not provide the context-tarring helpers"):
+            session.stage_build_context(_context(tmp_path, ""))
+        # Staging a plain tree does its own tarring, so it keeps working.
+        assert session.stage_tree(_project(tmp_path / "p"))
