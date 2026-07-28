@@ -811,12 +811,18 @@ def test_remote_stage_and_exec_leaves_a_value_that_names_no_local_path(monkeypat
     assert session.files == []
 
 
-def test_remote_stage_and_exec_refuses_a_missing_working_directory(monkeypatch, tmp_path):
+def test_remote_stage_and_exec_refuses_an_unusable_working_directory(monkeypatch, tmp_path):
+    # Two different mistakes land here, and the message has to distinguish them: a missing path, and a
+    # file passed where a directory belongs (`is_dir()` is false for both).
     _pin_hosts(monkeypatch, "prod=ssh://ops@prod")
+    a_file = tmp_path / "docker-compose.yml"
+    a_file.write_text("services: {}\n", encoding="utf-8")
     session = _FakeSession()
     with _stage_patched(session):
-        with pytest.raises(ValueError, match="does not exist here"):
+        with pytest.raises(ValueError, match="nothing exists at that path"):
             cli_module.remote_stage_and_exec("prod", ["compose", "up"], cwd=tmp_path / "gone", timeout=60.0)
+        with pytest.raises(ValueError, match="exists but is not a directory"):
+            cli_module.remote_stage_and_exec("prod", ["compose", "up"], cwd=a_file, timeout=60.0)
     assert session.trees == []
 
 

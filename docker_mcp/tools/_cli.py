@@ -421,9 +421,12 @@ def remote_stage_and_exec(
                 f"would be copied over. Pass one explicitly."
             ) from exc
     if not local_cwd.is_dir():
+        # Two different mistakes reach here — a missing path and a file passed where a directory belongs —
+        # and saying which one it is saves the caller a round trip.
+        detail = "it exists but is not a directory" if local_cwd.exists() else "nothing exists at that path"
         raise ValueError(
-            f"Cannot run `docker {args[0] if args else ''}` on the remote host: the working directory "
-            f"{str(local_cwd)!r} does not exist here, and it is what would be copied over."
+            f"Cannot run `docker {args[0] if args else ''}` on the remote host: {str(local_cwd)!r} is not a usable "
+            f"working directory on this host ({detail}), and it is what would be copied over."
         )
     with remote_staging_session(url, timeout=timeout) as session:
         remote_cwd = session.stage_tree(local_cwd)
