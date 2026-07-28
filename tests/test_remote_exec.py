@@ -14,6 +14,7 @@ import shlex
 import signal
 import subprocess
 import sys
+import time
 import unittest.mock
 from typing import cast
 
@@ -356,16 +357,31 @@ pytestmark_posix = pytest.mark.skipif(sys.platform == "win32", reason="needs a P
 # pre-existing snapshot rather than trusted outright.
 _WATCHDOG_MARKER_SECONDS = 4517
 _GRANDCHILD_MARKER_SECONDS = 4519
+# How long the watchdog may legitimately take to notice the command has gone. It ticks once a second,
+# so it is normally alive when the call returns; this bounds "promptly exits" without asserting an
+# impossible zero.
+_WATCHDOG_EXIT_GRACE_SECONDS = 10.0
 
 
-def _pids_sleeping_for(seconds: int) -> list[str]:
+def _processes_naming(seconds: int) -> list[str]:
     """
-    Pids of `sleep <seconds>` processes, via pgrep. Empty when pgrep finds nothing (exit 1).
+    Pids whose command line names this timeout, via pgrep. Empty when pgrep finds nothing (exit 1).
+
+    Matches two shapes on purpose, because the watchdog's footprint changed and both are worth
+    catching. `-lt <seconds>` finds the watchdog subshell, whose argv is the whole wrapper script —
+    that is what a lingering watchdog looks like today. `sleep <seconds>` finds the single long sleep
+    the watchdog used to be, which is the regression this most needs to catch: it leaked one stray per
+    call on Linux for the remainder of the timeout window.
+
+    Both were confirmed against `/proc` on dash. Probing only `sleep <seconds>` — as this helper did
+    when the watchdog was one long sleep — silently matches nothing under the current implementation,
+    making its caller vacuous. The watchdog's own `sleep 1` is deliberately not matched: it is
+    indistinguishable from any other second-long sleep on the machine.
 
     Skips the calling test when `pgrep` is absent — it is not in a minimal container image, and an
     unavailable probe should not look like a failing assertion.
     """
-    probe = ["pgrep", "-f", f"sleep {seconds}"]
+    probe = ["pgrep", "-f", f"sleep {seconds}|-lt {seconds}"]
     try:
         completed = subprocess.run(probe, capture_output=True, text=True, check=False)  # noqa: S603
     except (FileNotFoundError, PermissionError) as exc:
@@ -425,7 +441,7 @@ def test_real_shell_grandchildren_are_a_known_limitation():
     # signal unrelated processes on a developer's machine.
     with pytest.raises(subprocess.TimeoutExpired):
         _run_script(["sh", "-c", f"sleep {_GRANDCHILD_MARKER_SECONDS} & wait"], timeout=1, capture_timeout=4)
-    for pid in _pids_sleeping_for(_GRANDCHILD_MARKER_SECONDS):
+    for pid in _processes_naming(_GRANDCHILD_MARKER_SECONDS):
         with contextlib.suppress(ProcessLookupError, PermissionError):
             os.kill(int(pid), signal.SIGKILL)
 
@@ -450,19 +466,37 @@ def test_real_shell_leaves_no_marker_file_behind():
 
 
 @pytestmark_posix
-def test_real_shell_does_not_leave_the_watchdog_running_after_a_fast_command():
-    """A long timeout must not keep the call (or a stray `sleep`) alive once the command is done."""
-    # Record pre-existing matches and diff against them, so an unrelated `sleep` with the same
-    # duration (another developer process, or a concurrent test) cannot fail this. The duration is
-    # also deliberately odd, making a collision unlikely in the first place.
-    before = set(_pids_sleeping_for(_WATCHDOG_MARKER_SECONDS))
+def test_real_shell_watchdog_does_not_outlive_the_call_for_long():
+    """
+    A watchdog armed for 4517s must not still be around long after a command that took no time.
+
+    Asserting zero *immediately* would be wrong, not merely flaky: the watchdog is legitimately still
+    mid-`sleep 1` when the call returns (confirmed against `/proc` on dash), and only notices the
+    command has gone on its next tick. The guarantee worth testing is that it exits promptly rather
+    than living for the whole timeout window — which is exactly what leaked one stray per call before.
+
+    Note this bites on Linux, not on macOS: the leak it guards is dash's, and bash cleans up the same
+    construct. Reverting the fix locally leaves this test green, so a passing run here is not evidence
+    the guard works — CI's Linux job is what exercises it. That asymmetry is precisely how the leak
+    reached CI in the first place.
+    """
+    # Diff against pre-existing matches so an unrelated process cannot fail this; the duration is also
+    # deliberately implausible, making a collision unlikely to begin with.
+    before = set(_processes_naming(_WATCHDOG_MARKER_SECONDS))
     result = _run_script(["true"], timeout=_WATCHDOG_MARKER_SECONDS, capture_timeout=15)
     assert result.returncode == 0
-    leaked = set(_pids_sleeping_for(_WATCHDOG_MARKER_SECONDS)) - before
+
+    deadline = time.monotonic() + _WATCHDOG_EXIT_GRACE_SECONDS
+    leaked = set(_processes_naming(_WATCHDOG_MARKER_SECONDS)) - before
+    while leaked and time.monotonic() < deadline:
+        time.sleep(0.25)
+        leaked = set(_processes_naming(_WATCHDOG_MARKER_SECONDS)) - before
     for pid in leaked:  # don't leave our own strays behind if the assertion is about to fail
-        with contextlib.suppress(ProcessLookupError, PermissionError):
+        with contextlib.suppress(ProcessLookupError, PermissionError, ValueError):
             os.kill(int(pid), signal.SIGKILL)
-    assert not leaked, f"watchdog leaked: {sorted(leaked)}"
+    assert not leaked, (
+        f"watchdog still alive {_WATCHDOG_EXIT_GRACE_SECONDS}s after the command finished: {sorted(leaked)}"
+    )
 
 
 @pytestmark_posix
