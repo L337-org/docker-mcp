@@ -1,3 +1,4 @@
+import ast
 import inspect
 import json
 import subprocess
@@ -526,6 +527,62 @@ def test_instructions_mention_the_remote_exec_fallback_only_for_domains_that_hav
     assert "ssh://" not in context_only
 
 
+def _calls_function(source: str, name: str) -> bool:
+    """
+    Whether `source` contains a real call to `name`, by AST rather than substring.
+
+    A substring search would count a mention in a docstring or comment — and modules legitimately
+    document helpers they do not call — so the scan below looks for actual `Call` nodes, matching both
+    the bare `name(...)` and the `module.name(...)` attribute form.
+
+    args:
+        source - Python source text
+        name - the function name to look for
+    returns: bool - True if the source calls it
+    """
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Call):
+            func = node.func
+            called = func.id if isinstance(func, ast.Name) else getattr(func, "attr", None)
+            if called == name:
+                return True
+    return False
+
+
+def _tool_modules_calling(name: str) -> set[str]:
+    """Leaf tool-module names whose source actually calls `name` (private `_*` helpers excluded)."""
+    import pkgutil
+
+    import docker_mcp.tools as tools_package
+
+    root = Path(tools_package.__path__[0])
+    found = set()
+    for module in pkgutil.iter_modules(tools_package.__path__):
+        path = root / f"{module.name}.py"
+        # Skip subpackages and anything without a plain module file; `_cli.py` and friends define the
+        # helpers rather than consuming them and are not domains.
+        if module.ispkg or not path.is_file() or module.name.startswith("_"):
+            continue
+        if _calls_function(path.read_text(encoding="utf-8"), name):
+            found.add(module.name)
+    return found
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ("should_remote_exec(host, plugin='compose')", True),
+        ("_cli.should_remote_exec(host)", True),
+        ('"""Docs mentioning should_remote_exec(host) without calling it."""', False),
+        ("# see should_remote_exec(host) in _cli.py" + chr(10) + "x = 1", False),
+        ("x = should_remote_exec", False),  # referenced, not called
+    ],
+)
+def test_the_call_scan_distinguishes_calls_from_mentions(source, expected):
+    """The guard below is only as good as this scan: a docstring mention must not count as wiring."""
+    assert _calls_function(source, "should_remote_exec") is expected
+
+
 def test_remote_exec_domains_match_the_modules_that_implement_the_fallback():
     """
     `_REMOTE_EXEC_DOMAINS` drives what the router advertises, and it is hand-maintained — so a domain
@@ -533,17 +590,9 @@ def test_remote_exec_domains_match_the_modules_that_implement_the_fallback():
     a hard failure. Derived from the modules that actually call `should_remote_exec`, so the tuple cannot
     drift from the code either way.
     """
-    import pkgutil
-
-    import docker_mcp.tools as tools_package
     from docker_mcp.server import _REMOTE_EXEC_DOMAINS
 
-    implementing = set()
-    for module in pkgutil.iter_modules(tools_package.__path__):
-        source = (Path(tools_package.__path__[0]) / f"{module.name}.py").read_text(encoding="utf-8")
-        # `_cli.py` defines the helper rather than consuming it, and is not a domain.
-        if "should_remote_exec(" in source and not module.name.startswith("_"):
-            implementing.add(module.name)
+    implementing = _tool_modules_calling("should_remote_exec")
     assert implementing == set(_REMOTE_EXEC_DOMAINS), (
         f"modules calling should_remote_exec: {sorted(implementing)}; "
         f"_REMOTE_EXEC_DOMAINS: {sorted(_REMOTE_EXEC_DOMAINS)} — the router advertises the latter"
