@@ -426,10 +426,15 @@ def remote_stage_and_exec(
             # `Path.cwd()` raises a bare "No such file or directory" if the server's own working
             # directory has been deleted underneath it, which says nothing about what to do. The local
             # backend tolerates that (a process keeps its deleted cwd), so name the difference.
+            purpose = (
+                "that is what would be copied over"
+                if stage_cwd
+                else "that is what this call's relative paths resolve against"
+            )
             raise ValueError(
                 f"Cannot run `docker {args[0] if args else ''}` on the remote host: this server's own working "
-                f"directory is unavailable ({exc}), and with no explicit working directory that is what "
-                f"would be copied over. Pass one explicitly."
+                f"directory is unavailable ({exc}), and with no explicit working directory {purpose}. Pass one "
+                f"explicitly."
             ) from exc
     if stage_cwd and not local_cwd.is_dir():
         # Two different mistakes reach here — a missing path and a file passed where a directory belongs —

@@ -893,8 +893,12 @@ def test_remote_stage_and_exec_explains_an_unavailable_server_cwd(monkeypatch, t
         cli_module.Path, "cwd", staticmethod(lambda: (_ for _ in ()).throw(FileNotFoundError(2, "No such file")))
     )
     with _stage_patched(session):
-        with pytest.raises(ValueError, match="own working directory is unavailable"):
+        with pytest.raises(ValueError, match="that is what would be copied over"):
             cli_module.remote_stage_and_exec("prod", ["compose", "ps"], cwd=None, timeout=60.0)
+        # The same failure means something different when nothing is being staged as a working
+        # directory: there it is only what relative paths resolve against, so the message says so.
+        with pytest.raises(ValueError, match="relative paths resolve against"):
+            cli_module.remote_stage_and_exec("prod", ["buildx", "create"], cwd=None, timeout=60.0, stage_cwd=False)
     assert session.trees == []
 
 
