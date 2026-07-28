@@ -662,10 +662,11 @@ def detect_remote_dialect(
 
     Everything else — an MSYS/Cygwin-flavoured value, an unrecognised kernel, a restricted shell, a
     failed probe — is reported as WINDOWS, which here means only "no supported POSIX shell answered"
-    rather than a claim about the OS. Since `get_dialect`'s refusal therefore cannot name a cause, a
-    warning is logged before returning either way, so the refusal is diagnosable on first occurrence:
-    the observed exit status and output when the probe ran, or the underlying error when it could not
-    be completed at all.
+    rather than a claim about the OS. Since `get_dialect`'s refusal therefore cannot name a cause, both
+    routes to WINDOWS log a warning before returning, so the refusal is diagnosable on first
+    occurrence: the observed exit status and output when the probe ran, or the underlying error when it
+    could not be completed at all. A successful POSIX detection logs nothing — there is nothing to
+    explain, and this runs on every call whose host is not already cached.
 
     Cached per host with a short TTL (mirroring `_cli.has_plugin`), so a long-lived server neither
     re-probes on every call nor needs a restart after a remote change.

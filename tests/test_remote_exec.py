@@ -487,9 +487,12 @@ def test_real_shell_mktemp_failure_exits_125_without_running_argv():
     with contextlib.suppress(FileNotFoundError):
         os.unlink(canary)
     script = PosixDialect().wrap_with_timeout(["touch", canary], timeout=5)
-    # Shadow mktemp so it fails, exactly as an absent binary or unwritable TMPDIR would.
+    # Shadow mktemp so it fails, exactly as an absent binary or unwritable TMPDIR would. The function
+    # definition is POSIX, and shadowing an external command this way is honoured by dash, busybox ash
+    # and macOS sh alike (verified) — so this runs under /bin/sh like every other real-shell test here,
+    # rather than depending on bash, which a minimal image such as Alpine does not ship at all.
     result = subprocess.run(  # noqa: S603 — fixed argv, no shell; the script itself is under test
-        ["/bin/bash", "-c", "mktemp() { return 1; }\n" + shlex.split(script)[2]],
+        ["/bin/sh", "-c", "mktemp() { return 1; }\n" + shlex.split(script)[2]],
         capture_output=True,
         text=True,
         timeout=30,
@@ -678,6 +681,12 @@ def test_detect_remote_dialect_warns_on_every_refusal_path(caplog):
         detect_remote_dialect(fake_client(None, transport=False), "ssh://b")
     warnings = [r for r in caplog.records if r.levelname == "WARNING"]
     assert len(warnings) == 2, [r.getMessage() for r in warnings]
+    # And nothing is logged for a host that *is* supported — this runs on every uncached call, so a
+    # successful detection must stay silent.
+    caplog.clear()
+    with caplog.at_level("WARNING"):
+        detect_remote_dialect(fake_client(FakeChannel(stdout=[b"Linux\n"], exit_ready_immediately=True)), "ssh://ok")
+    assert not [r for r in caplog.records if r.levelname == "WARNING"]
     answered, failed = warnings
     assert "mingw64_nt-10.0" in answered.getMessage().lower()  # what the host reported
     assert "ssh://a" in answered.getMessage()
