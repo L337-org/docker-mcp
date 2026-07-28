@@ -9,13 +9,22 @@
 # CliResult dict and never raise; parsed-query tools (`stack_list`, `stack_ps`, `stack_services`)
 # return a parsed list and raise RuntimeError via `raise_on_cli_failure` on a non-zero exit.
 
+# With no local `docker` binary and an ssh:// target, these run on the far host via the remote-exec
+# fallback in `_cli.py`. `stack_deploy` is the only one that reads local files, so it is the only one
+# that stages its working directory; the queries and `stack rm` name nothing local.
+
 from docker_mcp.server import tool
 from docker_mcp.tools._cli import (
+    CliResult,
     filter_args,
+    flag_values,
     parse_json_or_ndjson,
     raise_on_cli_failure,
+    remote_exec_cli,
+    remote_stage_and_exec,
     run_docker,
     safe_positional,
+    should_remote_exec,
 )
 
 _TIMEOUT_QUERY = 60.0
@@ -32,6 +41,50 @@ _RESOLVE_IMAGE_CHOICES = frozenset({"always", "changed", "never"})
 # shorthand: the `json` keyword was only added to the docker CLI formatter in ~v23.0, whereas the
 # template renders one JSON object per line (NDJSON) on every version we might run against.
 _JSON_FORMAT = "{{json .}}"
+
+
+def _run_stack(
+    args: list[str],
+    *,
+    timeout: float,
+    host: str | None = None,
+    cwd: str | None = None,
+    stage_cwd: bool = False,
+) -> CliResult:
+    """
+    Run `docker stack <args...>`, locally or — with no local `docker` binary — on the ssh:// host.
+
+    `stage_cwd` is explicit rather than inferred from `cwd`, because the two questions differ: only
+    `stack_deploy` reads local files, and it needs the *server's* working directory staged when `cwd`
+    is None, whereas a query with no `cwd` needs no staging at all.
+
+    args:
+        args - the full docker argv, beginning with `stack`
+        timeout - seconds allowed for the command
+        host - configured host label, or None for the default host
+        cwd - working directory for resolving relative paths, or None for the server's own
+        stage_cwd - True for a subcommand that reads local files, so that directory is copied over
+    returns: CliResult - the same shape from either backend
+    """
+    if should_remote_exec(host, plugin=None):
+        if stage_cwd:
+            return remote_stage_and_exec(
+                # `stack_deploy` is the only producer of `-c` here, so scanning the argv recovers
+                # exactly its `compose_files` list.
+                host,
+                args,
+                cwd=cwd,
+                timeout=timeout,
+                # Scanning the whole argv is safe *here*, unlike compose's `-f` (see
+                # `compose._global_file_values`, where an appended container command can contain one):
+                # `stack deploy` appends no user-supplied argv, and its only caller-controlled tokens
+                # are the stack name — which `safe_positional` refuses if it starts with '-' — and
+                # `--filter key=value` pairs, which always contain '='. Nothing but a real flag can
+                # equal "-c".
+                path_values=flag_values(args, "-c"),
+            )
+        return remote_exec_cli(host, args, timeout=timeout)
+    return run_docker(args, cwd=cwd, timeout=timeout, host=host)
 
 
 def _parse_stack_list(stdout: str, *, truncated: bool, what: str) -> list[dict]:
@@ -73,7 +126,8 @@ def stack_deploy(
         prune - Remove services no longer defined in the Compose file
         resolve_image - Image-digest resolution: "always" (default), "changed", or "never"
         detach - Return immediately after submitting specs (True) vs wait for convergence (False)
-        cwd - Working directory for resolving relative Compose paths (defaults to the server's cwd)
+        cwd - Working directory for resolving relative Compose paths (defaults to the server's cwd;
+                      copied to the target host if no local docker CLI)
         timeout_seconds - Subprocess timeout (default 1800s)
     returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
     """
@@ -92,7 +146,7 @@ def stack_deploy(
         args.append(f"--resolve-image={resolve_image}")
     args.append(f"--detach={'true' if detach else 'false'}")
     args.append(safe_positional(name, "stack name"))
-    return run_docker(args, cwd=cwd, timeout=timeout_seconds, host=host).to_dict()
+    return _run_stack(args, cwd=cwd, timeout=timeout_seconds, host=host, stage_cwd=True).to_dict()
 
 
 @tool()
@@ -106,7 +160,7 @@ def stack_list(host: str | None = None) -> list:
 
     returns: list - One dict per stack (name, services count, orchestrator)
     """
-    result = run_docker(["stack", "ls", "--format", _JSON_FORMAT], timeout=_TIMEOUT_QUERY, host=host)
+    result = _run_stack(["stack", "ls", "--format", _JSON_FORMAT], timeout=_TIMEOUT_QUERY, host=host)
     raise_on_cli_failure(result, "stack ls")
     return _parse_stack_list(result.stdout, truncated=result.truncated, what="stack ls output")
 
@@ -131,7 +185,7 @@ def stack_ps(name: str, no_trunc: bool = False, filters: dict | None = None, hos
         args.append("--no-trunc")
     args.extend(filter_args(filters))
     args.append(safe_positional(name, "stack name"))
-    result = run_docker(args, timeout=_TIMEOUT_QUERY, host=host)
+    result = _run_stack(args, timeout=_TIMEOUT_QUERY, host=host)
     raise_on_cli_failure(result, "stack ps")
     return _parse_stack_list(result.stdout, truncated=result.truncated, what="stack ps output")
 
@@ -153,7 +207,7 @@ def stack_services(name: str, filters: dict | None = None, host: str | None = No
     args = ["stack", "services", "--format", _JSON_FORMAT]
     args.extend(filter_args(filters))
     args.append(safe_positional(name, "stack name"))
-    result = run_docker(args, timeout=_TIMEOUT_QUERY, host=host)
+    result = _run_stack(args, timeout=_TIMEOUT_QUERY, host=host)
     raise_on_cli_failure(result, "stack services")
     return _parse_stack_list(result.stdout, truncated=result.truncated, what="stack services output")
 
@@ -180,4 +234,4 @@ def stack_remove(
         raise ValueError("stack_remove requires at least one entry in names.")
     args = ["stack", "rm", f"--detach={'true' if detach else 'false'}"]
     args.extend(safe_positional(name, "stack name") for name in names)
-    return run_docker(args, timeout=timeout_seconds, host=host).to_dict()
+    return _run_stack(args, timeout=timeout_seconds, host=host).to_dict()

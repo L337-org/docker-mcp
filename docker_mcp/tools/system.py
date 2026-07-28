@@ -16,6 +16,7 @@ from docker_mcp._hosts import (
     Host,
     default as _default_host,
     is_multi as _is_multi,
+    is_ssh_url,
     registry as _host_registry,
     resolve as _resolve_host,
     resolve_auto,
@@ -128,7 +129,7 @@ def _ensure_ssh_port(url: str) -> str:
     args: url: str - a DOCKER_HOST/host URL; only `ssh://` URLs with no explicit port are affected
     returns: str - `url` unchanged, or with the `~/.ssh/config` port spliced into the netloc
     """
-    if not url.startswith("ssh://"):
+    if not is_ssh_url(url):
         return url
     parsed = urllib.parse.urlparse(url)
     try:
@@ -496,7 +497,7 @@ def _connection_help(exc: BaseException, host: Host | None) -> str:
     url = host.url if host is not None else None
     if host is not None and url:
         lines.append(f"  Default host {host.label!r} resolves to {url} — verify that endpoint is reachable.")
-    if url and url.startswith("ssh://"):
+    if is_ssh_url(url):
         # ssh:// uses the pure-Python paramiko transport. Its failure modes are auth/host-key, not
         # the socket-mount issues the rest of this function covers, so give targeted hints and stop.
         lines.append(

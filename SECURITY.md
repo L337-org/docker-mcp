@@ -23,13 +23,21 @@ Read that section before connecting an AI agent to this server.
 
 In short: the Docker daemon's socket is effectively root-equivalent on its
 host, and this server exposes the full Docker SDK surface plus selected
-docker CLI features (Compose, Context) and direct registry HTTPS access.
-There is no per-tool authorization layer — the daemon (and, for CLI-backed
-tools, the host running this server) is the trust boundary. Treat the
-agent as a privileged user, and prefer pointing the server at a scoped
-daemon (development VM, remote sandbox, Docker Desktop, rootless install)
-rather than a production socket — via `DOCKER_MCP_SERVER_HOSTS` (or
-`DOCKER_HOST`). The daemon set is fixed at startup (no runtime retarget to
-an arbitrary endpoint), and a host listed `(ro)` in `DOCKER_MCP_SERVER_HOSTS`
-makes the agent refuse to mutate it — an accident guard, not a substitute
-for a genuinely scoped daemon.
+docker CLI features (Compose, Stack, Buildx, Scout, Context) and direct
+registry HTTPS access. There is no per-tool authorization layer — the
+daemon (and, for CLI-backed tools, whichever host runs the CLI) is the
+trust boundary. That is normally the host running this server; when the
+docker CLI — or the plugin a call needs — is missing locally and the daemon
+is reached over `ssh://`, Compose / Stack / Buildx / Scout commands run on
+the *target* host as the SSH user, and the files they read are copied into a
+`0700` temp directory there first — including a `buildx_build` `--secret src=`
+file. That directory is removed when the call returns, but the teardown is
+best-effort: a dropped SSH connection leaves nothing able to run it, so a
+`docker-mcp-server.stage.*` directory can survive on the remote host (the
+failure is logged). Treat the agent as a privileged user, and prefer
+pointing the server at a scoped daemon (development VM, remote sandbox,
+Docker Desktop, rootless install) rather than a production socket — via
+`DOCKER_MCP_SERVER_HOSTS` (or `DOCKER_HOST`). The daemon set is fixed at
+startup (no runtime retarget to an arbitrary endpoint), and a host listed
+`(ro)` in `DOCKER_MCP_SERVER_HOSTS` makes the agent refuse to mutate it — an
+accident guard, not a substitute for a genuinely scoped daemon.

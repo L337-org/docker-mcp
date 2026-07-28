@@ -1,7 +1,9 @@
+import ast
 import inspect
 import json
 import subprocess
 import sys
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -503,6 +505,104 @@ def test_instructions_drop_cli_and_swarm_caveats_when_those_domains_are_absent()
     assert "scout" not in text
 
 
+def test_instructions_mention_the_remote_exec_fallback_only_for_domains_that_have_it():
+    """
+    The fallback changes which host a call runs on — its credentials, its filesystem — so it belongs in
+    the always-in-context router. `context` is the one CLI-backed domain without it (its tools manage
+    *this* host's context registry), so a surface of only `context` must not advertise it.
+    """
+    text = build_instructions(registered_domains={"compose", "context"})
+    assert "Applies to compose;" in text
+    several = build_instructions(registered_domains={"compose", "buildx", "context"})
+    assert "Applies to compose, buildx;" in several
+    # The condition is both halves — the CLI/plugin missing *and* an ssh:// target — because a client
+    # reading only the router would otherwise expect every ssh:// call to execute remotely.
+    assert "With the CLI or a required plugin missing locally" in text
+    # The blanket "those calls raise" is gone where a fallback exists — it contradicted the sentence
+    # after it — and the domain without one is named instead.
+    assert "those calls raise" not in text
+    assert "no fallback for context, which raises instead." in text
+    assert "reached over `ssh://`" in text
+    assert "a usable local CLI always wins" in text
+    assert "Applies to context" not in text  # named only where the fallback exists
+
+    context_only = build_instructions(registered_domains={"context", "containers"})
+    assert "CLI-backed domains (context)" in context_only
+    assert "ssh://" not in context_only
+
+
+def _calls_function(source: str, name: str) -> bool:
+    """
+    Whether `source` contains a real call to `name`, by AST rather than substring.
+
+    A substring search would count a mention in a docstring or comment — and modules legitimately
+    document helpers they do not call — so the scan below looks for actual `Call` nodes, matching both
+    the bare `name(...)` and the `module.name(...)` attribute form.
+
+    args:
+        source - Python source text
+        name - the function name to look for
+    returns: bool - True if the source calls it
+    """
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Call):
+            func = node.func
+            called = func.id if isinstance(func, ast.Name) else getattr(func, "attr", None)
+            if called == name:
+                return True
+    return False
+
+
+def _tool_modules_calling(name: str) -> set[str]:
+    """Leaf tool-module names whose source actually calls `name` (private `_*` helpers excluded)."""
+    import pkgutil
+
+    import docker_mcp.tools as tools_package
+
+    root = Path(tools_package.__path__[0])
+    found = set()
+    for module in pkgutil.iter_modules(tools_package.__path__):
+        path = root / f"{module.name}.py"
+        # Skip subpackages and anything without a plain module file; `_cli.py` and friends define the
+        # helpers rather than consuming them and are not domains.
+        if module.ispkg or not path.is_file() or module.name.startswith("_"):
+            continue
+        if _calls_function(path.read_text(encoding="utf-8"), name):
+            found.add(module.name)
+    return found
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ("should_remote_exec(host, plugin='compose')", True),
+        ("_cli.should_remote_exec(host)", True),
+        ('"""Docs mentioning should_remote_exec(host) without calling it."""', False),
+        ("# see should_remote_exec(host) in _cli.py" + chr(10) + "x = 1", False),
+        ("x = should_remote_exec", False),  # referenced, not called
+    ],
+)
+def test_the_call_scan_distinguishes_calls_from_mentions(source, expected):
+    """The guard below is only as good as this scan: a docstring mention must not count as wiring."""
+    assert _calls_function(source, "should_remote_exec") is expected
+
+
+def test_remote_exec_domains_match_the_modules_that_implement_the_fallback():
+    """
+    `_REMOTE_EXEC_DOMAINS` drives what the router advertises, and it is hand-maintained — so a domain
+    that wires the fallback without being added here would run remotely while the router still promised
+    a hard failure. Derived from the modules that actually call `should_remote_exec`, so the tuple cannot
+    drift from the code either way.
+    """
+    from docker_mcp.server import _REMOTE_EXEC_DOMAINS
+
+    implementing = _tool_modules_calling("should_remote_exec")
+    assert implementing == set(_REMOTE_EXEC_DOMAINS), (
+        f"modules calling should_remote_exec: {sorted(implementing)}; "
+        f"_REMOTE_EXEC_DOMAINS: {sorted(_REMOTE_EXEC_DOMAINS)} — the router advertises the latter"
+    )
+
+
 def test_instructions_default_to_the_live_registered_surface():
     # No argument -> reads _tool_registry; with everything registered, every domain blurb appears.
     # _NO_DOMAIN_TOOLS (domain=None) are excluded — they never get a per-domain router line.
@@ -859,6 +959,9 @@ def test_cli_tool_threads_host_to_run_docker(monkeypatch):
         captured.update(kwargs)
         return CliResult(returncode=0, stdout="", stderr="", truncated=False)
 
+    # A *non-ssh* second host on purpose: `_run_stack` now asks `should_remote_exec` first, and only a
+    # non-ssh transport makes that answer False regardless of whether this machine has a docker binary.
+    _set_multi_host(monkeypatch, spec="local=auto, prod=tcp://prod:2376")
     monkeypatch.setattr(stack, "run_docker", fake_run_docker)
     stack.stack_list(host="prod")
     assert captured.get("host") == "prod"

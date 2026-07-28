@@ -1,3 +1,5 @@
+import contextlib
+import pathlib
 import subprocess
 import time
 from unittest.mock import MagicMock, patch
@@ -7,6 +9,7 @@ import pytest
 import docker_mcp._hosts as _hosts_mod
 import docker_mcp.tools._cli as cli_module
 from docker_mcp._hosts import Host, parse_registry
+from docker_mcp.tools._ssh_proxy import RemoteExecResult
 from docker_mcp.tools._cli import (
     MAX_CLI_OUTPUT_BYTES,
     CliResult,
@@ -510,6 +513,352 @@ def test_apply_host_env_platform_default_strips_ambient(monkeypatch):
     assert "DOCKER_CONTEXT" not in env
 
 
+# ---------- should_remote_exec: when a CLI call has to run on the remote host ----------
+
+
+def _pin_hosts(monkeypatch, spec: str) -> None:
+    monkeypatch.setattr(_hosts_mod, "_registry", parse_registry(spec))
+
+
+@pytest.mark.parametrize(
+    ("hosts_spec", "host", "which", "plugin_present", "plugin", "expected"),
+    [
+        # ssh:// target with nothing local to serve the call -> remote.
+        ("prod=ssh://ops@prod", "prod", None, False, "scout", True),
+        ("prod=ssh://ops@prod", "prod", None, False, None, True),
+        # ssh:// target with a working local CLI/plugin -> local, unchanged behavior.
+        ("prod=ssh://ops@prod", "prod", "/usr/bin/docker", True, "scout", False),
+        ("prod=ssh://ops@prod", "prod", "/usr/bin/docker", True, None, False),
+        # ssh:// target, local binary but the plugin is missing -> remote (a core-CLI call still local).
+        ("prod=ssh://ops@prod", "prod", "/usr/bin/docker", False, "scout", True),
+        ("prod=ssh://ops@prod", "prod", "/usr/bin/docker", False, None, False),
+        # Never for a transport we cannot open a shell on, however broken the local CLI is.
+        ("prod=tcp://prod:2376", "prod", None, False, "scout", False),
+        ("prod=unix:///var/run/docker.sock", "prod", None, False, None, False),
+        # host=None resolves to the default (first) entry, not to whichever entry is ssh://.
+        ("local=unix:///local.sock, prod=ssh://ops@prod", None, None, False, "scout", False),
+        ("prod=ssh://ops@prod, local=unix:///local.sock", None, None, False, "scout", True),
+    ],
+)
+def test_should_remote_exec_matrix(monkeypatch, hosts_spec, host, which, plugin_present, plugin, expected):
+    _pin_hosts(monkeypatch, hosts_spec)
+    with (
+        patch("docker_mcp.tools._cli.shutil.which", return_value=which),
+        patch("docker_mcp.tools._cli.has_plugin", return_value=plugin_present) as has,
+    ):
+        assert cli_module.should_remote_exec(host, plugin=plugin) is expected
+    if which is None or plugin is None:
+        has.assert_not_called()  # no point probing a plugin when there is no binary (or no plugin needed)
+
+
+def test_should_remote_exec_does_not_probe_for_a_non_ssh_host(monkeypatch):
+    # The probe shells out (and, against an ssh:// default, would connect), so the cheap
+    # transport check has to come first.
+    _pin_hosts(monkeypatch, "prod=tcp://prod:2376")
+    with (
+        patch("docker_mcp.tools._cli.shutil.which") as which,
+        patch("docker_mcp.tools._cli.has_plugin") as has,
+    ):
+        assert cli_module.should_remote_exec("prod", plugin="compose") is False
+    which.assert_not_called()
+    has.assert_not_called()
+
+
+def test_should_remote_exec_false_for_platform_default_host(monkeypatch):
+    # url=None is the platform socket/npipe, which is never reachable over SSH.
+    monkeypatch.setattr(_hosts_mod, "_registry", {"box": Host("box", None)})
+    with patch("docker_mcp.tools._cli.shutil.which", return_value=None):
+        assert cli_module.should_remote_exec("box", plugin="scout") is False
+
+
+# ---------- remote_exec_cli: the remote backend in run_docker's result shape ----------
+
+
+def _remote_result(stdout: bytes = b"", stderr: bytes = b"", returncode: int = 0, truncated: bool = False):
+    return RemoteExecResult(returncode=returncode, stdout=stdout, stderr=stderr, truncated=truncated)
+
+
+def test_remote_exec_cli_runs_docker_on_the_resolved_ssh_url(monkeypatch):
+    _pin_hosts(monkeypatch, "local=unix:///local.sock, prod=ssh://ops@prod:2222")
+    with patch(
+        "docker_mcp.tools._cli.run_remote_exec", return_value=_remote_result(stdout=b"out\n", stderr=b"warn\n")
+    ) as remote:
+        result = cli_module.remote_exec_cli("prod", ["scout", "cves", "alpine"], timeout=42.0)
+    assert remote.call_args.args == ("ssh://ops@prod:2222", ["docker", "scout", "cves", "alpine"])
+    assert remote.call_args.kwargs == {"max_output_bytes": MAX_CLI_OUTPUT_BYTES, "timeout": 42.0}
+    assert isinstance(result, CliResult)
+    assert (result.returncode, result.stdout, result.stderr, result.truncated) == (0, "out\n", "warn\n", False)
+
+
+def test_remote_exec_cli_decodes_utf8_with_replace(monkeypatch):
+    _pin_hosts(monkeypatch, "prod=ssh://ops@prod")
+    with patch("docker_mcp.tools._cli.run_remote_exec", return_value=_remote_result(stdout=b"ok-\xff-end")):
+        result = cli_module.remote_exec_cli("prod", ["scout", "version"])
+    assert result.stdout.startswith("ok-")
+    assert result.stdout.endswith("-end")
+
+
+def test_remote_exec_cli_carries_through_remote_truncation(monkeypatch):
+    # The drain is the only place that saw the discarded bytes, so its flag has to survive even
+    # though the retained output is (necessarily) within the cap by the time we decode it.
+    _pin_hosts(monkeypatch, "prod=ssh://ops@prod")
+    with patch("docker_mcp.tools._cli.run_remote_exec", return_value=_remote_result(stdout=b"partial", truncated=True)):
+        result = cli_module.remote_exec_cli("prod", ["scout", "sbom", "alpine"])
+    assert result.truncated is True
+    assert result.stdout == "partial"
+
+
+def test_remote_exec_cli_preserves_nonzero_exit_without_raising(monkeypatch):
+    # Action tools return the raw result and decide for themselves; the backend must not raise for them.
+    _pin_hosts(monkeypatch, "prod=ssh://ops@prod")
+    with patch("docker_mcp.tools._cli.run_remote_exec", return_value=_remote_result(stderr=b"boom", returncode=17)):
+        result = cli_module.remote_exec_cli("prod", ["scout", "cves", "alpine"])
+    assert (result.returncode, result.stderr) == (17, "boom")
+
+
+def test_remote_exec_cli_propagates_timeout_as_timeout_expired(monkeypatch):
+    # Same exception the local subprocess path raises, so a tool sees one contract either way.
+    _pin_hosts(monkeypatch, "prod=ssh://ops@prod")
+    with patch(
+        "docker_mcp.tools._cli.run_remote_exec",
+        side_effect=subprocess.TimeoutExpired(cmd=["docker", "scout", "cves"], timeout=5.0),
+    ):
+        with pytest.raises(subprocess.TimeoutExpired):
+            cli_module.remote_exec_cli("prod", ["scout", "cves", "alpine"], timeout=5.0)
+
+
+def test_remote_exec_cli_refuses_a_non_ssh_host(monkeypatch):
+    _pin_hosts(monkeypatch, "prod=tcp://prod:2376")
+    with patch("docker_mcp.tools._cli.run_remote_exec") as remote:
+        with pytest.raises(RuntimeError, match="not reached over ssh://"):
+            cli_module.remote_exec_cli("prod", ["scout", "cves", "alpine"])
+    remote.assert_not_called()
+
+
+def test_remote_exec_cli_refuses_stdin_and_extra_env(monkeypatch):
+    # Silently dropping either would make the remote path diverge from the local one invisibly.
+    _pin_hosts(monkeypatch, "prod=ssh://ops@prod")
+    with patch("docker_mcp.tools._cli.run_remote_exec") as remote:
+        with pytest.raises(ValueError, match="stdin"):
+            cli_module.remote_exec_cli("prod", ["build", "-"], stdin=b"FROM alpine")
+        with pytest.raises(ValueError, match="COMPOSE_PROJECT_NAME"):
+            cli_module.remote_exec_cli("prod", ["compose", "up"], extra_env={"COMPOSE_PROJECT_NAME": "demo"})
+    remote.assert_not_called()
+
+
+# ---------- flag_values ----------
+
+
+def test_flag_values_recovers_the_paths_an_argv_names():
+    from docker_mcp.tools._cli import flag_values
+
+    args = ["compose", "-f", "a.yml", "-f", "sub/b.yml", "up", "-d"]
+    assert flag_values(args, "-f") == ["a.yml", "sub/b.yml"]
+    assert flag_values(args, "-c") == []
+
+
+def test_flag_values_ignores_a_trailing_flag_with_no_value():
+    from docker_mcp.tools._cli import flag_values
+
+    assert flag_values(["stack", "deploy", "-c"], "-c") == []
+
+
+# ---------- remote_stage_and_exec: staging the working directory ----------
+
+
+class _FakeSession:
+    """Records what a staging session was asked to stage and run."""
+
+    def __init__(self, root="/tmp/docker-mcp-server.stage.abc"):
+        self.root = root
+        self.trees: list[str] = []
+        self.files: list[str] = []
+        self.calls: list[dict] = []
+        self.result: RemoteExecResult | None = None
+
+    def stage_tree(self, local_dir):
+        self.trees.append(str(local_dir))
+        return f"{self.root}/tree{len(self.trees)}"
+
+    def stage_file(self, local_file):
+        self.files.append(str(local_file))
+        return f"{self.root}/file{len(self.files)}/{pathlib.Path(local_file).name}"
+
+    def exec(self, argv, *, timeout, max_output_bytes, cwd=None):
+        self.calls.append({"argv": list(argv), "timeout": timeout, "cwd": cwd, "cap": max_output_bytes})
+        return self.result or RemoteExecResult(returncode=0, stdout=b"", stderr=b"", truncated=False)
+
+
+@contextlib.contextmanager
+def _fake_staging(session):
+    yield session
+
+
+def _stage_patched(session):
+    return patch("docker_mcp.tools._cli.remote_staging_session", lambda *a, **k: _fake_staging(session))
+
+
+def test_remote_stage_and_exec_stages_the_given_cwd_and_runs_in_it(monkeypatch, tmp_path):
+    _pin_hosts(monkeypatch, "prod=ssh://ops@prod")
+    project = tmp_path / "project"
+    project.mkdir()
+    session = _FakeSession()
+    with _stage_patched(session):
+        result = cli_module.remote_stage_and_exec("prod", ["compose", "up", "-d"], cwd=project, timeout=120.0)
+    assert session.trees == [str(project)]
+    call = session.calls[0]
+    assert call["argv"] == ["docker", "compose", "up", "-d"]
+    assert call["cwd"] == f"{session.root}/tree1"  # runs in the staged copy, not the login home dir
+    assert (call["timeout"], call["cap"]) == (120.0, MAX_CLI_OUTPUT_BYTES)
+    assert isinstance(result, CliResult)
+
+
+def test_remote_stage_and_exec_treats_cwd_none_as_the_servers_own_directory(monkeypatch, tmp_path):
+    """
+    The trap this exists to avoid: `cwd=None` means the server's cwd on the local path (that is what
+    `subprocess.run` uses), so resolving it to "stage nothing" would leave the command running in the
+    SSH login home directory — quietly acting on whatever project happened to live there.
+    """
+    _pin_hosts(monkeypatch, "prod=ssh://ops@prod")
+    workdir = tmp_path / "server-cwd"
+    workdir.mkdir()
+    monkeypatch.chdir(workdir)
+    session = _FakeSession()
+    with _stage_patched(session):
+        cli_module.remote_stage_and_exec("prod", ["compose", "ps"], cwd=None, timeout=60.0)
+    assert session.trees == [str(workdir)]
+    assert session.calls[0]["cwd"] == f"{session.root}/tree1"
+
+
+def test_remote_stage_and_exec_leaves_a_relative_in_tree_path_alone(monkeypatch, tmp_path):
+    # A relative token already resolves against the staged tree, which is the remote cwd.
+    _pin_hosts(monkeypatch, "prod=ssh://ops@prod")
+    project = tmp_path / "project"
+    (project / "sub").mkdir(parents=True)
+    (project / "sub" / "compose.yml").write_text("services: {}\n", encoding="utf-8")
+    session = _FakeSession()
+    with _stage_patched(session):
+        cli_module.remote_stage_and_exec(
+            "prod",
+            ["compose", "-f", "sub/compose.yml", "up"],
+            cwd=project,
+            timeout=60.0,
+            path_values=["sub/compose.yml"],
+        )
+    assert session.calls[0]["argv"] == ["docker", "compose", "-f", "sub/compose.yml", "up"]
+    assert session.files == []  # no second copy of a file the tree already carried
+
+
+def test_remote_stage_and_exec_rewrites_an_absolute_in_tree_path_relative(monkeypatch, tmp_path):
+    """
+    An absolute local path is copied over as part of the tree, but the *token* still names a directory
+    that does not exist on the remote host — so it has to become relative to the staged copy.
+    """
+    _pin_hosts(monkeypatch, "prod=ssh://ops@prod")
+    project = tmp_path / "project"
+    project.mkdir()
+    compose_file = project / "docker-compose.yml"
+    compose_file.write_text("services: {}\n", encoding="utf-8")
+    session = _FakeSession()
+    with _stage_patched(session):
+        cli_module.remote_stage_and_exec(
+            "prod",
+            ["compose", "-f", str(compose_file), "up"],
+            cwd=project,
+            timeout=60.0,
+            path_values=[str(compose_file)],
+        )
+    assert session.calls[0]["argv"] == ["docker", "compose", "-f", "docker-compose.yml", "up"]
+    assert session.files == []
+
+
+def test_remote_stage_and_exec_stages_a_path_outside_the_tree(monkeypatch, tmp_path):
+    # A shared override file next to (not inside) the project: staged on its own and pointed at.
+    _pin_hosts(monkeypatch, "prod=ssh://ops@prod")
+    project = tmp_path / "project"
+    project.mkdir()
+    shared = tmp_path / "shared" / "base.yml"
+    shared.parent.mkdir()
+    shared.write_text("services: {}\n", encoding="utf-8")
+    session = _FakeSession()
+    with _stage_patched(session):
+        cli_module.remote_stage_and_exec(
+            "prod",
+            ["compose", "-f", str(shared), "config"],
+            cwd=project,
+            timeout=60.0,
+            path_values=[str(shared)],
+        )
+    assert session.files == [str(shared)]
+    assert session.calls[0]["argv"] == ["docker", "compose", "-f", f"{session.root}/file1/base.yml", "config"]
+
+
+def test_remote_stage_and_exec_leaves_a_value_that_names_no_local_path(monkeypatch, tmp_path):
+    """
+    Nothing to stage and nothing to rewrite, so both backends report the path the caller passed.
+
+    The in-tree case matters as much as the out-of-tree one: rewriting a missing `/proj/missing.yml` to
+    `missing.yml` would make the remote CLI complain about a name the caller never wrote, where the
+    local backend would have echoed the absolute path back.
+    """
+    _pin_hosts(monkeypatch, "prod=ssh://ops@prod")
+    project = tmp_path / "project"
+    project.mkdir()
+    outside = "/nowhere/missing.yml"
+    inside = str(project / "missing.yml")
+    session = _FakeSession()
+    with _stage_patched(session):
+        cli_module.remote_stage_and_exec(
+            "prod",
+            ["compose", "-f", outside, "-f", inside, "up"],
+            cwd=project,
+            timeout=60.0,
+            path_values=[outside, inside],
+        )
+    assert session.calls[0]["argv"] == ["docker", "compose", "-f", outside, "-f", inside, "up"]
+    assert session.files == []
+
+
+def test_remote_stage_and_exec_refuses_an_unusable_working_directory(monkeypatch, tmp_path):
+    # Two different mistakes land here, and the message has to distinguish them: a missing path, and a
+    # file passed where a directory belongs (`is_dir()` is false for both).
+    _pin_hosts(monkeypatch, "prod=ssh://ops@prod")
+    a_file = tmp_path / "docker-compose.yml"
+    a_file.write_text("services: {}\n", encoding="utf-8")
+    session = _FakeSession()
+    with _stage_patched(session):
+        with pytest.raises(ValueError, match="nothing exists at that path"):
+            cli_module.remote_stage_and_exec("prod", ["compose", "up"], cwd=tmp_path / "gone", timeout=60.0)
+        with pytest.raises(ValueError, match="exists but is not a directory"):
+            cli_module.remote_stage_and_exec("prod", ["compose", "up"], cwd=a_file, timeout=60.0)
+    assert session.trees == []
+
+
+def test_remote_stage_and_exec_refuses_stdin_extra_env_and_a_non_ssh_host(monkeypatch, tmp_path):
+    _pin_hosts(monkeypatch, "prod=ssh://ops@prod, local=unix:///local.sock")
+    session = _FakeSession()
+    with _stage_patched(session):
+        with pytest.raises(ValueError, match="stdin"):
+            cli_module.remote_stage_and_exec("prod", ["compose", "up"], cwd=tmp_path, stdin=b"x", timeout=60.0)
+        with pytest.raises(ValueError, match="COMPOSE_FILE"):
+            cli_module.remote_stage_and_exec(
+                "prod", ["compose", "up"], cwd=tmp_path, extra_env={"COMPOSE_FILE": "x"}, timeout=60.0
+            )
+        with pytest.raises(RuntimeError, match="not reached over ssh://"):
+            cli_module.remote_stage_and_exec("local", ["compose", "up"], cwd=tmp_path, timeout=60.0)
+    assert session.trees == []  # every refusal lands before anything is connected or copied
+
+
+def test_remote_stage_and_exec_returns_the_commands_own_failure(monkeypatch, tmp_path):
+    # Action tools inspect returncode themselves, so a non-zero exit must come back, not raise.
+    _pin_hosts(monkeypatch, "prod=ssh://ops@prod")
+    session = _FakeSession()
+    session.result = RemoteExecResult(returncode=1, stdout=b"", stderr=b"no such service", truncated=True)
+    with _stage_patched(session):
+        result = cli_module.remote_stage_and_exec("prod", ["compose", "up"], cwd=tmp_path, timeout=60.0)
+    assert (result.returncode, result.stderr, result.truncated) == (1, "no such service", True)
+
+
 # ---------- filter_args ----------
 
 
@@ -530,3 +879,158 @@ def test_filter_args_lowercases_booleans():
     from docker_mcp.tools._cli import filter_args
 
     assert filter_args({"dangling": True}) == ["--filter", "dangling=true"]
+
+
+def test_remote_stage_and_exec_explains_an_unavailable_server_cwd(monkeypatch, tmp_path):
+    """
+    `Path.cwd()` raises a bare "No such file or directory" when the server's own working directory has
+    been deleted underneath it — which says nothing about what to do, and the local backend tolerates
+    the same situation (a process keeps its deleted cwd). Found by tripping over it live.
+    """
+    _pin_hosts(monkeypatch, "prod=ssh://ops@prod")
+    session = _FakeSession()
+    monkeypatch.setattr(
+        cli_module.Path, "cwd", staticmethod(lambda: (_ for _ in ()).throw(FileNotFoundError(2, "No such file")))
+    )
+    with _stage_patched(session):
+        with pytest.raises(ValueError, match="that is what would be copied over"):
+            cli_module.remote_stage_and_exec("prod", ["compose", "ps"], cwd=None, timeout=60.0)
+        # The same failure means something different when nothing is being staged as a working
+        # directory: there it is only what relative paths resolve against, so the message says so — and
+        # the remedy differs, because such a tool may expose no `cwd` for the caller to set.
+        with pytest.raises(ValueError, match="Pass absolute paths instead"):
+            cli_module.remote_stage_and_exec(
+                "prod",
+                ["buildx", "create", "--config", "rel.toml"],
+                cwd=None,
+                timeout=60.0,
+                path_values=["rel.toml"],
+                stage_cwd=False,
+            )
+    assert session.trees == []
+
+
+def test_remote_stage_and_exec_needs_no_working_directory_for_absolute_paths_only(monkeypatch, tmp_path):
+    """
+    A tool in the no-staging mode may expose no `cwd` at all (`buildx_create --config /etc/…`), so
+    demanding a usable server working directory would fail a call that needs none: the base is only ever
+    read to resolve a *relative* value.
+    """
+    _pin_hosts(monkeypatch, "prod=ssh://ops@prod")
+    config = tmp_path / "buildkitd.toml"
+    config.write_text("[worker]\n", encoding="utf-8")
+    monkeypatch.setattr(
+        cli_module.Path, "cwd", staticmethod(lambda: (_ for _ in ()).throw(FileNotFoundError(2, "No such file")))
+    )
+    session = _FakeSession()
+    with _stage_patched(session):
+        cli_module.remote_stage_and_exec(
+            "prod",
+            ["buildx", "create", "--config", str(config)],
+            cwd=None,
+            timeout=60.0,
+            path_values=[str(config)],
+            stage_cwd=False,
+        )
+    assert session.files == [str(config)]
+    assert session.calls[0]["argv"][-1] == f"{session.root}/file1/buildkitd.toml"
+
+
+def test_remote_stage_and_exec_does_not_expand_tilde_in_cwd_or_path_tokens(monkeypatch, tmp_path):
+    """
+    Parity guard. `subprocess.run(cwd=...)` does not expand `~` (verified: it raises FileNotFoundError
+    for '~/proj'), the docker CLI does not expand argv tokens either, and the compose/stack docstrings
+    promise paths are used verbatim. Expanding here would make the same call succeed remotely and fail
+    locally — the one divergence this backend exists to avoid.
+    """
+    _pin_hosts(monkeypatch, "prod=ssh://ops@prod")
+    session = _FakeSession()
+    with _stage_patched(session):
+        with pytest.raises(ValueError, match="nothing exists at that path"):
+            cli_module.remote_stage_and_exec("prod", ["compose", "up"], cwd="~", timeout=60.0)
+    # And a `~` token is passed through untouched rather than resolved to the server user's home.
+    project = tmp_path / "project"
+    project.mkdir()
+    home_file = "~/docker-compose.yml"
+    with _stage_patched(session):
+        cli_module.remote_stage_and_exec(
+            "prod", ["compose", "-f", home_file, "up"], cwd=project, timeout=60.0, path_values=[home_file]
+        )
+    assert session.calls[-1]["argv"] == ["docker", "compose", "-f", home_file, "up"]
+    assert session.files == []
+
+
+# ---------- remote_stage_and_exec: stage_cwd=False (only the named paths) ----------
+
+
+def test_remote_stage_and_exec_without_staging_a_cwd_stages_each_named_path(monkeypatch, tmp_path):
+    """
+    The mode `buildx create --config` / `buildx imagetools create --file` use: nothing is copied as a
+    working directory, the remote command gets no cwd, and each declared path that exists locally is
+    staged on its own — there is no staged tree for it to be "inside".
+    """
+    _pin_hosts(monkeypatch, "prod=ssh://ops@prod")
+    config = tmp_path / "buildkitd.toml"
+    config.write_text("[worker]\n", encoding="utf-8")
+    session = _FakeSession()
+    with _stage_patched(session):
+        cli_module.remote_stage_and_exec(
+            "prod",
+            ["buildx", "create", "--config", str(config)],
+            cwd=tmp_path,
+            timeout=60.0,
+            path_values=[str(config)],
+            stage_cwd=False,
+        )
+    assert session.trees == []  # the working directory itself is not copied
+    assert session.files == [str(config)]
+    call = session.calls[0]
+    assert call["cwd"] is None
+    assert call["argv"] == ["docker", "buildx", "create", "--config", f"{session.root}/file1/buildkitd.toml"]
+
+
+def test_remote_stage_and_exec_without_staging_a_cwd_resolves_relative_paths_against_it(monkeypatch, tmp_path):
+    # `cwd` still says where a relative value resolves — the same place the local subprocess would have
+    # resolved it — even though it is not itself copied.
+    _pin_hosts(monkeypatch, "prod=ssh://ops@prod")
+    descriptor = tmp_path / "desc.json"
+    descriptor.write_text("{}\n", encoding="utf-8")
+    session = _FakeSession()
+    with _stage_patched(session):
+        cli_module.remote_stage_and_exec(
+            "prod",
+            ["buildx", "imagetools", "create", "--file", "desc.json"],
+            cwd=tmp_path,
+            timeout=60.0,
+            path_values=["desc.json"],
+            stage_cwd=False,
+        )
+    assert session.files == [str(descriptor)]
+    assert session.calls[0]["argv"][-1] == f"{session.root}/file1/desc.json"
+
+
+def test_remote_stage_and_exec_skips_the_session_entirely_when_nothing_will_be_staged(monkeypatch, tmp_path):
+    """
+    A declared path can name something only the *remote* has (`buildx_create --config /etc/…`). Opening a
+    staging session for that would apply the exec/SFTP filesystem guard to a call that stages nothing —
+    and refuse it on a host whose exec channel works while its SFTP does not, which is exactly the
+    capability that scoping the guard to staging is supposed to preserve.
+    """
+    _pin_hosts(monkeypatch, "prod=ssh://ops@prod")
+
+    def _no_session(*args, **kwargs):
+        raise AssertionError("a staging session must not be opened when nothing will be staged")
+
+    monkeypatch.setattr(cli_module, "remote_staging_session", _no_session)
+    with patch("docker_mcp.tools._cli.run_remote_exec", return_value=_remote_result(stdout=b"ok\n")) as remote:
+        result = cli_module.remote_stage_and_exec(
+            "prod",
+            ["buildx", "create", "--config", "/etc/buildkitd.toml"],
+            cwd=tmp_path / "gone",
+            timeout=60.0,
+            path_values=["/etc/buildkitd.toml"],
+            stage_cwd=False,
+        )
+    # Straight through the exec-only backend, token untouched, same CliResult contract.
+    assert remote.call_args.args[1] == ["docker", "buildx", "create", "--config", "/etc/buildkitd.toml"]
+    assert result.stdout == "ok\n"

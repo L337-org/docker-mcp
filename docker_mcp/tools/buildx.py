@@ -3,6 +3,16 @@
 # Buildx is a CLI plugin layered on BuildKit; it covers multi-platform builds, modern
 # cache export/import, attestations (SBOM/provenance), and manifest-list operations.
 # These tools wrap the CLI via tools/_cli.py for cross-platform safety.
+#
+# Remote-exec fallback (no local buildx plugin + an ssh:// target) splits this module three ways:
+# the query/lifecycle tools name nothing local and just run there; `buildx_bake` stages a working
+# directory like the compose tools; `buildx_create --config` and `buildx_imagetools_create --file`
+# stage only the files they name. `buildx_build` is bespoke — its context needs `.dockerignore`-aware
+# tarring and its `--build-context`/`--secret` values carry paths *inside* composite `key=value`
+# tokens — and it refuses the flags whose effect would land on the wrong machine (see
+# `_refuse_flags_that_resolve_on_the_wrong_host`).
+
+from pathlib import Path
 
 from docker_mcp.server import tool
 from docker_mcp.tools._cli import (
@@ -10,10 +20,16 @@ from docker_mcp.tools._cli import (
     filter_args,
     parse_json_or_ndjson,
     parse_ndjson,
+    RemoteStagingSession,
     raise_on_cli_failure,
+    remote_cli_session,
+    remote_exec_cli,
+    remote_stage_and_exec,
     require_plugin,
     run_docker,
+    run_in_session,
     safe_positional,
+    should_remote_exec,
 )
 
 # Per-operation timeout ceilings (seconds). Builds and pulls against slow registries or
@@ -25,9 +41,256 @@ _TIMEOUT_IMAGETOOLS_CREATE = 600.0
 _TIMEOUT_PRUNE = 600.0
 
 
-def _run_buildx(args: list[str], *, cwd: str | None = None, timeout: float, host: str | None = None) -> CliResult:
+def _run_buildx(
+    args: list[str],
+    *,
+    cwd: str | None = None,
+    timeout: float,
+    host: str | None = None,
+    path_values: list[str] | None = None,
+    stage_cwd: bool = False,
+) -> CliResult:
+    """
+    Run `docker buildx <args...>`, locally or — with no local buildx plugin — on the ssh:// host.
+
+    `stage_cwd` and `path_values` are passed explicitly by the two tools that read local files, rather
+    than recovered by scanning the argv: `buildx_bake` appends caller-supplied target names, so a
+    target could be the very flag a scan looks for. Explicit values need no such assumption.
+
+    args:
+        args - the buildx argv, without the leading `buildx`
+        cwd - working directory for the command, or None for the server's own
+        timeout - seconds allowed for the command
+        host - configured host label, or None for the default host
+        path_values - values in `args` naming local paths to reconcile with the remote host
+        stage_cwd - True when the subcommand reads files from `cwd` (bake), so it is copied over
+    returns: CliResult - the same shape from either backend
+    """
+    if should_remote_exec(host, plugin="buildx"):
+        if stage_cwd or path_values:
+            return remote_stage_and_exec(
+                host,
+                ["buildx", *args],
+                cwd=cwd,
+                timeout=timeout,
+                path_values=path_values or (),
+                stage_cwd=stage_cwd,
+            )
+        return remote_exec_cli(host, ["buildx", *args], timeout=timeout)
     require_plugin("buildx")
     return run_docker(["buildx", *args], cwd=cwd, timeout=timeout, host=host)
+
+
+# --- buildx_build's own staging -------------------------------------------------------------------
+#
+# `buildx_build` cannot use the generic backend: its context needs `.dockerignore`-aware tarring, and
+# two of its flags hide paths inside composite `key=value` tokens. It drives a staging session itself.
+
+
+def _spec_component(spec: str, key: str) -> str | None:
+    """
+    The value of `key=` within a comma-separated buildx spec, or None if absent.
+
+    buildx parses `--output`/`--cache-to`/`--secret` values as comma-separated `key=value` pairs, so a
+    path inside one cannot be found by looking at the whole token. A value containing a comma cannot be
+    expressed in that syntax at all (buildx has the same limitation), so splitting on commas is exact
+    rather than approximate.
+
+    args:
+        spec - one spec value, e.g. "type=local,dest=out" or "id=npmrc,src=/home/u/.npmrc"
+        key - the component to read, e.g. "dest"
+    returns: str | None - the component's value, or None when the spec does not carry it
+    """
+    for component in spec.split(","):
+        name, separator, value = component.partition("=")
+        if separator and name.strip() == key:
+            return value
+    return None
+
+
+def _replace_spec_component(spec: str, key: str, new_value: str) -> str:
+    """
+    Rewrite one `key=` component of a buildx spec, leaving the rest of it untouched.
+
+    args:
+        spec - the spec value to rewrite
+        key - the component to replace, e.g. "src"
+        new_value - the replacement value
+    returns: str - the rewritten spec
+    """
+    parts = []
+    for component in spec.split(","):
+        name, separator, _ = component.partition("=")
+        parts.append(f"{key}={new_value}" if separator and name.strip() == key else component)
+    return ",".join(parts)
+
+
+def _refuse_flags_that_resolve_on_the_wrong_host(
+    *, output: list[str] | None, cache_to: list[str] | None, cache_from: list[str] | None, ssh: list[str] | None
+) -> None:
+    """
+    Refuse build flags whose effect would land on the remote host instead of this one.
+
+    Reached only on the remote-exec path, and deliberately a refusal rather than a best effort. A
+    `dest=` output written into the staging directory would be deleted with it the moment the build
+    finished; a local cache export would accumulate on the wrong disk; a local `cache_from` that is not
+    there is *non-fatal* to BuildKit, so the build would silently run uncached; and `ssh=default` reads
+    the executing host's `$SSH_AUTH_SOCK`, which is the remote user's agent, not the caller's (agent
+    forwarding is not requested). Each of those either loses work or changes the build silently, which
+    is worse than not running.
+
+    `dest=-` is exempt for `output` **only**: that is stdout, which the result captures identically on
+    both paths, and buildx rejects it for the exporters where it makes no sense (verified:
+    `--output type=local,dest=-` fails with "dest cannot be stdout for local exporter"), so no
+    exporter allow-list is needed here. A cache has no stdout form, so any `dest=`/`src=` on the cache
+    flags is refused whatever its value.
+
+    args:
+        output - `--output` specs
+        cache_to - `--cache-to` specs
+        cache_from - `--cache-from` specs
+        ssh - `--ssh` specs
+    raises: RuntimeError - any of the above is present
+    """
+    checks = (
+        (
+            "output",
+            output,
+            "dest",
+            True,
+            "the image or archive would be written into a temporary directory on that host that is deleted "
+            "when the call returns. Push to a registry (`push=True`, or a `type=registry` output) instead",
+        ),
+        (
+            "cache_to",
+            cache_to,
+            "dest",
+            False,
+            "the cache would be written to that host's disk rather than yours, where nothing later reads it. "
+            "Export to a registry (`type=registry,ref=…`) instead",
+        ),
+        (
+            "cache_from",
+            cache_from,
+            "src",
+            False,
+            "the cache would be read from that host, and a cache import that isn't there is *non-fatal* to "
+            "BuildKit — so the build would silently run uncached rather than fail. Import from a registry "
+            "(`type=registry,ref=…`) instead",
+        ),
+    )
+    for flag, specs, key, stdout_exempt, consequence in checks:
+        for spec in specs or []:
+            value = _spec_component(spec, key)
+            if value is None or (stdout_exempt and value == "-"):
+                continue
+            raise RuntimeError(
+                f"buildx_build cannot honour {flag}={spec!r} against this host: this server has no local "
+                f"buildx plugin, so the build runs on the target host over SSH and {key}={value!r} would "
+                f"resolve on *that* machine — {consequence}, or run the build on a host with a local "
+                f"docker CLI."
+            )
+    if ssh:
+        raise RuntimeError(
+            f"buildx_build cannot honour ssh={ssh!r} against this host: this server has no local buildx plugin, "
+            f"so the build runs on the target host over SSH, where `--ssh` reads that host's $SSH_AUTH_SOCK — "
+            f"the remote user's agent, not yours (this server does not request agent forwarding). Bake the "
+            f"credential in with `--secret` instead, or run the build on a host with a local docker CLI."
+        )
+
+
+def _local_dockerfile(file: str | None, *, context_is_local: bool) -> Path | None:
+    """
+    Where `--file` points on *this* machine, or None when buildx would not read it from here.
+
+    Three behaviours, all established by running buildx rather than reasoning about it, because the
+    remote path must resolve `--file` exactly as the local backend would or it stages the wrong file:
+
+    - With a local-directory context, `--file` resolves against the **CLI's working directory**, not the
+      context — the opposite of what this tool's docstring used to claim. `-f Dockerfile.x ./ctx`
+      reports "failed to read dockerfile: open Dockerfile.x: no such file" when the file exists only
+      inside `./ctx`, while `-f ctx/Dockerfile.x ./ctx` reads it.
+    - With a **URL** context, an **absolute** `--file` is still read from this filesystem: buildx
+      transfers it as a separate dockerfile context (observed as `transferring dockerfile: 46B` plus a
+      parse error from the local file's own contents).
+    - With a URL context, a **relative** `--file` is resolved inside the *fetched* context, not here, so
+      it must be left alone — resolving it locally could stage a same-named file that happens to sit in
+      this server's working directory, silently building something else.
+
+    args:
+        file - the `file` parameter as given, or None
+        context_is_local - whether `context` names an existing local directory
+    returns: Path | None - the local path buildx would read, else None
+    raises: ValueError - a relative `file` cannot be resolved (this server's cwd is unavailable)
+    """
+    if file is None:
+        return None
+    path = Path(file)
+    if path.is_absolute():
+        return path
+    if not context_is_local:
+        return None  # resolved inside the fetched context; not ours to touch
+    try:
+        return Path.cwd() / path
+    except OSError as exc:
+        raise ValueError(
+            f"buildx_build cannot resolve file={file!r}: it is relative to this server's working directory, "
+            f"which is unavailable ({exc}). Pass an absolute path."
+        ) from exc
+
+
+def _replace_flag_value(args: list[str], flag: str, new_value: str) -> None:
+    """
+    Rewrite the value token following the first occurrence of `flag`, in place.
+
+    Anchored on the flag rather than matching the value as a whole token: the value is rewritten
+    because of where it sits in the argv this module just built, so an unrelated argument that happens
+    to equal it cannot be caught by accident.
+
+    args:
+        args - the argv to modify in place
+        flag - the flag whose value to replace, e.g. "--file"
+        new_value - the replacement
+    """
+    for index, token in enumerate(args):
+        if token == flag and index + 1 < len(args):
+            args[index + 1] = new_value
+            return
+
+
+def _stage_composite_paths(session: RemoteStagingSession, args: list[str], flag: str, key: str) -> None:
+    """
+    Stage the local path inside each `flag`'s composite spec and rewrite that component, in place.
+
+    Used for `--build-context name=path` and `--secret id=x,src=path`. A component that does not name
+    an existing local path (an image ref, a URL, `env=`) is left exactly as it was, so only real local
+    inputs are copied.
+
+    args:
+        session - the open staging session
+        args - the argv to modify in place
+        flag - the repeatable flag to walk, e.g. "--secret"
+        key - the component holding a path; "" means the whole value after `name=`
+    """
+    for index, token in enumerate(args):
+        if token != flag or index + 1 >= len(args):
+            continue
+        spec = args[index + 1]
+        if key:
+            local = _spec_component(spec, key)
+        else:
+            _, _, local = spec.partition("=")
+        if not local:
+            continue
+        source = Path(local)
+        if not source.exists():
+            continue
+        staged = session.stage_tree(source) if source.is_dir() else session.stage_file(source)
+        if key:
+            args[index + 1] = _replace_spec_component(spec, key, staged)
+        else:
+            name, _, _ = spec.partition("=")
+            args[index + 1] = f"{name}={staged}"
 
 
 @tool()
@@ -65,14 +328,22 @@ def buildx_build(
     (`platforms`), modern cache export (`cache_from`/`cache_to`), SBOM or provenance
     attestations, build secrets, or multi-stage builds with `target`. Always runs with
     `--progress=plain` so output is captured rather than redrawn on a TTY.
+    With no local buildx plugin and an `ssh://` target, the build runs on that host: a local `context`
+    directory is copied there honouring `.dockerignore`, as are `file`, `build_contexts` and `secret`
+    paths. Raises RuntimeError in that case for `output`/`cache_to` with a filesystem `dest=`,
+    `cache_from` with a local `src=`, or any `ssh=` — each would resolve on the remote machine, losing
+    the output or silently changing the build.
 
     args:
         context - Build context: a filesystem path or Git/HTTP URL (verbatim; no `~`/glob expansion).
                        The `-` stdin-tarball form is NOT supported (stdin isn't forwarded — it'd block
-                       on the server's own stdin); serve a pre-packed tarball over HTTP instead.
+                       on the server's own stdin); serve a pre-packed tarball over HTTP instead. Copied
+                       to the target host when it names a local directory and there is no local plugin.
         tags - Image references to apply (`-t`, repeatable)
         platforms - Target platforms, e.g. ["linux/amd64", "linux/arm64"]
-        file - Dockerfile path (relative to context unless absolute)
+        file - Dockerfile path. A relative path resolves against this server's working directory
+                      (buildx's own rule), NOT against `context` — pass e.g. "ctx/Dockerfile" for a
+                      Dockerfile inside the context directory "ctx".
         build_args - Build-time variables (each becomes `--build-arg KEY=VALUE`)
         build_contexts - Additional named build contexts (e.g. {"deps": "./vendor"})
         labels - Labels to set on the resulting image (each becomes `--label KEY=VALUE`)
@@ -80,7 +351,8 @@ def buildx_build(
         target - Target build stage to stop at
         push - Push the result to the registry (mutually exclusive with `load`)
         load - Load the result into the local image store (single-platform builds only)
-        output - Custom `--output` specs (e.g. ["type=tar,dest=out.tar"])
+        output - Custom `--output` specs (e.g. ["type=tar,dest=out.tar"]). A filesystem `dest=` is
+                      refused when the build has to run on a remote host; `dest=-` (stdout) is fine.
         no_cache - Do not use cache when building
         no_cache_filter - Stage names to exclude from caching
         pull - Always attempt to pull a newer version of each base image
@@ -92,7 +364,8 @@ def buildx_build(
         attest - Custom attestation specs (repeatable)
         secret - Secret specs (e.g. ["id=npmrc,src=/home/user/.npmrc"] or ["id=npmrc,env=NPM_TOKEN"]).
                             `~` in `src=` is NOT expanded (by this tool or the CLI) — use an absolute path.
-        ssh - SSH agent socket/key specs (e.g. ["default"], using $SSH_AUTH_SOCK)
+        ssh - SSH agent socket/key specs (e.g. ["default"], using $SSH_AUTH_SOCK). Refused when
+                            the build has to run on a remote host: the socket read would be that host's.
         timeout_seconds - Subprocess timeout (default 1800s)
     returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
     """
@@ -158,7 +431,93 @@ def buildx_build(
     for spec in ssh or []:
         args.extend(["--ssh", spec])
     args.append(safe_positional(context, "build context"))
-    return _run_buildx(args, timeout=timeout_seconds, host=host).to_dict()
+    if should_remote_exec(host, plugin="buildx"):
+        return _run_buildx_build_remotely(
+            args,
+            context=context,
+            file=file,
+            output=output,
+            cache_to=cache_to,
+            cache_from=cache_from,
+            ssh=ssh,
+            timeout=timeout_seconds,
+            host=host,
+        ).to_dict()
+    require_plugin("buildx")
+    return run_docker(["buildx", *args], timeout=timeout_seconds, host=host).to_dict()
+
+
+def _run_buildx_build_remotely(
+    args: list[str],
+    *,
+    context: str,
+    file: str | None,
+    output: list[str] | None,
+    cache_to: list[str] | None,
+    cache_from: list[str] | None,
+    ssh: list[str] | None,
+    timeout: float,
+    host: str | None,
+) -> CliResult:
+    """
+    Stage a build's local inputs on the ssh:// host and run the build there.
+
+    The context is staged only when it names an existing local directory — the inverse test to guessing
+    which strings are URLs, which cannot be got right from syntax alone. A Git/HTTP context (or a path
+    that does not exist here) is therefore passed through untouched, and the remote CLI fetches or
+    reports it exactly as the local one would.
+
+    The remote command gets **no working directory**, and every path rewritten here is absolute. Running
+    it inside the staged context instead would let a relative `--file` resolve *there* — and buildx
+    resolves `--file` against the CLI's own working directory (see `_local_dockerfile`), so a path the
+    local CLI could not find would be found remotely inside the copied context. An in-context Dockerfile
+    therefore becomes an absolute path under the staged copy; one outside the context, or beside a URL
+    context, is copied on its own and pointed at the same way.
+
+    args:
+        args - the fully-built buildx argv, ending with the context positional
+        context - the context as the caller gave it
+        file - the `file` parameter as the caller gave it
+        output/cache_to/cache_from/ssh - checked for effects that would land on the wrong machine
+        timeout - seconds allowed for the build
+        host - configured host label, or None for the default host
+    returns: CliResult - the build's outcome, in `run_docker`'s shape
+    raises: RuntimeError - a refused flag (see `_refuse_flags_that_resolve_on_the_wrong_host`)
+    """
+    # Before connecting: a refusal should not cost an SSH handshake and a context upload.
+    _refuse_flags_that_resolve_on_the_wrong_host(output=output, cache_to=cache_to, cache_from=cache_from, ssh=ssh)
+    staged_args = list(args)
+    local_context = Path(context)
+    context_is_local = local_context.is_dir()
+    dockerfile = _local_dockerfile(file, context_is_local=context_is_local)
+    with remote_cli_session(host, timeout=timeout) as session:
+        relative_dockerfile: str | None = None
+        staged_context: str | None = None
+        if context_is_local:
+            if dockerfile is not None:
+                try:
+                    relative_dockerfile = dockerfile.resolve().relative_to(local_context.resolve()).as_posix()
+                except ValueError, OSError:
+                    relative_dockerfile = None  # outside the context: staged on its own below
+            # Passing the Dockerfile's relative path through means the exclusion pass keeps it even when
+            # `.dockerignore` would have swept it up (`*.dockerfile`), matching an SDK-driven build.
+            staged_context = session.stage_build_context(local_context, dockerfile=relative_dockerfile)
+            staged_args[-1] = staged_context
+        if relative_dockerfile is not None and staged_context is not None:
+            # Absolute, not relative-plus-a-working-directory. Running in the staged context would make a
+            # relative `--file` resolve *there*, so a path the local CLI could not find (it resolves
+            # `--file` against the CLI's own cwd) could be found remotely inside the copied context — the
+            # same build succeeding remotely and failing locally. Every path this backend rewrites is
+            # absolute, and the command gets no working directory at all, so that cannot happen.
+            _replace_flag_value(staged_args, "--file", session.join(staged_context, relative_dockerfile))
+        elif dockerfile is not None and dockerfile.is_file():
+            # Outside the context, or alongside a URL context: buildx reads it from this filesystem, so
+            # it has to be copied. A `--file` naming nothing here is left verbatim instead of raising, so
+            # the remote CLI reports it exactly as the local one would.
+            _replace_flag_value(staged_args, "--file", session.stage_file(dockerfile))
+        _stage_composite_paths(session, staged_args, "--build-context", "")
+        _stage_composite_paths(session, staged_args, "--secret", "src")
+        return run_in_session(session, ["buildx", *staged_args], timeout=timeout)
 
 
 @tool()
@@ -191,7 +550,8 @@ def buildx_bake(
         no_cache - Do not use cache when building
         pull - Always pull a newer base image
         builder - Override the active builder
-        cwd - Working directory containing the bake file (defaults to the server's cwd)
+        cwd - Working directory containing the bake file (defaults to the server's cwd; copied to
+                      the target host if no local plugin)
         timeout_seconds - Subprocess timeout (default 1800s)
     returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
     """
@@ -211,8 +571,19 @@ def buildx_bake(
     if builder is not None:
         args.extend(["--builder", builder])
     if targets:
-        args.extend(targets)
-    return _run_buildx(args, cwd=cwd, timeout=timeout_seconds, host=host).to_dict()
+        # `safe_positional` for the same reason every other positional gets it: a target beginning with
+        # '-' would be parsed by the CLI as a flag. It also means a target can never be mistaken for one
+        # of bake's own flags — though `path_values` below is passed explicitly rather than relying on
+        # that.
+        args.extend(safe_positional(target, "bake target") for target in targets)
+    return _run_buildx(
+        args,
+        cwd=cwd,
+        timeout=timeout_seconds,
+        host=host,
+        stage_cwd=True,
+        path_values=list(files or []),
+    ).to_dict()
 
 
 @tool()
@@ -288,7 +659,8 @@ def buildx_imagetools_create(
         dry_run - Print the resulting manifest without pushing
         annotations - OCI annotations (repeatable; passed verbatim)
         platforms - Filter source platforms when combining
-        descriptor_files - Files to read source descriptors from, instead of refs
+        descriptor_files - Files to read source descriptors from, instead of refs (copied to the
+                            target host if no local plugin)
         builder - Override the active builder
         timeout_seconds - Subprocess timeout (default 600s)
     returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
@@ -309,7 +681,7 @@ def buildx_imagetools_create(
     if builder is not None:
         args.extend(["--builder", builder])
     args.extend(safe_positional(s, "source") for s in sources)
-    return _run_buildx(args, timeout=timeout_seconds, host=host).to_dict()
+    return _run_buildx(args, timeout=timeout_seconds, host=host, path_values=list(descriptor_files or [])).to_dict()
 
 
 @tool()
@@ -510,7 +882,7 @@ def buildx_create(
         use - Set the new builder as the current one
         bootstrap - Boot the builder immediately
         platforms - Platforms the builder advertises
-        config - Path to a buildkitd config file
+        config - Path to a buildkitd config file (copied to the target host if no local plugin)
         node_name - Node name within the builder (for multi-node builders)
         append - Append a node to an existing builder named `name`
     returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
@@ -534,7 +906,9 @@ def buildx_create(
         args.append("--append")
     if name is not None:
         args.extend(["--name", name])
-    return _run_buildx(args, timeout=_TIMEOUT_QUERY, host=host).to_dict()
+    return _run_buildx(
+        args, timeout=_TIMEOUT_QUERY, host=host, path_values=[config] if config is not None else None
+    ).to_dict()
 
 
 @tool()

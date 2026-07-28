@@ -395,6 +395,10 @@ _DOMAIN_BLURBS: dict[str, str] = {
 
 # CLI- and swarm-tied caveats are only worth emitting when the relevant domains actually registered.
 _CLI_DOMAINS = ("compose", "stack", "buildx", "scout", "context")
+# The CLI-backed domains that fall back to running on an ssh:// host when no local CLI/plugin is
+# installed. `context` is absent deliberately and permanently: its tools manage *this* host's CLI
+# context registry, which a remote host knows nothing about.
+_REMOTE_EXEC_DOMAINS = ("compose", "stack", "buildx", "scout")
 _SWARM_DOMAINS = ("swarm", "services", "nodes", "secrets", "configs")
 
 
@@ -432,10 +436,28 @@ def build_instructions(registered_domains: set[str] | None = None) -> str:
         caveats.append("`list_*(managed_only=True)` returns only resources this server created (provenance-labeled).")
     cli_present = [d for d in _CLI_DOMAINS if d in present]
     if cli_present:
-        caveats.append(
-            f"CLI-backed domains ({', '.join(cli_present)}) shell out to the docker CLI/plugins; those "
-            "calls raise if the CLI or a required plugin isn't installed."
-        )
+        # Only worth the tokens when a domain that actually has the fallback is registered.
+        fallback_present = [d for d in _REMOTE_EXEC_DOMAINS if d in present]
+        if not fallback_present:
+            caveats.append(
+                f"CLI-backed domains ({', '.join(cli_present)}) shell out to the docker CLI/plugins; those "
+                "calls raise if the CLI or a required plugin isn't installed."
+            )
+        else:
+            # One statement of what happens when the local CLI can't serve a call, rather than a blanket
+            # "raises" followed by a fallback that contradicts it. Every domain list here is an object
+            # rather than a subject: the lists are whatever registered, so a subject would need its verb
+            # to agree with a length that varies.
+            no_fallback = [d for d in cli_present if d not in fallback_present]
+            caveat = (
+                f"CLI-backed domains ({', '.join(cli_present)}) shell out to the docker CLI/plugins. With "
+                "the CLI or a required plugin missing locally, the call runs on the target host instead "
+                "when that host is reached over `ssh://` — its CLI, its registry credentials, and local "
+                "files (a compose project dir, a build context) copied over, so keep them small; a usable "
+                f"local CLI always wins. Applies to {', '.join(fallback_present)}"
+            )
+            caveat += f"; no fallback for {', '.join(no_fallback)}, which raises instead." if no_fallback else "."
+            caveats.append(caveat)
     if present & set(_SWARM_DOMAINS):
         caveats.append("Swarm-family tools require a swarm manager node.")
     if _hosts.is_multi():
