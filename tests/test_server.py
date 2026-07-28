@@ -512,15 +512,15 @@ def test_instructions_mention_the_remote_exec_fallback_only_for_domains_that_hav
     *this* host's context registry), so a surface of only `context` must not advertise it.
     """
     text = build_instructions(registered_domains={"compose", "context"})
-    # The domain list is whatever registered, so a single one is a real case and the verb must agree.
-    assert "With either missing, compose instead runs on the target host" in text
+    assert "Applies to compose;" in text
     several = build_instructions(registered_domains={"compose", "buildx", "context"})
-    assert "With either missing, compose, buildx instead run on the target host" in several
-    # The condition is both halves — no local CLI *and* an ssh:// target — because a client reading only
-    # the router would otherwise expect every ssh:// call to execute remotely.
+    assert "Applies to compose, buildx;" in several
+    # The condition is both halves — the CLI/plugin missing *and* an ssh:// target — because a client
+    # reading only the router would otherwise expect every ssh:// call to execute remotely.
+    assert "when the CLI or plugin a call needs is missing locally" in text
     assert "reached over `ssh://`" in text
-    assert "A working local CLI is always used in preference." in text
-    assert "context instead run" not in text  # named only where the fallback exists
+    assert "a usable local CLI always wins" in text
+    assert "Applies to context" not in text  # named only where the fallback exists
 
     context_only = build_instructions(registered_domains={"context", "containers"})
     assert "CLI-backed domains (context)" in context_only

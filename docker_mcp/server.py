@@ -443,14 +443,13 @@ def build_instructions(registered_domains: set[str] | None = None) -> str:
         # Only worth the tokens when a domain that actually has the fallback is registered.
         fallback_present = [d for d in _REMOTE_EXEC_DOMAINS if d in present]
         if fallback_present:
-            # The list is whatever registered, so one domain is a real case (a DISABLE that leaves only
-            # compose, say) and the verb has to agree with it.
-            verb = "runs" if len(fallback_present) == 1 else "run"
+            # Phrased with the domain list as an object rather than the subject: the list is whatever
+            # registered, so it can be one name or four, and a subject would need its verb to agree.
             caveat += (
-                f" With either missing, {', '.join(fallback_present)} instead {verb} on the target host when "
-                "it is reached over `ssh://` — its CLI, its registry credentials, and local files (a compose "
-                "project dir, a build context) copied over, so keep them small. A working local CLI is "
-                "always used in preference."
+                " Fallback: when the CLI or plugin a call needs is missing locally and the target is "
+                "reached over `ssh://`, the command runs on that host instead — its CLI, its registry "
+                "credentials, and local files (a compose project dir, a build context) copied over, so "
+                f"keep them small. Applies to {', '.join(fallback_present)}; a usable local CLI always wins."
             )
         caveats.append(caveat)
     if present & set(_SWARM_DOMAINS):
