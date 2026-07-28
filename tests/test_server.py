@@ -517,7 +517,11 @@ def test_instructions_mention_the_remote_exec_fallback_only_for_domains_that_hav
     assert "Applies to compose, buildx;" in several
     # The condition is both halves — the CLI/plugin missing *and* an ssh:// target — because a client
     # reading only the router would otherwise expect every ssh:// call to execute remotely.
-    assert "when the CLI or plugin a call needs is missing locally" in text
+    assert "With the CLI or a required plugin missing locally" in text
+    # The blanket "those calls raise" is gone where a fallback exists — it contradicted the sentence
+    # after it — and the domain without one is named instead.
+    assert "those calls raise" not in text
+    assert "no fallback for context, which raises instead." in text
     assert "reached over `ssh://`" in text
     assert "a usable local CLI always wins" in text
     assert "Applies to context" not in text  # named only where the fallback exists

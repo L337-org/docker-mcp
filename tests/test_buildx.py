@@ -489,6 +489,9 @@ class _FakeSession:
         self.files.append(str(local_file))
         return f"{self.root}/file{len(self.files)}/{pathlib.Path(local_file).name}"
 
+    def join(self, *parts):
+        return "/".join(parts)
+
     def exec(self, argv, *, timeout, max_output_bytes, cwd=None):
         self.calls.append({"argv": list(argv), "cwd": cwd, "timeout": timeout})
         from docker_mcp.tools._ssh_proxy import RemoteExecResult
@@ -583,7 +586,7 @@ def test_buildx_create_without_a_config_needs_no_staging():
 # ---------- buildx_build's bespoke staging ----------
 
 
-def test_buildx_build_stages_the_context_and_runs_in_it(tmp_path):
+def test_buildx_build_stages_the_context_and_points_the_build_at_it(tmp_path):
     context = tmp_path / "ctx"
     context.mkdir()
     (context / "Dockerfile").write_text("FROM alpine\n", encoding="utf-8")
@@ -596,7 +599,8 @@ def test_buildx_build_stages_the_context_and_runs_in_it(tmp_path):
     argv = _argv(session)
     assert argv[0] == "docker" and argv[1] == "buildx"
     assert argv[-1] == f"{session.root}/context1"  # the context positional points at the staged copy
-    assert session.calls[0]["cwd"] == f"{session.root}/context1"
+    # Deliberately no remote working directory: see the in-context Dockerfile test below.
+    assert session.calls[0]["cwd"] is None
 
 
 def test_buildx_build_passes_a_url_context_through_untouched(tmp_path):
@@ -616,11 +620,14 @@ def test_buildx_build_passes_a_url_context_through_untouched(tmp_path):
     assert session.calls[0]["cwd"] is None
 
 
-def test_buildx_build_keeps_an_in_context_dockerfile_relative(tmp_path, monkeypatch):
+def test_buildx_build_rewrites_an_in_context_dockerfile_to_an_absolute_staged_path(tmp_path, monkeypatch):
     """
-    buildx resolves `--file` against the CLI's working directory (verified empirically), so running with
-    the staged context as the working directory lets an in-context Dockerfile stay relative — and it is
-    passed to the exclusion pass so `.dockerignore` cannot drop it.
+    buildx resolves `--file` against the CLI's *working directory*, not the context (verified
+    empirically), so the rewrite is to an absolute path under the staged context and the remote command
+    gets no working directory at all. Running it *in* the staged context instead would let a relative
+    `--file` that the local CLI could not find resolve inside the copied context — the same build failing
+    locally and succeeding remotely. The relative path is still handed to the exclusion pass, so
+    `.dockerignore` cannot drop the Dockerfile.
     """
     context = tmp_path / "ctx"
     context.mkdir()
@@ -633,7 +640,8 @@ def test_buildx_build_keeps_an_in_context_dockerfile_relative(tmp_path, monkeypa
         buildx_build(str(context), file="ctx/app.dockerfile", host="prod")
     assert session.contexts == [(str(context), "app.dockerfile")]
     argv = _argv(session)
-    assert argv[argv.index("--file") + 1] == "app.dockerfile"
+    assert argv[argv.index("--file") + 1] == f"{session.root}/context1/app.dockerfile"
+    assert session.calls[0]["cwd"] is None
     assert session.files == []  # already inside the staged context; not copied twice
 
 
@@ -840,3 +848,28 @@ def test_buildx_build_leaves_a_dockerfile_that_does_not_exist_locally(tmp_path):
     assert session.files == []
     argv = _argv(session)
     assert argv[argv.index("--file") + 1] == str(tmp_path / "absent.dockerfile")
+
+
+def test_buildx_build_does_not_let_a_relative_dockerfile_resolve_inside_the_staged_context(tmp_path, monkeypatch):
+    """
+    The divergence this design avoids. `-f Dockerfile ./ctx` with no `Dockerfile` beside the *server's*
+    working directory fails locally, because buildx resolves `--file` against that directory. If the
+    remote command ran inside the staged context, the copy's own `Dockerfile` would satisfy it and the
+    build would succeed remotely — a different outcome for the same call. So the token is passed through
+    untouched and the command gets no working directory.
+    """
+    context = tmp_path / "ctx"
+    context.mkdir()
+    (context / "Dockerfile").write_text("FROM alpine\n", encoding="utf-8")
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)  # no Dockerfile here, so local buildx would fail
+    session = _FakeSession()
+    with contextlib.ExitStack() as stack:
+        for patcher in _remote_build(session):
+            stack.enter_context(patcher)
+        buildx_build(str(context), file="Dockerfile", host="prod")
+    argv = _argv(session)
+    assert argv[argv.index("--file") + 1] == "Dockerfile"  # verbatim: nothing local to reconcile it with
+    assert session.calls[0]["cwd"] is None  # ...and no cwd for it to resolve against remotely
+    assert session.files == []

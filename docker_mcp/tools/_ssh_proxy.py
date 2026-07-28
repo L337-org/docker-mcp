@@ -1254,6 +1254,19 @@ class RemoteStagingSession:
         self._sftp.mkdir(directory, mode=0o700)
         return directory, self._dialect.join_path(self.root, f"{kind}{self._slots}.tar")
 
+    def join(self, *parts: str) -> str:
+        """
+        Join remote path components with the remote separator.
+
+        Lets a caller build an absolute path under something a `stage_*` call returned, instead of
+        depending on the command's working directory — which is what keeps `buildx_build`'s `--file`
+        resolving the way local buildx resolves it.
+
+        args: parts - remote path components, the first absolute
+        returns: str - the joined remote path
+        """
+        return self._dialect.join_path(*parts)
+
     def _control(self, argv: list[str], *, timeout: float, what: str) -> RemoteExecResult:
         """
         Run one of the session's own bookkeeping commands, raising if it fails.

@@ -488,8 +488,8 @@ def _run_buildx_build_remotely(
     context_is_local = local_context.is_dir()
     dockerfile = _local_dockerfile(file, context_is_local=context_is_local)
     with remote_cli_session(host, timeout=timeout) as session:
-        remote_cwd: str | None = None
         relative_dockerfile: str | None = None
+        staged_context: str | None = None
         if context_is_local:
             if dockerfile is not None:
                 try:
@@ -498,11 +498,15 @@ def _run_buildx_build_remotely(
                     relative_dockerfile = None  # outside the context: staged on its own below
             # Passing the Dockerfile's relative path through means the exclusion pass keeps it even when
             # `.dockerignore` would have swept it up (`*.dockerfile`), matching an SDK-driven build.
-            remote_cwd = session.stage_build_context(local_context, dockerfile=relative_dockerfile)
-            staged_args[-1] = remote_cwd
-        if relative_dockerfile is not None:
-            # Inside the staged context, and the command runs there, so the relative form resolves.
-            _replace_flag_value(staged_args, "--file", relative_dockerfile)
+            staged_context = session.stage_build_context(local_context, dockerfile=relative_dockerfile)
+            staged_args[-1] = staged_context
+        if relative_dockerfile is not None and staged_context is not None:
+            # Absolute, not relative-plus-a-working-directory. Running in the staged context would make a
+            # relative `--file` resolve *there*, so a path the local CLI could not find (it resolves
+            # `--file` against the CLI's own cwd) could be found remotely inside the copied context — the
+            # same build succeeding remotely and failing locally. Every path this backend rewrites is
+            # absolute, and the command gets no working directory at all, so that cannot happen.
+            _replace_flag_value(staged_args, "--file", session.join(staged_context, relative_dockerfile))
         elif dockerfile is not None and dockerfile.is_file():
             # Outside the context, or alongside a URL context: buildx reads it from this filesystem, so
             # it has to be copied. A `--file` naming nothing here is left verbatim instead of raising, so
@@ -510,7 +514,7 @@ def _run_buildx_build_remotely(
             _replace_flag_value(staged_args, "--file", session.stage_file(dockerfile))
         _stage_composite_paths(session, staged_args, "--build-context", "")
         _stage_composite_paths(session, staged_args, "--secret", "src")
-        return run_in_session(session, ["buildx", *staged_args], timeout=timeout, cwd=remote_cwd)
+        return run_in_session(session, ["buildx", *staged_args], timeout=timeout)
 
 
 @tool()
