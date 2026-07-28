@@ -859,6 +859,9 @@ def test_cli_tool_threads_host_to_run_docker(monkeypatch):
         captured.update(kwargs)
         return CliResult(returncode=0, stdout="", stderr="", truncated=False)
 
+    # A *non-ssh* second host on purpose: `_run_stack` now asks `should_remote_exec` first, and only a
+    # non-ssh transport makes that answer False regardless of whether this machine has a docker binary.
+    _set_multi_host(monkeypatch, spec="local=auto, prod=tcp://prod:2376")
     monkeypatch.setattr(stack, "run_docker", fake_run_docker)
     stack.stack_list(host="prod")
     assert captured.get("host") == "prod"

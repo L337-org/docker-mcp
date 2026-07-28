@@ -535,3 +535,88 @@ def test_compose_pause_and_unpause():
     with patch("docker_mcp.tools.compose.run_docker", return_value=_ok()) as run:
         compose_unpause(services=["web"])
     assert "unpause" in run.call_args.args[0]
+
+
+# ---------- remote-exec fallback ----------
+
+
+def test_compose_stages_the_project_directory_when_there_is_no_local_plugin():
+    """
+    Every compose subcommand reads its file from a working directory, so the remote path has to copy
+    that directory over first — and the `-f` values go with it so an absolute one can be reconciled.
+    """
+    with (
+        patch("docker_mcp.tools.compose.should_remote_exec", return_value=True) as should,
+        patch("docker_mcp.tools.compose.remote_stage_and_exec", return_value=_ok("")) as staged,
+        patch("docker_mcp.tools.compose.run_docker") as run,
+        patch("docker_mcp.tools.compose.require_plugin") as require,
+    ):
+        compose_up(project_dir="/srv/app", files=["docker-compose.yml"], host="prod")
+    run.assert_not_called()
+    require.assert_not_called()  # a *local* capability question, irrelevant once we go remote
+    should.assert_called_with("prod", plugin="compose")
+    assert staged.call_args.args == ("prod", ["compose", "-f", "docker-compose.yml", "up", "-d"])
+    assert staged.call_args.kwargs["cwd"] == "/srv/app"
+    assert staged.call_args.kwargs["path_values"] == ["docker-compose.yml"]
+
+
+def test_compose_passes_project_dir_none_through_so_the_backend_resolves_it():
+    # The backend turns None into the server's own cwd; the tool must not pre-empt that with a guess.
+    with (
+        patch("docker_mcp.tools.compose.should_remote_exec", return_value=True),
+        patch("docker_mcp.tools.compose.remote_stage_and_exec", return_value=_ok("")) as staged,
+    ):
+        compose_ps(host="prod")
+    assert staged.call_args.kwargs["cwd"] is None
+
+
+def test_compose_uses_the_local_cli_when_it_can():
+    with (
+        patch("docker_mcp.tools.compose.should_remote_exec", return_value=False),
+        patch("docker_mcp.tools.compose.remote_stage_and_exec") as staged,
+        patch("docker_mcp.tools.compose.run_docker", return_value=_ok("")) as run,
+        patch("docker_mcp.tools.compose.require_plugin") as require,
+    ):
+        compose_down(project_dir="/srv/app", host="prod")
+    staged.assert_not_called()
+    require.assert_called_once_with("compose")
+    assert run.call_args.kwargs["cwd"] == "/srv/app"
+
+
+def test_compose_list_runs_remotely_without_staging_anything():
+    # The one compose tool that asks the daemon rather than reading a directory.
+    with (
+        patch("docker_mcp.tools.compose.should_remote_exec", return_value=True),
+        patch("docker_mcp.tools.compose.remote_stage_and_exec") as staged,
+        patch("docker_mcp.tools.compose.remote_exec_cli", return_value=_ok("[]")) as remote,
+    ):
+        assert compose_list(host="prod") == []
+    staged.assert_not_called()
+    assert remote.call_args.args == ("prod", ["compose", "ls", "--format", "json"])
+
+
+def test_compose_cp_is_refused_on_the_remote_path_and_names_the_alternatives():
+    """
+    Its whole purpose is the *local* side of the copy, which running the CLI on the far host cannot be.
+    The SDK-backed archive tools do the same job against any daemon with no local CLI at all, so the
+    refusal points at them rather than half-implementing a download.
+    """
+    with (
+        patch("docker_mcp.tools.compose.should_remote_exec", return_value=True),
+        patch("docker_mcp.tools.compose.remote_stage_and_exec") as staged,
+        patch("docker_mcp.tools.compose.run_docker") as run,
+    ):
+        with pytest.raises(RuntimeError, match="container_archive_put") as excinfo:
+            compose_cp("web:/etc/app.conf", "/tmp/app.conf", host="prod")
+    assert "container_archive_get_to_file" in str(excinfo.value)
+    staged.assert_not_called()
+    run.assert_not_called()
+
+
+def test_compose_cp_still_works_on_the_local_path():
+    with (
+        patch("docker_mcp.tools.compose.should_remote_exec", return_value=False),
+        patch("docker_mcp.tools.compose.run_docker", return_value=_ok("")) as run,
+    ):
+        compose_cp("web:/etc/app.conf", "/tmp/app.conf")
+    assert run.call_args.args[0][-2:] == ["web:/etc/app.conf", "/tmp/app.conf"]

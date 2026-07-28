@@ -6,17 +6,28 @@
 # Convention: long-running subcommands run detached (`-d`) and non-interactively
 # (`-T`, `--no-follow`) so they can't block the MCP server. To stream logs or
 # attach, use the host CLI directly.
+#
+# Every subcommand reads its Compose file from a working directory, so with no local compose plugin
+# and an ssh:// target the remote-exec fallback has to *stage* that directory on the far host before
+# running there (`_cli.py:remote_stage_and_exec`). Consequences worth knowing: the whole directory is
+# copied (nothing can tell which files a Compose file references, so an oversized one is refused with
+# a limit error), registry credentials come from the remote user's `~/.docker/config.json`, and
+# `compose_cp` is refused outright because its host side is a local path with nothing to stage it to.
 
 from typing import Literal
 
 from docker_mcp.server import tool
 from docker_mcp.tools._cli import (
     CliResult,
+    flag_values,
     parse_json_or_ndjson,
     raise_on_cli_failure,
+    remote_exec_cli,
+    remote_stage_and_exec,
     require_plugin,
     run_docker,
     safe_positional,
+    should_remote_exec,
 )
 
 # Per-operation timeout ceilings (seconds). Builds and pulls can run for many minutes
@@ -50,6 +61,27 @@ def _global_args(
 
 
 def _run_compose(subcommand_args: list[str], *, cwd: str | None, timeout: float, host: str | None = None) -> CliResult:
+    """
+    Run `docker compose <args...>`, staging the working directory when the CLI has to run remotely.
+
+    args:
+        subcommand_args - the compose argv, without the leading `compose`
+        cwd - the project directory, or None for the server's own working directory (which is what
+              gets staged in the remote case, matching what the local subprocess would use)
+        timeout - seconds allowed for the command
+        host - configured host label, or None for the default host
+    returns: CliResult - the same shape from either backend
+    """
+    if should_remote_exec(host, plugin="compose"):
+        return remote_stage_and_exec(
+            host,
+            ["compose", *subcommand_args],
+            cwd=cwd,
+            timeout=timeout,
+            # `_global_args` is the only producer of `-f` here, so scanning the argv recovers exactly
+            # the caller's `files` list.
+            path_values=flag_values(subcommand_args, "-f"),
+        )
     require_plugin("compose")
     return run_docker(["compose", *subcommand_args], cwd=cwd, timeout=timeout, host=host)
 
@@ -75,7 +107,8 @@ def compose_up(
     services are running, or `wait=True` to block until they're healthy.
 
     args:
-        project_dir - Dir with the compose file (default: server cwd; paths verbatim, no shell expansion)
+        project_dir - Dir with the compose file (default: server cwd, copied to the target host if no local
+                      plugin; paths verbatim, no shell expansion)
         files - Explicit compose file paths (repeatable, `-f`)
         project_name - Compose project name override
         profiles - Profiles to activate
@@ -120,7 +153,7 @@ def compose_down(
     Does not raise on a non-zero CLI exit — inspect `returncode`/`stderr` in the result.
 
     args:
-        project_dir - Dir with the compose file (default: server cwd)
+        project_dir - Dir with the compose file (default: server cwd; copied to the target host if no local plugin)
         files - Explicit compose file paths (repeatable, `-f`)
         project_name - Compose project name override
         profiles - Profiles to consider
@@ -154,7 +187,7 @@ def compose_ps(
     Does not raise on a non-zero CLI exit: `services` comes back empty — inspect `raw.stderr`.
 
     args:
-        project_dir - Dir with the compose file (default: server cwd)
+        project_dir - Dir with the compose file (default: server cwd; copied to the target host if no local plugin)
         files - Explicit compose file paths (repeatable, `-f`)
         project_name - Compose project name override
         services - Restrict output to these services
@@ -203,7 +236,7 @@ def compose_logs(
     Does not raise on a non-zero CLI exit — inspect `returncode`/`stderr` in the result.
 
     args:
-        project_dir - Dir with the compose file (default: server cwd)
+        project_dir - Dir with the compose file (default: server cwd; copied to the target host if no local plugin)
         files - Explicit compose file paths (repeatable, `-f`)
         project_name - Compose project name override
         services - Restrict to these services (default: all)
@@ -244,7 +277,7 @@ def compose_config(
     `raw.stderr`.
 
     args:
-        project_dir - Dir with the compose file (default: server cwd)
+        project_dir - Dir with the compose file (default: server cwd; copied to the target host if no local plugin)
         files - Explicit compose file paths (repeatable, `-f`)
         project_name - Compose project name override
         profiles - Profiles to activate before rendering
@@ -290,7 +323,7 @@ def compose_build(
     Does not raise on a non-zero CLI exit — inspect `returncode`/`stderr` in the result.
 
     args:
-        project_dir - Dir with the compose file (default: server cwd)
+        project_dir - Dir with the compose file (default: server cwd; copied to the target host if no local plugin)
         files - Explicit compose file paths (repeatable, `-f`)
         project_name - Compose project name override
         services - Specific services to build (default: all)
@@ -329,7 +362,7 @@ def compose_pull(
     want to separate the pull step.
 
     args:
-        project_dir - Dir with the compose file (default: server cwd)
+        project_dir - Dir with the compose file (default: server cwd; copied to the target host if no local plugin)
         files - Explicit compose file paths (repeatable, `-f`; overrides auto-discovery)
         project_name - Override the compose project name
         services - Pull only these services; omit to pull all
@@ -364,7 +397,7 @@ def compose_restart(
     `stop_timeout_seconds` controls the SIGTERM grace period before Docker sends SIGKILL.
 
     args:
-        project_dir - Dir with the compose file (default: server cwd)
+        project_dir - Dir with the compose file (default: server cwd; copied to the target host if no local plugin)
         files - Explicit compose file paths (repeatable, `-f`)
         project_name - Override the compose project name
         services - Restart only these services; omit to restart all
@@ -396,7 +429,7 @@ def compose_stop(
     Unlike `compose_down`, containers/networks/volumes survive — use `compose_start` to bring them back.
 
     args:
-        project_dir - Dir with the compose file (default: server cwd)
+        project_dir - Dir with the compose file (default: server cwd; copied to the target host if no local plugin)
         files - Explicit compose file paths (repeatable, `-f`)
         project_name - Compose project name override
         services - Specific services to stop (default: all)
@@ -428,7 +461,7 @@ def compose_start(
     `compose_up` to (re)create containers from the compose file.
 
     args:
-        project_dir - Dir with the compose file (default: server cwd)
+        project_dir - Dir with the compose file (default: server cwd; copied to the target host if no local plugin)
         files - Explicit compose file paths (repeatable, `-f`)
         project_name - Compose project name override
         services - Specific services to start (default: all)
@@ -468,7 +501,7 @@ def compose_run(
     args:
         service - Service name from the compose file
         command - Command + args to run (exec-form; no shell unless you invoke one)
-        project_dir - Dir with the compose file (default: server cwd)
+        project_dir - Dir with the compose file (default: server cwd; copied to the target host if no local plugin)
         files - Explicit compose file paths (repeatable, `-f`)
         project_name - Compose project name override
         detach - Run detached (default True)
@@ -525,7 +558,7 @@ def compose_exec(
     args:
         service - Service name from the compose file
         command - Argv to execute inside the container
-        project_dir - Dir with the compose file (default: server cwd)
+        project_dir - Dir with the compose file (default: server cwd; copied to the target host if no local plugin)
         files - Explicit compose file paths (repeatable, `-f`)
         project_name - Compose project name override
         index - Container index when the service has multiple replicas (default 1)
@@ -566,7 +599,7 @@ def compose_images(
     Raises RuntimeError if the CLI call fails.
 
     args:
-        project_dir - Dir with the compose file (default: server cwd)
+        project_dir - Dir with the compose file (default: server cwd; copied to the target host if no local plugin)
         files - Explicit compose file paths (repeatable, `-f`)
         project_name - Compose project name override
         services - Restrict to these services (default: all)
@@ -609,7 +642,7 @@ def compose_port(
         private_port - The container-internal port to look up
         protocol - "tcp" (default) or "udp"
         index - Container index when the service has multiple replicas (default 1)
-        project_dir - Dir with the compose file (default: server cwd)
+        project_dir - Dir with the compose file (default: server cwd; copied to the target host if no local plugin)
         files - Explicit compose file paths (repeatable, `-f`)
         project_name - Compose project name override
     returns: dict - {"service", "private_port", "protocol", "published": "host:port"|None,
@@ -660,7 +693,7 @@ def compose_wait(
 
     args:
         services - One or more services to wait on. At least one is required.
-        project_dir - Dir with the compose file (default: server cwd)
+        project_dir - Dir with the compose file (default: server cwd; copied to the target host if no local plugin)
         files - Explicit compose file paths (repeatable, `-f`)
         project_name - Compose project name override
         timeout_seconds - Subprocess timeout (default 300s)
@@ -690,7 +723,7 @@ def compose_top(
 
     args:
         services - Restrict to these services (default: all)
-        project_dir - Dir with the compose file (default: server cwd)
+        project_dir - Dir with the compose file (default: server cwd; copied to the target host if no local plugin)
         files - Explicit compose file paths (repeatable, `-f`)
         project_name - Compose project name override
     returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
@@ -720,19 +753,36 @@ def compose_cp(
     MCP server, read/written as the server's user (same host exposure as the file-path archive
     tools — see SECURITY.md). Copying to stdout (`dest="-"`) is unsupported; use
     `container_archive_get`.
-    Does not raise on a non-zero CLI exit — inspect `returncode`/`stderr` in the result.
+    Does not raise on a non-zero CLI exit — inspect `returncode`/`stderr` in the result. Raises
+    RuntimeError when this server has no local compose plugin and the target is an `ssh://` host: the
+    transfer's whole point is the *local* path, which running the CLI remotely cannot honour — use
+    `container_archive_put` / `container_archive_get_to_file` there instead (both talk to the daemon
+    directly and need no local CLI; `compose_ps` gives you the container name).
 
     args:
         source - `SERVICE:SRC_PATH` or a host path
         dest - `SERVICE:DEST_PATH` or a host path (not "-")
         index - Container index when the service has multiple replicas (default 1)
         all_containers - Copy to/from all containers of the service (`--all`)
-        project_dir - Dir with the compose file (default: server cwd)
+        project_dir - Dir with the compose file (default: server cwd; copied to the target host if no local plugin)
         files - Explicit compose file paths (repeatable, `-f`)
         project_name - Compose project name override
         timeout_seconds - Subprocess timeout (default 300s)
     returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
     """
+    if should_remote_exec(host, plugin="compose"):
+        # Everything else in this module stages its inputs and runs remotely; this one cannot. One side
+        # of the copy is a path on *this* host, and remote-exec has no way to be on both sides at once —
+        # pulling a file back would be a second, download-shaped mechanism for a job the SDK-backed
+        # archive tools already do against any daemon, with no local CLI involved.
+        raise RuntimeError(
+            "compose_cp cannot run against this host: this server has no local compose plugin, so the CLI "
+            "would run on the target host over SSH, where the non-container side of the copy "
+            f"({source!r} / {dest!r}) names a path on that host rather than this one. Use "
+            "`container_archive_put` (host to container) or `container_archive_get_to_file` (container to "
+            "host) instead — they talk to the daemon directly and need no local CLI; `compose_ps` gives "
+            "you the container name."
+        )
     args = [*_global_args(files, project_name, None), "cp"]
     if index != 1:
         args.extend(["--index", str(index)])
@@ -764,7 +814,7 @@ def compose_kill(
         services - Restrict to these services (default: all)
         signal - Signal to send (default "SIGKILL"; e.g. "SIGTERM", "SIGHUP")
         remove_orphans - Also remove containers for services not in the compose file
-        project_dir - Dir with the compose file (default: server cwd)
+        project_dir - Dir with the compose file (default: server cwd; copied to the target host if no local plugin)
         files - Explicit compose file paths (repeatable, `-f`)
         project_name - Compose project name override
     returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
@@ -797,7 +847,7 @@ def compose_pause(
 
     args:
         services - Restrict to these services (default: all)
-        project_dir - Dir with the compose file (default: server cwd)
+        project_dir - Dir with the compose file (default: server cwd; copied to the target host if no local plugin)
         files - Explicit compose file paths (repeatable, `-f`)
         project_name - Compose project name override
     returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
@@ -825,7 +875,7 @@ def compose_unpause(
 
     args:
         services - Restrict to these services (default: all)
-        project_dir - Dir with the compose file (default: server cwd)
+        project_dir - Dir with the compose file (default: server cwd; copied to the target host if no local plugin)
         files - Explicit compose file paths (repeatable, `-f`)
         project_name - Compose project name override
     returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
@@ -851,8 +901,13 @@ def compose_list(all: bool = False, host: str | None = None) -> list:
     args = ["compose", "ls", "--format", "json"]
     if all:
         args.append("--all")
-    require_plugin("compose")
-    result = run_docker(args, timeout=_TIMEOUT_QUERY, host=host)
+    # The only compose tool that reads nothing from a working directory (it asks the daemon), so the
+    # remote path needs no staging.
+    if should_remote_exec(host, plugin="compose"):
+        result = remote_exec_cli(host, args, timeout=_TIMEOUT_QUERY)
+    else:
+        require_plugin("compose")
+        result = run_docker(args, timeout=_TIMEOUT_QUERY, host=host)
     raise_on_cli_failure(result, "compose ls")
     parsed = parse_json_or_ndjson(result.stdout, truncated=result.truncated, what="compose ls output")
     if isinstance(parsed, list):

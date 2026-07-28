@@ -12,11 +12,18 @@ import subprocess
 import sys
 import threading
 import time
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from docker_mcp._hosts import is_multi as _is_multi, resolve as _resolve_host
-from docker_mcp.tools._ssh_proxy import run_remote_exec, ssh_proxy_for_docker_host
+from docker_mcp.tools._ssh_proxy import (
+    RemoteExecResult,
+    RemoteStagingSession,
+    remote_staging_session,
+    run_remote_exec,
+    ssh_proxy_for_docker_host,
+)
 
 DEFAULT_TIMEOUT_SECONDS = 60.0
 
@@ -342,6 +349,106 @@ def remote_exec_cli(
         RuntimeError - `host` is not an ssh:// host, the connection failed, or the remote is not POSIX
         subprocess.TimeoutExpired - the command exceeded `timeout`
     """
+    _reject_unforwardable(stdin, extra_env)
+    url = _ssh_url_for(host, args)
+    return _as_cli_result(
+        run_remote_exec(url, ["docker", *args], max_output_bytes=MAX_CLI_OUTPUT_BYTES, timeout=timeout)
+    )
+
+
+def remote_stage_and_exec(
+    host: str | None,
+    args: list[str],
+    *,
+    cwd: Path | str | None = None,
+    timeout: float = DEFAULT_TIMEOUT_SECONDS,
+    path_values: Sequence[str] = (),
+    stdin: bytes | None = None,
+    extra_env: dict[str, str] | None = None,
+) -> CliResult:
+    """
+    Copy a working directory to the target ssh:// host, run `docker <args...>` in it, and clean up.
+
+    The counterpart to `remote_exec_cli` for a command that reads local files — Compose files, a bake
+    file, a stack's `-c` files. Same `CliResult` contract, so a tool's error convention needs no remote
+    branch, and the staged copy lives exactly as long as the command.
+
+    **`cwd=None` means the server's own working directory, not "stage nothing".** That matches the
+    local path, where `cwd=None` reaches `subprocess.run` as the server's cwd. Resolving it to nothing
+    would leave the command running in the SSH login home directory, so `compose_up(files=[...])` would
+    quietly act on whatever project happened to live there — worse than any error.
+
+    Tokens in `args` that name local paths (declared by `path_values`) are reconciled with the staged
+    copy: a relative one already resolves against it and is left alone; an absolute one pointing inside
+    it is rewritten relative, so it resolves remotely instead of naming a local path that does not
+    exist there; one pointing outside it is staged separately and rewritten to the staged path. A path
+    outside the tree that itself references relative paths (an override Compose file with its own
+    `build:` context, say) will not find them — the remote CLI reports that, since nothing can follow
+    those references without parsing the file.
+
+    args:
+        host - configured host label, or None for the default host; must resolve to an ssh:// URL
+        args - the docker argv *without* the binary, exactly as passed to `run_docker`
+        cwd - local directory to stage and run in; None means the server's own working directory
+        timeout - seconds allowed for the command itself, and the bound on the SSH handshake. Staging
+                  has its own bounds, so total wall clock exceeds this by the upload time.
+        path_values - values in `args` that name local paths, so they can be reconciled as above.
+                      Matched against `args` by whole token.
+        stdin - must be None/empty: the remote channel carries no input
+        extra_env - must be None/empty: the child's environment is the remote login shell's
+    returns: CliResult - exit status, decoded stdout/stderr, and whether the byte cap truncated them
+    raises:
+        ValueError - `cwd` is not a directory, the payload exceeds the staging limits, or
+                     `stdin`/`extra_env` was supplied
+        RuntimeError - `host` is not an ssh:// host, the connection failed, the remote is not POSIX, or
+                       staging failed (including an SFTP subsystem on a different filesystem)
+        subprocess.TimeoutExpired - the command exceeded `timeout`
+    """
+    _reject_unforwardable(stdin, extra_env)
+    url = _ssh_url_for(host, args)
+    if cwd is not None:
+        local_cwd = Path(cwd).expanduser()
+    else:
+        try:
+            local_cwd = Path.cwd()
+        except OSError as exc:
+            # `Path.cwd()` raises a bare "No such file or directory" if the server's own working
+            # directory has been deleted underneath it, which says nothing about what to do. The local
+            # backend tolerates that (a process keeps its deleted cwd), so name the difference.
+            raise ValueError(
+                f"Cannot run `docker {args[0] if args else ''}` on the remote host: this server's own working "
+                f"directory is unavailable ({exc}), and with no explicit working directory that is what "
+                f"would be copied over. Pass one explicitly."
+            ) from exc
+    if not local_cwd.is_dir():
+        raise ValueError(
+            f"Cannot run `docker {args[0] if args else ''}` on the remote host: the working directory "
+            f"{str(local_cwd)!r} does not exist here, and it is what would be copied over."
+        )
+    with remote_staging_session(url, timeout=timeout) as session:
+        remote_cwd = session.stage_tree(local_cwd)
+        staged_args = _reconcile_path_tokens(session, args, path_values, base=local_cwd)
+        result = session.exec(
+            ["docker", *staged_args],
+            cwd=remote_cwd,
+            timeout=timeout,
+            max_output_bytes=MAX_CLI_OUTPUT_BYTES,
+        )
+    return _as_cli_result(result)
+
+
+def _reject_unforwardable(stdin: bytes | None, extra_env: dict[str, str] | None) -> None:
+    """
+    Refuse the two `run_docker` inputs the remote backends cannot honour.
+
+    Rejected rather than dropped: no in-scope tool passes either today, and one that starts to should
+    fail loudly here instead of silently diverging from its local path.
+
+    args:
+        stdin - must be None/empty
+        extra_env - must be None/empty
+    raises: ValueError - either was supplied
+    """
     if stdin:
         raise ValueError("remote-exec cannot send stdin to a remote docker command (no consumer needs it today).")
     if extra_env:
@@ -349,6 +456,18 @@ def remote_exec_cli(
             f"remote-exec cannot forward extra_env {sorted(extra_env)} to a remote docker command: the "
             f"environment is the remote login shell's, not this server's."
         )
+
+
+def _ssh_url_for(host: str | None, args: list[str]) -> str:
+    """
+    The ssh:// URL for a host that a remote backend was asked to use.
+
+    args:
+        host - configured host label, or None for the default host
+        args - the docker argv, for the error message only
+    returns: str - the host's resolved ssh:// URL
+    raises: RuntimeError - the host is not reached over ssh://
+    """
     resolved = _resolve_host(host)
     url = resolved.url
     if url is None or not resolved.is_ssh:
@@ -358,10 +477,19 @@ def remote_exec_cli(
             f"remote-exec was requested for host {resolved.label!r} ({url or 'platform default'}), which is "
             f"not reached over ssh:// — there is no remote shell to run `docker {args[0] if args else ''}` on."
         )
-    result = run_remote_exec(url, ["docker", *args], max_output_bytes=MAX_CLI_OUTPUT_BYTES, timeout=timeout)
-    # Decode at this boundary exactly as the local path does. The retention cap already applied
-    # remotely, so `_decode` re-checks a bound it cannot exceed; `truncated` is carried through from
-    # the drain, which is the only place that saw the discarded bytes.
+    return url
+
+
+def _as_cli_result(result: RemoteExecResult) -> CliResult:
+    """
+    Convert a remote result into `run_docker`'s shape, decoding at the same boundary the local path does.
+
+    The retention cap already applied remotely, so `_decode` re-checks a bound the bytes cannot exceed;
+    `truncated` is carried through from the drain, which is the only place that saw what was dropped.
+
+    args: result - the raw remote outcome
+    returns: CliResult - the decoded equivalent
+    """
     stdout, truncated_out = _decode(result.stdout)
     stderr, truncated_err = _decode(result.stderr)
     return CliResult(
@@ -370,6 +498,69 @@ def remote_exec_cli(
         stderr=stderr,
         truncated=result.truncated or truncated_out or truncated_err,
     )
+
+
+def flag_values(args: Sequence[str], flag: str) -> list[str]:
+    """
+    The values following each occurrence of `flag` in an already-built argv.
+
+    Used to recover the local paths a compose/stack/bake argv names (`-f`, `-c`) for
+    `remote_stage_and_exec`'s `path_values`. Reading them back out of the argv, rather than threading
+    the original list from every tool, keeps one producer and one consumer in the same place: twenty
+    call sites each passing the same list is twenty chances for one to be forgotten, and the omission
+    would only show up for an absolute path against a remote host.
+
+    args:
+        args - the argv to scan
+        flag - the exact flag whose values to collect, e.g. "-f"
+    returns: list[str] - one value per occurrence, in order
+    """
+    return [value for name, value in zip(args, args[1:], strict=False) if name == flag]
+
+
+def _reconcile_path_tokens(
+    session: RemoteStagingSession, args: list[str], path_values: Sequence[str], *, base: Path
+) -> list[str]:
+    """
+    Rewrite path-naming tokens in `args` so they resolve on the remote host.
+
+    Three cases, in order: a relative path inside the staged tree needs nothing (the remote cwd *is*
+    that tree); an absolute path inside it is rewritten relative, because the local absolute path means
+    nothing remotely even though the file was copied; anything else is staged on its own and rewritten
+    to where it landed. A value that names no local path is left alone so the remote CLI reports it,
+    which is the same thing the local backend would do.
+
+    Replacement is by whole token, so a value coinciding with an unrelated argument (a service named
+    exactly like an out-of-tree file path) would be rewritten too — accepted, being both unlikely and
+    visible in the resulting command.
+
+    args:
+        session - the staging session to copy extra paths through
+        args - the docker argv to rewrite
+        path_values - the values in `args` that name local paths
+        base - the local directory that was staged as the remote cwd
+    returns: list[str] - `args` with path tokens reconciled
+    """
+    replacements: dict[str, str] = {}
+    resolved_base = base.resolve()
+    for value in path_values:
+        if not value or value in replacements:
+            continue
+        candidate = Path(value).expanduser()
+        absolute = candidate if candidate.is_absolute() else base / candidate
+        try:
+            inside = absolute.resolve().is_relative_to(resolved_base)
+        except OSError:  # an unresolvable path is not something we can stage; let the remote say so
+            continue
+        if inside:
+            relative = absolute.resolve().relative_to(resolved_base).as_posix()
+            if relative != value:
+                replacements[value] = relative
+        elif absolute.is_dir():
+            replacements[value] = session.stage_tree(absolute)
+        elif absolute.is_file():
+            replacements[value] = session.stage_file(absolute)
+    return [replacements.get(token, token) for token in args]
 
 
 def safe_positional(value: str, what: str = "value") -> str:
