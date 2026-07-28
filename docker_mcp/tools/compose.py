@@ -790,7 +790,7 @@ def compose_cp(
         dest - `SERVICE:DEST_PATH` or a host path (not "-")
         index - Container index when the service has multiple replicas (default 1)
         all_containers - Copy to/from all containers of the service (`--all`)
-        project_dir - Dir with the compose file (default: server cwd; copied to the target host if no local plugin)
+        project_dir - Dir with the compose file (default: server cwd)
         files - Explicit compose file paths (repeatable, `-f`)
         project_name - Compose project name override
         timeout_seconds - Subprocess timeout (default 300s)

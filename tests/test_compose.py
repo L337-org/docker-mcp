@@ -649,3 +649,16 @@ def test_compose_exec_command_tokens_are_not_mistaken_for_compose_files():
     ):
         compose_exec(service="app", command=["tar", "-f", "/etc/hosts", "-x"], host="prod")
     assert staged.call_args.kwargs["path_values"] == []
+
+
+def test_compose_cp_docstring_does_not_promise_staging_it_refuses():
+    """
+    Mechanical guard rather than a note to remember: the staging clause was applied to every tool with a
+    `project_dir`, and `compose_cp` is the one where the remote path is a refusal, so nothing is ever
+    copied. A future sweep must not put it back.
+    """
+    assert compose_cp.__doc__ is not None
+    assert "copied to the target host" not in compose_cp.__doc__
+    # ...and every other project_dir-taking tool must still carry it, so this guard cannot be satisfied
+    # by dropping the clause everywhere.
+    assert "copied to the target host" in (compose_up.__doc__ or "")
