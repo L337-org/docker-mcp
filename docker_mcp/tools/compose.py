@@ -13,8 +13,14 @@
 # `compose_list` takes the exec-only path. Consequences worth knowing: the whole directory is copied
 # (nothing can tell which files a Compose file references, so an oversized one is refused with a limit
 # error), registry credentials come from the remote user's `~/.docker/config.json`, and `compose_cp` is
-# refused outright because its host side is a local path with nothing to stage it to.
+# refused outright because its host side is a local path with nothing to stage it to — `compose_copy`
+# does that job through the Engine API instead, needing no CLI on either side.
 
+import io
+import re
+import tarfile
+import tempfile
+from pathlib import Path
 from typing import Literal
 
 from docker_mcp.server import tool
@@ -29,6 +35,8 @@ from docker_mcp.tools._cli import (
     safe_positional,
     should_remote_exec,
 )
+from docker_mcp.tools._utils import assert_host_writable, host_read_path
+from docker_mcp.tools.system import _get_client
 
 # Per-operation timeout ceilings (seconds). Builds and pulls can run for many minutes
 # against slow registries / large contexts, so they get longer ceilings than queries.
@@ -804,10 +812,11 @@ def compose_cp(
         raise RuntimeError(
             "compose_cp cannot run against this host: this server has no local compose plugin, so the CLI "
             "would run on the target host over SSH, where the non-container side of the copy "
-            f"({source!r} / {dest!r}) names a path on that host rather than this one. Use "
-            "`container_archive_put` (host to container) or `container_archive_get_to_file` (container to "
-            "host) instead — they talk to the daemon directly and need no local CLI; `compose_ps` gives "
-            "you the container name."
+            f"({source!r} / {dest!r}) names a path on that host rather than this one. Use `compose_copy` "
+            "instead — same job, same `SERVICE:PATH` addressing, but through the Engine API, so it needs "
+            "no local CLI and works over any transport. (`container_archive_put` / "
+            "`container_archive_get_to_file` are the lower-level alternatives, addressing a container "
+            "rather than a service and dealing in tar archives rather than unpacked files.)"
         )
     args = [*_global_args(files, project_name, None), "cp"]
     if index != 1:
@@ -817,6 +826,201 @@ def compose_cp(
     args.append(safe_positional(source, "source"))
     args.append(safe_positional(dest, "dest"))
     return _run_compose(args, cwd=project_dir, timeout=timeout_seconds, host=host).to_dict()
+
+
+# Labels Compose stamps on every container it creates, verified against a real one (compose v5.3.1):
+# project, service, container-number and oneoff are all present, which is what makes a service
+# addressable through the Engine API without reading a Compose file or shelling out to the CLI.
+_LABEL_PROJECT = "com.docker.compose.project"
+_LABEL_SERVICE = "com.docker.compose.service"
+_LABEL_NUMBER = "com.docker.compose.container-number"
+_LABEL_ONEOFF = "com.docker.compose.oneoff"
+
+# `SERVICE:PATH`, the side of a copy that names a container. A Windows drive letter (`C:\...`) must not
+# be mistaken for one, hence requiring at least two characters before the colon.
+_SERVICE_PATH = re.compile(r"^(?P<service>[A-Za-z0-9][A-Za-z0-9._-]+):(?P<path>.+)$")
+
+
+def _split_service_path(value: str) -> tuple[str, str] | None:
+    """
+    Split a `SERVICE:PATH` value, or None when the value is an ordinary host path.
+
+    args: value - one side of a copy
+    returns: tuple[str, str] | None - (service, path in the container), else None
+    """
+    match = _SERVICE_PATH.match(value)
+    return (match.group("service"), match.group("path")) if match else None
+
+
+def _resolve_service_container(service: str, *, index: int, project_name: str | None, host: str | None):
+    """
+    Find the container backing a Compose service, through the Engine API rather than the CLI.
+
+    Matches on the labels Compose stamps at creation, so no Compose file is read and no project name has
+    to be inferred from a directory — Compose's own normalisation (it turned `tmp-labels.l6XS` into
+    `tmp-labelsl6xs`) is not reimplemented here. Stopped containers are included, since a copy into one
+    is legitimate; one-off `compose run` containers are excluded, as `docker compose cp` also ignores
+    them.
+
+    args:
+        service - the Compose service name
+        index - which replica, 1-based, matching Compose's own container numbering
+        project_name - the Compose project, or None to infer it when only one project matches
+        host - configured host label, or None for the default host
+    returns: the docker-py Container object
+    raises: RuntimeError - no container matches, or several projects do and none was named
+    """
+    labels = [f"{_LABEL_SERVICE}={service}", f"{_LABEL_NUMBER}={index}"]
+    if project_name:
+        labels.append(f"{_LABEL_PROJECT}={project_name}")
+    candidates = [
+        c
+        for c in _get_client(host).containers.list(all=True, filters={"label": labels})
+        if (c.labels.get(_LABEL_ONEOFF) or "False").lower() != "true"
+    ]
+    if not candidates:
+        searched = f"service={service!r}, replica {index}" + (f", project={project_name!r}" if project_name else "")
+        raise RuntimeError(
+            f"No Compose container matches {searched}. Check the service is up (`compose_ps`), that the "
+            f"replica index exists, and — if several projects define this service — pass `project_name` "
+            f"(`compose_list` reports the project names Compose actually used)."
+        )
+    projects = {c.labels.get(_LABEL_PROJECT, "?") for c in candidates}
+    if len(projects) > 1:
+        raise RuntimeError(
+            f"Service {service!r} (replica {index}) exists in more than one Compose project "
+            f"({sorted(projects)}) — pass `project_name` to say which."
+        )
+    return candidates[0]
+
+
+def _copy_from_container(container, container_path: str, dest_dir: str) -> dict:
+    """
+    Extract a container path into a host directory, unpacked, via the Engine API.
+
+    `get_archive` yields a tar, which is streamed to a temporary file rather than buffered — a container
+    path can be arbitrarily large — and then extracted under `filter="data"`, which is what stops a
+    member escaping the destination via `..` or an absolute name. Python does not apply that filter by
+    default (`TarFile.extraction_filter` is None on 3.14), so it is passed explicitly.
+
+    args:
+        container - the resolved container
+        container_path - the path inside it
+        dest_dir - an existing host directory to extract into
+    returns: dict - what was written
+    """
+    target = Path(dest_dir).expanduser()
+    if not target.is_dir():
+        raise ValueError(
+            f"dest {str(target)!r} must be an existing directory on this host: the container path is "
+            f"extracted into it, keeping its own name (so a copy of /etc/app.conf lands at "
+            f"{str(target / 'app.conf')!r})."
+        )
+    assert_host_writable(str(target))
+    stream, stat = container.get_archive(container_path)
+    written = 0
+    with tempfile.TemporaryFile() as archive:
+        for chunk in stream:
+            written += archive.write(chunk)
+        archive.seek(0)
+        with tarfile.open(fileobj=archive) as bundle:
+            members = bundle.getmembers()
+            bundle.extractall(path=target, filter="data")
+    return {
+        "direction": "container_to_host",
+        "container": container.name,
+        "container_path": container_path,
+        "dest": str(target),
+        "entries": len(members),
+        "archive_bytes": written,
+        "stat": stat,
+    }
+
+
+def _copy_to_container(container, source_path: str, container_dir: str) -> dict:
+    """
+    Upload a host file or directory into a container directory, via the Engine API.
+
+    Packed into a tar in memory and handed to `put_archive`, which is the Engine's only write path for
+    files: the archive's single top-level member keeps the source's own basename, so the result matches
+    `docker cp ./thing SERVICE:/dir/`.
+
+    args:
+        container - the resolved container
+        source_path - a host file or directory
+        container_dir - an existing directory inside the container to unpack into
+    returns: dict - what was sent
+    """
+    source = host_read_path(source_path)
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w") as bundle:
+        bundle.add(str(source), arcname=source.name)
+    payload = buffer.getvalue()
+    if not container.put_archive(container_dir, payload):
+        raise RuntimeError(
+            f"The daemon rejected the upload of {str(source)!r} into {container_dir!r} on "
+            f"{container.name!r}. The usual cause is that {container_dir!r} does not exist in the "
+            f"container — put_archive needs an existing directory."
+        )
+    return {
+        "direction": "host_to_container",
+        "container": container.name,
+        "source": str(source),
+        "container_dir": container_dir,
+        "archive_bytes": len(payload),
+    }
+
+
+@tool()
+def compose_copy(
+    source: str,
+    dest: str,
+    index: int = 1,
+    project_name: str | None = None,
+    host: str | None = None,
+) -> dict:
+    """
+    Copy files between a Compose service's container and this host, through the Engine API.
+
+    Does the same job as `compose_cp` without the docker CLI: it resolves the service to a container by
+    Compose's own labels and transfers through the daemon, so it works with no local CLI or plugin
+    installed and over any transport (`unix://`, `tcp://` + TLS, `ssh://`) — where `compose_cp` shells
+    out and is refused outright when there is no local plugin and the target is remote. Prefer this one
+    unless you need `compose_cp`'s `all_containers` or its exact `docker cp` path semantics.
+    Reads no Compose file, so there is no `project_dir`/`files`: pass `project_name` when the same
+    service name exists in several projects (`compose_list` reports the names Compose used).
+    Raises RuntimeError if no container matches or the daemon rejects the upload, ValueError if both or
+    neither side names a service, or the host destination is not an existing directory.
+
+    args:
+        source - `SERVICE:PATH` inside the container, or a path on this host
+        dest - the other end: a path on this host (an existing directory), or `SERVICE:PATH`
+        index - Which replica to use when the service is scaled, 1-based (default 1), matching
+                     Compose's own container numbering
+        project_name - Compose project the service belongs to; needed only to disambiguate
+    returns: dict - For a container-to-host copy: {"direction", "container", "container_path", "dest",
+                    "entries", "archive_bytes", "stat"}. For host-to-container:
+                    {"direction", "container", "source", "container_dir", "archive_bytes"}.
+    """
+    from_container = _split_service_path(source)
+    to_container = _split_service_path(dest)
+    if bool(from_container) == bool(to_container):
+        raise ValueError(
+            "compose_copy needs exactly one side to be `SERVICE:PATH` — got "
+            f"source={source!r}, dest={dest!r}. Copying between two containers is not supported; "
+            "use two calls via this host."
+        )
+    if from_container is not None:
+        service, container_path = from_container
+        container = _resolve_service_container(service, index=index, project_name=project_name, host=host)
+        result = _copy_from_container(container, container_path, dest)
+    elif to_container is not None:
+        service, container_dir = to_container
+        container = _resolve_service_container(service, index=index, project_name=project_name, host=host)
+        result = _copy_to_container(container, source, container_dir)
+    else:  # unreachable: the exclusive-or check above already rejected this
+        raise AssertionError("neither side named a service after the exclusivity check")
+    return {**result, "service": service, "project": container.labels.get(_LABEL_PROJECT)}
 
 
 @tool()

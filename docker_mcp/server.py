@@ -163,6 +163,7 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "compose_wait": ToolCategory.READ_ONLY,
     "compose_top": ToolCategory.READ_ONLY,
     "compose_cp": ToolCategory.MUTATING,
+    "compose_copy": ToolCategory.MUTATING,
     "compose_kill": ToolCategory.DESTRUCTIVE,
     "compose_pause": ToolCategory.MUTATING,
     "compose_unpause": ToolCategory.MUTATING,

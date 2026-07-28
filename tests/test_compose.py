@@ -1,4 +1,7 @@
-from unittest.mock import patch
+import io
+import pathlib
+import tarfile
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -7,6 +10,7 @@ from docker_mcp.tools.compose import (
     _global_args,
     compose_build,
     compose_config,
+    compose_copy,
     compose_cp,
     compose_down,
     compose_exec,
@@ -662,3 +666,150 @@ def test_compose_cp_docstring_does_not_promise_staging_it_refuses():
     # ...and every other project_dir-taking tool must still carry it, so this guard cannot be satisfied
     # by dropping the clause everywhere.
     assert "copied to the target host" in (compose_up.__doc__ or "")
+
+
+# ---------- compose_copy (SDK-backed, no CLI) ----------
+
+
+class _FakeContainer:
+    def __init__(self, name="proj-web-1", project="proj", service="web", number="1", oneoff="False"):
+        self.name = name
+        self.labels = {
+            "com.docker.compose.project": project,
+            "com.docker.compose.service": service,
+            "com.docker.compose.container-number": number,
+            "com.docker.compose.oneoff": oneoff,
+        }
+        self.put_calls: list[tuple[str, int]] = []
+        self.get_calls: list[str] = []
+        self.archive: bytes = b""
+        self.put_result = True
+
+    def get_archive(self, path):
+        self.get_calls.append(path)
+        return iter([self.archive]), {"name": pathlib.Path(path).name, "size": len(self.archive)}
+
+    def put_archive(self, path, data):
+        payload = data if isinstance(data, bytes) else data.read()
+        self.put_calls.append((path, len(payload)))
+        self._last_payload = payload
+        return self.put_result
+
+
+def _tar_bytes(entries: dict[str, str]) -> bytes:
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w") as bundle:
+        for name, body in entries.items():
+            info = tarfile.TarInfo(name)
+            info.size = len(body.encode())
+            bundle.addfile(info, io.BytesIO(body.encode()))
+    return buffer.getvalue()
+
+
+def _fake_client(containers):
+    client = MagicMock()
+    client.containers.list.return_value = containers
+    return client
+
+
+def test_compose_copy_pulls_a_container_path_into_a_host_directory(tmp_path):
+    container = _FakeContainer()
+    container.archive = _tar_bytes({"app.conf": "key=value\n"})
+    with patch("docker_mcp.tools.compose._get_client", return_value=_fake_client([container])):
+        result = compose_copy("web:/etc/app.conf", str(tmp_path))
+    assert container.get_calls == ["/etc/app.conf"]
+    # Unpacked, keeping its own name — the semantics `compose_cp` has and the archive tools do not.
+    assert (tmp_path / "app.conf").read_text(encoding="utf-8") == "key=value\n"
+    assert result["direction"] == "container_to_host"
+    assert (result["service"], result["project"], result["entries"]) == ("web", "proj", 1)
+
+
+def test_compose_copy_pushes_a_host_file_into_a_container_directory(tmp_path):
+    source = tmp_path / "app.env"
+    source.write_text("TOKEN=x\n", encoding="utf-8")
+    container = _FakeContainer()
+    with patch("docker_mcp.tools.compose._get_client", return_value=_fake_client([container])):
+        result = compose_copy(str(source), "web:/etc/config")
+    assert container.put_calls and container.put_calls[0][0] == "/etc/config"
+    # The archive's single member keeps the source basename, matching `docker cp ./x SERVICE:/dir/`.
+    with tarfile.open(fileobj=io.BytesIO(container._last_payload)) as bundle:
+        assert bundle.getnames() == ["app.env"]
+    assert result["direction"] == "host_to_container"
+
+
+def test_compose_copy_refuses_when_both_or_neither_side_names_a_service(tmp_path):
+    with pytest.raises(ValueError, match="exactly one side"):
+        compose_copy("web:/etc/a", "db:/etc/b")
+    with pytest.raises(ValueError, match="exactly one side"):
+        compose_copy(str(tmp_path / "a"), str(tmp_path / "b"))
+
+
+def test_compose_copy_selects_the_replica_and_can_disambiguate_by_project(tmp_path):
+    container = _FakeContainer(name="proj-web-3", number="3")
+    container.archive = _tar_bytes({"x": "y"})
+    with patch("docker_mcp.tools.compose._get_client", return_value=_fake_client([container])) as get_client:
+        compose_copy("web:/x", str(tmp_path), index=3, project_name="proj")
+    labels = get_client.return_value.containers.list.call_args.kwargs["filters"]["label"]
+    assert "com.docker.compose.service=web" in labels
+    assert "com.docker.compose.container-number=3" in labels
+    assert "com.docker.compose.project=proj" in labels
+    # Stopped containers are eligible: a copy into one is legitimate, and `docker compose cp` allows it.
+    assert get_client.return_value.containers.list.call_args.kwargs["all"] is True
+
+
+def test_compose_copy_ignores_one_off_run_containers(tmp_path):
+    oneoff = _FakeContainer(name="proj-web-run-abc", oneoff="True")
+    with patch("docker_mcp.tools.compose._get_client", return_value=_fake_client([oneoff])):
+        with pytest.raises(RuntimeError, match="No Compose container matches"):
+            compose_copy("web:/x", str(tmp_path))
+
+
+def test_compose_copy_names_the_candidate_projects_when_ambiguous(tmp_path):
+    one = _FakeContainer(name="a-web-1", project="alpha")
+    two = _FakeContainer(name="b-web-1", project="beta")
+    with patch("docker_mcp.tools.compose._get_client", return_value=_fake_client([one, two])):
+        with pytest.raises(RuntimeError, match=r"more than one Compose project.*alpha.*beta"):
+            compose_copy("web:/x", str(tmp_path))
+
+
+def test_compose_copy_requires_an_existing_host_directory(tmp_path):
+    container = _FakeContainer()
+    container.archive = _tar_bytes({"x": "y"})
+    with patch("docker_mcp.tools.compose._get_client", return_value=_fake_client([container])):
+        with pytest.raises(ValueError, match="must be an existing directory"):
+            compose_copy("web:/x", str(tmp_path / "nope"))
+
+
+def test_compose_copy_extraction_cannot_escape_the_destination(tmp_path):
+    """
+    A container is not a trusted source of tar member names. Python does not filter extraction by
+    default (`TarFile.extraction_filter` is None on 3.14), so `filter="data"` is passed explicitly —
+    without it, a member named `../escaped` would be written outside the destination.
+    """
+    dest = tmp_path / "dest"
+    dest.mkdir()
+    container = _FakeContainer()
+    container.archive = _tar_bytes({"../escaped": "nope\n"})
+    with patch("docker_mcp.tools.compose._get_client", return_value=_fake_client([container])):
+        with pytest.raises(tarfile.TarError):
+            compose_copy("web:/x", str(dest))
+    assert not (tmp_path / "escaped").exists()
+
+
+def test_compose_copy_surfaces_a_rejected_upload(tmp_path):
+    source = tmp_path / "f"
+    source.write_text("x", encoding="utf-8")
+    container = _FakeContainer()
+    container.put_result = False
+    with patch("docker_mcp.tools.compose._get_client", return_value=_fake_client([container])):
+        with pytest.raises(RuntimeError, match="does not exist in the container"):
+            compose_copy(str(source), "web:/missing-dir")
+
+
+def test_compose_copy_does_not_mistake_a_windows_path_for_a_service(tmp_path):
+    # `C:\...` has a colon but is a host path; the service pattern needs 2+ leading characters.
+    from docker_mcp.tools.compose import _split_service_path
+
+    assert _split_service_path("C:\\Users\\gavin\\file.txt") is None
+    assert _split_service_path("web:/etc/app.conf") == ("web", "/etc/app.conf")
+    assert _split_service_path("./local/path") is None
