@@ -35,10 +35,10 @@ file. That directory is removed when the call returns, but the teardown is
 best-effort: a dropped SSH connection leaves nothing able to run it, so a
 `docker-mcp-server.stage.*` directory can survive on the remote host (the
 failure is logged). Treat the agent as a privileged user, and prefer
-pointing the server at a scoped
-daemon (development VM, remote sandbox, Docker Desktop, rootless install)
-rather than a production socket — via `DOCKER_MCP_SERVER_HOSTS` (or
-`DOCKER_HOST`). The daemon set is fixed at startup (no runtime retarget to
+pointing the server at a scoped daemon (development VM, remote sandbox,
+Docker Desktop, rootless install) rather than a production socket — via
+`DOCKER_MCP_SERVER_HOSTS` (or `DOCKER_HOST`). The daemon set is fixed at
+startup (no runtime retarget to
 an arbitrary endpoint), and a host listed `(ro)` in `DOCKER_MCP_SERVER_HOSTS`
 makes the agent refuse to mutate it — an accident guard, not a substitute
 for a genuinely scoped daemon.
