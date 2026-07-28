@@ -452,6 +452,13 @@ def remote_stage_and_exec(
             f"Cannot run `docker {args[0] if args else ''}` on the remote host: {str(local_cwd)!r} is not a usable "
             f"working directory on this host ({detail}), and it is what would be copied over."
         )
+    if not stage_cwd and not any(_local_target(value, base=local_cwd) for value in path_values):
+        # Nothing will be copied, so do not open SFTP for this call — and therefore do not apply the
+        # staging-only filesystem guard. A host whose exec channel works while its SFTP subsystem does
+        # not (a Windows sshd shelling into `wsl.exe`) has to keep serving calls that stage nothing;
+        # scoping that guard to staging is pointless if merely *maybe* staging trips it. Reached when a
+        # declared path names something only the remote has, e.g. `buildx_create --config /etc/…`.
+        return remote_exec_cli(host, args, timeout=timeout)
     with remote_staging_session(url, timeout=timeout) as session:
         staged_tree = session.stage_tree(local_cwd) if stage_cwd else None
         staged_args = _reconcile_path_tokens(session, args, path_values, base=local_cwd, staged_tree=staged_tree)
@@ -585,6 +592,29 @@ def flag_values(args: Sequence[str], flag: str) -> list[str]:
     return [value for name, value in zip(args, args[1:], strict=False) if name == flag]
 
 
+def _local_target(value: str, *, base: Path) -> Path | None:
+    """
+    The local path a declared value names, if it exists on this machine.
+
+    Shared by the decision to stage at all and by the rewriting that follows, so the two cannot
+    disagree about what counts as a local input. No `~` expansion, matching the docker CLI, which
+    receives argv tokens verbatim.
+
+    args:
+        value - a value from `path_values`
+        base - the directory a relative value resolves against
+    returns: Path | None - the absolute local path, or None when the value names nothing here
+    """
+    if not value:
+        return None
+    candidate = Path(value)
+    absolute = candidate if candidate.is_absolute() else base / candidate
+    try:
+        return absolute if absolute.exists() else None
+    except OSError:  # an unresolvable path is not something we can stage; let the remote say so
+        return None
+
+
 def _reconcile_path_tokens(
     session: RemoteStagingSession,
     args: list[str],
@@ -622,19 +652,15 @@ def _reconcile_path_tokens(
     replacements: dict[str, str] = {}
     resolved_base = base.resolve()
     for value in path_values:
-        if not value or value in replacements:
+        if value in replacements:
             continue
-        # No `~` expansion, for the same parity reason as `cwd` above: the docker CLI receives argv
-        # tokens verbatim and does not expand them either, so a `~`-prefixed value names nothing on
-        # either backend and is passed through for the CLI to report.
-        candidate = Path(value)
-        absolute = candidate if candidate.is_absolute() else base / candidate
+        absolute = _local_target(value, base=base)
+        if absolute is None:
+            continue  # nothing to reconcile; both backends then report the path the caller passed
         try:
             inside = absolute.resolve().is_relative_to(resolved_base)
-        except OSError:  # an unresolvable path is not something we can stage; let the remote say so
+        except OSError:
             continue
-        if not absolute.exists():
-            continue  # nothing to reconcile; both backends then report the path the caller passed
         if staged_tree is None:
             # No working directory was staged, so "inside the tree" does not exist as a case: whatever
             # the value names has to be copied on its own to be readable remotely.

@@ -1009,19 +1009,28 @@ def test_remote_stage_and_exec_without_staging_a_cwd_resolves_relative_paths_aga
     assert session.calls[0]["argv"][-1] == f"{session.root}/file1/desc.json"
 
 
-def test_remote_stage_and_exec_without_staging_a_cwd_tolerates_a_missing_directory(monkeypatch, tmp_path):
-    # With nothing being copied there is no reason to require the directory to exist: a value that names
-    # nothing is simply left for the remote CLI to report, as on the local path.
+def test_remote_stage_and_exec_skips_the_session_entirely_when_nothing_will_be_staged(monkeypatch, tmp_path):
+    """
+    A declared path can name something only the *remote* has (`buildx_create --config /etc/…`). Opening a
+    staging session for that would apply the exec/SFTP filesystem guard to a call that stages nothing —
+    and refuse it on a host whose exec channel works while its SFTP does not, which is exactly the
+    capability that scoping the guard to staging is supposed to preserve.
+    """
     _pin_hosts(monkeypatch, "prod=ssh://ops@prod")
-    session = _FakeSession()
-    with _stage_patched(session):
-        cli_module.remote_stage_and_exec(
+
+    def _no_session(*args, **kwargs):
+        raise AssertionError("a staging session must not be opened when nothing will be staged")
+
+    monkeypatch.setattr(cli_module, "remote_staging_session", _no_session)
+    with patch("docker_mcp.tools._cli.run_remote_exec", return_value=_remote_result(stdout=b"ok\n")) as remote:
+        result = cli_module.remote_stage_and_exec(
             "prod",
-            ["buildx", "create", "--config", "absent.toml"],
+            ["buildx", "create", "--config", "/etc/buildkitd.toml"],
             cwd=tmp_path / "gone",
             timeout=60.0,
-            path_values=["absent.toml"],
+            path_values=["/etc/buildkitd.toml"],
             stage_cwd=False,
         )
-    assert session.files == []
-    assert session.calls[0]["argv"][-1] == "absent.toml"
+    # Straight through the exec-only backend, token untouched, same CliResult contract.
+    assert remote.call_args.args[1] == ["docker", "buildx", "create", "--config", "/etc/buildkitd.toml"]
+    assert result.stdout == "ok\n"
