@@ -37,6 +37,21 @@ class HostConfigError(Exception):
     """A malformed DOCKER_MCP_SERVER_HOSTS value. load() turns this into a stderr line + exit(1)."""
 
 
+def is_ssh_url(url: str | None) -> bool:
+    """
+    Whether a daemon URL uses the ssh:// transport.
+
+    One shared spelling of a check several call sites need (the CLI shell-out's proxy rewrite, the
+    remote-exec fallback's eligibility test, connection help, self-host detection) — some of which
+    hold a `Host` and some only a resolved DOCKER_HOST string, which is why this takes the string and
+    `Host.is_ssh` wraps it rather than the other way round.
+
+    args: url - a daemon URL, or None for "the platform default" (never ssh)
+    returns: bool - True for an ssh:// URL
+    """
+    return bool(url) and url.startswith("ssh://")
+
+
 @dataclass(frozen=True)
 class Host:
     """
@@ -51,6 +66,11 @@ class Host:
     url: str | None
     read_only: bool = False
     cert_dir: str | None = None
+
+    @property
+    def is_ssh(self) -> bool:
+        """Whether this host is reached over ssh:// (see `is_ssh_url`)."""
+        return is_ssh_url(self.url)
 
 
 # --- auto / local resolution (relocated from client.py; reads Docker config files, not the daemon) ---
