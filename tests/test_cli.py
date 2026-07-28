@@ -510,6 +510,141 @@ def test_apply_host_env_platform_default_strips_ambient(monkeypatch):
     assert "DOCKER_CONTEXT" not in env
 
 
+# ---------- should_remote_exec: when a CLI call has to run on the remote host ----------
+
+
+def _pin_hosts(monkeypatch, spec: str) -> None:
+    monkeypatch.setattr(_hosts_mod, "_registry", parse_registry(spec))
+
+
+@pytest.mark.parametrize(
+    ("hosts_spec", "host", "which", "plugin_present", "plugin", "expected"),
+    [
+        # ssh:// target with nothing local to serve the call -> remote.
+        ("prod=ssh://ops@prod", "prod", None, False, "scout", True),
+        ("prod=ssh://ops@prod", "prod", None, False, None, True),
+        # ssh:// target with a working local CLI/plugin -> local, unchanged behavior.
+        ("prod=ssh://ops@prod", "prod", "/usr/bin/docker", True, "scout", False),
+        ("prod=ssh://ops@prod", "prod", "/usr/bin/docker", True, None, False),
+        # ssh:// target, local binary but the plugin is missing -> remote (a core-CLI call still local).
+        ("prod=ssh://ops@prod", "prod", "/usr/bin/docker", False, "scout", True),
+        ("prod=ssh://ops@prod", "prod", "/usr/bin/docker", False, None, False),
+        # Never for a transport we cannot open a shell on, however broken the local CLI is.
+        ("prod=tcp://prod:2376", "prod", None, False, "scout", False),
+        ("prod=unix:///var/run/docker.sock", "prod", None, False, None, False),
+        # host=None resolves to the default (first) entry, not to whichever entry is ssh://.
+        ("local=unix:///local.sock, prod=ssh://ops@prod", None, None, False, "scout", False),
+        ("prod=ssh://ops@prod, local=unix:///local.sock", None, None, False, "scout", True),
+    ],
+)
+def test_should_remote_exec_matrix(monkeypatch, hosts_spec, host, which, plugin_present, plugin, expected):
+    _pin_hosts(monkeypatch, hosts_spec)
+    with (
+        patch("docker_mcp.tools._cli.shutil.which", return_value=which),
+        patch("docker_mcp.tools._cli.has_plugin", return_value=plugin_present) as has,
+    ):
+        assert cli_module.should_remote_exec(host, plugin=plugin) is expected
+    if which is None or plugin is None:
+        has.assert_not_called()  # no point probing a plugin when there is no binary (or no plugin needed)
+
+
+def test_should_remote_exec_does_not_probe_for_a_non_ssh_host(monkeypatch):
+    # The probe shells out (and, against an ssh:// default, would connect), so the cheap
+    # transport check has to come first.
+    _pin_hosts(monkeypatch, "prod=tcp://prod:2376")
+    with (
+        patch("docker_mcp.tools._cli.shutil.which") as which,
+        patch("docker_mcp.tools._cli.has_plugin") as has,
+    ):
+        assert cli_module.should_remote_exec("prod", plugin="compose") is False
+    which.assert_not_called()
+    has.assert_not_called()
+
+
+def test_should_remote_exec_false_for_platform_default_host(monkeypatch):
+    # url=None is the platform socket/npipe, which is never reachable over SSH.
+    monkeypatch.setattr(_hosts_mod, "_registry", {"box": Host("box", None)})
+    with patch("docker_mcp.tools._cli.shutil.which", return_value=None):
+        assert cli_module.should_remote_exec("box", plugin="scout") is False
+
+
+# ---------- remote_exec_cli: the remote backend in run_docker's result shape ----------
+
+
+def _remote_result(stdout: bytes = b"", stderr: bytes = b"", returncode: int = 0, truncated: bool = False):
+    from docker_mcp.tools._ssh_proxy import RemoteExecResult
+
+    return RemoteExecResult(returncode=returncode, stdout=stdout, stderr=stderr, truncated=truncated)
+
+
+def test_remote_exec_cli_runs_docker_on_the_resolved_ssh_url(monkeypatch):
+    _pin_hosts(monkeypatch, "local=unix:///local.sock, prod=ssh://ops@prod:2222")
+    with patch(
+        "docker_mcp.tools._cli.run_remote_exec", return_value=_remote_result(stdout=b"out\n", stderr=b"warn\n")
+    ) as remote:
+        result = cli_module.remote_exec_cli("prod", ["scout", "cves", "alpine"], timeout=42.0)
+    assert remote.call_args.args == ("ssh://ops@prod:2222", ["docker", "scout", "cves", "alpine"])
+    assert remote.call_args.kwargs == {"max_output_bytes": MAX_CLI_OUTPUT_BYTES, "timeout": 42.0}
+    assert isinstance(result, CliResult)
+    assert (result.returncode, result.stdout, result.stderr, result.truncated) == (0, "out\n", "warn\n", False)
+
+
+def test_remote_exec_cli_decodes_utf8_with_replace(monkeypatch):
+    _pin_hosts(monkeypatch, "prod=ssh://ops@prod")
+    with patch("docker_mcp.tools._cli.run_remote_exec", return_value=_remote_result(stdout=b"ok-\xff-end")):
+        result = cli_module.remote_exec_cli("prod", ["scout", "version"])
+    assert result.stdout.startswith("ok-")
+    assert result.stdout.endswith("-end")
+
+
+def test_remote_exec_cli_carries_through_remote_truncation(monkeypatch):
+    # The drain is the only place that saw the discarded bytes, so its flag has to survive even
+    # though the retained output is (necessarily) within the cap by the time we decode it.
+    _pin_hosts(monkeypatch, "prod=ssh://ops@prod")
+    with patch("docker_mcp.tools._cli.run_remote_exec", return_value=_remote_result(stdout=b"partial", truncated=True)):
+        result = cli_module.remote_exec_cli("prod", ["scout", "sbom", "alpine"])
+    assert result.truncated is True
+    assert result.stdout == "partial"
+
+
+def test_remote_exec_cli_preserves_nonzero_exit_without_raising(monkeypatch):
+    # Action tools return the raw result and decide for themselves; the backend must not raise for them.
+    _pin_hosts(monkeypatch, "prod=ssh://ops@prod")
+    with patch("docker_mcp.tools._cli.run_remote_exec", return_value=_remote_result(stderr=b"boom", returncode=17)):
+        result = cli_module.remote_exec_cli("prod", ["scout", "cves", "alpine"])
+    assert (result.returncode, result.stderr) == (17, "boom")
+
+
+def test_remote_exec_cli_propagates_timeout_as_timeout_expired(monkeypatch):
+    # Same exception the local subprocess path raises, so a tool sees one contract either way.
+    _pin_hosts(monkeypatch, "prod=ssh://ops@prod")
+    with patch(
+        "docker_mcp.tools._cli.run_remote_exec",
+        side_effect=subprocess.TimeoutExpired(cmd=["docker", "scout", "cves"], timeout=5.0),
+    ):
+        with pytest.raises(subprocess.TimeoutExpired):
+            cli_module.remote_exec_cli("prod", ["scout", "cves", "alpine"], timeout=5.0)
+
+
+def test_remote_exec_cli_refuses_a_non_ssh_host(monkeypatch):
+    _pin_hosts(monkeypatch, "prod=tcp://prod:2376")
+    with patch("docker_mcp.tools._cli.run_remote_exec") as remote:
+        with pytest.raises(RuntimeError, match="not reached over ssh://"):
+            cli_module.remote_exec_cli("prod", ["scout", "cves", "alpine"])
+    remote.assert_not_called()
+
+
+def test_remote_exec_cli_refuses_stdin_and_extra_env(monkeypatch):
+    # Silently dropping either would make the remote path diverge from the local one invisibly.
+    _pin_hosts(monkeypatch, "prod=ssh://ops@prod")
+    with patch("docker_mcp.tools._cli.run_remote_exec") as remote:
+        with pytest.raises(ValueError, match="stdin"):
+            cli_module.remote_exec_cli("prod", ["build", "-"], stdin=b"FROM alpine")
+        with pytest.raises(ValueError, match="COMPOSE_PROJECT_NAME"):
+            cli_module.remote_exec_cli("prod", ["compose", "up"], extra_env={"COMPOSE_PROJECT_NAME": "demo"})
+    remote.assert_not_called()
+
+
 # ---------- filter_args ----------
 
 

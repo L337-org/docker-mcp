@@ -48,3 +48,20 @@ def _force_host_install(monkeypatch):
     tests don't trip the mount check. Tests that exercise the in-container behaviour re-patch it.
     """
     monkeypatch.setattr("docker_mcp.tools._utils.in_container", lambda: False)
+
+
+@pytest.fixture(autouse=True)
+def _pin_registry_to_local_daemon(monkeypatch):
+    """
+    Pin the host registry to one deterministic local daemon.
+
+    With DOCKER_MCP_SERVER_HOSTS cleared above, the registry's single host is resolved from the
+    developer's own DOCKER_HOST or active docker context, which may perfectly well be `ssh://`. That
+    is not inert: the CLI-backed tools ask `should_remote_exec` whether the remote-exec fallback
+    applies, and an ssh:// default would send unit tests down that path — probing plugins, and
+    connecting, for real. Tests needing a specific registry set `_registry` themselves, which (running
+    after this fixture) wins.
+    """
+    from docker_mcp import _hosts
+
+    monkeypatch.setattr(_hosts, "_registry", {"default": _hosts.Host("default", "unix:///var/run/docker.sock")})

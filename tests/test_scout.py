@@ -191,6 +191,75 @@ def test_scout_sbom_with_platform():
     assert args[args.index("--platform") + 1] == "linux/arm64"
 
 
+# ---------- remote-exec fallback ----------
+
+
+def test_scout_runs_remotely_when_no_local_plugin_is_available():
+    # The whole point of the fallback: no local scout plugin, an ssh:// target, so the subcommand
+    # runs there instead of raising. The plugin probe must not gate the remote path.
+    with (
+        patch("docker_mcp.tools.scout.should_remote_exec", return_value=True) as should,
+        patch("docker_mcp.tools.scout.remote_exec_cli", return_value=_ok('{"vulnerabilities": []}')) as remote,
+        patch("docker_mcp.tools.scout.run_docker") as run,
+        patch("docker_mcp.tools.scout.require_plugin") as require,
+    ):
+        result = scout_cves("alpine:3.19", host="prod")
+    run.assert_not_called()
+    require.assert_not_called()
+    should.assert_called_once_with("prod", plugin="scout")
+    assert remote.call_args.args == ("prod", ["scout", "cves", "--format", "json", "alpine:3.19"])
+    assert remote.call_args.kwargs == {"timeout": 300.0}
+    assert result["result"] == {"vulnerabilities": []}  # identical parsing either way
+
+
+def test_scout_uses_the_local_cli_when_it_can():
+    with (
+        patch("docker_mcp.tools.scout.should_remote_exec", return_value=False),
+        patch("docker_mcp.tools.scout.remote_exec_cli") as remote,
+        patch("docker_mcp.tools.scout.run_docker", return_value=_ok("{}")) as run,
+        patch("docker_mcp.tools.scout.require_plugin") as require,
+    ):
+        scout_quickview("alpine:3.19", host="prod")
+    remote.assert_not_called()
+    require.assert_called_once_with("scout")
+    assert run.call_args.kwargs["host"] == "prod"
+
+
+def test_scout_compare_refuses_a_local_path_target_on_the_remote_path(tmp_path):
+    # `to` may be a directory or archive; staging isn't supported here, so a path that exists locally
+    # would silently resolve against the *remote* filesystem. Refuse and name the reason instead.
+    local_dir = tmp_path / "old-image"
+    local_dir.mkdir()
+    with (
+        patch("docker_mcp.tools.scout.should_remote_exec", return_value=True),
+        patch("docker_mcp.tools.scout.remote_exec_cli") as remote,
+    ):
+        with pytest.raises(ValueError, match="names a path on the host running this MCP server"):
+            scout_compare("org/app:v2", to=str(local_dir), host="prod")
+    remote.assert_not_called()
+
+
+def test_scout_compare_allows_an_image_ref_target_on_the_remote_path():
+    # Only an existing local path is refused — an ordinary reference (even one with a '/') goes through.
+    with (
+        patch("docker_mcp.tools.scout.should_remote_exec", return_value=True),
+        patch("docker_mcp.tools.scout.remote_exec_cli", return_value=_ok("{}")) as remote,
+    ):
+        scout_compare("org/app:v2", to="org/app:v1", host="prod")
+    assert remote.call_args.args[1][-1] == "org/app:v2"
+
+
+def test_scout_compare_allows_a_local_path_target_when_running_locally(tmp_path):
+    local_dir = tmp_path / "old-image"
+    local_dir.mkdir()
+    with (
+        patch("docker_mcp.tools.scout.should_remote_exec", return_value=False),
+        patch("docker_mcp.tools.scout.run_docker", return_value=_ok("{}")) as run,
+    ):
+        scout_compare("org/app:v2", to=str(local_dir))
+    assert run.call_args.args[0][run.call_args.args[0].index("--to") + 1] == str(local_dir)
+
+
 # ---------- argument-injection defense ----------
 
 
