@@ -447,7 +447,7 @@ def build_instructions(registered_domains: set[str] | None = None) -> str:
             # compose, say) and the verb has to agree with it.
             verb = "runs" if len(fallback_present) == 1 else "run"
             caveat += (
-                f" With none installed, {', '.join(fallback_present)} instead {verb} on the target host when "
+                f" With either missing, {', '.join(fallback_present)} instead {verb} on the target host when "
                 "it is reached over `ssh://` — its CLI, its registry credentials, and local files (a compose "
                 "project dir, a build context) copied over, so keep them small. A working local CLI is "
                 "always used in preference."

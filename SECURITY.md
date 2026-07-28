@@ -26,9 +26,10 @@ host, and this server exposes the full Docker SDK surface plus selected
 docker CLI features (Compose, Stack, Buildx, Scout, Context) and direct
 registry HTTPS access. There is no per-tool authorization layer — the
 daemon (and, for CLI-backed tools, whichever host runs the CLI) is the
-trust boundary. That is normally the host running this server; with no
-local docker CLI and an `ssh://` daemon, Compose / Stack / Buildx / Scout
-commands run on the *target* host as the SSH user, and the files they read
+trust boundary. That is normally the host running this server; when the
+docker CLI — or the plugin a call needs — is missing locally and the daemon
+is reached over `ssh://`, Compose / Stack / Buildx / Scout commands run on
+the *target* host as the SSH user, and the files they read
 are copied into a `0700` temp directory there first — including a
 `buildx_build` `--secret src=` file — which is removed when the call
 returns. Treat the
