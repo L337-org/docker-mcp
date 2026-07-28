@@ -30,6 +30,7 @@ from docker_mcp.tools._ssh_proxy import (
     detect_remote_dialect,
     exec_remote,
     get_dialect,
+    parse_ssh_url,
     run_remote_exec,
 )
 
@@ -221,6 +222,21 @@ def test_marker_is_written_before_the_kill_not_after():
     assert watchdog.index('printf t >"$m"') < watchdog.index("kill $pid 2>/dev/null)"), watchdog
     # Guarded on the command still being alive, so a command that already exited is not marked.
     assert "kill -0 $pid" in watchdog
+
+
+def test_mktemp_failure_aborts_before_running_the_command():
+    """
+    A silent `mktemp` failure would misreport timeouts, not merely lose the marker.
+
+    With `m` empty the marker write fails while the kill still happens, so a genuine timeout returns a
+    plain SIGTERM status and is reported as an ordinary failure — verified as rc=143 instead of the
+    sentinel. Exit 125 follows GNU `timeout`'s convention for "the wrapper itself could not run".
+    """
+    body = _script_body(["true"], timeout=5)
+    mktemp_line = next(line for line in body.splitlines() if "mktemp" in line)
+    assert "|| {" in mktemp_line
+    assert "exit 125" in mktemp_line
+    assert "cannot create a temp file" in mktemp_line  # says why, on stderr
 
 
 def test_mktemp_is_given_an_explicit_template():
@@ -464,6 +480,27 @@ def test_real_shell_honours_cwd_and_refuses_an_unreachable_one():
 
 
 @pytestmark_posix
+def test_real_shell_mktemp_failure_exits_125_without_running_argv():
+    """The command must not run at all when the wrapper cannot set up its marker, since without one a
+    genuine timeout is indistinguishable from an ordinary SIGTERM exit."""
+    canary = "/tmp/docker-mcp-mktemp-canary"
+    with contextlib.suppress(FileNotFoundError):
+        os.unlink(canary)
+    script = PosixDialect().wrap_with_timeout(["touch", canary], timeout=5)
+    # Shadow mktemp so it fails, exactly as an absent binary or unwritable TMPDIR would.
+    result = subprocess.run(  # noqa: S603 — fixed argv, no shell; the script itself is under test
+        ["/bin/bash", "-c", "mktemp() { return 1; }\n" + shlex.split(script)[2]],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 125
+    assert "cannot create a temp file" in result.stderr
+    assert not os.path.exists(canary), "argv ran despite the wrapper being unable to set itself up"
+
+
+@pytestmark_posix
 def test_real_shell_leaves_no_marker_file_behind():
     """Covers the happy path and the early-`cd`-failure path, which used to strand its marker."""
     pattern = os.path.join(os.environ.get("TMPDIR", "/tmp"), "docker-mcp-server.*")
@@ -512,6 +549,26 @@ def test_real_shell_watchdog_does_not_outlive_the_call_for_long():
 def test_real_shell_quoting_blocks_metacharacter_injection():
     result = _run_script(["sh", "-c", 'printf "%s" "$1"', "x", 'a"b;touch /tmp/pwned-$$'], timeout=30)
     assert result.stdout == 'a"b;touch /tmp/pwned-$$'
+
+
+# --- URL scheme validation -----------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("url", ["tcp://10.0.0.5:2375", "unix:///var/run/docker.sock", "npipe:////./pipe/x", ""])
+def test_non_ssh_urls_are_rejected_before_any_connection_attempt(url):
+    """
+    A wrong scheme was parsed as if it were ssh://: `tcp://10.0.0.5:2375` yielded a plausible target
+    and would be attempted as SSH on port 2375, failing with advice about keys and known_hosts for
+    what is really a caller bug. Checked in `parse_ssh_url`, so both the dial-stdio proxy and the
+    remote-exec fallback are covered at the one place that already validates the URL.
+    """
+    with pytest.raises(ValueError, match="Expected an ssh:// URL"):
+        parse_ssh_url(url)
+
+
+def test_ssh_urls_still_parse():
+    target = parse_ssh_url("ssh://bob@example.com:2222")
+    assert (target.hostname, target.port, target.username) == ("example.com", 2222, "bob")
 
 
 # --- get_dialect ---------------------------------------------------------------------------------
@@ -571,6 +628,41 @@ def test_detect_remote_dialect_treats_a_failed_probe_as_non_posix():
 
 def test_detect_remote_dialect_treats_a_dead_transport_as_non_posix():
     assert detect_remote_dialect(fake_client(None, transport=False), "ssh://h") is RemoteDialectKind.WINDOWS
+
+
+def test_detect_remote_dialect_does_not_hang_on_a_wedged_remote():
+    """
+    `Channel.settimeout` bounds reads and writes only. `recv_exit_status()` waits on an Event with no
+    timeout — paramiko's own docstring warns it "will hang indefinitely" — so a shell that never
+    reports a status would hang detection, and with it `run_remote_exec`, whatever timeout the caller
+    passed. Expiry is treated as "no POSIX shell answered", which is what it is.
+    """
+
+    class NeverFinishes(FakeChannel):
+        def __init__(self):
+            super().__init__(stdout=[b"Linux\n"])
+
+        def exit_status_ready(self):
+            return False  # the remote never reports a status
+
+        def recv_exit_status(self):  # pragma: no cover — reaching this means the guard failed
+            raise AssertionError("recv_exit_status() would have blocked indefinitely")
+
+    started = time.monotonic()
+    kind = detect_remote_dialect(fake_client(NeverFinishes()), "ssh://wedged", timeout=1)
+    elapsed = time.monotonic() - started
+    assert kind is RemoteDialectKind.WINDOWS
+    assert elapsed < 10, f"detection took {elapsed:.1f}s — the deadline did not bound it"
+
+
+def test_refusal_message_matches_the_allow_list():
+    """The message used to name only Linux/macOS/BSD/WSL while the allow-list also accepts SunOS and
+    AIX, so a supported-but-unusual host hitting the failure path was told its OS was unsupported."""
+    with pytest.raises(RuntimeError) as excinfo:
+        get_dialect(RemoteDialectKind.WINDOWS)
+    message = str(excinfo.value).lower()
+    for kernel in ("sunos", "aix", "linux", "darwin"):
+        assert kernel in message, f"{kernel} is accepted by detection but absent from the refusal"
 
 
 def test_detect_remote_dialect_warns_on_every_refusal_path(caplog):

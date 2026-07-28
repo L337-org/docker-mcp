@@ -34,6 +34,8 @@ from typing import Protocol
 
 import paramiko
 
+from docker_mcp._hosts import is_ssh_url
+
 logger = logging.getLogger(__name__)
 
 _RECV_BUFFER_SIZE = 32_768
@@ -82,9 +84,18 @@ def parse_ssh_url(url: str) -> SshTarget:
     that docker-py's `SSHHTTPAdapter._create_paramiko_client` performs, so this proxy resolves the
     same target docker-py (and the system `ssh` client) would for the same URL.
 
+    The scheme is checked rather than assumed. Both callers (the dial-stdio proxy and the remote-exec
+    fallback) only ever pass an ssh:// host, but a wrong scheme would otherwise be parsed as if it
+    were one — `tcp://10.0.0.5:2375` yields a plausible target and gets attempted as SSH on port 2375,
+    failing with advice about keys and known_hosts for what is really a caller bug. Validating here
+    covers both callers at the one point that already validates the URL.
+
     args: url: str - a DOCKER_HOST value starting with 'ssh://'
     returns: SshTarget - hostname/port/username/key_filename/proxycommand after config-file lookup
+    raises: ValueError - the URL is not ssh://, or carries no hostname
     """
+    if not is_ssh_url(url):
+        raise ValueError(f"Expected an ssh:// URL for an SSH connection, got {url!r}")
     parsed = urllib.parse.urlparse(url)
     hostname = parsed.hostname
     if not hostname:
@@ -558,7 +569,14 @@ class PosixDialect:
         # FreeBSD/OpenBSD/NetBSD require a template argument and would fail here — before running argv
         # at all — on hosts this dialect claims to support.
         lines = [
-            'm=$(mktemp "${TMPDIR:-/tmp}/docker-mcp-server.XXXXXXXX")',
+            # Fail fast if the marker cannot be created (absent `mktemp`, unwritable or read-only
+            # TMPDIR). Continuing leaves `m` empty, and the marker write then fails silently while the
+            # kill still happens — so a genuine timeout comes back as a plain SIGTERM exit and is
+            # reported as an ordinary failure (verified: rc=143 instead of the sentinel). Exit 125
+            # follows GNU `timeout`'s convention for "the wrapper itself could not run".
+            'm=$(mktemp "${TMPDIR:-/tmp}/docker-mcp-server.XXXXXXXX") || {'
+            ' echo "docker-mcp-server: cannot create a temp file on the remote host'
+            ' (is ${TMPDIR:-/tmp} writable?)" >&2; exit 125; }',
             # Remove the marker on any exit rather than only the happy path: the early `cd` failure
             # below returns without reaching the end of the script, and an outer timeout or dropped
             # channel can kill this shell outright — both of which otherwise strand the file in the
@@ -607,12 +625,14 @@ def get_dialect(kind: RemoteDialectKind) -> RemoteDialect:
         # kernel reaches this message too, and calling those Windows would be wrong.
         raise RuntimeError(
             "Remote-exec fallback: no supported POSIX shell was detected on this host, so the docker "
-            "CLI cannot be run on it. Supported remotes are Linux, macOS/BSD, and sshd running inside "
-            "a WSL distro. Common causes: an sshd whose shell is Windows cmd/PowerShell (a Windows "
-            "dialect is architected but not implemented yet); a `uname` from MSYS/MinGW/Cygwin; a "
-            "restricted shell; or an unrecognized kernel. Preceding log lines record what the host "
-            "reported. Either install the docker CLI locally to use the local-CLI path against this "
-            "host, or expose the host over a POSIX shell (on Windows, run sshd inside the WSL distro)."
+            "CLI cannot be run on it. Any host presenting a POSIX shell is supported — including "
+            f"{', '.join(sorted(_POSIX_UNAME_VALUES))} — as is sshd running inside a WSL distro. Common "
+            "causes of this refusal: an sshd whose shell is Windows cmd/PowerShell (a Windows dialect "
+            "is architected but not implemented yet); a `uname` from MSYS/MinGW/Cygwin; a restricted "
+            "shell; a probe that never answered; or a kernel not on that list. Preceding log lines "
+            "record what the host actually reported. Either install the docker CLI locally to use the "
+            "local-CLI path against this host, or expose the host over a POSIX shell (on Windows, run "
+            "sshd inside the WSL distro)."
         )
     return dialect
 
@@ -673,6 +693,17 @@ def detect_remote_dialect(
                 channel.settimeout(min(timeout, _CONNECT_TIMEOUT_CAP_SECONDS))
             channel.exec_command("uname -s")
             output = channel.recv(_RECV_BUFFER_SIZE).decode("utf-8", errors="replace").strip().lower()
+            # Poll for the exit status rather than calling recv_exit_status() straight off.
+            # `Channel.settimeout` above bounds reads and writes only; recv_exit_status() waits on an
+            # Event with no timeout at all (paramiko's own docstring warns it "will hang
+            # indefinitely"), so a wedged remote shell would hang detection — and with it
+            # run_remote_exec — regardless of the caller's timeout. A probe that never answers is
+            # exactly the "no POSIX shell here" case, so expiry falls through to WINDOWS.
+            deadline = time.monotonic() + min(timeout or _CONNECT_TIMEOUT_CAP_SECONDS, _CONNECT_TIMEOUT_CAP_SECONDS)
+            while not channel.exit_status_ready():
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("the remote host did not report an exit status for `uname -s`")
+                time.sleep(_EXEC_POLL_SECONDS)
             status = channel.recv_exit_status()
             if status == 0 and output in _POSIX_UNAME_VALUES:
                 kind = RemoteDialectKind.POSIX
@@ -846,6 +877,8 @@ def exec_remote(
             argv=argv,
             timeout=timeout,
         )
+        # Safe to call unguarded here, unlike in detect_remote_dialect: _drain_exec_channel only
+        # returns once it has seen exit_status_ready(), so the Event this waits on is already set.
         returncode = channel.recv_exit_status()
     finally:
         channel.close()
