@@ -38,7 +38,6 @@ failure is logged). Treat the agent as a privileged user, and prefer
 pointing the server at a scoped daemon (development VM, remote sandbox,
 Docker Desktop, rootless install) rather than a production socket — via
 `DOCKER_MCP_SERVER_HOSTS` (or `DOCKER_HOST`). The daemon set is fixed at
-startup (no runtime retarget to
-an arbitrary endpoint), and a host listed `(ro)` in `DOCKER_MCP_SERVER_HOSTS`
-makes the agent refuse to mutate it — an accident guard, not a substitute
-for a genuinely scoped daemon.
+startup (no runtime retarget to an arbitrary endpoint), and a host listed
+`(ro)` in `DOCKER_MCP_SERVER_HOSTS` makes the agent refuse to mutate it — an
+accident guard, not a substitute for a genuinely scoped daemon.
