@@ -444,9 +444,10 @@ def build_instructions(registered_domains: set[str] | None = None) -> str:
         fallback_present = [d for d in _REMOTE_EXEC_DOMAINS if d in present]
         if fallback_present:
             caveat += (
-                f" Exception: against an `ssh://` host, {', '.join(fallback_present)} then run on that host "
-                "instead — its CLI, its registry credentials, and local files (a compose project dir, a "
-                "build context) copied over, so keep them small."
+                f" With none installed, {', '.join(fallback_present)} instead run on the target host when it "
+                "is reached over `ssh://` — its CLI, its registry credentials, and local files (a compose "
+                "project dir, a build context) copied over, so keep them small. A working local CLI is "
+                "always used in preference."
             )
         caveats.append(caveat)
     if present & set(_SWARM_DOMAINS):

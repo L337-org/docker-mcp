@@ -920,3 +920,70 @@ def test_remote_stage_and_exec_does_not_expand_tilde_in_cwd_or_path_tokens(monke
         )
     assert session.calls[-1]["argv"] == ["docker", "compose", "-f", home_file, "up"]
     assert session.files == []
+
+
+# ---------- remote_stage_and_exec: stage_cwd=False (only the named paths) ----------
+
+
+def test_remote_stage_and_exec_without_staging_a_cwd_stages_each_named_path(monkeypatch, tmp_path):
+    """
+    The mode `buildx create --config` / `buildx imagetools create --file` use: nothing is copied as a
+    working directory, the remote command gets no cwd, and each declared path that exists locally is
+    staged on its own — there is no staged tree for it to be "inside".
+    """
+    _pin_hosts(monkeypatch, "prod=ssh://ops@prod")
+    config = tmp_path / "buildkitd.toml"
+    config.write_text("[worker]\n", encoding="utf-8")
+    session = _FakeSession()
+    with _stage_patched(session):
+        cli_module.remote_stage_and_exec(
+            "prod",
+            ["buildx", "create", "--config", str(config)],
+            cwd=tmp_path,
+            timeout=60.0,
+            path_values=[str(config)],
+            stage_cwd=False,
+        )
+    assert session.trees == []  # the working directory itself is not copied
+    assert session.files == [str(config)]
+    call = session.calls[0]
+    assert call["cwd"] is None
+    assert call["argv"] == ["docker", "buildx", "create", "--config", f"{session.root}/file1/buildkitd.toml"]
+
+
+def test_remote_stage_and_exec_without_staging_a_cwd_resolves_relative_paths_against_it(monkeypatch, tmp_path):
+    # `cwd` still says where a relative value resolves — the same place the local subprocess would have
+    # resolved it — even though it is not itself copied.
+    _pin_hosts(monkeypatch, "prod=ssh://ops@prod")
+    descriptor = tmp_path / "desc.json"
+    descriptor.write_text("{}\n", encoding="utf-8")
+    session = _FakeSession()
+    with _stage_patched(session):
+        cli_module.remote_stage_and_exec(
+            "prod",
+            ["buildx", "imagetools", "create", "--file", "desc.json"],
+            cwd=tmp_path,
+            timeout=60.0,
+            path_values=["desc.json"],
+            stage_cwd=False,
+        )
+    assert session.files == [str(descriptor)]
+    assert session.calls[0]["argv"][-1] == f"{session.root}/file1/desc.json"
+
+
+def test_remote_stage_and_exec_without_staging_a_cwd_tolerates_a_missing_directory(monkeypatch, tmp_path):
+    # With nothing being copied there is no reason to require the directory to exist: a value that names
+    # nothing is simply left for the remote CLI to report, as on the local path.
+    _pin_hosts(monkeypatch, "prod=ssh://ops@prod")
+    session = _FakeSession()
+    with _stage_patched(session):
+        cli_module.remote_stage_and_exec(
+            "prod",
+            ["buildx", "create", "--config", "absent.toml"],
+            cwd=tmp_path / "gone",
+            timeout=60.0,
+            path_values=["absent.toml"],
+            stage_cwd=False,
+        )
+    assert session.files == []
+    assert session.calls[0]["argv"][-1] == "absent.toml"
