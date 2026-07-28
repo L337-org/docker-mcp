@@ -178,3 +178,61 @@ def test_stack_rm_requires_a_stack_name():
 def test_stack_rm_rejects_flag_like_name():
     with pytest.raises(ValueError, match="flag"):
         stack_remove(["web", "-rf"])
+
+
+# ---------- remote-exec fallback ----------
+
+
+def test_stack_deploy_stages_its_working_directory_when_there_is_no_local_cli():
+    with (
+        patch("docker_mcp.tools.stack.should_remote_exec", return_value=True) as should,
+        patch("docker_mcp.tools.stack.remote_stage_and_exec", return_value=_ok("")) as staged,
+        patch("docker_mcp.tools.stack.run_docker") as run,
+    ):
+        stack_deploy("api", ["docker-stack.yml"], cwd="/srv/app", host="prod")
+    run.assert_not_called()
+    # `docker stack` is core CLI, not a plugin, so the probe asks about the binary itself.
+    should.assert_called_with("prod", plugin=None)
+    assert staged.call_args.kwargs["cwd"] == "/srv/app"
+    assert staged.call_args.kwargs["path_values"] == ["docker-stack.yml"]
+
+
+def test_stack_queries_run_remotely_without_staging_anything():
+    # `ls`/`ps`/`services`/`rm` name nothing local, so there is no directory worth copying.
+    for call, expected in (
+        (lambda: stack_list(host="prod"), ["stack", "ls", "--format", "{{json .}}"]),
+        (lambda: stack_ps("api", host="prod"), ["stack", "ps", "--format", "{{json .}}", "api"]),
+        (lambda: stack_services("api", host="prod"), ["stack", "services", "--format", "{{json .}}", "api"]),
+    ):
+        with (
+            patch("docker_mcp.tools.stack.should_remote_exec", return_value=True),
+            patch("docker_mcp.tools.stack.remote_stage_and_exec") as staged,
+            patch("docker_mcp.tools.stack.remote_exec_cli", return_value=_ok("[]")) as remote,
+        ):
+            call()
+        staged.assert_not_called()
+        assert remote.call_args.args == ("prod", expected)
+
+
+def test_stack_remove_runs_remotely_without_staging():
+    with (
+        patch("docker_mcp.tools.stack.should_remote_exec", return_value=True),
+        patch("docker_mcp.tools.stack.remote_stage_and_exec") as staged,
+        patch("docker_mcp.tools.stack.remote_exec_cli", return_value=_ok("")) as remote,
+    ):
+        stack_remove(["api"], host="prod")
+    staged.assert_not_called()
+    assert remote.call_args.args[1][:2] == ["stack", "rm"]
+
+
+def test_stack_uses_the_local_cli_when_it_can():
+    with (
+        patch("docker_mcp.tools.stack.should_remote_exec", return_value=False),
+        patch("docker_mcp.tools.stack.remote_exec_cli") as remote,
+        patch("docker_mcp.tools.stack.remote_stage_and_exec") as staged,
+        patch("docker_mcp.tools.stack.run_docker", return_value=_ok("[]")) as run,
+    ):
+        stack_list(host="prod")
+    remote.assert_not_called()
+    staged.assert_not_called()
+    assert run.call_args.kwargs["host"] == "prod"
