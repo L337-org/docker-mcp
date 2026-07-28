@@ -467,9 +467,12 @@ def _run_buildx_build_remotely(
     that does not exist here) is therefore passed through untouched, and the remote CLI fetches or
     reports it exactly as the local one would.
 
-    When a context *is* staged, the command runs with that directory as its working directory, so a
-    `--file` inside it can stay relative — which is how buildx resolves it (see `_local_dockerfile`).
-    A Dockerfile outside the context is copied on its own and pointed at absolutely.
+    The remote command gets **no working directory**, and every path rewritten here is absolute. Running
+    it inside the staged context instead would let a relative `--file` resolve *there* — and buildx
+    resolves `--file` against the CLI's own working directory (see `_local_dockerfile`), so a path the
+    local CLI could not find would be found remotely inside the copied context. An in-context Dockerfile
+    therefore becomes an absolute path under the staged copy; one outside the context, or beside a URL
+    context, is copied on its own and pointed at the same way.
 
     args:
         args - the fully-built buildx argv, ending with the context positional
