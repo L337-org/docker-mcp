@@ -674,7 +674,9 @@ def detect_remote_dialect(
     args:
         ssh_client - an already-connected client for the host being probed
         cache_key - identity to cache under; pass the host's DOCKER_HOST URL
-        timeout - seconds to bound the probe channel; None leaves paramiko's own default
+        timeout - seconds to bound the probe (channel reads and the exit-status wait alike), capped
+                  at _CONNECT_TIMEOUT_CAP_SECONDS; None falls back to that cap rather than being
+                  unbounded, since an unbounded probe can hang detection outright
     returns: RemoteDialectKind - POSIX when `uname -s` names a known POSIX kernel, else WINDOWS
     """
     now = time.monotonic()
@@ -690,8 +692,14 @@ def detect_remote_dialect(
             raise RuntimeError("SSH transport is not connected.")
         channel = transport.open_session()
         try:
-            if timeout is not None:
-                channel.settimeout(min(timeout, _CONNECT_TIMEOUT_CAP_SECONDS))
+            # Bound the channel unconditionally. With `timeout=None` there would be no bound at all, and
+            # the `recv` below blocks first — before the exit-status deadline further down can help — so
+            # a remote that wedges without writing anything would hang detection forever. Falling back
+            # to the connect cap keeps a probe bounded even when the caller expressed no preference.
+            probe_bound = (
+                _CONNECT_TIMEOUT_CAP_SECONDS if timeout is None else min(timeout, _CONNECT_TIMEOUT_CAP_SECONDS)
+            )
+            channel.settimeout(probe_bound)
             channel.exec_command("uname -s")
             output = channel.recv(_RECV_BUFFER_SIZE).decode("utf-8", errors="replace").strip().lower()
             # Poll for the exit status rather than calling recv_exit_status() straight off.
@@ -700,7 +708,7 @@ def detect_remote_dialect(
             # indefinitely"), so a wedged remote shell would hang detection — and with it
             # run_remote_exec — regardless of the caller's timeout. A probe that never answers is
             # exactly the "no POSIX shell here" case, so expiry falls through to WINDOWS.
-            deadline = time.monotonic() + min(timeout or _CONNECT_TIMEOUT_CAP_SECONDS, _CONNECT_TIMEOUT_CAP_SECONDS)
+            deadline = time.monotonic() + probe_bound
             while not channel.exit_status_ready():
                 if time.monotonic() >= deadline:
                     raise TimeoutError("the remote host did not report an exit status for `uname -s`")

@@ -633,6 +633,23 @@ def test_detect_remote_dialect_treats_a_dead_transport_as_non_posix():
     assert detect_remote_dialect(fake_client(None, transport=False), "ssh://h") is RemoteDialectKind.WINDOWS
 
 
+@pytest.mark.parametrize(
+    ("timeout", "expected"),
+    [(None, 30.0), (5, 5.0), (900, 30.0)],  # None falls back to the cap; a large timeout is capped
+)
+def test_detect_remote_dialect_always_bounds_the_probe_channel(timeout, expected):
+    """
+    The channel must be bounded even when the caller passes no timeout.
+
+    `channel.recv` runs before the exit-status deadline can help, so leaving the channel unbounded
+    means a remote that wedges without writing anything hangs detection outright — the deadline below
+    it never gets a chance to fire.
+    """
+    channel = FakeChannel(stdout=[b"Linux\n"], exit_ready_immediately=True)
+    detect_remote_dialect(fake_client(channel), "ssh://h", timeout=timeout)
+    assert channel.timeout == expected
+
+
 def test_detect_remote_dialect_does_not_hang_on_a_wedged_remote():
     """
     `Channel.settimeout` bounds reads and writes only. `recv_exit_status()` waits on an Event with no
