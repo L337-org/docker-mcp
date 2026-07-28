@@ -95,6 +95,9 @@ addopts = "-m 'not integration'"
 
 [dependency-groups]
 dev = [
+    # Pulled in transitively by pytest, but tests/test_pyproject_pins.py parses PEP 508 requirement
+    # strings with it directly, so declare it — the same reasoning as `requests` above.
+    "packaging>=24.0",
     "pytest>=9.0.3",
     "pyright>=1.1.409",
     "ruff>=0.15.12",
