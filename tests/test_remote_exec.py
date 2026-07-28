@@ -9,11 +9,16 @@ a mock cannot verify.
 
 import contextlib
 import glob
+import io
+import logging
 import os
+import pathlib
 import shlex
 import signal
+import stat
 import subprocess
 import sys
+import tarfile
 import time
 import unittest.mock
 from typing import cast
@@ -23,15 +28,18 @@ import pytest
 
 from docker_mcp.tools._ssh_proxy import (
     PosixDialect,
+    _enforce_stage_limits,
     _is_remote_timeout,
     RemoteDialectKind,
     _clear_dialect_cache,
     _REMOTE_TERM_GRACE_SECONDS,
     _REMOTE_TIMEOUT_EXIT_CODE,
+    _tar_local_tree,
     detect_remote_dialect,
     exec_remote,
     get_dialect,
     parse_ssh_url,
+    remote_staging_session,
     run_remote_exec,
 )
 
@@ -909,3 +917,551 @@ def test_run_remote_exec_refuses_a_non_posix_host(monkeypatch):
     with pytest.raises(RuntimeError, match="no supported POSIX shell"):
         run_remote_exec("ssh://win-host", ["docker", "ps"], max_output_bytes=_CAP, timeout=5)
     assert fake.closed
+
+
+# --- staging: fakes ------------------------------------------------------------------------------
+#
+# The staging path runs several commands over one connection (mktemp, tar -xf, rm, plus the caller's)
+# and talks to SFTP, which the FakeChannel/FakeSshClient pair above cannot express: they serve one
+# scripted channel. These fakes extend the same convention — paramiko is never contacted — with a host
+# that answers per command and an in-memory SFTP subsystem.
+
+
+class ScriptedChannel(FakeChannel):
+    """A FakeChannel whose output and exit status are decided by the command it is asked to run."""
+
+    def __init__(self, host):
+        super().__init__(exit_ready_immediately=False)
+        self._host = host
+
+    def exec_command(self, command):
+        super().exec_command(command)
+        stdout, stderr, status = self._host.respond(command)
+        self.stdout_chunks = [stdout] if stdout else []
+        self.stderr_chunks = [stderr] if stderr else []
+        self._exit_status = status
+
+
+class FakeSFTPClient:
+    """In-memory SFTP subsystem recording directories created and payloads uploaded."""
+
+    def __init__(self, *, sees_exec_filesystem: bool = True):
+        self.dirs: list[tuple[str, int]] = []
+        self.uploads: dict[str, bytes] = {}
+        self.stats: list[str] = []
+        self.closed = False
+        self._sees_exec_filesystem = sees_exec_filesystem
+
+    def stat(self, path):
+        self.stats.append(path)
+        if not self._sees_exec_filesystem:
+            raise FileNotFoundError(f"No such file: {path}")
+        return unittest.mock.MagicMock()
+
+    def mkdir(self, path, mode=0o777):
+        self.dirs.append((path, mode))
+
+    def putfo(self, fl, remotepath, confirm=True):
+        self.uploads[remotepath] = fl.read()
+
+    def put(self, localpath, remotepath, confirm=True):
+        self.uploads[remotepath] = pathlib.Path(localpath).read_bytes()
+
+    def close(self):
+        self.closed = True
+
+
+class ScriptedHost:
+    """
+    Fake SSH host for the staging path: one channel per session, every command recorded.
+
+    `failures` maps a substring of the wrapped command to the `(stderr, exit status)` it should answer
+    with, which is how a test makes exactly one of the session's steps fail.
+    """
+
+    _STAGE_ROOT = "/tmp/docker-mcp-server.stage.abc12345"
+
+    def __init__(self, *, uname=b"Linux\n", temp_dir=_STAGE_ROOT, failures=None, sftp=None):
+        self.commands: list[str] = []
+        self.uname = uname
+        self.temp_dir = temp_dir
+        self.failures = failures or {}
+        self.sftp = sftp if sftp is not None else FakeSFTPClient()
+        self.sftp_opens = 0
+        self.closed = False
+
+    def respond(self, command):
+        self.commands.append(command)
+        for needle, (stderr, status) in self.failures.items():
+            if needle in command:
+                return b"", stderr, status
+        if "uname -s" in command:
+            return self.uname, b"", 0
+        if "mktemp -d" in command:
+            return f"{self.temp_dir}\n".encode(), b"", 0
+        return b"", b"", 0
+
+    def get_transport(self):
+        host = self
+
+        class _Transport:
+            def open_session(self):
+                return ScriptedChannel(host)
+
+        return _Transport()
+
+    def open_sftp(self):
+        self.sftp_opens += 1
+        return self.sftp
+
+    def close(self):
+        self.closed = True
+
+    # -- assertions helpers used by the tests below --
+
+    def ran(self, needle: str) -> bool:
+        return any(needle in command for command in self.commands)
+
+    def staged_tar(self, remote_path: str) -> list[str]:
+        """Member names of an uploaded tar, so a test can assert on what actually got packed."""
+        with tarfile.open(fileobj=io.BytesIO(self.sftp.uploads[remote_path])) as bundle:
+            return sorted(name.removeprefix("./") for name in bundle.getnames() if name not in (".", "./"))
+
+
+@contextlib.contextmanager
+def _staging(host, *, docker_host="ssh://ops@prod"):
+    """Open a staging session against a ScriptedHost, with paramiko's connect patched out."""
+    client = cast(paramiko.SSHClient, host)
+    with unittest.mock.patch("docker_mcp.tools._ssh_proxy.connect_ssh_client", return_value=client):
+        with remote_staging_session(docker_host) as session:
+            yield session
+
+
+# --- staging: dialect argv -------------------------------------------------------------------------
+
+
+def test_temp_dir_argv_uses_an_explicit_mktemp_template_under_tmpdir():
+    argv = PosixDialect().temp_dir_argv()
+    assert argv[:2] == ["sh", "-c"]
+    # An explicit template (bare `mktemp -d` fails on the BSDs) under $TMPDIR, and named after the
+    # project so an abandoned directory on a shared host is attributable.
+    # The `stage.` infix separates a staging directory (holds copied content) from the watchdog's own
+    # marker files, which share the project prefix and are empty.
+    assert 'mktemp -d "${TMPDIR:-/tmp}/docker-mcp-server.stage.XXXXXXXX"' == argv[2]
+
+
+def test_remove_and_extract_argv_pass_paths_as_arguments_never_interpolated():
+    dialect = PosixDialect()
+    assert dialect.remove_tree_argv("/tmp/x y") == ["rm", "-rf", "/tmp/x y"]
+    # Uncompressed: `-z` autodetection is a GNU/bsdtar extension, not a POSIX guarantee.
+    assert dialect.extract_tar_argv("/tmp/a.tar", "/tmp/dest") == ["tar", "-xf", "/tmp/a.tar", "-C", "/tmp/dest"]
+
+
+def test_join_path_uses_the_remote_separator_not_the_local_one():
+    # posixpath, not os.path: a server running on Windows must still compose '/' paths for a Linux target.
+    assert PosixDialect().join_path("/tmp/root", "tree1") == "/tmp/root/tree1"
+
+
+# --- staging: session lifecycle --------------------------------------------------------------------
+
+
+def test_session_creates_a_temp_root_opens_sftp_and_verifies_the_filesystem():
+    host = ScriptedHost()
+    with _staging(host) as session:
+        assert session.root == ScriptedHost._STAGE_ROOT
+    assert host.ran("mktemp -d")
+    assert host.sftp_opens == 1
+    # The guard stats exactly the directory the exec channel created.
+    assert host.sftp.stats == [ScriptedHost._STAGE_ROOT]
+
+
+def test_session_removes_the_temp_root_and_closes_everything_on_success():
+    host = ScriptedHost()
+    with _staging(host):
+        pass
+    assert host.ran(f"rm -rf {ScriptedHost._STAGE_ROOT}")
+    assert host.sftp.closed
+    assert host.closed
+
+
+def test_session_removes_the_temp_root_when_the_body_raises():
+    host = ScriptedHost()
+    with pytest.raises(ValueError, match="body blew up"):
+        with _staging(host):
+            raise ValueError("body blew up")
+    assert host.ran(f"rm -rf {ScriptedHost._STAGE_ROOT}")
+    assert host.sftp.closed
+    assert host.closed
+
+
+def test_session_removes_the_temp_root_when_the_body_times_out():
+    # A timeout is the exit path most likely to be special-cased wrongly; here it is just an exception.
+    host = ScriptedHost()
+    with pytest.raises(subprocess.TimeoutExpired):
+        with _staging(host):
+            raise subprocess.TimeoutExpired(cmd=["docker", "compose", "up"], timeout=1)
+    assert host.ran(f"rm -rf {ScriptedHost._STAGE_ROOT}")
+    assert host.closed
+
+
+def test_teardown_failure_is_logged_and_never_masks_the_bodys_exception(caplog):
+    """
+    A failing `rm` must not replace what the body was already reporting — but it must be visible:
+    a surviving temp dir holds remote disk, and possibly a staged secret, until someone clears /tmp.
+    """
+    host = ScriptedHost(failures={"rm -rf": (b"rm: permission denied", 1)})
+    with caplog.at_level(logging.WARNING), pytest.raises(ValueError, match="the real problem"):
+        with _staging(host):
+            raise ValueError("the real problem")
+    assert "could not remove the staging directory" in caplog.text
+    assert host.closed
+
+
+def test_teardown_failure_on_the_success_path_does_not_raise(caplog):
+    host = ScriptedHost(failures={"rm -rf": (b"rm: permission denied", 1)})
+    with caplog.at_level(logging.WARNING):
+        with _staging(host) as session:
+            assert session.root  # the body succeeded; teardown trouble must not turn that into an error
+    assert "could not remove the staging directory" in caplog.text
+
+
+def test_session_refuses_a_non_posix_remote_before_creating_anything():
+    # MINGW is the false positive exit-status-only detection would accept; nothing should be created.
+    host = ScriptedHost(uname=b"MINGW64_NT-10.0\n")
+    with pytest.raises(RuntimeError, match="no supported POSIX shell"):
+        with _staging(host):
+            pytest.fail("the session body must not run")
+    assert not host.ran("mktemp -d")
+    assert host.sftp_opens == 0
+    assert host.closed
+
+
+def test_session_refuses_when_mktemp_cannot_create_a_directory():
+    host = ScriptedHost(failures={"mktemp -d": (b"mktemp: /tmp: read-only file system", 1)})
+    with pytest.raises(RuntimeError, match="Could not create a staging directory"):
+        with _staging(host):
+            pytest.fail("the session body must not run")
+    assert host.sftp_opens == 0
+    assert host.closed
+
+
+# --- staging: the exec/SFTP split-brain guard ------------------------------------------------------
+
+
+def test_staging_is_refused_when_sftp_cannot_see_the_exec_channels_filesystem():
+    """
+    A Windows sshd whose shell is `wsl.exe` runs exec inside WSL (so `uname -s` says Linux and the
+    watchdog works) while SFTP stays on the Windows side. Staging would otherwise fail somewhere in
+    the middle; one stat of the directory we just made names the cause instead.
+    """
+    host = ScriptedHost(sftp=FakeSFTPClient(sees_exec_filesystem=False))
+    with pytest.raises(RuntimeError, match="not looking at the same filesystem") as excinfo:
+        with _staging(host):
+            pytest.fail("the session body must not run")
+    assert "wsl.exe" in str(excinfo.value)
+    # Still tidied up, and the failure does not leave the connection open.
+    assert host.ran(f"rm -rf {ScriptedHost._STAGE_ROOT}")
+    assert host.closed
+
+
+def test_exec_only_calls_still_work_against_a_split_brain_host(monkeypatch):
+    """The guard is scoped to staging: a host whose SFTP is unusable can still run remote commands."""
+    host = ScriptedHost(sftp=FakeSFTPClient(sees_exec_filesystem=False))
+    client = cast(paramiko.SSHClient, host)
+    monkeypatch.setattr("docker_mcp.tools._ssh_proxy.connect_ssh_client", lambda *a, **k: client)
+    result = run_remote_exec("ssh://ops@prod", ["docker", "ps"], max_output_bytes=_CAP, timeout=5)
+    assert result.returncode == 0
+    assert host.sftp_opens == 0  # never even asked for SFTP
+
+
+# --- staging: stage_tree --------------------------------------------------------------------------
+
+
+def _project(tmp_path) -> pathlib.Path:
+    root = tmp_path / "project"
+    (root / "sub").mkdir(parents=True)
+    (root / "docker-compose.yml").write_text("services: {}\n", encoding="utf-8")
+    (root / "sub" / "app.env").write_text("A=1\n", encoding="utf-8")
+    return root
+
+
+def test_stage_tree_uploads_a_tar_of_the_whole_tree_and_unpacks_it(tmp_path):
+    host = ScriptedHost()
+    source = _project(tmp_path)
+    with _staging(host) as session:
+        destination = session.stage_tree(source)
+    assert destination == f"{ScriptedHost._STAGE_ROOT}/tree1"
+    archive_path = f"{ScriptedHost._STAGE_ROOT}/tree1.tar"
+    # The archive really is a tar of the tree — an unfiltered copy, no .dockerignore involved.
+    assert host.staged_tar(archive_path) == ["docker-compose.yml", "sub", "sub/app.env"]
+    assert host.ran(f"tar -xf {archive_path} -C {destination}")
+    assert (destination, 0o700) in host.sftp.dirs
+
+
+def test_stage_tree_keeps_the_archive_outside_the_staged_directory_and_removes_it(tmp_path):
+    """
+    A tar left inside the staged directory would be seen by whatever reads it next — for a build
+    context that means it lands in the image. It is written beside the directory, and removed once
+    unpacked so the session does not hold two copies of a large tree.
+    """
+    host = ScriptedHost()
+    with _staging(host) as session:
+        destination = session.stage_tree(_project(tmp_path))
+    archive_path = next(iter(host.sftp.uploads))
+    assert not archive_path.startswith(f"{destination}/")
+    assert host.ran(f"rm -rf {archive_path}")
+
+
+def test_stage_tree_gives_each_call_its_own_slot(tmp_path):
+    host = ScriptedHost()
+    first = _project(tmp_path / "a")
+    second = _project(tmp_path / "b")  # same basenames inside; must not collide remotely
+    with _staging(host) as session:
+        one = session.stage_tree(first)
+        two = session.stage_tree(second)
+    assert one != two
+
+
+def test_stage_tree_rejects_a_path_that_is_not_a_directory(tmp_path):
+    file_path = tmp_path / "docker-compose.yml"
+    file_path.write_text("services: {}\n", encoding="utf-8")
+    host = ScriptedHost()
+    with _staging(host) as session:
+        with pytest.raises(ValueError, match="not a directory"):
+            session.stage_tree(file_path)
+    assert not host.sftp.uploads
+
+
+def test_stage_tree_refuses_an_oversized_tree_with_actionable_guidance(tmp_path, monkeypatch):
+    monkeypatch.setattr("docker_mcp.tools._ssh_proxy._MAX_STAGE_BYTES", 1024)
+    source = _project(tmp_path)
+    (source / "big.bin").write_bytes(b"x" * 4096)
+    host = ScriptedHost()
+    with _staging(host) as session:
+        with pytest.raises(ValueError, match="past the staging limit") as excinfo:
+            session.stage_tree(source)
+    message = str(excinfo.value)
+    assert "project_dir" in message  # names the way out, not just the limit
+    assert not host.sftp.uploads  # nothing was uploaded before the refusal
+
+
+def test_stage_tree_refuses_too_many_entries(tmp_path, monkeypatch):
+    # A large node_modules/.git can sit well under the byte cap and still make tar and the remote
+    # extraction pathological.
+    monkeypatch.setattr("docker_mcp.tools._ssh_proxy._MAX_STAGE_FILES", 3)
+    source = _project(tmp_path)
+    for index in range(10):
+        (source / f"f{index}").write_text("x", encoding="utf-8")
+    host = ScriptedHost()
+    with _staging(host) as session:
+        with pytest.raises(ValueError, match="past the staging limit"):
+            session.stage_tree(source)
+
+
+def test_stage_limits_are_checked_lazily_rather_than_after_a_full_walk(monkeypatch):
+    """
+    The check consumes its entry stream, so a pathological tree is refused after a few thousand
+    entries instead of being walked, tarred to local disk and pushed over SSH first.
+    """
+    monkeypatch.setattr("docker_mcp.tools._ssh_proxy._MAX_STAGE_FILES", 3)
+    consumed = 0
+
+    def endless():
+        nonlocal consumed
+        while True:
+            consumed += 1
+            yield f"entry{consumed}"
+
+    with pytest.raises(ValueError, match="past the staging limit"):
+        _enforce_stage_limits(pathlib.Path("/nonexistent"), endless(), what="directory")
+    assert consumed <= 5  # stopped as soon as the cap was passed, not "eventually"
+
+
+# --- staging: stage_file --------------------------------------------------------------------------
+
+
+def test_stage_file_uploads_directly_and_keeps_the_basename(tmp_path):
+    config = tmp_path / "buildkitd.toml"
+    config.write_text("[worker]\n", encoding="utf-8")
+    host = ScriptedHost()
+    with _staging(host) as session:
+        remote = session.stage_file(config)
+    assert remote == f"{ScriptedHost._STAGE_ROOT}/file1/buildkitd.toml"
+    assert host.sftp.uploads[remote] == b"[worker]\n"
+    assert not host.ran("tar -xf")  # a single file needs no archive or remote extraction
+
+
+def test_stage_file_rejects_a_directory_and_an_oversized_file(tmp_path, monkeypatch):
+    host = ScriptedHost()
+    big = tmp_path / "big.bin"
+    big.write_bytes(b"x" * 4096)
+    monkeypatch.setattr("docker_mcp.tools._ssh_proxy._MAX_STAGE_BYTES", 1024)
+    with _staging(host) as session:
+        with pytest.raises(ValueError, match="not a file"):
+            session.stage_file(tmp_path)
+        with pytest.raises(ValueError, match="past the staging limit"):
+            session.stage_file(big)
+    assert not host.sftp.uploads
+
+
+# --- staging: stage_build_context -----------------------------------------------------------------
+
+
+def _context(tmp_path, dockerignore: str, *, dockerfile_name: str = "Dockerfile") -> pathlib.Path:
+    root = tmp_path / "ctx"
+    root.mkdir()
+    (root / dockerfile_name).write_text("FROM alpine\n", encoding="utf-8")
+    (root / "app.py").write_text("print('hi')\n", encoding="utf-8")
+    (root / "secrets.env").write_text("TOKEN=x\n", encoding="utf-8")
+    (root / ".dockerignore").write_text(dockerignore, encoding="utf-8")
+    return root
+
+
+def test_stage_build_context_honours_dockerignore(tmp_path):
+    host = ScriptedHost()
+    source = _context(tmp_path, "secrets.env\n# a comment\n\n")
+    with _staging(host) as session:
+        destination = session.stage_build_context(source)
+    members = host.staged_tar(f"{ScriptedHost._STAGE_ROOT}/context1.tar")
+    assert "app.py" in members
+    assert "Dockerfile" in members
+    assert "secrets.env" not in members  # excluded paths are never even read, let alone uploaded
+    assert host.ran(f"tar -xf {ScriptedHost._STAGE_ROOT}/context1.tar -C {destination}")
+
+
+def test_stage_build_context_keeps_a_named_dockerfile_the_patterns_would_exclude(tmp_path):
+    """
+    `.dockerignore` patterns routinely sweep up the Dockerfile itself (`*.dockerfile`); docker-py
+    negates that for the file named by `-f`, and a staged context has to do the same or the build
+    fails remotely for a file that was present locally.
+    """
+    host = ScriptedHost()
+    source = _context(tmp_path, "*.dockerfile\n", dockerfile_name="app.dockerfile")
+    with _staging(host) as session:
+        session.stage_build_context(source, dockerfile="app.dockerfile")
+    assert "app.dockerfile" in host.staged_tar(f"{ScriptedHost._STAGE_ROOT}/context1.tar")
+
+
+def test_stage_build_context_measures_only_what_dockerignore_includes(tmp_path, monkeypatch):
+    # Excluding a large dataset is exactly why .dockerignore exists; the size check must respect it
+    # rather than refusing a context whose staged form is tiny.
+    monkeypatch.setattr("docker_mcp.tools._ssh_proxy._MAX_STAGE_BYTES", 4096)
+    source = _context(tmp_path, "data\n")
+    (source / "data").mkdir()
+    (source / "data" / "dump.bin").write_bytes(b"x" * 65_536)
+    host = ScriptedHost()
+    with _staging(host) as session:
+        session.stage_build_context(source)
+    assert "data/dump.bin" not in host.staged_tar(f"{ScriptedHost._STAGE_ROOT}/context1.tar")
+
+
+def test_stage_build_context_rejects_a_path_that_is_not_a_directory(tmp_path):
+    host = ScriptedHost()
+    with _staging(host) as session:
+        with pytest.raises(ValueError, match="not a directory"):
+            session.stage_build_context(tmp_path / "missing")
+
+
+# --- staging: session.exec ------------------------------------------------------------------------
+
+
+def test_session_exec_reuses_the_connection_and_runs_in_a_staged_directory(tmp_path):
+    host = ScriptedHost()
+    with unittest.mock.patch(
+        "docker_mcp.tools._ssh_proxy.connect_ssh_client", return_value=cast(paramiko.SSHClient, host)
+    ) as connect:
+        with remote_staging_session("ssh://ops@prod") as session:
+            destination = session.stage_tree(_project(tmp_path))
+            result = session.exec(["docker", "compose", "up", "-d"], timeout=30, max_output_bytes=_CAP, cwd=destination)
+    assert connect.call_count == 1  # staging and running share one handshake
+    assert result.returncode == 0
+    ran = [command for command in host.commands if "docker compose up" in command]
+    assert len(ran) == 1
+    # cwd is a *remote* path — the one staging just returned — and is entered as its own statement.
+    assert f"cd {shlex.quote(destination)} || exit 127" in ran[0]
+
+
+def test_session_exec_propagates_a_timeout(tmp_path, monkeypatch):
+    host = ScriptedHost()
+    monkeypatch.setattr(
+        "docker_mcp.tools._ssh_proxy.exec_remote",
+        lambda *a, **k: (_ for _ in ()).throw(subprocess.TimeoutExpired(cmd=["docker"], timeout=1)),
+    )
+    client = cast(paramiko.SSHClient, host)
+    with unittest.mock.patch("docker_mcp.tools._ssh_proxy.connect_ssh_client", return_value=client):
+        with pytest.raises(subprocess.TimeoutExpired):
+            with remote_staging_session("ssh://ops@prod") as session:
+                session.exec(["docker", "ps"], timeout=1, max_output_bytes=_CAP)
+
+
+# --- staging: tar and extraction through a real shell ----------------------------------------------
+
+
+@pytestmark_posix
+def test_real_shell_temp_dir_argv_creates_a_private_directory(tmp_path):
+    """`mktemp -d`'s mode is what keeps a staged secret off a shared host's world-readable /tmp."""
+    result = _run_script(PosixDialect().temp_dir_argv(), timeout=30)
+    assert result.returncode == 0
+    created = pathlib.Path(result.stdout.strip())
+    try:
+        assert created.is_dir()
+        assert created.name.startswith("docker-mcp-server.stage.")
+        assert stat.S_IMODE(created.stat().st_mode) == 0o700
+    finally:
+        created.rmdir()
+
+
+@pytestmark_posix
+def test_real_shell_round_trips_a_staged_tree_through_tar(tmp_path):
+    """
+    The pairing that matters: what `_tar_local_tree` writes must be what `extract_tar_argv` unpacks.
+    Exercised through a real `tar` and a real shell, since a mock can only confirm the argv.
+    """
+    source = _project(tmp_path)
+    (source / "link").symlink_to("docker-compose.yml")
+    destination = tmp_path / "dest"
+    destination.mkdir()
+    archive = tmp_path / "stage.tar"
+    with _tar_local_tree(source) as packed:
+        archive.write_bytes(packed.read())
+    result = _run_script(PosixDialect().extract_tar_argv(str(archive), str(destination)), timeout=60)
+    assert result.returncode == 0, result.stderr
+    assert (destination / "docker-compose.yml").read_text(encoding="utf-8") == "services: {}\n"
+    assert (destination / "sub" / "app.env").read_text(encoding="utf-8") == "A=1\n"
+    # A symlink inside the tree survives as a symlink and still resolves on the far side.
+    assert (destination / "link").is_symlink()
+    assert (destination / "link").read_text(encoding="utf-8") == "services: {}\n"
+
+
+@pytestmark_posix
+def test_tar_skips_entries_that_cannot_be_recreated_remotely(tmp_path):
+    # A FIFO in a project directory would otherwise be staged as one, which is a surprise rather than
+    # a service; sockets never even reach the filter (tarfile skips them itself).
+    source = _project(tmp_path)
+    os.mkfifo(source / "pipe")
+    with _tar_local_tree(source) as packed:
+        with tarfile.open(fileobj=io.BytesIO(packed.read())) as bundle:
+            names = {name.removeprefix("./") for name in bundle.getnames()}
+    assert "pipe" not in names
+    assert "docker-compose.yml" in names
+
+
+def test_missing_docker_py_helpers_fail_only_the_call_that_needs_them(tmp_path, monkeypatch):
+    """
+    The context-tarring helpers are undocumented docker-py internals, so a release can rename them
+    away. That must not stop the server from importing — every tool module imports `_ssh_proxy`, so a
+    module-level `from docker.utils import tar` would take startup down with it (confirmed against a
+    live interpreter) — which is why the import sits inside the one method that uses them.
+
+    Deleting the attribute is the faithful simulation: the module still imports (docker-py's own
+    package needs it), only the name is gone.
+    """
+    import docker.utils
+
+    monkeypatch.delattr(docker.utils, "tar")
+    host = ScriptedHost()
+    with _staging(host) as session:
+        with pytest.raises(RuntimeError, match="does not provide the context-tarring helpers"):
+            session.stage_build_context(_context(tmp_path, ""))
+        # Staging a plain tree does its own tarring, so it keeps working.
+        assert session.stage_tree(_project(tmp_path / "p"))

@@ -21,16 +21,20 @@ import enum
 import logging
 import math
 import os
+import posixpath
 import shlex
 import socket
 import subprocess
+import tarfile
+import tempfile
 import threading
 import time
 import urllib.parse
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from types import TracebackType
-from typing import Protocol
+from typing import IO, Protocol, cast
 
 import paramiko
 
@@ -482,6 +486,36 @@ _EXEC_POLL_SECONDS = 0.01
 # Costs at most `_EXIT_SETTLE_POLLS * _EXEC_POLL_SECONDS` once per call, only at the very end.
 _EXIT_SETTLE_POLLS = 5
 
+# --- staging limits and bookkeeping ----------------------------------------------------------------
+#
+# Naming the staging root after the project makes an abandoned directory attributable on a shared
+# host (only a hard transport drop can leave one — see `remote_staging_session`). The `stage.` infix
+# then separates it from the watchdog's own marker files, which share the project prefix: a stray
+# marker is an empty file and harmless, whereas a stray staging directory holds copied content
+# (possibly a build secret) and is worth an operator's attention. Confirmed worth having by mistaking
+# one for the other while verifying this on a real host — a `docker-mcp-server.*` glob matched the
+# listing command's own live marker file and read as a leaked staging directory.
+_STAGE_ROOT_PREFIX = "docker-mcp-server.stage."
+
+# Ceiling on one staged tree. Whole-tree staging cannot narrow itself to "only the files the command
+# will actually read" without parsing Compose YAML (`build:`, `env_file:` and `include:` all name
+# arbitrary relative paths), so a caller who points a compose tool at a directory that also holds a
+# large dataset would otherwise silently push all of it over SSH and fill the remote /tmp. The cap
+# turns that into an immediate, explained refusal naming the offending directory. Generous enough
+# that a real project tree never meets it.
+_MAX_STAGE_BYTES = 200 * 1024 * 1024  # 200 MiB
+# A second cap on entry count: a huge `node_modules` or `.git` can sit far under the byte ceiling and
+# still make both the tar and the remote extraction pathologically slow.
+_MAX_STAGE_FILES = 50_000
+
+# Bounds for the session's own bookkeeping commands (mktemp / rm / tar), which are quick and quiet.
+# Extraction gets its own, larger bound because it scales with the staged tree, not with the network.
+_STAGING_CONTROL_TIMEOUT_SECONDS = 60.0
+_STAGING_EXTRACT_TIMEOUT_SECONDS = 300.0
+# Bookkeeping commands print a path at most; anything beyond this is an error message we want to see
+# in full but need not retain megabytes of.
+_STAGING_OUTPUT_CAP_BYTES = 65_536
+
 
 class RemoteDialectKind(enum.Enum):
     """
@@ -506,9 +540,24 @@ _POSIX_UNAME_VALUES = frozenset({"linux", "darwin", "freebsd", "openbsd", "netbs
 
 
 class RemoteDialect(Protocol):
-    """Wraps an argv into a single remote shell command string that self-enforces a timeout."""
+    """
+    Everything platform-specific about driving a remote shell: command wrapping and path handling.
+
+    A dialect exists so the pieces that cannot be written portably are stated once per platform
+    rather than assumed. The staging members are argv lists rather than command strings because they
+    are handed to `wrap_with_timeout` like any other command, so they inherit the same watchdog and
+    quoting; only `temp_dir_argv` needs a shell of its own, for the `${TMPDIR}` expansion.
+    """
 
     def wrap_with_timeout(self, argv: Sequence[str], *, timeout: float, cwd: str | None = None) -> str: ...
+
+    def temp_dir_argv(self) -> list[str]: ...
+
+    def remove_tree_argv(self, path: str) -> list[str]: ...
+
+    def extract_tar_argv(self, archive: str, dest: str) -> list[str]: ...
+
+    def join_path(self, *parts: str) -> str: ...
 
 
 class PosixDialect:
@@ -626,6 +675,57 @@ class PosixDialect:
             ]
         )
         return f"sh -c {shlex.quote(chr(10).join(lines))}"
+
+    def temp_dir_argv(self) -> list[str]:
+        """
+        Argv creating a private staging directory and printing its path.
+
+        `mktemp -d` is used rather than a name we compose ourselves because it is atomic and creates
+        the directory mode 0700 — on a shared host, a predictable path under /tmp would be a symlink
+        and content-tampering opportunity for any other user on the box. An explicit template is
+        required for the same portability reason as in `wrap_with_timeout`: bare `mktemp -d` works on
+        macOS but not on the BSDs. Nesting `sh -c` inside the watchdog wrapper is intentional — the
+        `${TMPDIR:-/tmp}` expansion needs a shell, and going through the wrapper means this command is
+        bounded and quoted exactly like every other.
+
+        returns: list[str] - argv whose stdout is the new directory's absolute path
+        """
+        return ["sh", "-c", f'mktemp -d "${{TMPDIR:-/tmp}}/{_STAGE_ROOT_PREFIX}XXXXXXXX"']
+
+    def remove_tree_argv(self, path: str) -> list[str]:
+        """
+        Argv removing a staged tree and everything under it.
+
+        args: path - absolute remote path to remove; passed as an argv element, never interpolated
+        returns: list[str] - argv that succeeds whether or not the path still exists
+        """
+        return ["rm", "-rf", path]
+
+    def extract_tar_argv(self, archive: str, dest: str) -> list[str]:
+        """
+        Argv unpacking a staged tar archive into an existing directory.
+
+        Uncompressed tar only: `-z` autodetection is a GNU/bsdtar extension rather than something
+        every POSIX `tar` offers, so the uploader does not compress (see `_upload_and_extract`).
+
+        args:
+            archive - absolute remote path of the uploaded tar
+            dest - absolute remote directory to unpack into; must already exist
+        returns: list[str] - argv for the extraction
+        """
+        return ["tar", "-xf", archive, "-C", dest]
+
+    def join_path(self, *parts: str) -> str:
+        """
+        Join remote path components with the remote separator.
+
+        `posixpath`, not `os.path`: the separator belongs to the *remote* host, and a server running
+        on Windows would otherwise compose `\\`-joined paths for a Linux target.
+
+        args: parts - path components, the first of which should be absolute
+        returns: str - the joined remote path
+        """
+        return posixpath.join(*parts)
 
 
 _DIALECTS: dict[RemoteDialectKind, RemoteDialect] = {RemoteDialectKind.POSIX: PosixDialect()}
@@ -959,4 +1059,552 @@ def run_remote_exec(
             dialect=dialect,
         )
     finally:
+        ssh_client.close()
+
+
+# --- staging: putting local files where a remote docker command can read them -----------------------
+#
+# `run_remote_exec` covers commands whose arguments are all references (an image, a service, a stack).
+# The rest — `compose -f docker-compose.yml`, `stack deploy -c`, `buildx bake -f`, a build context —
+# name files that exist *here* and would mean something else, or nothing, on the target host. Those
+# need the files copied over first, which is one logical operation with the command that reads them:
+# hence a session holding one connection, one private remote directory, and a guaranteed teardown,
+# rather than an exec primitive with a file-copy bolted on.
+
+
+def _walk_relative(root: Path) -> Iterator[str]:
+    """
+    Yield every entry under `root` as a path relative to it, directories included.
+
+    Symlinks are not followed (`followlinks=False`), so a link into a huge tree costs one entry rather
+    than recursing through it — and matches how the tar records them.
+
+    args: root - directory to walk
+    returns: Iterator[str] - relative paths, in os.walk order
+    """
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+        for name in (*dirnames, *filenames):
+            yield os.path.relpath(os.path.join(dirpath, name), root)
+
+
+def _enforce_stage_limits(root: Path, entries: Iterator[str] | Sequence[str], *, what: str) -> None:
+    """
+    Refuse an oversized staging payload before any of it is read, tarred, or uploaded.
+
+    Checks as it consumes `entries`, so a pathologically large tree is refused after a few thousand
+    entries instead of being walked, tarred to local disk and pushed over SSH first. An entry that
+    cannot be stat'd is counted but contributes no bytes: it is not this function's job to report a
+    read error, and the tar step will surface the real one.
+
+    args:
+        root - the directory the entries are relative to
+        entries - relative paths to account for; a generator is consumed lazily, which is the point
+        what - noun for the message, e.g. "directory" or "build context"
+    raises: ValueError - the payload exceeds `_MAX_STAGE_BYTES` or `_MAX_STAGE_FILES`
+    """
+    total = 0
+    count = 0
+    for relative in entries:
+        count += 1
+        with contextlib.suppress(OSError):
+            total += os.lstat(root / relative).st_size
+        if count > _MAX_STAGE_FILES or total > _MAX_STAGE_BYTES:
+            raise ValueError(
+                f"Refusing to stage the {what} {str(root)!r} onto the remote host: it holds at least "
+                f"{count} entries totalling {total // (1024 * 1024)} MiB, past the staging limit of "
+                f"{_MAX_STAGE_FILES} entries / {_MAX_STAGE_BYTES // (1024 * 1024)} MiB. With no local docker "
+                f"CLI the whole {what} has to be copied to the target host, and there is no way to tell "
+                f"which files the command will actually read. Point the call at a smaller directory (for a "
+                f"Compose tool, an explicit project_dir holding just the Compose files and what they "
+                f"reference), exclude bulk directories via .dockerignore for a build, or install the docker "
+                f"CLI on this host so the files can stay where they are."
+            )
+
+
+def _staged_member(info: tarfile.TarInfo) -> tarfile.TarInfo | None:
+    """
+    Keep regular files, directories and symlinks; drop anything else from a staged tar.
+
+    FIFOs and device nodes cannot be meaningfully recreated on another host, and a staged copy of one
+    would be a surprise rather than a service. (Sockets never reach this filter — `gettarinfo` returns
+    None for them and `TarFile.add` skips them itself.)
+
+    args: info - the member tarfile is about to add
+    returns: tarfile.TarInfo | None - the member to keep, or None to skip it
+    """
+    if info.isfile() or info.isdir() or info.issym():
+        return info
+    logger.debug("remote-exec staging: skipping unsupported entry %r (type %r)", info.name, info.type)
+    return None
+
+
+def _tar_local_tree(root: Path) -> IO[bytes]:
+    """
+    Pack a directory's contents into an uncompressed tar in a local temp file, rewound for upload.
+
+    No `.dockerignore` handling: this is a plain directory copy for tools that read files from a
+    working directory (Compose, stack, bake), not a build context — see `stage_build_context` for the
+    filtered variant. Uncompressed because the remote unpacks with plain `tar -xf`, whose compression
+    autodetection is a GNU/bsdtar extension rather than a POSIX guarantee.
+
+    A symlink is staged as a symlink, so one pointing inside the tree still resolves remotely while an
+    absolute or escaping one will not — the same outcome as copying the tree by any other means.
+
+    args: root - directory whose contents become the archive's top level
+    returns: IO[bytes] - the archive, positioned at 0; the caller closes it
+    """
+    archive = tempfile.TemporaryFile()  # deleted on close, never linked into a directory
+    try:
+        with tarfile.open(fileobj=archive, mode="w") as bundle:
+            bundle.add(str(root), arcname=".", filter=_staged_member)
+    except BaseException:
+        archive.close()
+        raise
+    archive.seek(0)
+    return archive
+
+
+def _load_context_tar_helpers():
+    """
+    Import docker-py's context-tarring helpers on first use, not at module import.
+
+    They are reused so a staged build context honours `.dockerignore` exactly as an SDK-driven build
+    would — `APIClient.build` calls the same two — but nothing documents `docker.utils`, so this is a
+    soft dependency on internals. At module scope that risk lands in the wrong place: every tool module
+    imports this one, so an upstream rename would stop the whole server from starting even for a session
+    that never stages anything (verified by deleting `docker.utils.tar` in a live interpreter: a
+    module-level `from docker.utils import tar` then raises ImportError and takes startup with it).
+    Importing here confines it to the one call that needs them, as an actionable error.
+
+    Signatures verified against docker==7.1.0: `tar(path, exclude=None, dockerfile=None, fileobj=None,
+    gzip=False)` returns a rewound file object, and `exclude_paths(root, patterns, dockerfile=None)`
+    *mutates* `patterns`, hence the fresh copy at each call site. A silently changed *meaning* is not
+    detectable here — only absence is.
+
+    returns: tuple - (tar, exclude_paths) from docker.utils
+    raises: RuntimeError - the installed docker-py does not provide them
+    """
+    try:
+        from docker.utils import exclude_paths, tar
+    except ImportError as exc:
+        raise RuntimeError(
+            f"Cannot stage a build context onto the remote host: the installed docker-py does not provide the "
+            f"context-tarring helpers this needs ({exc}). `docker.utils.tar` / `docker.utils.exclude_paths` "
+            f"have been stable for years but are not part of docker-py's published API, so a release can drop "
+            f"them. Until this is updated, either install the docker CLI on this host (the local-CLI path "
+            f"needs no staging) or pin docker-py to a release that still provides them."
+        ) from exc
+    return tar, exclude_paths
+
+
+def _read_dockerignore(context_dir: Path) -> list[str]:
+    """
+    Read `.dockerignore` into the pattern list docker-py's tarring helpers expect.
+
+    Mirrors `APIClient.build`'s own reading of the file (blank lines and `#` comments dropped, each
+    line stripped) so a staged context excludes exactly what an SDK-driven build would.
+
+    args: context_dir - the build context root
+    returns: list[str] - patterns, empty when there is no .dockerignore
+    """
+    dockerignore = context_dir / ".dockerignore"
+    if not dockerignore.is_file():
+        return []
+    lines = dockerignore.read_text(encoding="utf-8", errors="replace").splitlines()
+    return [stripped for line in lines if (stripped := line.strip()) and not stripped.startswith("#")]
+
+
+class RemoteStagingSession:
+    """
+    One SSH connection plus a private remote temp directory, for a command that reads local files.
+
+    Built by `remote_staging_session`, which owns the teardown — don't construct one directly. Each
+    `stage_*` call lands in its own numbered subdirectory, so two staged items with the same basename
+    cannot collide and a staged tree never contains the archive it came from (which would otherwise
+    end up inside a build context). Every staged path returned is absolute on the remote host and
+    suitable as a `cwd` or an argument to `exec`.
+    """
+
+    def __init__(
+        self,
+        *,
+        docker_host: str,
+        ssh_client: paramiko.SSHClient,
+        sftp: paramiko.SFTPClient,
+        dialect_kind: RemoteDialectKind,
+        root: str,
+    ) -> None:
+        self.docker_host = docker_host
+        self.root = root
+        self._ssh_client = ssh_client
+        self._sftp = sftp
+        self._dialect_kind = dialect_kind
+        self._dialect = get_dialect(dialect_kind)
+        self._slots = 0
+
+    def _new_slot(self, kind: str) -> tuple[str, str]:
+        """
+        Create the next numbered subdirectory under the session root.
+
+        args: kind - short label for the slot, for legibility while debugging on the remote host
+        returns: tuple[str, str] - (the new directory, a sibling path to use for its upload archive)
+        """
+        self._slots += 1
+        directory = self._dialect.join_path(self.root, f"{kind}{self._slots}")
+        self._sftp.mkdir(directory, mode=0o700)
+        return directory, self._dialect.join_path(self.root, f"{kind}{self._slots}.tar")
+
+    def _control(self, argv: list[str], *, timeout: float, what: str) -> RemoteExecResult:
+        """
+        Run one of the session's own bookkeeping commands, raising if it fails.
+
+        Unlike `exec` — which runs the *caller's* docker command and reports failure in the result —
+        these are our own steps, and a caller cannot do anything useful with a half-staged directory.
+
+        args:
+            argv - the command to run on the remote host
+            timeout - seconds allowed
+            what - infinitive phrase for the error message, e.g. "unpack the staged archive"
+        returns: RemoteExecResult - the successful result
+        raises: RuntimeError - the command exited non-zero
+        """
+        result = self.exec(argv, timeout=timeout, max_output_bytes=_STAGING_OUTPUT_CAP_BYTES)
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout).decode("utf-8", errors="replace").strip()
+            raise RuntimeError(
+                f"Remote-exec could not {what} on {self.docker_host}: `{shlex.join(argv)}` exited "
+                f"{result.returncode}: {detail or '<no output>'}"
+            )
+        return result
+
+    def _upload_and_extract(self, archive: IO[bytes], *, destination: str, archive_path: str) -> None:
+        """
+        Upload a tar over SFTP and unpack it into an already-created remote directory.
+
+        The archive is written *beside* the destination rather than inside it, so nothing the caller
+        later reads (a Compose file glob, a build context) can see it. It is removed once unpacked;
+        the session teardown would collect it anyway, but two copies of a large tree in the remote
+        temp dir for the rest of the session is worth avoiding.
+
+        args:
+            archive - a rewound tar
+            destination - remote directory to unpack into
+            archive_path - remote path to upload the tar to
+        raises: RuntimeError - the upload or the extraction failed
+        """
+        self._sftp.putfo(archive, archive_path, confirm=True)
+        self._control(
+            self._dialect.extract_tar_argv(archive_path, destination),
+            timeout=_STAGING_EXTRACT_TIMEOUT_SECONDS,
+            what="unpack the staged archive",
+        )
+        self._control(
+            self._dialect.remove_tree_argv(archive_path),
+            timeout=_STAGING_CONTROL_TIMEOUT_SECONDS,
+            what="remove the staged archive",
+        )
+
+    def stage_tree(self, local_dir: Path | str) -> str:
+        """
+        Copy a whole local directory to the remote host and return its remote path.
+
+        For tools that resolve relative paths against a working directory — Compose's `project_dir`,
+        `stack deploy`'s `-c` files, `buildx bake`'s files. The copy is unfiltered: it cannot know
+        which files the command will read (Compose's `build:`, `env_file:` and `include:` all name
+        arbitrary relative paths), so `_enforce_stage_limits` is what keeps an oversized directory
+        from being pushed silently. Use `stage_build_context` instead when the payload *is* a build
+        context, since that has `.dockerignore` to narrow it.
+
+        args: local_dir - the directory to copy; `~` is expanded
+        returns: str - the remote directory holding the copied contents
+        raises:
+            ValueError - `local_dir` is not a directory, or exceeds the staging limits
+            RuntimeError - the upload or remote extraction failed
+        """
+        source = Path(local_dir).expanduser()
+        if not source.is_dir():
+            raise ValueError(f"Cannot stage {str(source)!r} onto the remote host: it is not a directory.")
+        _enforce_stage_limits(source, _walk_relative(source), what="directory")
+        destination, archive_path = self._new_slot("tree")
+        with _tar_local_tree(source) as archive:
+            self._upload_and_extract(archive, destination=destination, archive_path=archive_path)
+        return destination
+
+    def stage_file(self, local_file: Path | str) -> str:
+        """
+        Copy one local file to the remote host and return its remote path.
+
+        For a lone path argument that is not a whole tree — a buildkitd config, an imagetools
+        descriptor, a Dockerfile living outside its build context. Uploaded directly over SFTP; no tar
+        or remote extraction is involved.
+
+        args: local_file - the file to copy; `~` is expanded
+        returns: str - the remote path of the copied file, keeping its basename
+        raises:
+            ValueError - `local_file` is not a file, or is larger than `_MAX_STAGE_BYTES`
+            RuntimeError - the upload failed
+        """
+        source = Path(local_file).expanduser()
+        if not source.is_file():
+            raise ValueError(f"Cannot stage {str(source)!r} onto the remote host: it is not a file.")
+        size = source.stat().st_size
+        if size > _MAX_STAGE_BYTES:
+            raise ValueError(
+                f"Refusing to stage the file {str(source)!r} onto the remote host: it is "
+                f"{size // (1024 * 1024)} MiB, past the staging limit of "
+                f"{_MAX_STAGE_BYTES // (1024 * 1024)} MiB."
+            )
+        destination, _ = self._new_slot("file")
+        remote_path = self._dialect.join_path(destination, source.name)
+        self._sftp.put(str(source), remote_path, confirm=True)
+        return remote_path
+
+    def stage_build_context(self, context_dir: Path | str, *, dockerfile: str | None = None) -> str:
+        """
+        Copy a build context to the remote host, honouring `.dockerignore`, and return its path.
+
+        Uses docker-py's own tarring helpers, so what lands remotely is what an SDK-driven build would
+        have sent: excluded paths are never read, and the limit check runs over the *included* set, so
+        a context that `.dockerignore`s a large dataset is not refused for its size.
+
+        `dockerfile` names a Dockerfile *inside* the context, relative to it, and is passed through so
+        the exclusion pass keeps it even when the patterns would have dropped it (`*.dockerfile`, say)
+        — the same negation docker-py applies. A Dockerfile *outside* the context is not a context file
+        at all: stage it with `stage_file` and point `-f` at the result.
+
+        args:
+            context_dir - the build context root; `~` is expanded
+            dockerfile - path to the Dockerfile relative to the context, or None for the default
+        returns: str - the remote directory holding the unpacked context
+        raises:
+            ValueError - `context_dir` is not a directory, or the included set exceeds the limits
+            RuntimeError - the upload or remote extraction failed
+        """
+        source = Path(context_dir).expanduser()
+        if not source.is_dir():
+            raise ValueError(f"Cannot stage the build context {str(source)!r} onto the remote host: not a directory.")
+        context_tar, exclude_paths = _load_context_tar_helpers()
+        patterns = _read_dockerignore(source)
+        # Both helpers mutate the pattern list they are given (each appends a `!<dockerfile>`
+        # negation), so each gets its own copy.
+        included = sorted(exclude_paths(str(source), list(patterns), dockerfile=dockerfile))
+        _enforce_stage_limits(source, included, what="build context")
+        destination, archive_path = self._new_slot("context")
+        # docker-py types the return as its temp-file wrapper *or* a caller-supplied fileobj; with no
+        # fileobj passed it is always the former, and `create_archive` rewinds it before returning.
+        archive = cast(
+            IO[bytes],
+            context_tar(
+                source,
+                exclude=list(patterns),
+                # The tuple form docker-py builds internally: (path relative to the context, contents).
+                # Contents None means "the file is already in the context" — it only needs protecting
+                # from the exclusion patterns, not injecting as an extra tar member.
+                dockerfile=(dockerfile, None) if dockerfile else None,
+                gzip=False,
+            ),
+        )
+        with contextlib.closing(archive):
+            self._upload_and_extract(archive, destination=destination, archive_path=archive_path)
+        return destination
+
+    def exec(
+        self,
+        argv: Sequence[str],
+        *,
+        timeout: float,
+        max_output_bytes: int,
+        cwd: str | None = None,
+    ) -> RemoteExecResult:
+        """
+        Run a command on the session's host, reusing its connection.
+
+        Same semantics as `run_remote_exec` (watchdog timeout, concurrent drain, `TimeoutExpired` on
+        expiry) without a second handshake, and `cwd` here is a *remote* path — typically one a
+        `stage_*` call just returned.
+
+        args:
+            argv - the remote command, including the binary
+            timeout - seconds the remote watchdog allows the command
+            max_output_bytes - per-stream cap on retained output
+            cwd - remote directory to run in
+        returns: RemoteExecResult - exit status plus captured (possibly truncated) output
+        raises:
+            RuntimeError - the transport is gone
+            subprocess.TimeoutExpired - the command exceeded `timeout`
+        """
+        return exec_remote(
+            self._ssh_client,
+            argv,
+            max_output_bytes=max_output_bytes,
+            timeout=timeout,
+            cwd=cwd,
+            dialect=self._dialect_kind,
+        )
+
+
+def _make_stage_root(ssh_client: paramiko.SSHClient, dialect_kind: RemoteDialectKind, docker_host: str) -> str:
+    """
+    Create the session's private temp directory on the remote host and return its path.
+
+    args:
+        ssh_client - an already-connected client for the host
+        dialect_kind - the host's detected dialect
+        docker_host - the host's URL, for the error message
+    returns: str - the absolute remote path of the new directory
+    raises: RuntimeError - the remote could not create a temp directory, or named it unusably
+    """
+    argv = get_dialect(dialect_kind).temp_dir_argv()
+    result = exec_remote(
+        ssh_client,
+        argv,
+        max_output_bytes=_STAGING_OUTPUT_CAP_BYTES,
+        timeout=_STAGING_CONTROL_TIMEOUT_SECONDS,
+        dialect=dialect_kind,
+    )
+    root = result.stdout.decode("utf-8", errors="replace").strip()
+    if result.returncode != 0 or not root or "\n" in root:
+        detail = (result.stderr or result.stdout).decode("utf-8", errors="replace").strip()
+        raise RuntimeError(
+            f"Could not create a staging directory on {docker_host}: `{shlex.join(argv)}` exited "
+            f"{result.returncode} and reported {detail or '<no output>'}. Staging needs a writable temp "
+            f"directory (${{TMPDIR:-/tmp}}) on the target host."
+        )
+    return root
+
+
+def _verify_shared_filesystem(sftp: paramiko.SFTPClient, root: str, docker_host: str) -> None:
+    """
+    Confirm the SFTP subsystem sees the directory the exec channel just created.
+
+    One SSH connection does not guarantee one filesystem. A Windows sshd whose `DefaultShell` is
+    `wsl.exe` runs exec commands inside the WSL distro — so `uname -s` says Linux and the watchdog
+    works — while its SFTP subsystem is still the Windows-side one, leaving the two channels
+    disagreeing about what `/tmp/...` means. Staging would then fail somewhere in the middle with a
+    confusing error. One `stat` of the directory we just made catches that, and equally catches a
+    chrooted or jailed SFTP subsystem.
+
+    Scoped to staging on purpose: exec-only calls touch no SFTP and keep working against such a host,
+    so refusing it outright would give up capability for nothing.
+
+    args:
+        sftp - the session's SFTP client
+        root - the directory created over the exec channel
+        docker_host - the host's URL, for the error message
+    raises: RuntimeError - SFTP cannot see `root`
+    """
+    try:
+        sftp.stat(root)
+    except OSError as exc:
+        raise RuntimeError(
+            f"Remote-exec cannot stage files to {docker_host}: the directory {root!r} created over the SSH "
+            f"exec channel is not visible to that host's SFTP subsystem ({exc}), so the two are not looking "
+            f"at the same filesystem. The usual cause is a Windows sshd whose shell is `wsl.exe` — exec lands "
+            f"in the WSL distro while SFTP stays on the Windows side; a chrooted or jailed SFTP subsystem "
+            f"does the same. Tools that only run a command remotely still work against this host; only "
+            f"staging local files does not. Run sshd inside the WSL distro itself, or install the docker CLI "
+            f"on this host so its files never need copying."
+        ) from exc
+
+
+# Teardown must not raise: it runs in a `finally`, where an exception would replace whatever the body
+# was already reporting. These are the failures a bounded remote `rm` can produce.
+_TEARDOWN_ERRORS: tuple[type[BaseException], ...] = (
+    OSError,
+    EOFError,
+    paramiko.SSHException,
+    subprocess.TimeoutExpired,
+    RuntimeError,
+)
+
+
+def _remove_stage_root(
+    ssh_client: paramiko.SSHClient, dialect_kind: RemoteDialectKind, root: str, docker_host: str
+) -> None:
+    """
+    Delete the session's temp directory, reporting a failure without raising.
+
+    Logged at warning because a surviving directory is a real (if small) problem — remote disk held
+    until someone clears /tmp, possibly holding a staged secret file — and the operator can only act
+    on it if we say so. The one case this cannot cover is a dropped transport: there is no channel left
+    to run `rm` on, which is why the directory carries the project name and 0700 mode.
+
+    args:
+        ssh_client - the session's client, still connected
+        dialect_kind - the host's detected dialect
+        root - the directory to remove
+        docker_host - the host's URL, for the log line
+    """
+    try:
+        result = exec_remote(
+            ssh_client,
+            get_dialect(dialect_kind).remove_tree_argv(root),
+            max_output_bytes=_STAGING_OUTPUT_CAP_BYTES,
+            timeout=_STAGING_CONTROL_TIMEOUT_SECONDS,
+            dialect=dialect_kind,
+        )
+        if result.returncode != 0:
+            logger.warning(
+                "remote-exec: could not remove the staging directory %s on %s (exit %d): %s",
+                root,
+                docker_host,
+                result.returncode,
+                result.stderr.decode("utf-8", errors="replace").strip(),
+            )
+    except _TEARDOWN_ERRORS:
+        logger.warning(
+            "remote-exec: could not remove the staging directory %s on %s; it may need clearing by hand",
+            root,
+            docker_host,
+            exc_info=True,
+        )
+
+
+@contextlib.contextmanager
+def remote_staging_session(docker_host: str, *, timeout: float | None = None) -> Iterator[RemoteStagingSession]:
+    """
+    Open a staging session against an ssh:// host: one connection, one temp dir, guaranteed teardown.
+
+    Use it for a command that reads local files (Compose files, a bake file, a build context); use
+    `run_remote_exec` when every argument is a reference and there is nothing to copy. Staging and
+    running are one logical operation, so they share a connection: the files exist for exactly as long
+    as the command that needs them.
+
+    Cleanup falls out of ordinary context-manager semantics rather than being special-cased per exit
+    path, so success, an exception and a timeout all remove the directory. A hard transport drop is the
+    exception — nothing is left to run `rm` on — which is inherent rather than handled.
+
+    args:
+        docker_host - the host's resolved DOCKER_HOST value, starting with 'ssh://'
+        timeout - seconds bounding the SSH handshake and the dialect probe; the session's own
+                  bookkeeping commands use their own bounds, and each `exec` takes its own timeout
+    returns: Iterator[RemoteStagingSession] - the session, valid inside the `with` block only
+    raises:
+        RuntimeError - connection failure, a non-POSIX remote, no writable remote temp dir, or an
+                       SFTP subsystem that cannot see the exec channel's filesystem
+    """
+    ssh_client = connect_ssh_client(docker_host, timeout=timeout)
+    sftp: paramiko.SFTPClient | None = None
+    root: str | None = None
+    try:
+        dialect_kind = detect_remote_dialect(ssh_client, docker_host, timeout=timeout)
+        # Refuse a non-POSIX remote here, before anything is created or uploaded, rather than letting
+        # the first bookkeeping command fail with a shell error.
+        get_dialect(dialect_kind)
+        root = _make_stage_root(ssh_client, dialect_kind, docker_host)
+        sftp = ssh_client.open_sftp()
+        _verify_shared_filesystem(sftp, root, docker_host)
+        yield RemoteStagingSession(
+            docker_host=docker_host,
+            ssh_client=ssh_client,
+            sftp=sftp,
+            dialect_kind=dialect_kind,
+            root=root,
+        )
+    finally:
+        if root is not None:
+            _remove_stage_root(ssh_client, dialect_kind, root, docker_host)
+        if sftp is not None:
+            with contextlib.suppress(Exception):  # teardown must never mask the body's outcome
+                sftp.close()
         ssh_client.close()
