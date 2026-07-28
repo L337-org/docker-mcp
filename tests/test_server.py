@@ -510,7 +510,10 @@ def test_instructions_mention_the_remote_exec_fallback_only_for_domains_that_hav
     *this* host's context registry), so a surface of only `context` must not advertise it.
     """
     text = build_instructions(registered_domains={"compose", "context"})
-    assert "With none installed, compose instead run on the target host" in text
+    # The domain list is whatever registered, so a single one is a real case and the verb must agree.
+    assert "With none installed, compose instead runs on the target host" in text
+    several = build_instructions(registered_domains={"compose", "buildx", "context"})
+    assert "compose, buildx instead run on the target host" in several
     # The condition is both halves — no local CLI *and* an ssh:// target — because a client reading only
     # the router would otherwise expect every ssh:// call to execute remotely.
     assert "reached over `ssh://`" in text

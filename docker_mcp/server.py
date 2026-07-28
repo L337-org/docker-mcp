@@ -443,9 +443,12 @@ def build_instructions(registered_domains: set[str] | None = None) -> str:
         # Only worth the tokens when a domain that actually has the fallback is registered.
         fallback_present = [d for d in _REMOTE_EXEC_DOMAINS if d in present]
         if fallback_present:
+            # The list is whatever registered, so one domain is a real case (a DISABLE that leaves only
+            # compose, say) and the verb has to agree with it.
+            verb = "runs" if len(fallback_present) == 1 else "run"
             caveat += (
-                f" With none installed, {', '.join(fallback_present)} instead run on the target host when it "
-                "is reached over `ssh://` — its CLI, its registry credentials, and local files (a compose "
+                f" With none installed, {', '.join(fallback_present)} instead {verb} on the target host when "
+                "it is reached over `ssh://` — its CLI, its registry credentials, and local files (a compose "
                 "project dir, a build context) copied over, so keep them small. A working local CLI is "
                 "always used in preference."
             )
