@@ -24,24 +24,22 @@ def _dependency_name(requirement: str) -> str:
     return match.group(0)
 
 
-def _upper_bound(requirement: str) -> tuple[int, ...] | None:
+def _admits(requirement: str, version: str) -> bool:
     """
-    The lowest `<`/`<=` version a requirement declares, or None if it declares no upper bound.
+    Whether a requirement's specifiers allow `version` to be installed.
 
-    Parsed with `packaging` rather than a regex because specifier *order is not guaranteed*: a tool
-    rewriting `mcp>=1.27.1,<2` as `mcp<2,>=1.27.1` (or collapsing it to `mcp<2`) must not read as "the
-    cap is gone" — a guard that cries wolf gets disabled, which is worse than no guard. Environment
-    markers and extras are handled by the parser too.
+    This is the question the caps actually pose, and asking it directly avoids two mistakes a bound
+    comparison makes. Ordering: PEP 508 does not fix specifier order, so `mcp<2,>=1.27.1` must read the
+    same as `mcp>=1.27.1,<2`. Strictness: `<=2` *admits* 2.0.0 — the very release that cannot import —
+    yet compares equal to a `<2` bound, so a guard built on bounds passes it. `packaging` answers the
+    real question and handles markers, extras, `!=` and `~=` for free.
 
-    args: requirement - a PEP 508 requirement string from pyproject's dependency list
-    returns: tuple[int, ...] | None - the lowest capped version as a tuple, or None when uncapped
+    args:
+        requirement - a PEP 508 requirement string from pyproject's dependency list
+        version - the version to test, normally the first known-bad one
+    returns: bool - True if that version satisfies the requirement
     """
-    bounds = [
-        _version_tuple(spec.version.rstrip(".*"))
-        for spec in Requirement(requirement).specifier
-        if spec.operator in ("<", "<=")
-    ]
-    return min(bounds) if bounds else None
+    return Requirement(requirement).specifier.contains(version)
 
 
 def test_intel_macos_cryptography_pin_not_relaxed():
@@ -68,11 +66,10 @@ def test_intel_macos_cryptography_pin_not_relaxed():
     assert len(intel_macos_deps) == 1, f"expected exactly one Intel-macOS cryptography pin, found: {intel_macos_deps!r}"
 
     dep = intel_macos_deps[0]
-    bound = _upper_bound(dep)
-    assert bound is not None, f"cryptography pin must declare a '<N[.N...]' upper bound, got: {dep!r}"
-    assert bound <= _version_tuple("49"), (
-        f"cryptography upper bound raised past 49 in {dep!r} — 49.x has no x86_64 macOS wheel; "
-        "see the pyproject.toml comment before lifting this cap"
+    assert not _admits(dep, "49.0"), (
+        f"the Intel-macOS cryptography pin {dep!r} allows 49.0, which has no x86_64 macOS wheel — the "
+        "resolver then falls back to a source build needing a newer Rust toolchain than many users have. "
+        "See the pyproject.toml comment before lifting this cap."
     )
 
 
@@ -92,14 +89,10 @@ def test_mcp_major_cap_not_relaxed():
     assert len(mcp_deps) == 1, f"expected exactly one 'mcp' dependency, found: {mcp_deps!r}"
 
     dep = mcp_deps[0]
-    bound = _upper_bound(dep)
-    assert bound is not None, (
-        f"the mcp dependency must declare a '<N' upper bound, got: {dep!r} — an uncapped mcp "
-        "resolves to 2.x, which has no `mcp.server.fastmcp`"
-    )
-    assert bound <= _version_tuple("2"), (
-        f"mcp upper bound raised past 2 in {dep!r} — 2.x moved FastMCP to `mcp.server.mcpserver`; "
-        "port `server.py` before lifting this cap"
+    assert not _admits(dep, "2.0.0"), (
+        f"the mcp dependency {dep!r} allows 2.0.0, which removed `mcp.server.fastmcp` — `import "
+        "docker_mcp` then fails outright. Port `server.py` to `mcp.server.mcpserver` before lifting "
+        "this cap; note `<=2` allows 2.0.0 and so is not a cap."
     )
 
 
@@ -160,23 +153,26 @@ def test_uv_lock_self_version_matches_pyproject():
 
 
 @pytest.mark.parametrize(
-    ("requirement", "expected"),
+    ("requirement", "admits_two"),
     [
-        # Specifier order is not guaranteed; all three of these declare the same cap.
-        ("mcp>=1.27.1,<2", (2, 0, 0, 0)),
-        ("mcp<2,>=1.27.1", (2, 0, 0, 0)),
-        ("mcp<2", (2, 0, 0, 0)),
-        # Markers and extras must not confuse it.
-        ("cryptography<49; platform_system == 'Darwin' and platform_machine == 'x86_64'", (49, 0, 0, 0)),
-        ("docker[ssh]>=7.1.0,<8", (8, 0, 0, 0)),
-        ("mcp<=1.28.1", (1, 28, 1, 0)),
-        # The lowest cap wins when more than one is present.
-        ("mcp<3,<2", (2, 0, 0, 0)),
-        # Uncapped — the state this guard exists to catch.
-        ("mcp>=1.27.1", None),
-        ("docker[ssh]>=7.1.0", None),
+        # Specifier order is not guaranteed; these three declare the same real cap.
+        ("mcp>=1.27.1,<2", False),
+        ("mcp<2,>=1.27.1", False),
+        ("mcp<2", False),
+        # `<=2` reads like a cap and is not one: it admits 2.0.0, the release that cannot import.
+        ("mcp<=2", True),
+        ("mcp<=2.0.0", True),
+        # Uncapped, and a cap above the bad version — both states the guard must reject.
+        ("mcp>=1.27.1", True),
+        ("mcp>=1.27.1,<3", True),
+        # Markers and extras are the parser's problem, not the guard's.
+        ("mcp<2; python_version >= '3.14'", False),
+        ("mcp[ws]<2", False),
     ],
 )
-def test_upper_bound_reads_a_cap_whatever_the_specifier_order(requirement, expected):
-    """A guard that fails on a legitimate rewrite gets disabled, so this must not cry wolf."""
-    assert _upper_bound(requirement) == expected
+def test_admits_answers_the_question_the_caps_actually_pose(requirement, admits_two):
+    """
+    A guard is only as good as its predicate. `<=2` is the case a bound comparison gets wrong, and a
+    guard that cries wolf on a reordered specifier gets disabled — so both are pinned here.
+    """
+    assert _admits(requirement, "2.0.0") is admits_two
