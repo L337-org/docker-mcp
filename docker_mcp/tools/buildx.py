@@ -199,19 +199,28 @@ def _refuse_flags_that_resolve_on_the_wrong_host(
         )
 
 
-def _local_dockerfile(file: str | None) -> Path | None:
+def _local_dockerfile(file: str | None, *, context_is_local: bool) -> Path | None:
     """
-    Where `--file` points on this machine, resolved the way buildx itself resolves it.
+    Where `--file` points on *this* machine, or None when buildx would not read it from here.
 
-    Verified empirically, because it is the opposite of what this tool's docstring used to claim:
-    buildx resolves `--file` against the **CLI's working directory**, not the build context
-    (`buildx build -f Dockerfile.x ./ctx` reports "failed to read dockerfile: open Dockerfile.x: no
-    such file" when the file exists only inside ./ctx, while `-f ctx/Dockerfile.x ./ctx` reads it).
-    The remote path has to resolve it the same way or it would stage a different file than the local
-    backend would have read.
+    Three behaviours, all established by running buildx rather than reasoning about it, because the
+    remote path must resolve `--file` exactly as the local backend would or it stages the wrong file:
 
-    args: file - the `file` parameter as given, or None
-    returns: Path | None - the absolute local path, or None when `file` was not given
+    - With a local-directory context, `--file` resolves against the **CLI's working directory**, not the
+      context — the opposite of what this tool's docstring used to claim. `-f Dockerfile.x ./ctx`
+      reports "failed to read dockerfile: open Dockerfile.x: no such file" when the file exists only
+      inside `./ctx`, while `-f ctx/Dockerfile.x ./ctx` reads it.
+    - With a **URL** context, an **absolute** `--file` is still read from this filesystem: buildx
+      transfers it as a separate dockerfile context (observed as `transferring dockerfile: 46B` plus a
+      parse error from the local file's own contents).
+    - With a URL context, a **relative** `--file` is resolved inside the *fetched* context, not here, so
+      it must be left alone — resolving it locally could stage a same-named file that happens to sit in
+      this server's working directory, silently building something else.
+
+    args:
+        file - the `file` parameter as given, or None
+        context_is_local - whether `context` names an existing local directory
+    returns: Path | None - the local path buildx would read, else None
     raises: ValueError - a relative `file` cannot be resolved (this server's cwd is unavailable)
     """
     if file is None:
@@ -219,6 +228,8 @@ def _local_dockerfile(file: str | None) -> Path | None:
     path = Path(file)
     if path.is_absolute():
         return path
+    if not context_is_local:
+        return None  # resolved inside the fetched context; not ours to touch
     try:
         return Path.cwd() / path
     except OSError as exc:
@@ -472,28 +483,31 @@ def _run_buildx_build_remotely(
     """
     # Before connecting: a refusal should not cost an SSH handshake and a context upload.
     _refuse_flags_that_resolve_on_the_wrong_host(output=output, cache_to=cache_to, cache_from=cache_from, ssh=ssh)
-    dockerfile = _local_dockerfile(file)
     staged_args = list(args)
     local_context = Path(context)
+    context_is_local = local_context.is_dir()
+    dockerfile = _local_dockerfile(file, context_is_local=context_is_local)
     with remote_cli_session(host, timeout=timeout) as session:
         remote_cwd: str | None = None
-        if local_context.is_dir():
-            relative_dockerfile: str | None = None
+        relative_dockerfile: str | None = None
+        if context_is_local:
             if dockerfile is not None:
                 try:
                     relative_dockerfile = dockerfile.resolve().relative_to(local_context.resolve()).as_posix()
                 except ValueError, OSError:
-                    relative_dockerfile = None  # outside the context: staged separately below
+                    relative_dockerfile = None  # outside the context: staged on its own below
             # Passing the Dockerfile's relative path through means the exclusion pass keeps it even when
             # `.dockerignore` would have swept it up (`*.dockerfile`), matching an SDK-driven build.
             remote_cwd = session.stage_build_context(local_context, dockerfile=relative_dockerfile)
             staged_args[-1] = remote_cwd
-            if dockerfile is not None:
-                _replace_flag_value(
-                    staged_args,
-                    "--file",
-                    relative_dockerfile if relative_dockerfile else session.stage_file(dockerfile),
-                )
+        if relative_dockerfile is not None:
+            # Inside the staged context, and the command runs there, so the relative form resolves.
+            _replace_flag_value(staged_args, "--file", relative_dockerfile)
+        elif dockerfile is not None and dockerfile.is_file():
+            # Outside the context, or alongside a URL context: buildx reads it from this filesystem, so
+            # it has to be copied. A `--file` naming nothing here is left verbatim instead of raising, so
+            # the remote CLI reports it exactly as the local one would.
+            _replace_flag_value(staged_args, "--file", session.stage_file(dockerfile))
         _stage_composite_paths(session, staged_args, "--build-context", "")
         _stage_composite_paths(session, staged_args, "--secret", "src")
         return run_in_session(session, ["buildx", *staged_args], timeout=timeout, cwd=remote_cwd)

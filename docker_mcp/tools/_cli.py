@@ -419,22 +419,28 @@ def remote_stage_and_exec(
         # given with no shell expansion. Expanding here would make the same call succeed remotely and
         # fail locally, which is the one divergence this whole backend exists to avoid.
         local_cwd = Path(cwd)
+    elif not stage_cwd and all(not value or Path(value).is_absolute() for value in path_values):
+        # Nothing is being copied from a working directory and every path named is already absolute, so
+        # this server's own directory plays no part — don't consult it, since a tool in this mode
+        # (`buildx_create --config /etc/…`) may not even expose a `cwd` for the caller to supply. The
+        # value is never read: `_reconcile_path_tokens` only resolves *relative* values against it.
+        local_cwd = Path("/")
     else:
         try:
             local_cwd = Path.cwd()
         except OSError as exc:
             # `Path.cwd()` raises a bare "No such file or directory" if the server's own working
             # directory has been deleted underneath it, which says nothing about what to do. The local
-            # backend tolerates that (a process keeps its deleted cwd), so name the difference.
-            purpose = (
-                "that is what would be copied over"
+            # backend tolerates that (a process keeps its deleted cwd), so name the difference — and the
+            # remedy differs by mode, since a tool in the no-staging mode may have no `cwd` parameter.
+            remedy = (
+                "that is what would be copied over. Pass one explicitly."
                 if stage_cwd
-                else "that is what this call's relative paths resolve against"
+                else "that is what this call's relative paths resolve against. Pass absolute paths instead."
             )
             raise ValueError(
                 f"Cannot run `docker {args[0] if args else ''}` on the remote host: this server's own working "
-                f"directory is unavailable ({exc}), and with no explicit working directory {purpose}. Pass one "
-                f"explicitly."
+                f"directory is unavailable ({exc}), and with no explicit working directory {remedy}"
             ) from exc
     if stage_cwd and not local_cwd.is_dir():
         # Two different mistakes reach here — a missing path and a file passed where a directory belongs —

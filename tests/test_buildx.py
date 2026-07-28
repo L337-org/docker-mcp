@@ -787,3 +787,56 @@ def test_buildx_build_refusals_name_the_consequence_for_that_flag(tmp_path):
     assert "nothing later reads it" in messages["cache_to"]
     assert "silently run uncached" in messages["cache_from"]
     assert "written" not in messages["cache_from"]  # nothing is written on an import
+
+
+def test_buildx_build_stages_an_absolute_dockerfile_beside_a_url_context(tmp_path):
+    """
+    With a URL context an *absolute* `--file` is still read from this filesystem — buildx transfers it as
+    a separate dockerfile context (observed: `transferring dockerfile: 46B` plus a parse error from the
+    local file's own contents). So it has to be staged, even though the context is not.
+    """
+    dockerfile = tmp_path / "Dockerfile.remote"
+    dockerfile.write_text("FROM alpine\n", encoding="utf-8")
+    session = _FakeSession()
+    with contextlib.ExitStack() as stack:
+        for patcher in _remote_build(session):
+            stack.enter_context(patcher)
+        buildx_build("https://github.com/org/repo.git", file=str(dockerfile), host="prod")
+    assert session.contexts == []  # the URL context is untouched
+    assert session.files == [str(dockerfile)]
+    argv = _argv(session)
+    assert argv[argv.index("--file") + 1] == f"{session.root}/file1/Dockerfile.remote"
+
+
+def test_buildx_build_leaves_a_relative_dockerfile_beside_a_url_context_alone(tmp_path, monkeypatch):
+    """
+    The mirror case: with a URL context a *relative* `--file` is resolved inside the fetched context, not
+    here (verified — `-f Dockerfile <git-url>` reports "open Dockerfile: no such file" rather than using
+    the identically-named file in the working directory). Resolving it locally would risk staging a
+    same-named file that happens to sit in this server's cwd and silently building something else.
+    """
+    decoy = tmp_path / "Dockerfile"
+    decoy.write_text("FROM decoy\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    session = _FakeSession()
+    with contextlib.ExitStack() as stack:
+        for patcher in _remote_build(session):
+            stack.enter_context(patcher)
+        buildx_build("https://github.com/org/repo.git", file="Dockerfile", host="prod")
+    assert session.files == []  # the decoy in the cwd is not staged
+    argv = _argv(session)
+    assert argv[argv.index("--file") + 1] == "Dockerfile"
+
+
+def test_buildx_build_leaves_a_dockerfile_that_does_not_exist_locally(tmp_path):
+    # Parity: a `--file` naming nothing here is reported by the remote CLI, not turned into a staging error.
+    context = tmp_path / "ctx"
+    context.mkdir()
+    session = _FakeSession()
+    with contextlib.ExitStack() as stack:
+        for patcher in _remote_build(session):
+            stack.enter_context(patcher)
+        buildx_build(str(context), file=str(tmp_path / "absent.dockerfile"), host="prod")
+    assert session.files == []
+    argv = _argv(session)
+    assert argv[argv.index("--file") + 1] == str(tmp_path / "absent.dockerfile")

@@ -896,10 +896,44 @@ def test_remote_stage_and_exec_explains_an_unavailable_server_cwd(monkeypatch, t
         with pytest.raises(ValueError, match="that is what would be copied over"):
             cli_module.remote_stage_and_exec("prod", ["compose", "ps"], cwd=None, timeout=60.0)
         # The same failure means something different when nothing is being staged as a working
-        # directory: there it is only what relative paths resolve against, so the message says so.
-        with pytest.raises(ValueError, match="relative paths resolve against"):
-            cli_module.remote_stage_and_exec("prod", ["buildx", "create"], cwd=None, timeout=60.0, stage_cwd=False)
+        # directory: there it is only what relative paths resolve against, so the message says so — and
+        # the remedy differs, because such a tool may expose no `cwd` for the caller to set.
+        with pytest.raises(ValueError, match="Pass absolute paths instead"):
+            cli_module.remote_stage_and_exec(
+                "prod",
+                ["buildx", "create", "--config", "rel.toml"],
+                cwd=None,
+                timeout=60.0,
+                path_values=["rel.toml"],
+                stage_cwd=False,
+            )
     assert session.trees == []
+
+
+def test_remote_stage_and_exec_needs_no_working_directory_for_absolute_paths_only(monkeypatch, tmp_path):
+    """
+    A tool in the no-staging mode may expose no `cwd` at all (`buildx_create --config /etc/…`), so
+    demanding a usable server working directory would fail a call that needs none: the base is only ever
+    read to resolve a *relative* value.
+    """
+    _pin_hosts(monkeypatch, "prod=ssh://ops@prod")
+    config = tmp_path / "buildkitd.toml"
+    config.write_text("[worker]\n", encoding="utf-8")
+    monkeypatch.setattr(
+        cli_module.Path, "cwd", staticmethod(lambda: (_ for _ in ()).throw(FileNotFoundError(2, "No such file")))
+    )
+    session = _FakeSession()
+    with _stage_patched(session):
+        cli_module.remote_stage_and_exec(
+            "prod",
+            ["buildx", "create", "--config", str(config)],
+            cwd=None,
+            timeout=60.0,
+            path_values=[str(config)],
+            stage_cwd=False,
+        )
+    assert session.files == [str(config)]
+    assert session.calls[0]["argv"][-1] == f"{session.root}/file1/buildkitd.toml"
 
 
 def test_remote_stage_and_exec_does_not_expand_tilde_in_cwd_or_path_tokens(monkeypatch, tmp_path):
