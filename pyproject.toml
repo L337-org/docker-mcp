@@ -1,6 +1,6 @@
 [project]
 name = "docker-mcp-server"
-version = "2.2.0"
+version = "2.2.1"
 description = "MCP server for managing Docker resources via the Docker SDK for Python"
 readme = "README.md"
 license = "MIT"
@@ -24,7 +24,13 @@ dependencies = [
     # system `ssh` binary, so it works identically on the host and inside the container images.
     "docker[ssh]>=7.1.0",
     "httpx>=0.28.1",
-    "mcp>=1.27.1",
+    # Capped below 2: mcp 2.0.0 (2026-07-28) removed `mcp.server.fastmcp`, which `server.py`
+    # imports FastMCP from — that surface moved to `mcp.server.mcpserver`, so 2.x is an API
+    # migration rather than a bump. Without the cap a fresh resolve picks 2.x and `import
+    # docker_mcp` dies, which is exactly what happened to the published 2.2.0 (CI installs
+    # `--locked`, so the lockfile's 1.x kept every test green while `uvx docker-mcp-server`
+    # was dead on arrival). `tests/test_pyproject_pins.py` fails if this cap is lifted.
+    "mcp>=1.27.1,<2",
     # Pulled in transitively by docker, but we import requests.exceptions directly
     # (container_wait catches ReadTimeout), so declare it explicitly.
     "requests>=2.26.0",
@@ -89,6 +95,9 @@ addopts = "-m 'not integration'"
 
 [dependency-groups]
 dev = [
+    # Pulled in transitively by pytest, but tests/test_pyproject_pins.py parses PEP 508 requirement
+    # strings with it directly, so declare it — the same reasoning as `requests` above.
+    "packaging>=24.0",
     "pytest>=9.0.3",
     "pyright>=1.1.409",
     "ruff>=0.15.12",

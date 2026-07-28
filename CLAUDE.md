@@ -55,6 +55,15 @@ non-required `Check docs mirror` job flags a PR that edits `CLAUDE.md` or
 `.github/copilot-instructions.md` without the other (see the MIRROR RULE above) — it's a prompt to
 double-check, not a merge blocker.
 
+**Two dependency caps exist because a fresh resolve can break what `--locked` CI cannot see**, both
+enforced by `tests/test_pyproject_pins.py`: `cryptography<49` on Intel macOS (49 dropped the
+universal2 wheel), and **`mcp<2`** — mcp 2.0.0 removed `mcp.server.fastmcp`, which `server.py` imports
+`FastMCP` from (it moved to `mcp.server.mcpserver`), so 2.x needs a port rather than a bump. The
+published 2.2.0 shipped uncapped and `uvx docker-mcp-server` was dead on arrival at import while every
+CI job stayed green, because CI installs `--locked` against a lockfile pinning mcp 1.x; 2.2.1
+superseded it. When adding a direct dependency whose *import surface* we touch, consider whether a
+major-version cap plus a pin guard belongs with it.
+
 A **weekly canary** (`.github/workflows/canary.yaml`, Mondays + dispatch) hunts platform/ecosystem
 drift premerge CI can't see: wheels-only (`--only-binary :all:`) dependency resolution for Intel
 macOS / ARM macOS / Windows against both the repo `pyproject.toml` and the latest published PyPI

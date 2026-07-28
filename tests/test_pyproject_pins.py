@@ -3,6 +3,9 @@ import re
 import tomllib
 from pathlib import Path
 
+import pytest
+from packaging.requirements import Requirement
+
 _ROOT = Path(__file__).resolve().parent.parent
 PYPROJECT = _ROOT / "pyproject.toml"
 MANIFEST = _ROOT / "manifest.json"
@@ -19,6 +22,24 @@ def _dependency_name(requirement: str) -> str:
     match = re.match(r"[A-Za-z0-9][A-Za-z0-9._-]*", requirement)
     assert match, f"could not parse a dependency name from {requirement!r}"
     return match.group(0)
+
+
+def _admits(requirement: str, version: str) -> bool:
+    """
+    Whether a requirement's specifiers allow `version` to be installed.
+
+    This is the question the caps actually pose, and asking it directly avoids two mistakes a bound
+    comparison makes. Ordering: PEP 508 does not fix specifier order, so `mcp<2,>=1.27.1` must read the
+    same as `mcp>=1.27.1,<2`. Strictness: `<=2` *admits* 2.0.0 — the very release that cannot import —
+    yet compares equal to a `<2` bound, so a guard built on bounds passes it. `packaging` answers the
+    real question and handles markers, extras, `!=` and `~=` for free.
+
+    args:
+        requirement - a PEP 508 requirement string from pyproject's dependency list
+        version - the version to test, normally the first known-bad one
+    returns: bool - True if that version satisfies the requirement
+    """
+    return Requirement(requirement).specifier.contains(version)
 
 
 def test_intel_macos_cryptography_pin_not_relaxed():
@@ -45,14 +66,52 @@ def test_intel_macos_cryptography_pin_not_relaxed():
     assert len(intel_macos_deps) == 1, f"expected exactly one Intel-macOS cryptography pin, found: {intel_macos_deps!r}"
 
     dep = intel_macos_deps[0]
-    m = re.search(r"cryptography\s*<\s*([0-9]+(?:\.[0-9]+)*)", dep)
-    assert m, f"cryptography pin must use a '<N[.N...]' upper bound, got: {dep!r}"
+    assert not _admits(dep, "49.0"), (
+        f"the Intel-macOS cryptography pin {dep!r} allows 49.0, which has no x86_64 macOS wheel — the "
+        "resolver then falls back to a source build needing a newer Rust toolchain than many users have. "
+        "See the pyproject.toml comment before lifting this cap."
+    )
 
-    bound = _version_tuple(m.group(1))
-    max_allowed = _version_tuple("49")
-    assert bound <= max_allowed, (
-        f"cryptography upper bound raised to {m.group(1)} — 49.x has no x86_64 macOS wheel; "
-        "see the pyproject.toml comment before lifting this cap"
+
+def test_mcp_major_cap_not_relaxed():
+    """
+    mcp 2.0.0 removed `mcp.server.fastmcp`, which `server.py` imports FastMCP from, so an
+    uncapped `mcp` resolves to a release that cannot import this package. That is not
+    hypothetical: the published 2.2.0 shipped uncapped and `uvx docker-mcp-server` failed at
+    import on a clean machine, while CI stayed green because it installs `--locked` against a
+    lockfile pinning 1.x. Lifting this cap needs the `mcp.server.mcpserver` migration first.
+    """
+    data = tomllib.loads(PYPROJECT.read_text())
+    deps = data["project"]["dependencies"]
+
+    mcp_deps = [d for d in deps if _dependency_name(d) == "mcp"]
+    assert mcp_deps, "no direct 'mcp' dependency found in pyproject.toml"
+    assert len(mcp_deps) == 1, f"expected exactly one 'mcp' dependency, found: {mcp_deps!r}"
+
+    dep = mcp_deps[0]
+    assert not _admits(dep, "2.0.0"), (
+        f"the mcp dependency {dep!r} allows 2.0.0, which removed `mcp.server.fastmcp` — `import "
+        "docker_mcp` then fails outright. Port `server.py` to `mcp.server.mcpserver` before lifting "
+        "this cap; note `<=2` allows 2.0.0 and so is not a cap."
+    )
+
+
+def test_the_declared_mcp_bound_matches_what_the_code_imports():
+    """
+    The cap and the import have to agree, and only one of them is in pyproject: assert the
+    module we import FastMCP from is the one the *locked* mcp actually provides. Catches a
+    lockfile that drifts past the cap as well as a cap raised without porting the import.
+    """
+    import importlib.util
+
+    from docker_mcp import server as server_module
+
+    source = Path(server_module.__file__).read_text(encoding="utf-8")
+    match = re.search(r"from (mcp[\w.]*) import FastMCP", source)
+    assert match, "server.py no longer imports FastMCP from an `mcp.*` module — update this guard"
+    assert importlib.util.find_spec(match.group(1)) is not None, (
+        f"server.py imports FastMCP from {match.group(1)!r}, which the installed mcp does not "
+        "provide — the pyproject cap and the code disagree"
     )
 
 
@@ -91,3 +150,29 @@ def test_uv_lock_self_version_matches_pyproject():
         f"uv.lock self-entry version {lock_version!r} != pyproject.toml version {pyproject_version!r} — "
         "run `uv lock` after bumping the version"
     )
+
+
+@pytest.mark.parametrize(
+    ("requirement", "admits_two"),
+    [
+        # Specifier order is not guaranteed; these three declare the same real cap.
+        ("mcp>=1.27.1,<2", False),
+        ("mcp<2,>=1.27.1", False),
+        ("mcp<2", False),
+        # `<=2` reads like a cap and is not one: it admits 2.0.0, the release that cannot import.
+        ("mcp<=2", True),
+        ("mcp<=2.0.0", True),
+        # Uncapped, and a cap above the bad version — both states the guard must reject.
+        ("mcp>=1.27.1", True),
+        ("mcp>=1.27.1,<3", True),
+        # Markers and extras are the parser's problem, not the guard's.
+        ("mcp<2; python_version >= '3.14'", False),
+        ("mcp[ws]<2", False),
+    ],
+)
+def test_admits_answers_the_question_the_caps_actually_pose(requirement, admits_two):
+    """
+    A guard is only as good as its predicate. `<=2` is the case a bound comparison gets wrong, and a
+    guard that cries wolf on a reordered specifier gets disabled — so both are pinned here.
+    """
+    assert _admits(requirement, "2.0.0") is admits_two
