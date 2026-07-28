@@ -953,9 +953,10 @@ def _copy_to_container(container, source_path: str, container_dir: str) -> dict:
     """
     Upload a host file or directory into a container directory, via the Engine API.
 
-    Packed into a tar in memory and handed to `put_archive`, which is the Engine's only write path for
-    files: the archive's single top-level member keeps the source's own basename, so the result matches
-    `docker cp ./thing SERVICE:/dir/`.
+    Packed into a tar on disk — a temporary file, since a directory upload is unbounded — and handed to
+    `put_archive` as a file object, which is the Engine's only write path for files. The archive's single
+    top-level member keeps the source's own basename, so the result matches `docker cp ./thing
+    SERVICE:/dir/`.
 
     args:
         container - the resolved container
@@ -1006,7 +1007,9 @@ def compose_copy(
     Reads no Compose file, so there is no `project_dir`/`files`: pass `project_name` when the same
     service name exists in several projects (`compose_list` reports the names Compose used).
     Raises RuntimeError if no container matches or the daemon rejects the upload, ValueError if both or
-    neither side names a service, or the host destination is not an existing directory.
+    neither side names a service or the host destination is not an existing directory, and
+    `tarfile.TarError` if the container's archive contains a member that would escape that directory
+    (extraction is filtered — a container is not a trusted source of member names).
 
     args:
         source - `SERVICE:PATH` inside the container, or a path on this host. On a Windows server a
