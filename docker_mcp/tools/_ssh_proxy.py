@@ -379,6 +379,31 @@ _REMOTE_TIMEOUT_EXIT_CODE = 124
 _TIMEOUT_ATTRIBUTION_SLACK_SECONDS = 0.25
 
 
+def _validate_exec_args(argv: Sequence[str], timeout: float, max_output_bytes: int) -> None:
+    """
+    Reject arguments the remote path cannot honour, before anything connects or runs.
+
+    A non-positive timeout raises `subprocess.TimeoutExpired` rather than `ValueError`, to match the
+    local path exactly: `subprocess.run` raises that same exception immediately for `0`, `-1` and
+    `-0.5` (verified), and the command never completes. Remotely the watchdog's one-second floor would
+    otherwise quietly grant a whole second of runtime, so a mutating command — `compose down`, say —
+    would actually execute where the local backend refused it. Silently running more than asked is a
+    worse failure than a clear error.
+
+    args:
+        argv - the remote command, used only for the exception's message
+        timeout - the caller's timeout; must be positive
+        max_output_bytes - the retention cap; must not be negative
+    raises:
+        subprocess.TimeoutExpired - `timeout` is zero or negative
+        ValueError - `max_output_bytes` is negative (a caller bug with no local analogue)
+    """
+    if timeout <= 0:
+        raise subprocess.TimeoutExpired(cmd=list(argv), timeout=timeout)
+    if max_output_bytes < 0:
+        raise ValueError(f"max_output_bytes must not be negative, got {max_output_bytes!r}")
+
+
 def _watchdog_sleep_seconds(timeout: float) -> int:
     """
     Whole seconds the remote watchdog sleeps before killing the command.
@@ -769,6 +794,7 @@ def exec_remote(
         RuntimeError - the transport is gone, or the dialect isn't implemented
         subprocess.TimeoutExpired - the command exceeded `timeout`
     """
+    _validate_exec_args(argv, timeout, max_output_bytes)
     command = get_dialect(dialect).wrap_with_timeout(argv, timeout=timeout, cwd=cwd)
     transport = ssh_client.get_transport()
     if transport is None:
@@ -819,6 +845,9 @@ def run_remote_exec(
         RuntimeError - connection failure (with guidance), or a non-POSIX remote
         subprocess.TimeoutExpired - the command exceeded `timeout`
     """
+    # Validate before connecting: opening (and authenticating) an SSH session only to reject the
+    # caller's own arguments wastes a handshake against a possibly-remote host.
+    _validate_exec_args(argv, timeout, max_output_bytes)
     ssh_client = connect_ssh_client(docker_host, timeout=timeout)
     try:
         dialect = detect_remote_dialect(ssh_client, docker_host, timeout=timeout)

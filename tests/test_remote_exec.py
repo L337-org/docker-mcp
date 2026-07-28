@@ -241,6 +241,41 @@ def test_marker_is_removed_on_any_exit_not_just_the_happy_path():
     assert lines.index(trap) < lines.index(f"cd {shlex.quote(cwd)} || exit 127")
 
 
+# --- argument validation -------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("timeout", [0, -1, -0.5])
+def test_non_positive_timeout_matches_the_local_backends_behaviour(timeout):
+    """
+    `subprocess.run` raises TimeoutExpired immediately for these values and never lets the command
+    complete. Without this check the watchdog's one-second floor would quietly grant a second of
+    runtime instead, so a mutating command would actually execute where the local backend refused it.
+    """
+    channel = FakeChannel(stdout=[b"must not run"])
+    with pytest.raises(subprocess.TimeoutExpired):
+        exec_remote(fake_client(channel), ["docker", "compose", "down"], max_output_bytes=_CAP, timeout=timeout)
+    assert channel.executed is None, "the command must not reach the remote host"
+
+
+def test_negative_output_cap_is_rejected():
+    channel = FakeChannel(stdout=[b"x"])
+    with pytest.raises(ValueError, match="must not be negative"):
+        exec_remote(fake_client(channel), ["docker", "ps"], max_output_bytes=-1, timeout=5)
+    assert channel.executed is None
+
+
+def test_run_remote_exec_validates_before_opening_a_connection(monkeypatch):
+    """Rejecting the caller's own arguments must not cost an SSH handshake first."""
+    connected = []
+    monkeypatch.setattr(
+        "docker_mcp.tools._ssh_proxy.connect_ssh_client",
+        lambda *a, **k: connected.append(True),  # pyright: ignore[reportUnknownLambdaType]
+    )
+    with pytest.raises(subprocess.TimeoutExpired):
+        run_remote_exec("ssh://h", ["docker", "ps"], max_output_bytes=_CAP, timeout=0)
+    assert not connected, "connected before validating its arguments"
+
+
 # --- timeout attribution -------------------------------------------------------------------------
 
 
