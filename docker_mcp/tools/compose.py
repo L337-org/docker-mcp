@@ -16,8 +16,8 @@
 # refused outright because its host side is a local path with nothing to stage it to — `compose_copy`
 # does that job through the Engine API instead, needing no CLI on either side.
 
-import io
 import re
+import sys
 import tarfile
 import tempfile
 from pathlib import Path
@@ -836,18 +836,30 @@ _LABEL_SERVICE = "com.docker.compose.service"
 _LABEL_NUMBER = "com.docker.compose.container-number"
 _LABEL_ONEOFF = "com.docker.compose.oneoff"
 
-# `SERVICE:PATH`, the side of a copy that names a container. A Windows drive letter (`C:\...`) must not
-# be mistaken for one, hence requiring at least two characters before the colon.
-_SERVICE_PATH = re.compile(r"^(?P<service>[A-Za-z0-9][A-Za-z0-9._-]+):(?P<path>.+)$")
+# `SERVICE:PATH`, the side of a copy that names a container. Compose allows a one-character service name,
+# so the pattern does too — the ambiguity with a Windows drive letter is resolved below by platform
+# rather than by forbidding short names.
+_SERVICE_PATH = re.compile(r"^(?P<service>[A-Za-z0-9][A-Za-z0-9._-]*):(?P<path>.+)$")
+
+# `C:\dir` or `C:/dir` — meaningful only on Windows, which is where the check applies.
+_WINDOWS_DRIVE = re.compile(r"^[A-Za-z]:[\\/]")
 
 
 def _split_service_path(value: str) -> tuple[str, str] | None:
     """
     Split a `SERVICE:PATH` value, or None when the value is an ordinary host path.
 
+    A single-character service name is legal in Compose and is accepted, which collides with a Windows
+    drive letter (`C:/dir` is a path, `c:/dir` could be service `c`). The collision is resolved by asking
+    where the *server* runs: drive letters exist only on Windows, so only there is a one-letter prefix
+    read as a drive. The cost is that a one-character service name is not addressable from a Windows
+    server — documented on the tool, and preferable to silently treating a host path as a service.
+
     args: value - one side of a copy
     returns: tuple[str, str] | None - (service, path in the container), else None
     """
+    if sys.platform == "win32" and _WINDOWS_DRIVE.match(value):  # pyright: ignore[reportUnreachable]
+        return None
     match = _SERVICE_PATH.match(value)
     return (match.group("service"), match.group("path")) if match else None
 
@@ -952,11 +964,15 @@ def _copy_to_container(container, source_path: str, container_dir: str) -> dict:
     returns: dict - what was sent
     """
     source = host_read_path(source_path)
-    buffer = io.BytesIO()
-    with tarfile.open(fileobj=buffer, mode="w") as bundle:
-        bundle.add(str(source), arcname=source.name)
-    payload = buffer.getvalue()
-    if not container.put_archive(container_dir, payload):
+    # Packed to a temp file rather than held in memory: a directory upload is unbounded, and docker-py's
+    # `put_archive` takes a file object, which is how `container_archive_put(from_file=…)` sends one too.
+    with tempfile.TemporaryFile() as archive:
+        with tarfile.open(fileobj=archive, mode="w") as bundle:
+            bundle.add(str(source), arcname=source.name)
+        size = archive.tell()
+        archive.seek(0)
+        accepted = container.put_archive(container_dir, archive)
+    if not accepted:
         raise RuntimeError(
             f"The daemon rejected the upload of {str(source)!r} into {container_dir!r} on "
             f"{container.name!r}. The usual cause is that {container_dir!r} does not exist in the "
@@ -967,7 +983,7 @@ def _copy_to_container(container, source_path: str, container_dir: str) -> dict:
         "container": container.name,
         "source": str(source),
         "container_dir": container_dir,
-        "archive_bytes": len(payload),
+        "archive_bytes": size,
     }
 
 
@@ -993,10 +1009,10 @@ def compose_copy(
     neither side names a service, or the host destination is not an existing directory.
 
     args:
-        source - `SERVICE:PATH` inside the container, or a path on this host
+        source - `SERVICE:PATH` inside the container, or a path on this host. On a Windows server a
+                      one-character service name is not addressable, since `C:/dir` reads as a drive.
         dest - the other end: a path on this host (an existing directory), or `SERVICE:PATH`
-        index - Which replica to use when the service is scaled, 1-based (default 1), matching
-                     Compose's own container numbering
+        index - Which replica to use when the service is scaled, 1-based (default 1)
         project_name - Compose project the service belongs to; needed only to disambiguate
     returns: dict - For a container-to-host copy: {"direction", "container", "container_path", "dest",
                     "entries", "archive_bytes", "stat"}. For host-to-container:

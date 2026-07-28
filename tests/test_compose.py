@@ -806,10 +806,48 @@ def test_compose_copy_surfaces_a_rejected_upload(tmp_path):
             compose_copy(str(source), "web:/missing-dir")
 
 
-def test_compose_copy_does_not_mistake_a_windows_path_for_a_service(tmp_path):
-    # `C:\...` has a colon but is a host path; the service pattern needs 2+ leading characters.
+def test_compose_copy_recognises_ordinary_host_paths(tmp_path):
     from docker_mcp.tools.compose import _split_service_path
 
-    assert _split_service_path("C:\\Users\\gavin\\file.txt") is None
     assert _split_service_path("web:/etc/app.conf") == ("web", "/etc/app.conf")
     assert _split_service_path("./local/path") is None
+    assert _split_service_path("/absolute/path") is None
+
+
+def test_compose_copy_accepts_a_one_character_service_name():
+    """Compose allows a one-character service name, so the parser must not exclude it to dodge `C:\\`."""
+    from docker_mcp.tools.compose import _split_service_path
+
+    assert _split_service_path("x:/etc/hosts") == ("x", "/etc/hosts")
+
+
+def test_compose_copy_treats_a_drive_letter_as_a_host_path_on_windows(monkeypatch):
+    """
+    The one-character service name collides with a Windows drive letter, resolved by where the *server*
+    runs: drive letters exist only on Windows, so only there is a lone letter read as a drive.
+    """
+    import docker_mcp.tools.compose as compose_module
+
+    monkeypatch.setattr(compose_module.sys, "platform", "win32")
+    assert compose_module._split_service_path("C:\\Users\\gavin\\file.txt") is None
+    assert compose_module._split_service_path("C:/Users/gavin/file.txt") is None
+    # A multi-character name is unambiguous even there.
+    assert compose_module._split_service_path("web:/etc/app.conf") == ("web", "/etc/app.conf")
+
+
+def test_compose_copy_streams_the_upload_rather_than_buffering_it(tmp_path):
+    """
+    A directory upload is unbounded, so the tar goes to a temp file and `put_archive` receives the file
+    object — the same shape `container_archive_put(from_file=…)` uses.
+    """
+    source = tmp_path / "tree"
+    source.mkdir()
+    (source / "a.txt").write_text("a" * 4096, encoding="utf-8")
+    container = _FakeContainer()
+    with patch("docker_mcp.tools.compose._get_client", return_value=_fake_client([container])):
+        result = compose_copy(str(source), "web:/data")
+    # The fake records what it was handed; a file object is read, not passed as bytes.
+    assert container.put_calls[0][0] == "/data"
+    assert result["archive_bytes"] == container.put_calls[0][1]
+    with tarfile.open(fileobj=io.BytesIO(container._last_payload)) as bundle:
+        assert sorted(bundle.getnames()) == ["tree", "tree/a.txt"]
