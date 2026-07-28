@@ -7,7 +7,11 @@ executed through the *real* `/bin/sh`, since its correctness is entirely about s
 a mock cannot verify.
 """
 
+import contextlib
+import glob
+import os
 import shlex
+import signal
 import subprocess
 import sys
 from typing import cast
@@ -17,6 +21,7 @@ import pytest
 
 from docker_mcp.tools._ssh_proxy import (
     PosixDialect,
+    _is_remote_timeout,
     RemoteDialectKind,
     _clear_dialect_cache,
     _REMOTE_TIMEOUT_EXIT_CODE,
@@ -175,12 +180,79 @@ def test_watchdog_stdio_is_detached_from_the_commands_streams():
 
 
 def test_timeout_is_reported_via_a_marker_not_the_signal_status():
-    """A marker written only when the kill signalled a live process, so a timeout is distinguishable
-    from any other non-zero exit (143 would be indistinguishable from any SIGTERM death)."""
+    """A marker written only when the command was alive at the deadline, so a timeout is
+    distinguishable from any other non-zero exit (143 would be indistinguishable from any SIGTERM
+    death)."""
     body = _script_body(["true"], timeout=5)
-    assert 'kill $pid 2>/dev/null && printf t >"$m"' in body
     assert f'[ -s "$m" ] && ec={_REMOTE_TIMEOUT_EXIT_CODE}' in body
-    assert "kill -0" not in body  # a fired-but-unreaped watchdog is a zombie that still answers
+
+
+def test_marker_is_written_before_the_kill_not_after():
+    """
+    Race regression guard.
+
+    The kill is what releases the main shell from `wait $pid`, and the main shell then kills the
+    watchdog — so writing the marker *after* the kill leaves a window where the watchdog dies before
+    the `printf` lands, and a genuine timeout is misreported as a plain SIGTERM death (observed as an
+    intermittent 143). Writing it first means the main shell is provably still blocked.
+    """
+    body = _script_body(["true"], timeout=5)
+    watchdog = next(line for line in body.splitlines() if "sleep 5" in line)
+    assert watchdog.index('printf t >"$m"') < watchdog.index("kill $pid"), watchdog
+    # Guarded on the command still being alive, so a command that already exited is not marked.
+    assert "kill -0 $pid" in watchdog
+
+
+def test_mktemp_is_given_an_explicit_template():
+    """The bare `mktemp` form is accepted by macOS but rejected by FreeBSD/OpenBSD/NetBSD, which
+    require a template — there it would fail before running argv at all, on hosts this dialect
+    claims to support."""
+    body = _script_body(["true"], timeout=5)
+    assert 'mktemp "${TMPDIR:-/tmp}/docker-mcp-server.XXXXXXXX"' in body
+
+
+def test_marker_is_removed_on_any_exit_not_just_the_happy_path():
+    """The `cd` failure path returns without reaching the end of the script, and a dropped channel
+    has sshd signal the shell — both stranded the marker in the remote temp dir before the trap."""
+    cwd = "/srv/app"
+    lines = _script_body(["true"], timeout=5, cwd=cwd).splitlines()
+    trap = "trap 'rm -f \"$m\"' EXIT HUP INT TERM"
+    assert trap in lines
+    # The trap must be armed before anything that can exit early, or it cannot cover it.
+    assert lines.index(trap) < lines.index(f"cd {shlex.quote(cwd)} || exit 127")
+
+
+# --- timeout attribution -------------------------------------------------------------------------
+
+
+def test_timeout_attribution_requires_the_full_budget_to_have_elapsed():
+    """
+    The sentinel exit code alone must not decide it.
+
+    `docker run`/`compose run` propagate the *container's* status, so a container may legitimately
+    exit with the sentinel code — no exit code is collision-proof. Corroborating elapsed time keeps
+    such a command an ordinary failure instead of a spurious TimeoutExpired.
+    """
+    # Genuine timeout: ran its whole budget.
+    assert _is_remote_timeout(_REMOTE_TIMEOUT_EXIT_CODE, elapsed=30.0, timeout=30.0) is True
+    # Same status, but finished early — a real exit status, not a timeout.
+    assert _is_remote_timeout(_REMOTE_TIMEOUT_EXIT_CODE, elapsed=0.4, timeout=30.0) is False
+    # Any other status is never a timeout, however long it ran.
+    assert _is_remote_timeout(0, elapsed=99.0, timeout=30.0) is False
+    assert _is_remote_timeout(143, elapsed=99.0, timeout=30.0) is False
+
+
+def test_timeout_attribution_tolerates_sub_second_measurement_noise():
+    """A 1s timeout elapses at just under 1s often enough that an exact comparison would flap."""
+    assert _is_remote_timeout(_REMOTE_TIMEOUT_EXIT_CODE, elapsed=0.99, timeout=1.0) is True
+
+
+def test_exec_remote_reports_an_early_sentinel_exit_as_an_ordinary_failure():
+    """End to end for the collision case: the status is returned, not raised as a timeout."""
+    channel = FakeChannel(stdout=[b"container said no"], exit_status=_REMOTE_TIMEOUT_EXIT_CODE)
+    result = exec_remote(fake_client(channel), ["docker", "run", "img"], max_output_bytes=_CAP, timeout=600)
+    assert result.returncode == _REMOTE_TIMEOUT_EXIT_CODE
+    assert result.stdout == b"container said no"
 
 
 # --- PosixDialect: behaviour through a real shell -------------------------------------------------
@@ -188,6 +260,19 @@ def test_timeout_is_reported_via_a_marker_not_the_signal_status():
 # The script's correctness is shell semantics, which no mock can check. These run it for real.
 
 pytestmark_posix = pytest.mark.skipif(sys.platform == "win32", reason="needs a POSIX /bin/sh")
+
+
+# Deliberately odd sleep durations, so a `pgrep` for one cannot plausibly match an unrelated process
+# on a developer machine or a concurrently running test. Matches are additionally diffed against a
+# pre-existing snapshot rather than trusted outright.
+_WATCHDOG_MARKER_SECONDS = 4517
+_GRANDCHILD_MARKER_SECONDS = 4519
+
+
+def _pids_sleeping_for(seconds: int) -> list[str]:
+    """Pids of `sleep <seconds>` processes, via pgrep. Empty when pgrep finds nothing (exit 1)."""
+    probe = ["pgrep", "-f", f"sleep {seconds}"]
+    return subprocess.run(probe, capture_output=True, text=True, check=False).stdout.split()  # noqa: S603
 
 
 def _run_script(argv, *, timeout, cwd=None, capture_timeout=30):
@@ -237,10 +322,14 @@ def test_real_shell_grandchildren_are_a_known_limitation():
     return promptly where this local-style capture cannot. The local `run_docker` path has the
     identical limitation, so it is parity, not a regression.
     """
+    # A duration nothing else plausibly uses, so the cleanup below cannot match another process. It
+    # is reaped by the pids this test's own probe found — never by a `pkill -f` pattern, which would
+    # signal unrelated processes on a developer's machine.
     with pytest.raises(subprocess.TimeoutExpired):
-        _run_script(["sh", "-c", "sleep 30 & wait"], timeout=1, capture_timeout=4)
-    reap = ["pkill", "-f", "sleep 30"]
-    subprocess.run(reap, capture_output=True, check=False)  # noqa: S603
+        _run_script(["sh", "-c", f"sleep {_GRANDCHILD_MARKER_SECONDS} & wait"], timeout=1, capture_timeout=4)
+    for pid in _pids_sleeping_for(_GRANDCHILD_MARKER_SECONDS):
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            os.kill(int(pid), signal.SIGKILL)
 
 
 @pytestmark_posix
@@ -252,13 +341,30 @@ def test_real_shell_honours_cwd_and_refuses_an_unreachable_one():
 
 
 @pytestmark_posix
+def test_real_shell_leaves_no_marker_file_behind():
+    """Covers the happy path and the early-`cd`-failure path, which used to strand its marker."""
+    pattern = os.path.join(os.environ.get("TMPDIR", "/tmp"), "docker-mcp-server.*")
+    before = set(glob.glob(pattern))
+    _run_script(["true"], timeout=5)
+    _run_script(["echo", "x"], timeout=5, cwd="/no-such-dir-zzz")
+    _run_script(["sh", "-c", "exec sleep 30"], timeout=1, capture_timeout=15)  # timeout path
+    assert set(glob.glob(pattern)) - before == set()
+
+
+@pytestmark_posix
 def test_real_shell_does_not_leave_the_watchdog_running_after_a_fast_command():
     """A long timeout must not keep the call (or a stray `sleep`) alive once the command is done."""
-    result = _run_script(["true"], timeout=45, capture_timeout=15)
+    # Record pre-existing matches and diff against them, so an unrelated `sleep` with the same
+    # duration (another developer process, or a concurrent test) cannot fail this. The duration is
+    # also deliberately odd, making a collision unlikely in the first place.
+    before = set(_pids_sleeping_for(_WATCHDOG_MARKER_SECONDS))
+    result = _run_script(["true"], timeout=_WATCHDOG_MARKER_SECONDS, capture_timeout=15)
     assert result.returncode == 0
-    probe = ["pgrep", "-f", "sleep 45"]
-    survivors = subprocess.run(probe, capture_output=True, text=True, check=False).stdout.split()  # noqa: S603
-    assert not survivors, f"watchdog leaked: {survivors}"
+    leaked = set(_pids_sleeping_for(_WATCHDOG_MARKER_SECONDS)) - before
+    for pid in leaked:  # don't leave our own strays behind if the assertion is about to fail
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            os.kill(int(pid), signal.SIGKILL)
+    assert not leaked, f"watchdog leaked: {sorted(leaked)}"
 
 
 @pytestmark_posix
@@ -376,9 +482,11 @@ def test_exec_remote_raises_timeout_expired_on_the_watchdog_exit_code():
     """The remote watchdog's 124 becomes the same exception the local subprocess path raises, so
     callers see one contract regardless of which backend ran."""
     channel = FakeChannel(stdout=[b"partial"], exit_status=_REMOTE_TIMEOUT_EXIT_CODE)
+    # timeout=0 so the (instant) fake still counts as having consumed its whole budget, which is what
+    # distinguishes a real timeout from a command that merely exited with the sentinel code.
     with pytest.raises(subprocess.TimeoutExpired) as excinfo:
-        exec_remote(fake_client(channel), ["docker", "build", "."], max_output_bytes=_CAP, timeout=7)
-    assert excinfo.value.timeout == 7
+        exec_remote(fake_client(channel), ["docker", "build", "."], max_output_bytes=_CAP, timeout=0)
+    assert excinfo.value.timeout == 0
     assert excinfo.value.cmd == ["docker", "build", "."]
     assert excinfo.value.output == b"partial"  # output captured before the kill is preserved
 
@@ -404,7 +512,7 @@ def test_exec_remote_raises_when_the_transport_is_gone():
 def test_exec_remote_closes_the_channel_even_when_the_command_raises(monkeypatch):
     channel = FakeChannel(stdout=[b"x"], exit_status=_REMOTE_TIMEOUT_EXIT_CODE)
     with pytest.raises(subprocess.TimeoutExpired):
-        exec_remote(fake_client(channel), ["docker", "ps"], max_output_bytes=_CAP, timeout=1)
+        exec_remote(fake_client(channel), ["docker", "ps"], max_output_bytes=_CAP, timeout=0)
     assert channel.closed
 
 

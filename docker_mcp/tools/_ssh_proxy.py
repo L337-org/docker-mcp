@@ -367,7 +367,37 @@ def ssh_proxy_for_docker_host(docker_host: str, *, timeout: float | None = None)
 # reporting the killed process's 143 (128+SIGTERM) instead would be indistinguishable from any other
 # SIGTERM death, and would surface a timeout as an ordinary failure while the local subprocess path
 # raises TimeoutExpired for the same event.
+#
+# No exit code is collision-proof, because `docker run`/`compose run` propagate the *container's* own
+# status and a container may legitimately exit 124. So the code alone does not decide it: a timeout is
+# only attributed when the call also actually ran for its full timeout (see `_is_remote_timeout`),
+# which a command exiting 124 early cannot satisfy.
 _REMOTE_TIMEOUT_EXIT_CODE = 124
+
+# Tolerance when comparing elapsed time against the timeout, for float/latency noise only. A genuine
+# remote timeout always elapses at least `ceil(timeout)` (the watchdog sleeps that long before killing),
+# so this never needs to be generous.
+_TIMEOUT_ATTRIBUTION_SLACK_SECONDS = 0.25
+
+
+def _is_remote_timeout(returncode: int, elapsed: float, timeout: float) -> bool:
+    """
+    Whether a finished remote command should be reported as having timed out.
+
+    Requires both the wrapper's sentinel status *and* corroborating elapsed time, so a command that
+    legitimately exits with the sentinel code well inside its budget — a container propagating 124
+    through `docker run`, say — is reported as the ordinary failure it is rather than as a timeout.
+
+    args:
+        returncode - the exit status the remote wrapper reported
+        elapsed - seconds from issuing the command to it completing
+        timeout - the caller's timeout for the command
+    returns: bool - True only when the status is the timeout sentinel and the call ran its full budget
+    """
+    if returncode != _REMOTE_TIMEOUT_EXIT_CODE:
+        return False
+    return elapsed >= timeout - _TIMEOUT_ATTRIBUTION_SLACK_SECONDS
+
 
 # Extra local slack past the caller's timeout before we give up on the channel ourselves. The remote
 # watchdog should have killed the command and exited by then; this only covers the case where the
@@ -431,11 +461,19 @@ class PosixDialect:
         and orphaned to init on every single timeout. Keeping `cd` separate means `$!` is the
         command itself.
 
-        The watchdog reports `_REMOTE_TIMEOUT_EXIT_CODE` via a marker file written only when its
-        `kill` actually signalled a live process, so a timeout is distinguishable from any other
-        non-zero exit. Testing "is the watchdog still alive?" with `kill -0` instead would be wrong:
-        a watchdog that has fired but not yet been reaped is a zombie whose pid still answers
-        `kill -0`, so real timeouts would be missed.
+        The watchdog reports `_REMOTE_TIMEOUT_EXIT_CODE` via a marker file, written only when the
+        command was still alive at the deadline, so a timeout is distinguishable from any other
+        non-zero exit. Testing whether the *watchdog* is still alive with `kill -0` would instead be
+        wrong: a watchdog that has fired but not yet been reaped is a zombie whose pid still answers,
+        so real timeouts would be missed. (`kill -0` on the *command* below is a different question —
+        asked before signalling, about a live child — and is sound.)
+
+        The marker is written **before** the kill, which is what makes it race-free. The kill is what
+        releases the main shell from `wait $pid`, and the main shell then kills the watchdog — so
+        writing the marker afterwards leaves a window where the watchdog is killed before the `printf`
+        lands, and a genuine timeout is misreported as an ordinary SIGTERM death (observed:
+        intermittent 143 instead of the sentinel). Ordering it first guarantees the main shell is
+        still blocked when the file is written.
 
         Both `wait`s run inside `{ ... } 2>/dev/null` groups to swallow the shell's own asynchronous
         job-reap notices ("Terminated: 15 ( sleep 30; ...)"), which otherwise land in the *command's*
@@ -462,17 +500,28 @@ class PosixDialect:
         returns: str - a complete `sh -c '...'` command string for `Channel.exec_command`
         """
         seconds = max(1, math.ceil(timeout))
-        lines = ["m=$(mktemp)"]
+        # An explicit template, because the bare `mktemp` form is not portable: macOS accepts it, but
+        # FreeBSD/OpenBSD/NetBSD require a template argument and would fail here — before running argv
+        # at all — on hosts this dialect claims to support.
+        lines = [
+            'm=$(mktemp "${TMPDIR:-/tmp}/docker-mcp-server.XXXXXXXX")',
+            # Remove the marker on any exit rather than only the happy path: the early `cd` failure
+            # below returns without reaching the end of the script, and an outer timeout or dropped
+            # channel can kill this shell outright — both of which otherwise strand the file in the
+            # remote temp dir. A SIGKILL still can't be trapped, so this narrows the leak rather than
+            # eliminating it.
+            "trap 'rm -f \"$m\"' EXIT HUP INT TERM",
+        ]
         if cwd is not None:
             lines.append(f"cd {shlex.quote(cwd)} || exit 127")
         lines.extend(
             [
                 f"{shlex.join(argv)} & pid=$!",
-                f'(sleep {seconds}; kill $pid 2>/dev/null && printf t >"$m") >/dev/null 2>&1 & wpid=$!',
+                f'(sleep {seconds}; kill -0 $pid 2>/dev/null && {{ printf t >"$m"; kill $pid 2>/dev/null; }})'
+                " >/dev/null 2>&1 & wpid=$!",
                 "{ wait $pid; ec=$?; } 2>/dev/null",
                 "{ kill $wpid; wait $wpid; } 2>/dev/null",
                 f'[ -s "$m" ] && ec={_REMOTE_TIMEOUT_EXIT_CODE}',
-                'rm -f "$m"',
                 "exit $ec",
             ]
         )
@@ -681,12 +730,13 @@ def exec_remote(
     if transport is None:
         raise RuntimeError("SSH transport is not connected.")
     channel = transport.open_session()
+    started = time.monotonic()
     try:
         channel.exec_command(command)
         stdout, stderr, truncated = _drain_exec_channel(
             channel,
             max_output_bytes=max_output_bytes,
-            deadline=time.monotonic() + timeout + _REMOTE_KILL_GRACE_SECONDS,
+            deadline=started + timeout + _REMOTE_KILL_GRACE_SECONDS,
             argv=argv,
             timeout=timeout,
         )
@@ -694,7 +744,7 @@ def exec_remote(
     finally:
         channel.close()
 
-    if returncode == _REMOTE_TIMEOUT_EXIT_CODE:
+    if _is_remote_timeout(returncode, time.monotonic() - started, timeout):
         raise subprocess.TimeoutExpired(cmd=list(argv), timeout=timeout, output=stdout, stderr=stderr)
     return RemoteExecResult(returncode=returncode, stdout=stdout, stderr=stderr, truncated=truncated)
 
