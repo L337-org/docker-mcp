@@ -7,12 +7,13 @@
 # (`-T`, `--no-follow`) so they can't block the MCP server. To stream logs or
 # attach, use the host CLI directly.
 #
-# Every subcommand reads its Compose file from a working directory, so with no local compose plugin
-# and an ssh:// target the remote-exec fallback has to *stage* that directory on the far host before
-# running there (`_cli.py:remote_stage_and_exec`). Consequences worth knowing: the whole directory is
-# copied (nothing can tell which files a Compose file references, so an oversized one is refused with
-# a limit error), registry credentials come from the remote user's `~/.docker/config.json`, and
-# `compose_cp` is refused outright because its host side is a local path with nothing to stage it to.
+# Every subcommand but `compose_list` reads its Compose file from a working directory (that one asks
+# the daemon), so with no local compose plugin and an ssh:// target the remote-exec fallback has to
+# *stage* that directory on the far host before running there (`_cli.py:remote_stage_and_exec`);
+# `compose_list` takes the exec-only path. Consequences worth knowing: the whole directory is copied
+# (nothing can tell which files a Compose file references, so an oversized one is refused with a limit
+# error), registry credentials come from the remote user's `~/.docker/config.json`, and `compose_cp` is
+# refused outright because its host side is a local path with nothing to stage it to.
 
 from typing import Literal
 
