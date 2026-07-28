@@ -705,6 +705,11 @@ def test_buildx_build_leaves_non_path_composite_values_alone(tmp_path):
         ({"cache_to": ["type=local,dest=/tmp/cache"]}, "cache_to="),
         ({"cache_from": ["type=local,src=/tmp/cache"]}, "cache_from="),
         ({"ssh": ["default"]}, "ssh="),
+        # The stdout exemption is `output`-only: a cache has no stdout form, so "-" is just a path
+        # named "-" on the remote host — and for cache_from a missing import is non-fatal, i.e. a
+        # silently uncached build.
+        ({"cache_to": ["type=local,dest=-"]}, "cache_to="),
+        ({"cache_from": ["type=local,src=-"]}, "cache_from="),
     ],
 )
 def test_buildx_build_refuses_flags_that_would_resolve_on_the_remote_host(tmp_path, kwargs, needle):
@@ -726,7 +731,9 @@ def test_buildx_build_refuses_flags_that_would_resolve_on_the_remote_host(tmp_pa
 
 
 def test_buildx_build_allows_a_registry_output_and_stdout_dest(tmp_path):
-    # Only a *filesystem* dest is refused: `dest=-` is stdout, captured identically on both paths.
+    # `dest=-` on `output` is stdout, captured identically on both paths — and buildx itself rejects it
+    # for exporters where it makes no sense ("dest cannot be stdout for local exporter", verified), so
+    # this needs no exporter allow-list of our own.
     context = tmp_path / "ctx"
     context.mkdir()
     session = _FakeSession()
@@ -754,3 +761,29 @@ def test_buildx_build_uses_the_local_cli_when_it_can(tmp_path):
     # The refusals are remote-only: locally these flags work exactly as before.
     assert "--output" in run.call_args.args[0]
     assert "--ssh" in run.call_args.args[0]
+
+
+def test_buildx_build_refusals_name_the_consequence_for_that_flag(tmp_path):
+    """
+    One shared message for three flags was wrong: nothing is *written* for `cache_from`, and "deleted
+    when the call returns" describes only the output case. Each refusal now explains its own failure.
+    """
+    context = tmp_path / "ctx"
+    context.mkdir()
+    session = _FakeSession()
+    messages = {}
+    for flag, kwargs in (
+        ("output", {"output": ["type=local,dest=out"]}),
+        ("cache_to", {"cache_to": ["type=local,dest=/tmp/c"]}),
+        ("cache_from", {"cache_from": ["type=local,src=/tmp/c"]}),
+    ):
+        with contextlib.ExitStack() as stack:
+            for patcher in _remote_build(session):
+                stack.enter_context(patcher)
+            with pytest.raises(RuntimeError) as excinfo:
+                buildx_build(str(context), host="prod", **kwargs)
+        messages[flag] = str(excinfo.value)
+    assert "deleted when the call returns" in messages["output"]
+    assert "nothing later reads it" in messages["cache_to"]
+    assert "silently run uncached" in messages["cache_from"]
+    assert "written" not in messages["cache_from"]  # nothing is written on an import

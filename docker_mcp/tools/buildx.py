@@ -139,7 +139,11 @@ def _refuse_flags_that_resolve_on_the_wrong_host(
     forwarding is not requested). Each of those either loses work or changes the build silently, which
     is worse than not running.
 
-    `dest=-` is allowed through: that is stdout, which the result captures the same way on both paths.
+    `dest=-` is exempt for `output` **only**: that is stdout, which the result captures identically on
+    both paths, and buildx rejects it for the exporters where it makes no sense (verified:
+    `--output type=local,dest=-` fails with "dest cannot be stdout for local exporter"), so no
+    exporter allow-list is needed here. A cache has no stdout form, so any `dest=`/`src=` on the cache
+    flags is refused whatever its value.
 
     args:
         output - `--output` specs
@@ -148,22 +152,44 @@ def _refuse_flags_that_resolve_on_the_wrong_host(
         ssh - `--ssh` specs
     raises: RuntimeError - any of the above is present
     """
-    for flag, specs, key in (
-        ("output", output, "dest"),
-        ("cache_to", cache_to, "dest"),
-        ("cache_from", cache_from, "src"),
-    ):
+    checks = (
+        (
+            "output",
+            output,
+            "dest",
+            True,
+            "the image or archive would be written into a temporary directory on that host that is deleted "
+            "when the call returns. Push to a registry (`push=True`, or a `type=registry` output) instead",
+        ),
+        (
+            "cache_to",
+            cache_to,
+            "dest",
+            False,
+            "the cache would be written to that host's disk rather than yours, where nothing later reads it. "
+            "Export to a registry (`type=registry,ref=…`) instead",
+        ),
+        (
+            "cache_from",
+            cache_from,
+            "src",
+            False,
+            "the cache would be read from that host, and a cache import that isn't there is *non-fatal* to "
+            "BuildKit — so the build would silently run uncached rather than fail. Import from a registry "
+            "(`type=registry,ref=…`) instead",
+        ),
+    )
+    for flag, specs, key, stdout_exempt, consequence in checks:
         for spec in specs or []:
             value = _spec_component(spec, key)
-            if value is not None and value != "-":
-                raise RuntimeError(
-                    f"buildx_build cannot honour {flag}={spec!r} against this host: this server has no local "
-                    f"buildx plugin, so the build runs on the target host over SSH and {key}={value!r} would "
-                    f"resolve on *that* machine — a build output would be written into a temporary directory "
-                    f"that is deleted when the call returns, and a cache path would be read from or written to "
-                    f"the wrong disk. Use a registry-backed alternative (`--push`, or a `type=registry` cache), "
-                    f"or run the build on a host with a local docker CLI."
-                )
+            if value is None or (stdout_exempt and value == "-"):
+                continue
+            raise RuntimeError(
+                f"buildx_build cannot honour {flag}={spec!r} against this host: this server has no local "
+                f"buildx plugin, so the build runs on the target host over SSH and {key}={value!r} would "
+                f"resolve on *that* machine — {consequence}, or run the build on a host with a local "
+                f"docker CLI."
+            )
     if ssh:
         raise RuntimeError(
             f"buildx_build cannot honour ssh={ssh!r} against this host: this server has no local buildx plugin, "
