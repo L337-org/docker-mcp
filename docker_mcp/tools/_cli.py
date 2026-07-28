@@ -16,7 +16,7 @@ from collections.abc import Iterator, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from docker_mcp._hosts import is_multi as _is_multi, resolve as _resolve_host
+from docker_mcp._hosts import is_multi as _is_multi, is_ssh_url, resolve as _resolve_host
 from docker_mcp.tools._ssh_proxy import (
     RemoteExecResult,
     RemoteStagingSession,
@@ -193,7 +193,7 @@ def run_docker(
         env.update(extra_env)
     creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0
     with contextlib.ExitStack() as stack:
-        if env.get("DOCKER_HOST", "").startswith("ssh://"):
+        if is_ssh_url(env.get("DOCKER_HOST")):
             # Bound the paramiko connect/banner/auth phases to this call's own timeout — they run
             # before subprocess.run(timeout=timeout) below, so without this an unreachable or
             # filtered ssh:// host could hang here indefinitely regardless of the caller's timeout.

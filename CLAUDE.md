@@ -146,6 +146,8 @@ Each `docker_mcp/tools/<module>.py` has a corresponding `tests/test_<module>.py`
 
 `tests/test_docs.py` is not tied to a module: it checks the repo's own prose, today that any line describing the CLI-backed surface enumerates a complete set of those domains (derived from `server.py`'s `_CLI_DOMAINS` / `_REMOTE_EXEC_DOMAINS`, so adding a domain fails until the docs name it). It exists because that one list was wrong in six places across a single feature branch; a line that legitimately carries a marker phrase without enumerating gets a recorded exemption there rather than a looser rule.
 
+`tests/integration/test_remote_exec.py` is the exception to needing a daemon: it exercises the SSH remote-exec fallback against a real remote host and is gated on `DOCKER_MCP_TEST_SSH_HOST=ssh://user@host` (deliberately *not* in the `DOCKER_MCP_SERVER_*` namespace — it configures the test, not the server), overriding the autouse daemon fixture and skipping cleanly when unset. Everything it runs remotely is read-only.
+
 `tests/integration/` holds tests that hit a real Docker daemon. `tests/integration/conftest.py` auto-marks every test in the directory with `@pytest.mark.integration` (excluded by default via `addopts = "-m 'not integration'"` in `pyproject.toml`) and provides an autouse `skip_if_no_daemon` fixture so the suite skips cleanly when no daemon is reachable. Run with `uv run pytest -m integration`.
 
 ### Container image (`Dockerfile`)

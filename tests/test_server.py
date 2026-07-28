@@ -2,6 +2,7 @@ import inspect
 import json
 import subprocess
 import sys
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -523,6 +524,30 @@ def test_instructions_mention_the_remote_exec_fallback_only_for_domains_that_hav
     context_only = build_instructions(registered_domains={"context", "containers"})
     assert "CLI-backed domains (context)" in context_only
     assert "ssh://" not in context_only
+
+
+def test_remote_exec_domains_match_the_modules_that_implement_the_fallback():
+    """
+    `_REMOTE_EXEC_DOMAINS` drives what the router advertises, and it is hand-maintained — so a domain
+    that wires the fallback without being added here would run remotely while the router still promised
+    a hard failure. Derived from the modules that actually call `should_remote_exec`, so the tuple cannot
+    drift from the code either way.
+    """
+    import pkgutil
+
+    import docker_mcp.tools as tools_package
+    from docker_mcp.server import _REMOTE_EXEC_DOMAINS
+
+    implementing = set()
+    for module in pkgutil.iter_modules(tools_package.__path__):
+        source = (Path(tools_package.__path__[0]) / f"{module.name}.py").read_text(encoding="utf-8")
+        # `_cli.py` defines the helper rather than consuming it, and is not a domain.
+        if "should_remote_exec(" in source and not module.name.startswith("_"):
+            implementing.add(module.name)
+    assert implementing == set(_REMOTE_EXEC_DOMAINS), (
+        f"modules calling should_remote_exec: {sorted(implementing)}; "
+        f"_REMOTE_EXEC_DOMAINS: {sorted(_REMOTE_EXEC_DOMAINS)} — the router advertises the latter"
+    )
 
 
 def test_instructions_default_to_the_live_registered_surface():
