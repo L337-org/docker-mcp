@@ -75,6 +75,12 @@ def _run_stack(
                 args,
                 cwd=cwd,
                 timeout=timeout,
+                # Scanning the whole argv is safe *here*, unlike compose's `-f` (see
+                # `compose._global_file_values`, where an appended container command can contain one):
+                # `stack deploy` appends no user-supplied argv, and its only caller-controlled tokens
+                # are the stack name — which `safe_positional` refuses if it starts with '-' — and
+                # `--filter key=value` pairs, which always contain '='. Nothing but a real flag can
+                # equal "-c".
                 path_values=flag_values(args, "-c"),
             )
         return remote_exec_cli(host, args, timeout=timeout)

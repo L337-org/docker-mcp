@@ -20,7 +20,6 @@ from typing import Literal
 from docker_mcp.server import tool
 from docker_mcp.tools._cli import (
     CliResult,
-    flag_values,
     parse_json_or_ndjson,
     raise_on_cli_failure,
     remote_exec_cli,
@@ -61,6 +60,34 @@ def _global_args(
     return args
 
 
+# The flags `_global_args` emits, all of which take a separate value token. Used to walk exactly that
+# prefix back off an argv and no further.
+_GLOBAL_FLAGS = ("-f", "--project-name", "--profile")
+
+
+def _global_file_values(subcommand_args: list[str]) -> list[str]:
+    """
+    The `-f` values in the argv's *global prefix* — the local paths a compose call names.
+
+    Scanning the whole argv for `-f` would be wrong, not merely loose: `compose_run` and `compose_exec`
+    append an arbitrary container command, so `command=["python", "-f", "script.py"]` would present
+    `script.py` as a compose file, and on the remote path an absolute one would be uploaded and the
+    caller's argument rewritten. Only `_global_args` produces genuine `-f` values, always as a
+    flag/value prefix, so walking pairs from the start and stopping at the first token that is not a
+    global flag recovers exactly that list — the subcommand name terminates it.
+
+    args: subcommand_args - the argv built by a tool, without the leading `compose`
+    returns: list[str] - the values following each `-f` in the global prefix
+    """
+    values: list[str] = []
+    index = 0
+    while index + 1 < len(subcommand_args) and subcommand_args[index] in _GLOBAL_FLAGS:
+        if subcommand_args[index] == "-f":
+            values.append(subcommand_args[index + 1])
+        index += 2
+    return values
+
+
 def _run_compose(subcommand_args: list[str], *, cwd: str | None, timeout: float, host: str | None = None) -> CliResult:
     """
     Run `docker compose <args...>`, staging the working directory when the CLI has to run remotely.
@@ -79,9 +106,7 @@ def _run_compose(subcommand_args: list[str], *, cwd: str | None, timeout: float,
             ["compose", *subcommand_args],
             cwd=cwd,
             timeout=timeout,
-            # `_global_args` is the only producer of `-f` here, so scanning the argv recovers exactly
-            # the caller's `files` list.
-            path_values=flag_values(subcommand_args, "-f"),
+            path_values=_global_file_values(subcommand_args),
         )
     require_plugin("compose")
     return run_docker(["compose", *subcommand_args], cwd=cwd, timeout=timeout, host=host)

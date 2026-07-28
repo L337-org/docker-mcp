@@ -620,3 +620,32 @@ def test_compose_cp_still_works_on_the_local_path():
     ):
         compose_cp("web:/etc/app.conf", "/tmp/app.conf")
     assert run.call_args.args[0][-2:] == ["web:/etc/app.conf", "/tmp/app.conf"]
+
+
+def test_compose_run_command_tokens_are_not_mistaken_for_compose_files():
+    """
+    `compose_run` / `compose_exec` append an arbitrary container command, so a `-f` inside *that* is not
+    a compose file: `command=["python", "-f", "/etc/hosts"]` must not make the remote path upload
+    /etc/hosts and rewrite the argument. Only the global prefix `_global_args` emits counts.
+    """
+    with (
+        patch("docker_mcp.tools.compose.should_remote_exec", return_value=True),
+        patch("docker_mcp.tools.compose.remote_stage_and_exec", return_value=_ok("")) as staged,
+    ):
+        compose_run(
+            service="app",
+            command=["python", "-f", "/etc/hosts"],
+            project_dir="/srv/app",
+            files=["docker-compose.yml"],
+            host="prod",
+        )
+    assert staged.call_args.kwargs["path_values"] == ["docker-compose.yml"]
+
+
+def test_compose_exec_command_tokens_are_not_mistaken_for_compose_files():
+    with (
+        patch("docker_mcp.tools.compose.should_remote_exec", return_value=True),
+        patch("docker_mcp.tools.compose.remote_stage_and_exec", return_value=_ok("")) as staged,
+    ):
+        compose_exec(service="app", command=["tar", "-f", "/etc/hosts", "-x"], host="prod")
+    assert staged.call_args.kwargs["path_values"] == []
