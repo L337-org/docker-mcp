@@ -464,6 +464,12 @@ def _is_remote_timeout(returncode: int, elapsed: float, timeout: float) -> bool:
 # wrapper never ran or the remote is wedged, so the call can't hang indefinitely.
 _REMOTE_KILL_GRACE_SECONDS = 10.0
 
+# How long the remote watchdog waits after SIGTERM before escalating to SIGKILL. SIGTERM goes first so
+# the docker CLI can shut down cleanly; the escalation is what makes the timeout an actual guarantee,
+# since SIGTERM alone can be trapped or ignored. Kept well inside `_REMOTE_KILL_GRACE_SECONDS` so the
+# escalation has time to land before `exec_remote`'s own local deadline gives up on the channel.
+_REMOTE_TERM_GRACE_SECONDS = 3
+
 # Idle poll interval while draining a remote command's output. Deliberately a poll rather than
 # select(): paramiko Channels are select-able only via fileno(), which both couples this loop to a
 # real channel object and allocates an OS pipe per call — a plain readiness poll keeps the loop
@@ -553,10 +559,20 @@ class PosixDialect:
         for the remainder of the timeout window — which a consumer waiting for EOF experiences as a
         fast command hanging for its full timeout. The watchdog has no legitimate use for them anyway.
 
-        Known and accepted: the kill is SIGTERM to the direct child only (no process-group signal, no
-        SIGKILL escalation) — the same semantics `subprocess.run(timeout=...)` already has locally,
-        so this is parity rather than a new gap. A command that exits on its own at the exact instant
-        the watchdog fires may be attributed either way; the window is microseconds wide.
+        Termination targets the direct child only, never its process group. That much *is* parity with
+        the local path: `subprocess.run(timeout=...)` calls `Popen.kill()`, which is
+        `os.kill(self.pid, ...)` on POSIX — the child, not the group — so a process the command itself
+        forked survives a timeout there too (see `_drain_exec_channel` for why that shapes completion
+        detection).
+
+        The signal is *not* parity, and this used to claim it was. Locally the timeout sends SIGKILL,
+        which cannot be caught; here SIGTERM goes first so the docker CLI can clean up, then SIGKILL
+        after `_REMOTE_TERM_GRACE_SECONDS`. Without that escalation a command which traps or ignores
+        SIGTERM would outlive its own timeout — the caller would still be released, by the local
+        deadline in `exec_remote`, while the remote process kept running.
+
+        A command that exits on its own at the exact instant the watchdog fires may be attributed
+        either way; the window is microseconds wide.
 
         args:
             argv - the remote command as an argv list; joined with shell quoting, never concatenated
@@ -598,7 +614,12 @@ class PosixDialect:
                 # no controlling terminal, which is exactly what an SSH exec channel provides.
                 f'(i=0; while [ "$i" -lt {seconds} ]; do sleep 1;'
                 " kill -0 $pid 2>/dev/null || exit 0; i=$((i+1)); done;"
-                ' printf t >"$m"; kill $pid 2>/dev/null) >/dev/null 2>&1 &',
+                ' printf t >"$m"; kill $pid 2>/dev/null;'
+                # SIGTERM first so the docker CLI can clean up, then SIGKILL, so a command that traps
+                # or ignores SIGTERM cannot outlive its own timeout. `kill -9` on an already-dead pid
+                # is a harmless no-op, so this needs no liveness re-check.
+                f" sleep {_REMOTE_TERM_GRACE_SECONDS}; kill -9 $pid 2>/dev/null)"
+                " >/dev/null 2>&1 &",
                 "{ wait $pid; ec=$?; } 2>/dev/null",
                 f'[ -s "$m" ] && ec={_REMOTE_TIMEOUT_EXIT_CODE}',
                 "exit $ec",

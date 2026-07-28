@@ -26,6 +26,7 @@ from docker_mcp.tools._ssh_proxy import (
     _is_remote_timeout,
     RemoteDialectKind,
     _clear_dialect_cache,
+    _REMOTE_TERM_GRACE_SECONDS,
     _REMOTE_TIMEOUT_EXIT_CODE,
     detect_remote_dialect,
     exec_remote,
@@ -200,6 +201,19 @@ def test_watchdog_self_terminates_rather_than_being_killed():
     assert "kill -0 $pid 2>/dev/null || exit 0" in watchdog  # gives up once the command is gone
 
 
+def test_watchdog_escalates_from_sigterm_to_sigkill():
+    """
+    SIGTERM first so the docker CLI can clean up, then SIGKILL so the timeout is a real guarantee.
+
+    The local path is not a precedent for stopping at SIGTERM, as this once claimed: CPython's
+    `subprocess.run(timeout=...)` calls `Popen.kill()`, which is SIGKILL on POSIX. Without escalation
+    a command that traps or ignores SIGTERM outlives its own timeout while the caller is released.
+    """
+    watchdog = next(line for line in _script_body(["true"], timeout=5).splitlines() if "printf t" in line)
+    assert watchdog.index("kill $pid") < watchdog.index("kill -9 $pid"), watchdog
+    assert f"sleep {_REMOTE_TERM_GRACE_SECONDS}; kill -9 $pid" in watchdog
+
+
 def test_timeout_is_reported_via_a_marker_not_the_signal_status():
     """A marker written only when the command was alive at the deadline, so a timeout is
     distinguishable from any other non-zero exit (143 would be indistinguishable from any SIGTERM
@@ -219,7 +233,7 @@ def test_marker_is_written_before_the_kill_not_after():
     """
     body = _script_body(["true"], timeout=5)
     watchdog = next(line for line in body.splitlines() if "printf t" in line)
-    assert watchdog.index('printf t >"$m"') < watchdog.index("kill $pid 2>/dev/null)"), watchdog
+    assert watchdog.index('printf t >"$m"') < watchdog.index("kill $pid"), watchdog
     # Guarded on the command still being alive, so a command that already exited is not marked.
     assert "kill -0 $pid" in watchdog
 
@@ -477,6 +491,26 @@ def test_real_shell_honours_cwd_and_refuses_an_unreachable_one():
     refused = _run_script(["echo", "must-not-run"], timeout=30, cwd="/no-such-dir-zzz")
     assert refused.returncode == 127
     assert "must-not-run" not in refused.stdout
+
+
+@pytestmark_posix
+def test_real_shell_kills_a_command_that_ignores_sigterm():
+    """
+    The case the old "same as subprocess.run" claim got wrong.
+
+    A command trapping SIGTERM survives the watchdog's first signal. Locally that cannot happen —
+    `subprocess.run` uses SIGKILL — so without escalation the remote path had the weaker guarantee:
+    the caller would be released by the local deadline while the remote command kept running.
+    """
+    # `trap '' TERM` ignores SIGTERM outright; only SIGKILL can end this.
+    result = _run_script(
+        ["sh", "-c", "trap '' TERM; while :; do sleep 1; done"],
+        timeout=1,
+        capture_timeout=30,
+    )
+    # Killed by SIGKILL (128+9) rather than exiting on its own, and still attributed as a timeout via
+    # the marker the watchdog wrote before signalling.
+    assert result.returncode in (_REMOTE_TIMEOUT_EXIT_CODE, 137), result.returncode
 
 
 @pytestmark_posix
