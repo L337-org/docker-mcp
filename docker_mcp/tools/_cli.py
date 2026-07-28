@@ -12,7 +12,7 @@ import subprocess
 import sys
 import threading
 import time
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -363,6 +363,7 @@ def remote_stage_and_exec(
     cwd: Path | str | None = None,
     timeout: float = DEFAULT_TIMEOUT_SECONDS,
     path_values: Sequence[str] = (),
+    stage_cwd: bool = True,
     stdin: bytes | None = None,
     extra_env: dict[str, str] | None = None,
 ) -> CliResult:
@@ -394,12 +395,18 @@ def remote_stage_and_exec(
                   has its own bounds, so total wall clock exceeds this by the upload time.
         path_values - values in `args` that name local paths, so they can be reconciled as above.
                       Matched against `args` by whole token.
+        stage_cwd - True (the default) for a command that reads files from a working directory. False
+                    for one whose only local inputs are the paths it names (`buildx create --config`,
+                    `buildx imagetools create --file`): nothing is staged as a working directory, the
+                    remote command gets no cwd, and every `path_values` entry that exists locally is
+                    staged individually. `cwd` is then used only to resolve relative ones, matching
+                    where the local subprocess would have resolved them.
         stdin - must be None/empty: the remote channel carries no input
         extra_env - must be None/empty: the child's environment is the remote login shell's
     returns: CliResult - exit status, decoded stdout/stderr, and whether the byte cap truncated them
     raises:
-        ValueError - `cwd` is not a directory, the payload exceeds the staging limits, or
-                     `stdin`/`extra_env` was supplied
+        ValueError - `cwd` is not a directory (when `stage_cwd`), the payload exceeds the staging
+                     limits, or `stdin`/`extra_env` was supplied
         RuntimeError - `host` is not an ssh:// host, the connection failed, the remote is not POSIX, or
                        staging failed (including an SFTP subsystem on a different filesystem)
         subprocess.TimeoutExpired - the command exceeded `timeout`
@@ -424,24 +431,66 @@ def remote_stage_and_exec(
                 f"directory is unavailable ({exc}), and with no explicit working directory that is what "
                 f"would be copied over. Pass one explicitly."
             ) from exc
-    if not local_cwd.is_dir():
+    if stage_cwd and not local_cwd.is_dir():
         # Two different mistakes reach here — a missing path and a file passed where a directory belongs —
-        # and saying which one it is saves the caller a round trip.
+        # and saying which one it is saves the caller a round trip. Only checked when the directory is
+        # actually being copied: with `stage_cwd=False` it is just the base for relative path values, and
+        # a missing one simply leaves them unresolved for the remote CLI to report.
         detail = "it exists but is not a directory" if local_cwd.exists() else "nothing exists at that path"
         raise ValueError(
             f"Cannot run `docker {args[0] if args else ''}` on the remote host: {str(local_cwd)!r} is not a usable "
             f"working directory on this host ({detail}), and it is what would be copied over."
         )
     with remote_staging_session(url, timeout=timeout) as session:
-        remote_cwd = session.stage_tree(local_cwd)
-        staged_args = _reconcile_path_tokens(session, args, path_values, base=local_cwd)
+        staged_tree = session.stage_tree(local_cwd) if stage_cwd else None
+        staged_args = _reconcile_path_tokens(session, args, path_values, base=local_cwd, staged_tree=staged_tree)
         result = session.exec(
             ["docker", *staged_args],
-            cwd=remote_cwd,
+            cwd=staged_tree,
             timeout=timeout,
             max_output_bytes=MAX_CLI_OUTPUT_BYTES,
         )
     return _as_cli_result(result)
+
+
+@contextlib.contextmanager
+def remote_cli_session(host: str | None, *, timeout: float) -> Iterator[RemoteStagingSession]:
+    """
+    Open a staging session for a tool whose inputs need bespoke handling, and run it yourself.
+
+    `remote_stage_and_exec` covers the common shape: a working directory plus whole-token path
+    arguments. `buildx_build` fits neither half of that — its context needs `.dockerignore`-aware
+    tarring, and its `--build-context` / `--secret` values are composite `key=value` tokens whose path
+    lives inside them — so it drives a session directly and calls `run_in_session` when the rewriting
+    is done. Reach for this only when the generic backend genuinely cannot express the staging.
+
+    args:
+        host - configured host label, or None for the default host; must resolve to an ssh:// URL
+        timeout - bound on the SSH handshake and dialect probe
+    returns: Iterator[RemoteStagingSession] - the session, valid inside the `with` block only
+    raises: RuntimeError - not an ssh:// host, connection failure, non-POSIX remote, or staging setup
+    """
+    with remote_staging_session(_ssh_url_for(host, []), timeout=timeout) as session:
+        yield session
+
+
+def run_in_session(
+    session: RemoteStagingSession, args: list[str], *, timeout: float, cwd: str | None = None
+) -> CliResult:
+    """
+    Run `docker <args...>` in an open staging session, in `run_docker`'s result shape.
+
+    args:
+        session - a session from `remote_cli_session`
+        args - the docker argv *without* the binary
+        timeout - seconds the remote watchdog allows the command
+        cwd - remote directory to run in, typically one a `stage_*` call returned
+    returns: CliResult - exit status, decoded stdout/stderr, and whether the byte cap truncated them
+    raises: subprocess.TimeoutExpired - the command exceeded `timeout`
+    """
+    return _as_cli_result(
+        session.exec(["docker", *args], cwd=cwd, timeout=timeout, max_output_bytes=MAX_CLI_OUTPUT_BYTES)
+    )
 
 
 def _reject_unforwardable(stdin: bytes | None, extra_env: dict[str, str] | None) -> None:
@@ -526,15 +575,21 @@ def flag_values(args: Sequence[str], flag: str) -> list[str]:
 
 
 def _reconcile_path_tokens(
-    session: RemoteStagingSession, args: list[str], path_values: Sequence[str], *, base: Path
+    session: RemoteStagingSession,
+    args: list[str],
+    path_values: Sequence[str],
+    *,
+    base: Path,
+    staged_tree: str | None,
 ) -> list[str]:
     """
     Rewrite path-naming tokens in `args` so they resolve on the remote host.
 
-    Three cases, in order: a relative path inside the staged tree needs nothing (the remote cwd *is*
-    that tree); an absolute path inside it is rewritten relative, because the local absolute path means
-    nothing remotely even though the file was copied; anything else is staged on its own and rewritten
-    to where it landed.
+    With a staged tree, three cases in order: a relative path inside it needs nothing (the remote cwd
+    *is* that tree); an absolute path inside it is rewritten relative, because the local absolute path
+    means nothing remotely even though the file was copied; anything else is staged on its own and
+    rewritten to where it landed. With `staged_tree=None` there is no tree to be inside, so every value
+    that exists locally is staged individually.
 
     A value naming nothing that exists locally is left alone in every one of those cases, including the
     in-tree one. There is nothing to reconcile it with, and rewriting it would make the remote CLI
@@ -549,7 +604,8 @@ def _reconcile_path_tokens(
         session - the staging session to copy extra paths through
         args - the docker argv to rewrite
         path_values - the values in `args` that name local paths
-        base - the local directory that was staged as the remote cwd
+        base - the local directory relative values resolve against
+        staged_tree - the remote path `base` was staged to, or None when it was not staged
     returns: list[str] - `args` with path tokens reconciled
     """
     replacements: dict[str, str] = {}
@@ -568,7 +624,11 @@ def _reconcile_path_tokens(
             continue
         if not absolute.exists():
             continue  # nothing to reconcile; both backends then report the path the caller passed
-        if inside:
+        if staged_tree is None:
+            # No working directory was staged, so "inside the tree" does not exist as a case: whatever
+            # the value names has to be copied on its own to be readable remotely.
+            replacements[value] = session.stage_tree(absolute) if absolute.is_dir() else session.stage_file(absolute)
+        elif inside:
             relative = absolute.resolve().relative_to(resolved_base).as_posix()
             if relative != value:
                 replacements[value] = relative

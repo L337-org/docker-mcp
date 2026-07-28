@@ -503,6 +503,21 @@ def test_instructions_drop_cli_and_swarm_caveats_when_those_domains_are_absent()
     assert "scout" not in text
 
 
+def test_instructions_mention_the_remote_exec_fallback_only_for_domains_that_have_it():
+    """
+    The fallback changes which host a call runs on — its credentials, its filesystem — so it belongs in
+    the always-in-context router. `context` is the one CLI-backed domain without it (its tools manage
+    *this* host's context registry), so a surface of only `context` must not advertise it.
+    """
+    text = build_instructions(registered_domains={"compose", "context"})
+    assert "against an `ssh://` host, compose then run on that host" in text
+    assert "context then run" not in text  # named only where the fallback exists
+
+    context_only = build_instructions(registered_domains={"context", "containers"})
+    assert "CLI-backed domains (context)" in context_only
+    assert "ssh://" not in context_only
+
+
 def test_instructions_default_to_the_live_registered_surface():
     # No argument -> reads _tool_registry; with everything registered, every domain blurb appears.
     # _NO_DOMAIN_TOOLS (domain=None) are excluded — they never get a per-domain router line.

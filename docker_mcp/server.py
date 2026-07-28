@@ -395,6 +395,10 @@ _DOMAIN_BLURBS: dict[str, str] = {
 
 # CLI- and swarm-tied caveats are only worth emitting when the relevant domains actually registered.
 _CLI_DOMAINS = ("compose", "stack", "buildx", "scout", "context")
+# The CLI-backed domains that fall back to running on an ssh:// host when no local CLI/plugin is
+# installed. `context` is absent deliberately and permanently: its tools manage *this* host's CLI
+# context registry, which a remote host knows nothing about.
+_REMOTE_EXEC_DOMAINS = ("compose", "stack", "buildx", "scout")
 _SWARM_DOMAINS = ("swarm", "services", "nodes", "secrets", "configs")
 
 
@@ -432,10 +436,19 @@ def build_instructions(registered_domains: set[str] | None = None) -> str:
         caveats.append("`list_*(managed_only=True)` returns only resources this server created (provenance-labeled).")
     cli_present = [d for d in _CLI_DOMAINS if d in present]
     if cli_present:
-        caveats.append(
+        caveat = (
             f"CLI-backed domains ({', '.join(cli_present)}) shell out to the docker CLI/plugins; those "
             "calls raise if the CLI or a required plugin isn't installed."
         )
+        # Only worth the tokens when a domain that actually has the fallback is registered.
+        fallback_present = [d for d in _REMOTE_EXEC_DOMAINS if d in present]
+        if fallback_present:
+            caveat += (
+                f" Exception: against an `ssh://` host, {', '.join(fallback_present)} then run on that host "
+                "instead — its CLI, its registry credentials, and local files (a compose project dir, a "
+                "build context) copied over, so keep them small."
+            )
+        caveats.append(caveat)
     if present & set(_SWARM_DOMAINS):
         caveats.append("Swarm-family tools require a swarm manager node.")
     if _hosts.is_multi():
