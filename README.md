@@ -10,7 +10,7 @@ More than just a fully featured [MCP](https://modelcontextprotocol.io) server th
 
 For simple cases, you can just install and go with no configuration required - once loaded it will discover your local Docker socket and expose the full command surface to your AI agent. For more advanced users it can [manage multiple Docker daemons](#managing-several-daemons), e.g. both your local dev environment and also a remote production environment [over TCP, TLS or SSH](#talking-to-a-remote-daemon) in a single session. It can also be configured to mark some daemons as read-only, so you can monitor them without the risk of making accidental changes.
 
-It can even be run on a machine [without Docker installed](#no-local-docker) and manage remote daemons over SSH, TLS or TCP (some features require SSH).  The AI itself does not require shell or ssh access.
+It can even be run on a machine [without Docker installed](#no-local-docker) and manage remote daemons over SSH, TLS or TCP (some features require SSH).  The AI itself does not require shell or SSH access.
 
 The MCP server also exposes things like logs and stats as resources so that you can monitor and triage, enabling you to [answer questions](#example-prompts) like 'why did my container crash?', 'what is the state of my swarm?', 'am I suffering memory pressure?', 'what is the disk usage of my volumes?', 'what differences are there between my test and production systems?', and more...
 
