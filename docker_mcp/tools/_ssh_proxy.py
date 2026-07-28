@@ -1,22 +1,33 @@
-# Per-call localhost TCP proxy that bridges CLI-backed tools (Compose, Buildx, Context, Scout) to
-# an ssh:// daemon through paramiko, the same pure-Python transport docker-py already uses for the
-# SDK-backed tools. This lets the `docker` CLI authenticate with our paramiko credentials instead
-# of shelling out to the system `ssh` client, so both tool families behave identically over SSH.
+# SSH plumbing shared by every CLI-backed tool (Compose, Stack, Buildx, Context, Scout), built on
+# paramiko — the same pure-Python transport docker-py already uses for the SDK-backed tools, so both
+# tool families authenticate identically over SSH with no system `ssh` client involved.
 #
-# Mechanism (see docker-py's docker/transport/sshconn.py): both the docker CLI and docker-py run
-# `docker system dial-stdio` over an SSH session channel — that command bridges the remote
-# /var/run/docker.sock to stdin/stdout, one channel per API connection. docker-py opens those
-# channels directly on its own paramiko transport; here we accept plain TCP connections from the
-# `docker` CLI on 127.0.0.1 and bridge each one to its own `dial-stdio` channel on a single shared
-# paramiko connection, full-duplex, until either side closes.
+# Two distinct mechanisms live here, both on top of `connect_ssh_client`:
+#
+# 1. `ssh_proxy_for_docker_host` — a per-call localhost TCP proxy letting a *local* `docker` CLI
+#    drive a remote daemon. Mechanism (see docker-py's docker/transport/sshconn.py): both the docker
+#    CLI and docker-py run `docker system dial-stdio` over an SSH session channel, which bridges the
+#    remote /var/run/docker.sock to stdin/stdout, one channel per API connection. docker-py opens
+#    those channels on its own paramiko transport; here we accept plain TCP connections from the
+#    `docker` CLI on 127.0.0.1 and bridge each to its own `dial-stdio` channel over one shared
+#    paramiko connection, full-duplex, until either side closes.
+#
+# 2. `run_remote_exec` — runs the `docker` CLI *on the remote host itself*, for the fallback where
+#    there is no local `docker` binary (or plugin) to point at a daemon in the first place. Used
+#    only when the local CLI is genuinely unavailable; when it is present, mechanism 1 is unchanged.
 
 import contextlib
+import enum
 import logging
+import math
 import os
+import shlex
 import socket
+import subprocess
 import threading
+import time
 import urllib.parse
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 from types import TracebackType
 from typing import Protocol
@@ -341,5 +352,389 @@ def ssh_proxy_for_docker_host(docker_host: str, *, timeout: float | None = None)
         proxy = SshDialStdioProxy(paramiko_dial_stdio_factory(ssh_client))
         with proxy:
             yield proxy
+    finally:
+        ssh_client.close()
+
+
+# --- remote exec: run the `docker` CLI on the far side of the SSH connection ----------------------
+#
+# The fallback for a machine with no local `docker` binary (or a missing plugin) but SSH access to a
+# real Docker host: instead of driving a local CLI at a remote daemon (the proxy above), run the CLI
+# on the remote host, which — being a Docker host — plausibly already has it.
+
+# Exit status the remote wrapper reports when *it* killed the command for exceeding its timeout.
+# 124 is GNU `timeout`'s convention. It must be distinguishable from the command's own statuses:
+# reporting the killed process's 143 (128+SIGTERM) instead would be indistinguishable from any other
+# SIGTERM death, and would surface a timeout as an ordinary failure while the local subprocess path
+# raises TimeoutExpired for the same event.
+_REMOTE_TIMEOUT_EXIT_CODE = 124
+
+# Extra local slack past the caller's timeout before we give up on the channel ourselves. The remote
+# watchdog should have killed the command and exited by then; this only covers the case where the
+# wrapper never ran or the remote is wedged, so the call can't hang indefinitely.
+_REMOTE_KILL_GRACE_SECONDS = 10.0
+
+# Idle poll interval while draining a remote command's output. Deliberately a poll rather than
+# select(): paramiko Channels are select-able only via fileno(), which both couples this loop to a
+# real channel object and allocates an OS pipe per call — a plain readiness poll keeps the loop
+# trivially fake-able in tests, and at these call rates the wakeups cost nothing measurable.
+_EXEC_POLL_SECONDS = 0.01
+
+
+class RemoteDialectKind(enum.Enum):
+    """
+    Which command-wrapping dialect a remote host needs.
+
+    Only POSIX is implemented. WINDOWS exists so detection can *name* what it found and refuse
+    precisely, rather than mis-running a POSIX script against cmd/PowerShell — and so adding Windows
+    later is one new dialect implementation rather than a redesign.
+    """
+
+    POSIX = "posix"
+    WINDOWS = "windows"
+
+
+# `uname -s` values we accept as POSIX. Matched exactly (lowercased) rather than by "did uname exit
+# 0", because exit status alone has a real false positive: a Windows host whose sshd shell is
+# cmd/PowerShell but which has Git Bash or Cygwin on PATH answers `uname -s` successfully with
+# MINGW64_NT-… , which would classify as POSIX and drop us into a half-working MSYS environment with
+# translated paths. Note WSL reports plain "Linux" and so is (correctly) accepted: sshd running
+# inside a WSL distro is a genuine Linux target, not a Windows one.
+_POSIX_UNAME_VALUES = frozenset({"linux", "darwin", "freebsd", "openbsd", "netbsd", "dragonfly", "sunos", "aix"})
+_NON_POSIX_UNAME_PREFIXES = ("mingw", "msys", "cygwin", "windows")
+
+
+class RemoteDialect(Protocol):
+    """Wraps an argv into a single remote shell command string that self-enforces a timeout."""
+
+    def wrap_with_timeout(self, argv: Sequence[str], *, timeout: float, cwd: str | None = None) -> str: ...
+
+
+class PosixDialect:
+    """
+    Command wrapper for a POSIX remote shell, needing only `sh`, `sleep`, `kill` and `mktemp`.
+
+    Deliberately not GNU coreutils `timeout`, which is absent on macOS/BSD; this runs anywhere with
+    a POSIX shell. Termination is the *remote* side's own responsibility because closing an SSH
+    channel does not portably kill what it started.
+    """
+
+    def wrap_with_timeout(self, argv: Sequence[str], *, timeout: float, cwd: str | None = None) -> str:
+        """
+        Build the remote `sh -c` command that runs `argv` under a self-killing watchdog.
+
+        Two things here are load-bearing and easy to get wrong:
+
+        `cd` is emitted as its **own statement**, never joined to the command with `&&`. In POSIX
+        shell `&` binds looser than `&&`, so `cd X && cmd &` makes the whole AND-list one async job
+        and `$!` becomes the *subshell's* pid — killing that leaves the real `docker` process alive
+        and orphaned to init on every single timeout. Keeping `cd` separate means `$!` is the
+        command itself.
+
+        The watchdog reports `_REMOTE_TIMEOUT_EXIT_CODE` via a marker file written only when its
+        `kill` actually signalled a live process, so a timeout is distinguishable from any other
+        non-zero exit. Testing "is the watchdog still alive?" with `kill -0` instead would be wrong:
+        a watchdog that has fired but not yet been reaped is a zombie whose pid still answers
+        `kill -0`, so real timeouts would be missed.
+
+        Both `wait`s run inside `{ ... } 2>/dev/null` groups to swallow the shell's own asynchronous
+        job-reap notices ("Terminated: 15 ( sleep 30; ...)"), which otherwise land in the *command's*
+        captured stderr and corrupt it — on every fast command, since killing the still-sleeping
+        watchdog is the normal path. The redirect only hides the shell's notice, not the command's own
+        output: the command inherited fd 2 when it started, so its writes are unaffected. A brace
+        group is required rather than a subshell so `ec=$?` assigns in the current shell.
+
+        The watchdog's own stdio is sent to /dev/null so it never holds the command's streams. Killing
+        the watchdog subshell does not reliably kill the `sleep` inside it (same reason `cd X && cmd &`
+        was wrong above), and an orphaned `sleep` still holding those descriptors keeps the stream open
+        for the remainder of the timeout window — which a consumer waiting for EOF experiences as a
+        fast command hanging for its full timeout. The watchdog has no legitimate use for them anyway.
+
+        Known and accepted: the kill is SIGTERM to the direct child only (no process-group signal, no
+        SIGKILL escalation) — the same semantics `subprocess.run(timeout=...)` already has locally,
+        so this is parity rather than a new gap. A command that exits on its own at the exact instant
+        the watchdog fires may be attributed either way; the window is microseconds wide.
+
+        args:
+            argv - the remote command as an argv list; joined with shell quoting, never concatenated
+            timeout - seconds before the remote watchdog kills the command (rounded up, floor 1s)
+            cwd - remote directory to run in; a failure to enter it exits 127 without running argv
+        returns: str - a complete `sh -c '...'` command string for `Channel.exec_command`
+        """
+        seconds = max(1, math.ceil(timeout))
+        lines = ["m=$(mktemp)"]
+        if cwd is not None:
+            lines.append(f"cd {shlex.quote(cwd)} || exit 127")
+        lines.extend(
+            [
+                f"{shlex.join(argv)} & pid=$!",
+                f'(sleep {seconds}; kill $pid 2>/dev/null && printf t >"$m") >/dev/null 2>&1 & wpid=$!',
+                "{ wait $pid; ec=$?; } 2>/dev/null",
+                "{ kill $wpid; wait $wpid; } 2>/dev/null",
+                f'[ -s "$m" ] && ec={_REMOTE_TIMEOUT_EXIT_CODE}',
+                'rm -f "$m"',
+                "exit $ec",
+            ]
+        )
+        return f"sh -c {shlex.quote(chr(10).join(lines))}"
+
+
+_DIALECTS: dict[RemoteDialectKind, RemoteDialect] = {RemoteDialectKind.POSIX: PosixDialect()}
+
+
+def get_dialect(kind: RemoteDialectKind) -> RemoteDialect:
+    """
+    Return the wrapper implementation for a dialect, or refuse if it isn't implemented yet.
+
+    args: kind - the dialect a host was detected as
+    returns: RemoteDialect - the implementation to wrap commands with
+    raises: RuntimeError - for a detected-but-unimplemented dialect (today: WINDOWS)
+    """
+    dialect = _DIALECTS.get(kind)
+    if dialect is None:
+        raise RuntimeError(
+            f"Remote-exec fallback: this host needs the {kind.value!r} command dialect, which is not "
+            f"implemented yet — only POSIX remotes (Linux, macOS/BSD, and sshd running inside WSL) are "
+            f"supported. Install the docker CLI locally to use the local-CLI path against this host "
+            f"instead, or expose the host over a POSIX shell (e.g. run sshd inside the WSL distro)."
+        )
+    return dialect
+
+
+_DIALECT_CACHE_TTL_SECONDS = 60.0
+_dialect_cache: dict[str, tuple[float, RemoteDialectKind]] = {}
+_dialect_cache_lock = threading.Lock()
+
+
+def _clear_dialect_cache() -> None:
+    """Drop all cached dialect detections (used by tests; also valid after a remote OS change)."""
+    with _dialect_cache_lock:
+        _dialect_cache.clear()
+
+
+def detect_remote_dialect(
+    ssh_client: paramiko.SSHClient, cache_key: str, *, timeout: float | None = None
+) -> RemoteDialectKind:
+    """
+    Detect which command dialect a remote host needs, by probing `uname -s`.
+
+    This is a *behavioural* probe — "is there a POSIX shell here that will run my script?" — not an
+    OS fingerprint, which is why sshd inside a WSL distro is correctly accepted (it answers "Linux"
+    and has real `sh`/`sleep`/`kill`). Anything unrecognised, MSYS/MinGW/Cygwin-flavoured, or that
+    fails to run at all is reported as WINDOWS, i.e. "no POSIX shell reachable" — a locked-down
+    restricted shell lands there too, which is the right outcome when the only consequence is a
+    clear refusal from `get_dialect`.
+
+    Cached per host with a short TTL (mirroring `_cli.has_plugin`), so a long-lived server neither
+    re-probes on every call nor needs a restart after a remote change.
+
+    args:
+        ssh_client - an already-connected client for the host being probed
+        cache_key - identity to cache under; pass the host's DOCKER_HOST URL
+        timeout - seconds to bound the probe channel; None leaves paramiko's own default
+    returns: RemoteDialectKind - POSIX when `uname -s` names a known POSIX kernel, else WINDOWS
+    """
+    now = time.monotonic()
+    with _dialect_cache_lock:
+        entry = _dialect_cache.get(cache_key)
+        if entry is not None and now - entry[0] < _DIALECT_CACHE_TTL_SECONDS:
+            return entry[1]
+
+    kind = RemoteDialectKind.WINDOWS
+    try:
+        transport = ssh_client.get_transport()
+        if transport is None:
+            raise RuntimeError("SSH transport is not connected.")
+        channel = transport.open_session()
+        try:
+            if timeout is not None:
+                channel.settimeout(min(timeout, _CONNECT_TIMEOUT_CAP_SECONDS))
+            channel.exec_command("uname -s")
+            output = channel.recv(_RECV_BUFFER_SIZE).decode("utf-8", errors="replace").strip().lower()
+            if channel.recv_exit_status() == 0 and output:
+                if output in _POSIX_UNAME_VALUES:
+                    kind = RemoteDialectKind.POSIX
+                elif not output.startswith(_NON_POSIX_UNAME_PREFIXES):
+                    # A POSIX-looking kernel we simply haven't listed (an unusual Unix) — refuse
+                    # rather than guess, and say what it reported so the list can be extended.
+                    logger.debug("remote-exec: unrecognized `uname -s` value %r; treating as non-POSIX", output)
+        finally:
+            channel.close()
+    except OSError, EOFError, paramiko.SSHException, RuntimeError:
+        # Probe failure is itself the signal ("no POSIX shell answered"), never a hard error here —
+        # get_dialect() is what turns a non-POSIX result into an actionable refusal.
+        logger.debug("remote-exec: `uname -s` probe failed; treating host as non-POSIX", exc_info=True)
+
+    with _dialect_cache_lock:
+        _dialect_cache[cache_key] = (time.monotonic(), kind)
+    return kind
+
+
+@dataclass(frozen=True)
+class RemoteExecResult:
+    """
+    Outcome of one remote command: raw captured bytes plus whether the cap truncated them.
+
+    Bytes rather than str so decoding stays the caller's concern, matching how `_cli.run_docker`
+    captures a local subprocess and decodes once at the boundary.
+    """
+
+    returncode: int
+    stdout: bytes
+    stderr: bytes
+    truncated: bool
+
+
+def _drain_exec_channel(
+    channel: paramiko.Channel, *, max_output_bytes: int, deadline: float, argv: Sequence[str], timeout: float
+) -> tuple[bytes, bytes, bool]:
+    """
+    Pump a channel's stdout and stderr until the command ends, capping what we keep.
+
+    Both streams must be drained *concurrently*: paramiko stops advertising window space for a
+    stream nobody reads, so draining only stdout lets a chatty stderr fill the window and block the
+    remote command until our own deadline — the classic pipe deadlock. `subprocess.run` avoids this
+    locally via `communicate()`; this is the equivalent. For the same reason, once the cap is hit we
+    keep reading and discard rather than stopping, since an unread stream would hang the remote
+    instead of merely truncating its output.
+
+    Completion is decided by `exit_status_ready()`, deliberately not by EOF on the streams. A command
+    that spawns its own children leaves those children holding the inherited stdout/stderr after the
+    watchdog SIGTERMs their parent, so waiting for EOF would block for the rest of the timeout window
+    even though the command itself has already exited (measured: `subprocess.run(capture_output=True)`
+    blocks exactly this way locally, since it *does* wait for EOF). Keying on the exit status makes
+    this path return as soon as the command is genuinely done.
+
+    args:
+        channel - a channel with the command already exec'd
+        max_output_bytes - per-stream cap on retained bytes; excess is read and dropped
+        deadline - monotonic time after which we abandon the channel
+        argv - the remote argv, for the TimeoutExpired message
+        timeout - the caller's timeout, for the TimeoutExpired message
+    returns: tuple[bytes, bytes, bool] - (stdout, stderr, truncated)
+    raises: subprocess.TimeoutExpired - if `deadline` passes before the command ends
+    """
+    stdout = bytearray()
+    stderr = bytearray()
+    truncated = False
+
+    def keep(buffer: bytearray, chunk: bytes) -> bool:
+        room = max_output_bytes - len(buffer)
+        if room <= 0:
+            return True
+        buffer.extend(chunk[:room])
+        return len(chunk) > room
+
+    while True:
+        moved = False
+        if channel.recv_ready():
+            truncated = keep(stdout, channel.recv(_RECV_BUFFER_SIZE)) or truncated
+            moved = True
+        if channel.recv_stderr_ready():
+            truncated = keep(stderr, channel.recv_stderr(_RECV_BUFFER_SIZE)) or truncated
+            moved = True
+        if moved:
+            continue  # drain greedily before re-checking for completion
+        if channel.exit_status_ready():
+            break
+        if time.monotonic() >= deadline:
+            raise subprocess.TimeoutExpired(cmd=list(argv), timeout=timeout, output=bytes(stdout), stderr=bytes(stderr))
+        time.sleep(_EXEC_POLL_SECONDS)
+
+    return bytes(stdout), bytes(stderr), truncated
+
+
+def exec_remote(
+    ssh_client: paramiko.SSHClient,
+    argv: Sequence[str],
+    *,
+    max_output_bytes: int,
+    timeout: float,
+    cwd: str | None = None,
+    dialect: RemoteDialectKind = RemoteDialectKind.POSIX,
+) -> RemoteExecResult:
+    """
+    Run one command on an already-connected host, under the dialect's own timeout watchdog.
+
+    Prefer `run_remote_exec` unless you already hold a connection you intend to reuse (staging a
+    file and then running against it, say) — this takes a client rather than opening one.
+
+    A timeout raises `subprocess.TimeoutExpired`, the same exception `run_docker`'s local path
+    raises, so callers see one contract regardless of which backend ran. That covers both the
+    remote watchdog's own kill (reported as `_REMOTE_TIMEOUT_EXIT_CODE`) and the local grace
+    deadline, which only fires if the watchdog never ran at all.
+
+    args:
+        ssh_client - an already-connected client for the target host
+        argv - the remote command as an argv list, including the binary (e.g. ["docker", "ps"])
+        max_output_bytes - per-stream cap on retained output; the rest is drained and dropped
+        timeout - seconds the remote watchdog allows the command before killing it
+        cwd - remote directory to run in; entering it is part of the wrapped command
+        dialect - the host's detected dialect; a non-POSIX one is refused by `get_dialect`
+    returns: RemoteExecResult - exit status plus captured (possibly truncated) stdout/stderr bytes
+    raises:
+        RuntimeError - the transport is gone, or the dialect isn't implemented
+        subprocess.TimeoutExpired - the command exceeded `timeout`
+    """
+    command = get_dialect(dialect).wrap_with_timeout(argv, timeout=timeout, cwd=cwd)
+    transport = ssh_client.get_transport()
+    if transport is None:
+        raise RuntimeError("SSH transport is not connected.")
+    channel = transport.open_session()
+    try:
+        channel.exec_command(command)
+        stdout, stderr, truncated = _drain_exec_channel(
+            channel,
+            max_output_bytes=max_output_bytes,
+            deadline=time.monotonic() + timeout + _REMOTE_KILL_GRACE_SECONDS,
+            argv=argv,
+            timeout=timeout,
+        )
+        returncode = channel.recv_exit_status()
+    finally:
+        channel.close()
+
+    if returncode == _REMOTE_TIMEOUT_EXIT_CODE:
+        raise subprocess.TimeoutExpired(cmd=list(argv), timeout=timeout, output=stdout, stderr=stderr)
+    return RemoteExecResult(returncode=returncode, stdout=stdout, stderr=stderr, truncated=truncated)
+
+
+def run_remote_exec(
+    docker_host: str,
+    argv: Sequence[str],
+    *,
+    max_output_bytes: int,
+    timeout: float,
+    cwd: str | None = None,
+) -> RemoteExecResult:
+    """
+    Connect to an ssh:// host, run one command on it, and close the connection.
+
+    A fresh connection per call, which suits commands with no local inputs to stage (`scout_*`, and
+    the reference-only buildx/stack subcommands): there is nothing to keep a session open for, and
+    per-call teardown matches how `ssh_proxy_for_docker_host` already behaves.
+
+    args:
+        docker_host - the host's resolved DOCKER_HOST value, starting with 'ssh://'
+        argv - the remote command as an argv list, including the binary
+        max_output_bytes - per-stream cap on retained output
+        timeout - seconds the remote watchdog allows the command; also bounds the SSH handshake
+        cwd - remote directory to run in
+    returns: RemoteExecResult - exit status plus captured (possibly truncated) stdout/stderr bytes
+    raises:
+        RuntimeError - connection failure (with guidance), or a non-POSIX remote
+        subprocess.TimeoutExpired - the command exceeded `timeout`
+    """
+    ssh_client = connect_ssh_client(docker_host, timeout=timeout)
+    try:
+        dialect = detect_remote_dialect(ssh_client, docker_host, timeout=timeout)
+        return exec_remote(
+            ssh_client,
+            argv,
+            max_output_bytes=max_output_bytes,
+            timeout=timeout,
+            cwd=cwd,
+            dialect=dialect,
+        )
     finally:
         ssh_client.close()

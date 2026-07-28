@@ -1,0 +1,451 @@
+"""Tests for the SSH remote-exec primitives in `docker_mcp.tools._ssh_proxy`.
+
+Split out from `test_ssh_proxy.py`, which covers the dial-stdio proxy (the other, older mechanism
+in that module). Follows the same conventions: paramiko is never really contacted — `SSHClient` is
+patched wholesale, or a fake channel is injected — and the generated shell script is additionally
+executed through the *real* `/bin/sh`, since its correctness is entirely about shell semantics that
+a mock cannot verify.
+"""
+
+import shlex
+import subprocess
+import sys
+from typing import cast
+
+import paramiko
+import pytest
+
+from docker_mcp.tools._ssh_proxy import (
+    PosixDialect,
+    RemoteDialectKind,
+    _clear_dialect_cache,
+    _REMOTE_TIMEOUT_EXIT_CODE,
+    detect_remote_dialect,
+    exec_remote,
+    get_dialect,
+    run_remote_exec,
+)
+
+_CAP = 1_048_576  # per-stream output cap used by tests that don't care about truncation
+
+
+@pytest.fixture(autouse=True)
+def _clear_caches():
+    """Dialect detection is TTL-cached per host; isolate every test from its neighbours."""
+    _clear_dialect_cache()
+    yield
+    _clear_dialect_cache()
+
+
+class FakeChannel:
+    """
+    Minimal `paramiko.Channel` stand-in for the exec path.
+
+    Serves stdout/stderr in scripted chunks so a test can interleave them, and only reports the exit
+    status once both are drained (mirroring a real channel, where output precedes completion).
+    """
+
+    def __init__(self, *, stdout=(), stderr=(), exit_status=0, exit_ready_immediately=False):
+        self.stdout_chunks = list(stdout)
+        self.stderr_chunks = list(stderr)
+        self._exit_status = exit_status
+        self._exit_ready_immediately = exit_ready_immediately
+        self.executed: str | None = None
+        self.closed = False
+        self.timeout: float | None = None
+
+    def settimeout(self, value):
+        self.timeout = value
+
+    def exec_command(self, command):
+        self.executed = command
+
+    def recv_ready(self):
+        return bool(self.stdout_chunks)
+
+    def recv_stderr_ready(self):
+        return bool(self.stderr_chunks)
+
+    def recv(self, _n):
+        return self.stdout_chunks.pop(0)
+
+    def recv_stderr(self, _n):
+        return self.stderr_chunks.pop(0)
+
+    def exit_status_ready(self):
+        if self._exit_ready_immediately:
+            return True
+        return not self.stdout_chunks and not self.stderr_chunks
+
+    def recv_exit_status(self):
+        return self._exit_status
+
+    def close(self):
+        self.closed = True
+
+
+class FakeTransport:
+    def __init__(self, channel):
+        self.channel = channel
+
+    def open_session(self):
+        return self.channel
+
+
+class FakeSshClient:
+    def __init__(self, channel, *, transport=True):
+        self._transport = FakeTransport(channel) if transport else None
+        self.closed = False
+
+    def get_transport(self):
+        return self._transport
+
+    def close(self):
+        self.closed = True
+
+
+def fake_client(channel, *, transport: bool = True) -> paramiko.SSHClient:
+    """A FakeSshClient typed as the real thing, so these tests type-check without littering casts."""
+    return cast(paramiko.SSHClient, FakeSshClient(channel, transport=transport))
+
+
+# --- PosixDialect.wrap_with_timeout: script construction -----------------------------------------
+
+
+def _script_body(argv, *, timeout, cwd=None) -> str:
+    """
+    The inner shell script, recovered from the `sh -c '<script>'` wrapper.
+
+    Assertions must run against this rather than the wrapper string: the whole script is one quoted
+    argument, so every single quote inside it appears as `'"'"'` in the outer form and a naive
+    substring check either fails or (worse) passes for the wrong reason.
+    """
+    parts = shlex.split(PosixDialect().wrap_with_timeout(argv, timeout=timeout, cwd=cwd))
+    assert parts[:2] == ["sh", "-c"], parts
+    return parts[2]
+
+
+def test_cwd_is_its_own_statement_never_joined_with_and():
+    """
+    Regression guard for the orphaned-remote-process bug.
+
+    `cd X && cmd &` makes the whole AND-list one async job, so `$!` is the subshell's pid and killing
+    it leaves the real command alive and reparented to init. Nothing fails visibly until a call times
+    out, so the shape is pinned here rather than left to a functional test to notice.
+    """
+    for cwd in ("/srv/app", "/srv/my app"):
+        body = _script_body(["docker", "ps"], timeout=30, cwd=cwd)
+        cd_line = f"cd {shlex.quote(cwd)} || exit 127"
+        assert cd_line in body.splitlines()
+        # The backgrounded job is the command itself, on its own line — not tacked onto the cd.
+        assert "docker ps & pid=$!" in body.splitlines()
+        assert "&&" not in cd_line
+
+
+def test_no_cd_statement_when_cwd_is_none():
+    assert "cd " not in _script_body(["docker", "ps"], timeout=5)
+
+
+def test_timeout_is_rounded_up_with_a_one_second_floor():
+    assert "sleep 31" in _script_body(["true"], timeout=30.2)
+    assert "sleep 1" in _script_body(["true"], timeout=0.1)
+
+
+def test_argv_is_shell_quoted_not_concatenated():
+    body = _script_body(["docker", "run", "a b; rm -rf /", "$HOME"], timeout=5)
+    assert "'a b; rm -rf /'" in body
+    assert "'$HOME'" in body
+
+
+def test_reap_notices_are_suppressed_around_both_waits():
+    """Both waits sit in `{ ... } 2>/dev/null` groups: the shell's async "Terminated" job notice
+    would otherwise land in the command's captured stderr (on every fast call, since killing the
+    still-sleeping watchdog is the normal path). Brace groups, not subshells, so `ec=$?` survives."""
+    body = _script_body(["true"], timeout=5)
+    assert "{ wait $pid; ec=$?; } 2>/dev/null" in body
+    assert "{ kill $wpid; wait $wpid; } 2>/dev/null" in body
+
+
+def test_watchdog_stdio_is_detached_from_the_commands_streams():
+    """An orphaned watchdog `sleep` still holding the command's stdout/stderr keeps the stream open
+    for the rest of the timeout window, which a consumer waiting for EOF sees as a fast command
+    hanging for its full timeout."""
+    body = _script_body(["true"], timeout=5)
+    assert ">/dev/null 2>&1 & wpid=$!" in body
+
+
+def test_timeout_is_reported_via_a_marker_not_the_signal_status():
+    """A marker written only when the kill signalled a live process, so a timeout is distinguishable
+    from any other non-zero exit (143 would be indistinguishable from any SIGTERM death)."""
+    body = _script_body(["true"], timeout=5)
+    assert 'kill $pid 2>/dev/null && printf t >"$m"' in body
+    assert f'[ -s "$m" ] && ec={_REMOTE_TIMEOUT_EXIT_CODE}' in body
+    assert "kill -0" not in body  # a fired-but-unreaped watchdog is a zombie that still answers
+
+
+# --- PosixDialect: behaviour through a real shell -------------------------------------------------
+#
+# The script's correctness is shell semantics, which no mock can check. These run it for real.
+
+pytestmark_posix = pytest.mark.skipif(sys.platform == "win32", reason="needs a POSIX /bin/sh")
+
+
+def _run_script(argv, *, timeout, cwd=None, capture_timeout=30):
+    script = PosixDialect().wrap_with_timeout(argv, timeout=timeout, cwd=cwd)
+    return subprocess.run(  # noqa: S603 — fixed argv, no shell; the script itself is under test
+        ["/bin/sh", "-c", script], capture_output=True, text=True, timeout=capture_timeout, check=False
+    )
+
+
+@pytestmark_posix
+def test_real_shell_preserves_exit_status_and_streams():
+    result = _run_script(["sh", "-c", "echo out; echo err >&2; exit 7"], timeout=30)
+    assert result.returncode == 7
+    assert result.stdout.strip() == "out"
+    # Exactly the command's own stderr — no shell job-reap notice mixed in.
+    assert result.stderr.strip() == "err"
+
+
+@pytestmark_posix
+def test_real_shell_reports_timeout_exit_code_and_kills_the_command():
+    # `exec` so the killed process is the leaf. Without it the shell would fork `sleep` as a child
+    # that survives the SIGTERM to its parent and keeps holding this capture's pipes — the documented
+    # direct-child-only limitation (identical on the local subprocess path), not something under test
+    # here; `test_real_shell_grandchildren_are_a_known_limitation` covers that explicitly.
+    result = _run_script(["sh", "-c", "echo pre >&2; exec sleep 60"], timeout=1, capture_timeout=15)
+    assert result.returncode == _REMOTE_TIMEOUT_EXIT_CODE
+    assert "pre" in result.stderr  # the command's own output up to the kill is kept
+    assert "Terminated" not in result.stderr
+
+
+@pytestmark_posix
+def test_real_shell_returns_promptly_when_the_command_beats_a_long_timeout():
+    """The watchdog's stdio is detached, so a fast command with a long timeout must not keep the
+    caller's captured streams open waiting for an orphaned `sleep` to finish."""
+    result = _run_script(["true"], timeout=120, capture_timeout=10)
+    assert result.returncode == 0
+
+
+@pytestmark_posix
+def test_real_shell_grandchildren_are_a_known_limitation():
+    """
+    Pins the accepted limitation rather than pretending it away: the watchdog SIGTERMs only the
+    direct child, so a process the command itself forked survives and keeps the streams open.
+
+    `subprocess.run(capture_output=True)` waits for EOF and so blocks here — which is exactly why
+    `_drain_exec_channel` keys completion on the exit status instead, making the real remote path
+    return promptly where this local-style capture cannot. The local `run_docker` path has the
+    identical limitation, so it is parity, not a regression.
+    """
+    with pytest.raises(subprocess.TimeoutExpired):
+        _run_script(["sh", "-c", "sleep 30 & wait"], timeout=1, capture_timeout=4)
+    reap = ["pkill", "-f", "sleep 30"]
+    subprocess.run(reap, capture_output=True, check=False)  # noqa: S603
+
+
+@pytestmark_posix
+def test_real_shell_honours_cwd_and_refuses_an_unreachable_one():
+    assert _run_script(["pwd"], timeout=30, cwd="/tmp").stdout.strip().endswith("/tmp")
+    refused = _run_script(["echo", "must-not-run"], timeout=30, cwd="/no-such-dir-zzz")
+    assert refused.returncode == 127
+    assert "must-not-run" not in refused.stdout
+
+
+@pytestmark_posix
+def test_real_shell_does_not_leave_the_watchdog_running_after_a_fast_command():
+    """A long timeout must not keep the call (or a stray `sleep`) alive once the command is done."""
+    result = _run_script(["true"], timeout=45, capture_timeout=15)
+    assert result.returncode == 0
+    probe = ["pgrep", "-f", "sleep 45"]
+    survivors = subprocess.run(probe, capture_output=True, text=True, check=False).stdout.split()  # noqa: S603
+    assert not survivors, f"watchdog leaked: {survivors}"
+
+
+@pytestmark_posix
+def test_real_shell_quoting_blocks_metacharacter_injection():
+    result = _run_script(["sh", "-c", 'printf "%s" "$1"', "x", 'a"b;touch /tmp/pwned-$$'], timeout=30)
+    assert result.stdout == 'a"b;touch /tmp/pwned-$$'
+
+
+# --- get_dialect ---------------------------------------------------------------------------------
+
+
+def test_get_dialect_returns_the_posix_implementation():
+    assert isinstance(get_dialect(RemoteDialectKind.POSIX), PosixDialect)
+
+
+def test_get_dialect_refuses_windows_with_actionable_guidance():
+    with pytest.raises(RuntimeError, match="not implemented yet") as excinfo:
+        get_dialect(RemoteDialectKind.WINDOWS)
+    message = str(excinfo.value)
+    assert "WSL" in message  # the supported alternative a Windows user needs to be told about
+
+
+# --- detect_remote_dialect -----------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("uname", "expected"),
+    [
+        # WSL reports plain "Linux" — sshd inside a WSL distro is a genuine Linux target and must be
+        # accepted, not refused as "Windows".
+        ("Linux\n", RemoteDialectKind.POSIX),
+        ("Darwin\n", RemoteDialectKind.POSIX),
+        ("FreeBSD\n", RemoteDialectKind.POSIX),
+        ("SunOS\n", RemoteDialectKind.POSIX),
+        # The false positive an exit-status-only probe would let through: a Windows host with Git Bash
+        # or Cygwin on PATH answers `uname -s` successfully.
+        ("MINGW64_NT-10.0-19045\n", RemoteDialectKind.WINDOWS),
+        ("CYGWIN_NT-10.0\n", RemoteDialectKind.WINDOWS),
+        ("MSYS_NT-10.0-19045\n", RemoteDialectKind.WINDOWS),
+        ("Windows_NT\n", RemoteDialectKind.WINDOWS),
+        ("SomethingExotic\n", RemoteDialectKind.WINDOWS),
+        ("\n", RemoteDialectKind.WINDOWS),
+    ],
+)
+def test_detect_remote_dialect_classifies_uname_output(uname, expected):
+    channel = FakeChannel(stdout=[uname.encode()], exit_ready_immediately=True)
+    client = fake_client(channel)
+    assert detect_remote_dialect(client, "ssh://host") is expected
+
+
+def test_detect_remote_dialect_treats_a_failed_probe_as_non_posix():
+    """A non-zero `uname` (cmd/PowerShell: command not found) means no POSIX shell answered."""
+    channel = FakeChannel(stdout=[b""], exit_status=127, exit_ready_immediately=True)
+    assert detect_remote_dialect(fake_client(channel), "ssh://host") is RemoteDialectKind.WINDOWS
+
+
+def test_detect_remote_dialect_treats_a_dead_transport_as_non_posix():
+    assert detect_remote_dialect(fake_client(None, transport=False), "ssh://h") is RemoteDialectKind.WINDOWS
+
+
+def test_detect_remote_dialect_caches_per_host():
+    channel = FakeChannel(stdout=[b"Linux\n"], exit_ready_immediately=True)
+    client = fake_client(channel)
+    assert detect_remote_dialect(client, "ssh://host") is RemoteDialectKind.POSIX
+    # The fake serves its stdout once; a second probe would see empty output and classify WINDOWS.
+    # Getting POSIX back proves the cached value was used instead of re-probing.
+    assert detect_remote_dialect(client, "ssh://host") is RemoteDialectKind.POSIX
+
+
+def test_detect_remote_dialect_does_not_share_results_between_hosts():
+    posix = fake_client(FakeChannel(stdout=[b"Linux\n"], exit_ready_immediately=True))
+    windows = fake_client(FakeChannel(stdout=[b"MINGW64_NT-10.0\n"], exit_ready_immediately=True))
+    assert detect_remote_dialect(posix, "ssh://a") is RemoteDialectKind.POSIX
+    assert detect_remote_dialect(windows, "ssh://b") is RemoteDialectKind.WINDOWS
+
+
+# --- exec_remote ---------------------------------------------------------------------------------
+
+
+def test_exec_remote_returns_status_and_both_streams():
+    channel = FakeChannel(stdout=[b"out"], stderr=[b"err"], exit_status=3)
+    result = exec_remote(fake_client(channel), ["docker", "ps"], max_output_bytes=_CAP, timeout=5)
+    assert (result.returncode, result.stdout, result.stderr, result.truncated) == (3, b"out", b"err", False)
+    assert channel.closed
+
+
+def test_exec_remote_drains_stderr_as_well_as_stdout():
+    """Both streams are pumped: paramiko stops advertising window space for an unread stream, so a
+    chatty stderr would otherwise block the remote command until our deadline."""
+    channel = FakeChannel(stdout=[b"a", b"b"], stderr=[b"x", b"y", b"z"])
+    result = exec_remote(fake_client(channel), ["docker", "ps"], max_output_bytes=_CAP, timeout=5)
+    assert result.stdout == b"ab"
+    assert result.stderr == b"xyz"
+
+
+def test_exec_remote_caps_each_stream_and_flags_truncation():
+    channel = FakeChannel(stdout=[b"0123456789"], stderr=[b"abcdefghij"])
+    result = exec_remote(fake_client(channel), ["docker", "ps"], max_output_bytes=4, timeout=5)
+    assert result.stdout == b"0123"
+    assert result.stderr == b"abcd"
+    assert result.truncated is True
+
+
+def test_exec_remote_keeps_draining_after_the_cap_is_reached():
+    """Past the cap we must keep reading and discard — an unread stream hangs the remote command
+    rather than merely truncating its output."""
+    channel = FakeChannel(stdout=[b"aaaa", b"bbbb", b"cccc"])
+    result = exec_remote(fake_client(channel), ["docker", "ps"], max_output_bytes=2, timeout=5)
+    assert result.stdout == b"aa"
+    assert result.truncated is True
+    assert not channel.stdout_chunks, "later chunks were left unread, which would block the remote"
+
+
+def test_exec_remote_raises_timeout_expired_on_the_watchdog_exit_code():
+    """The remote watchdog's 124 becomes the same exception the local subprocess path raises, so
+    callers see one contract regardless of which backend ran."""
+    channel = FakeChannel(stdout=[b"partial"], exit_status=_REMOTE_TIMEOUT_EXIT_CODE)
+    with pytest.raises(subprocess.TimeoutExpired) as excinfo:
+        exec_remote(fake_client(channel), ["docker", "build", "."], max_output_bytes=_CAP, timeout=7)
+    assert excinfo.value.timeout == 7
+    assert excinfo.value.cmd == ["docker", "build", "."]
+    assert excinfo.value.output == b"partial"  # output captured before the kill is preserved
+
+
+def test_exec_remote_refuses_a_non_posix_dialect_before_running_anything():
+    channel = FakeChannel()
+    with pytest.raises(RuntimeError, match="not implemented yet"):
+        exec_remote(
+            fake_client(channel),
+            ["docker", "ps"],
+            max_output_bytes=_CAP,
+            timeout=5,
+            dialect=RemoteDialectKind.WINDOWS,
+        )
+    assert channel.executed is None
+
+
+def test_exec_remote_raises_when_the_transport_is_gone():
+    with pytest.raises(RuntimeError, match="transport is not connected"):
+        exec_remote(fake_client(None, transport=False), ["docker", "ps"], max_output_bytes=_CAP, timeout=5)
+
+
+def test_exec_remote_closes_the_channel_even_when_the_command_raises(monkeypatch):
+    channel = FakeChannel(stdout=[b"x"], exit_status=_REMOTE_TIMEOUT_EXIT_CODE)
+    with pytest.raises(subprocess.TimeoutExpired):
+        exec_remote(fake_client(channel), ["docker", "ps"], max_output_bytes=_CAP, timeout=1)
+    assert channel.closed
+
+
+# --- run_remote_exec -----------------------------------------------------------------------------
+
+
+def test_run_remote_exec_connects_detects_runs_and_closes(monkeypatch):
+    channel = FakeChannel(stdout=[b"Linux\n"], exit_ready_immediately=True)
+    fake = FakeSshClient(channel)
+    client = cast(paramiko.SSHClient, fake)
+    monkeypatch.setattr("docker_mcp.tools._ssh_proxy.connect_ssh_client", lambda *a, **k: client)
+
+    # After the uname probe the same fake channel serves the command; reload its scripted output.
+    def fake_exec_remote(ssh_client, argv, **kwargs):
+        assert ssh_client is client
+        return "sentinel"
+
+    monkeypatch.setattr("docker_mcp.tools._ssh_proxy.exec_remote", fake_exec_remote)
+    result = run_remote_exec("ssh://bob@example.com", ["docker", "ps"], max_output_bytes=_CAP, timeout=5)
+    assert result == "sentinel"
+    assert fake.closed
+
+
+def test_run_remote_exec_closes_the_client_even_on_failure(monkeypatch):
+    fake = FakeSshClient(FakeChannel(stdout=[b"Linux\n"], exit_ready_immediately=True))
+    client = cast(paramiko.SSHClient, fake)
+    monkeypatch.setattr("docker_mcp.tools._ssh_proxy.connect_ssh_client", lambda *a, **k: client)
+    monkeypatch.setattr(
+        "docker_mcp.tools._ssh_proxy.exec_remote",
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+    with pytest.raises(RuntimeError, match="boom"):
+        run_remote_exec("ssh://h", ["docker", "ps"], max_output_bytes=_CAP, timeout=5)
+    assert fake.closed
+
+
+def test_run_remote_exec_refuses_a_non_posix_host(monkeypatch):
+    """End to end: a cmd/PowerShell host is refused with guidance, and the client still gets closed."""
+    fake = FakeSshClient(FakeChannel(stdout=[b""], exit_status=127, exit_ready_immediately=True))
+    client = cast(paramiko.SSHClient, fake)
+    monkeypatch.setattr("docker_mcp.tools._ssh_proxy.connect_ssh_client", lambda *a, **k: client)
+    with pytest.raises(RuntimeError, match="not implemented yet"):
+        run_remote_exec("ssh://win-host", ["docker", "ps"], max_output_bytes=_CAP, timeout=5)
+    assert fake.closed
