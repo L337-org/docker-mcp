@@ -56,6 +56,55 @@ def test_intel_macos_cryptography_pin_not_relaxed():
     )
 
 
+def test_mcp_major_cap_not_relaxed():
+    """
+    mcp 2.0.0 removed `mcp.server.fastmcp`, which `server.py` imports FastMCP from, so an
+    uncapped `mcp` resolves to a release that cannot import this package. That is not
+    hypothetical: the published 2.2.0 shipped uncapped and `uvx docker-mcp-server` failed at
+    import on a clean machine, while CI stayed green because it installs `--locked` against a
+    lockfile pinning 1.x. Lifting this cap needs the `mcp.server.mcpserver` migration first.
+    """
+    data = tomllib.loads(PYPROJECT.read_text())
+    deps = data["project"]["dependencies"]
+
+    mcp_deps = [d for d in deps if _dependency_name(d) == "mcp"]
+    assert mcp_deps, "no direct 'mcp' dependency found in pyproject.toml"
+    assert len(mcp_deps) == 1, f"expected exactly one 'mcp' dependency, found: {mcp_deps!r}"
+
+    dep = mcp_deps[0]
+    m = re.search(r"mcp[^,]*,\s*<\s*([0-9]+(?:\.[0-9]+)*)", dep)
+    assert m, (
+        f"the mcp dependency must carry a '<N' upper bound, got: {dep!r} — an uncapped mcp "
+        "resolves to 2.x, which has no `mcp.server.fastmcp`"
+    )
+
+    bound = _version_tuple(m.group(1))
+    max_allowed = _version_tuple("2")
+    assert bound <= max_allowed, (
+        f"mcp upper bound raised to {m.group(1)} — 2.x moved FastMCP to `mcp.server.mcpserver`; "
+        "port `server.py` before lifting this cap"
+    )
+
+
+def test_the_declared_mcp_bound_matches_what_the_code_imports():
+    """
+    The cap and the import have to agree, and only one of them is in pyproject: assert the
+    module we import FastMCP from is the one the *locked* mcp actually provides. Catches a
+    lockfile that drifts past the cap as well as a cap raised without porting the import.
+    """
+    import importlib.util
+
+    from docker_mcp import server as server_module
+
+    source = Path(server_module.__file__).read_text(encoding="utf-8")
+    match = re.search(r"from (mcp[\w.]*) import FastMCP", source)
+    assert match, "server.py no longer imports FastMCP from an `mcp.*` module — update this guard"
+    assert importlib.util.find_spec(match.group(1)) is not None, (
+        f"server.py imports FastMCP from {match.group(1)!r}, which the installed mcp does not "
+        "provide — the pyproject cap and the code disagree"
+    )
+
+
 # The release pipeline's preflight job re-asserts these against the release tag; the tests
 # below catch the drift earlier, at PR time. server.json is intentionally NOT checked — its
 # committed version is stale by design and stamped from the tag at release time.
