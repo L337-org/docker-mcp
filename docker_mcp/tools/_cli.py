@@ -16,7 +16,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from docker_mcp._hosts import is_multi as _is_multi, resolve as _resolve_host
-from docker_mcp.tools._ssh_proxy import ssh_proxy_for_docker_host
+from docker_mcp.tools._ssh_proxy import run_remote_exec, ssh_proxy_for_docker_host
 
 DEFAULT_TIMEOUT_SECONDS = 60.0
 
@@ -265,6 +265,111 @@ def require_plugin(name: str) -> None:
             f"install it via your distribution's docker-{name}-plugin package "
             f"(or follow the upstream docs)."
         )
+
+
+# --- remote-exec fallback -------------------------------------------------------------------------
+#
+# CLI-backed tools need a local `docker` binary; the docker-py-backed ones need nothing but the
+# daemon. So on a machine with SSH access to a real Docker host but no local Docker install, every
+# CLI-backed tool fails at `_resolve("docker")` above before any host logic runs. When the target
+# host is reached over ssh://, the command can instead run *on that host* — which, being a Docker
+# host, plausibly has the CLI and its plugins already.
+#
+# This is a pure fallback. With a usable local CLI nothing below is reached and behavior is
+# unchanged, including the dial-stdio proxy in `run_docker`: only the "we have no local option at
+# all" case changes, from an error into a remote call.
+
+
+def should_remote_exec(host: str | None, *, plugin: str | None = None) -> bool:
+    """
+    Whether a CLI call against `host` has to run on the remote host instead of locally.
+
+    True only when the target is an ssh:// host *and* nothing local can serve the call, so a machine
+    with a working CLI keeps using it — the credentials, filesystem, and buildx state a call sees
+    change only when there is no alternative. For a non-ssh host this returns False and the caller's
+    existing `_resolve`/`require_plugin` errors stand, which is the honest outcome: we have no way to
+    reach a unix://, tcp:// or npipe:// daemon's host to run anything on it.
+
+    A CLI-backed tool module calls this in exactly one place — its shared `_run_*` wrapper — rather
+    than probing per tool, so the decision, and the conditions under which behavior changes at all,
+    live here.
+
+    args:
+        host - configured host label, or None for the default host
+        plugin - the CLI plugin the call needs ("compose"/"buildx"/"scout"), or None for a core-CLI
+                 subcommand such as `docker stack …` (probes only the `docker` binary itself)
+    returns: bool - True if the caller should route through `remote_exec_cli` instead of `run_docker`
+    """
+    if not _resolve_host(host).is_ssh:
+        return False
+    if shutil.which("docker") is None:
+        return True  # no local CLI at all, so no local call is possible whatever the subcommand is
+    return plugin is not None and not has_plugin(plugin)
+
+
+def remote_exec_cli(
+    host: str | None,
+    args: list[str],
+    *,
+    timeout: float = DEFAULT_TIMEOUT_SECONDS,
+    stdin: bytes | None = None,
+    extra_env: dict[str, str] | None = None,
+) -> CliResult:
+    """
+    Run `docker <args...>` on the target ssh:// host, in `run_docker`'s own result shape.
+
+    A drop-in for `run_docker` on the calls `should_remote_exec` selects — same `CliResult`, same
+    `truncated` flag, same `subprocess.TimeoutExpired` on a timeout — so each tool keeps its existing
+    error convention (raw dict vs `raise_on_cli_failure`) with no remote-specific branch. Call it only
+    behind `should_remote_exec`; it raises rather than falling back for a non-ssh host.
+
+    Nothing is forwarded from the local environment and no DOCKER_HOST rewriting happens (the command
+    runs on the daemon's own host, against its own socket), so registry credentials, `~/.docker`
+    config and the filesystem are the *remote* user's. `stdin`/`extra_env` are rejected rather than
+    dropped, so a tool that starts needing either fails loudly here instead of silently diverging
+    from its local path.
+
+    args:
+        host - configured host label, or None for the default host; must resolve to an ssh:// URL
+        args - the docker argv *without* the binary, exactly as passed to `run_docker`
+        timeout - seconds the remote watchdog allows the command; also bounds the SSH handshake. Total
+                  wall clock can exceed it by the connect time plus a short kill grace.
+        stdin - must be None/empty: the remote channel carries no input
+        extra_env - must be None/empty: the child's environment is the remote login shell's
+    returns: CliResult - exit status, decoded stdout/stderr, and whether the byte cap truncated them
+    raises:
+        ValueError - `stdin` or `extra_env` was supplied
+        RuntimeError - `host` is not an ssh:// host, the connection failed, or the remote is not POSIX
+        subprocess.TimeoutExpired - the command exceeded `timeout`
+    """
+    if stdin:
+        raise ValueError("remote-exec cannot send stdin to a remote docker command (no consumer needs it today).")
+    if extra_env:
+        raise ValueError(
+            f"remote-exec cannot forward extra_env {sorted(extra_env)} to a remote docker command: the "
+            f"environment is the remote login shell's, not this server's."
+        )
+    resolved = _resolve_host(host)
+    url = resolved.url
+    if url is None or not resolved.is_ssh:
+        # A programming error, not a user-facing condition: every call site gates on
+        # should_remote_exec, which is False for a host we cannot reach over SSH.
+        raise RuntimeError(
+            f"remote-exec was requested for host {resolved.label!r} ({url or 'platform default'}), which is "
+            f"not reached over ssh:// — there is no remote shell to run `docker {args[0] if args else ''}` on."
+        )
+    result = run_remote_exec(url, ["docker", *args], max_output_bytes=MAX_CLI_OUTPUT_BYTES, timeout=timeout)
+    # Decode at this boundary exactly as the local path does. The retention cap already applied
+    # remotely, so `_decode` re-checks a bound it cannot exceed; `truncated` is carried through from
+    # the drain, which is the only place that saw the discarded bytes.
+    stdout, truncated_out = _decode(result.stdout)
+    stderr, truncated_err = _decode(result.stderr)
+    return CliResult(
+        returncode=result.returncode,
+        stdout=stdout,
+        stderr=stderr,
+        truncated=result.truncated or truncated_out or truncated_err,
+    )
 
 
 def safe_positional(value: str, what: str = "value") -> str:

@@ -4,17 +4,73 @@
 # require `docker login` against Docker Hub to fetch policy data and per-image scans;
 # anonymous calls work for basic CVE listing on public images but degrade for the
 # `recommendations` and policy-related subcommands.
+#
+# Scout is the first consumer of the remote-exec fallback in `_cli.py`: when the target host is
+# reached over ssh:// and this machine has no scout plugin (or no `docker` binary at all), the
+# subcommand runs on that host instead of failing. Scout is the simplest shape for it — every
+# subcommand takes image references and reads nothing from the local filesystem, so there is nothing
+# to stage; the one exception (`scout_compare`'s `to`, which may name a local directory or archive)
+# is refused rather than resolved against the remote filesystem. Consequence to keep in mind: Hub
+# credentials then come from the *remote* user's `~/.docker/config.json`, so an anonymous-capable
+# call may succeed while a policy-dependent one reports an auth failure in `raw.stderr`.
 
 import json
+from pathlib import Path
 
 from docker_mcp.server import tool
-from docker_mcp.tools._cli import CliResult, require_plugin, run_docker, safe_positional
+from docker_mcp.tools._cli import (
+    CliResult,
+    remote_exec_cli,
+    require_plugin,
+    run_docker,
+    safe_positional,
+    should_remote_exec,
+)
 
 # Scout calls are CDN-backed network queries; 5 minutes is plenty for any one image.
 _TIMEOUT_SCOUT = 300.0
 
 
-def _run_scout(args: list[str], *, timeout: float = _TIMEOUT_SCOUT, host: str | None = None) -> CliResult:
+def _refuse_local_path_args(candidates: dict[str, str | None]) -> None:
+    """
+    Refuse a parameter that names an existing *local* path when the call is about to run remotely.
+
+    Only reached on the remote-exec path. Existence is the test rather than the value's shape, because
+    an image reference and a relative path are not distinguishable by syntax (`org/app:v1` contains a
+    '/' too). A path that exists here would resolve on the remote host to something else or nothing at
+    all, so refusing names the cause; a value that is not a local path passes through untouched.
+    """
+    for name, value in candidates.items():
+        if value and Path(value).exists():
+            raise ValueError(
+                f"Refusing to run `docker scout` on the remote host with {name}={value!r}: that names a path on "
+                f"the host running this MCP server, but with no local scout plugin available the command runs "
+                f"on the target host over SSH, where the path means something else (or nothing). Pass an image "
+                f"reference instead, or install the docker CLI and its scout plugin on this host."
+            )
+
+
+def _run_scout(
+    args: list[str],
+    *,
+    timeout: float = _TIMEOUT_SCOUT,
+    host: str | None = None,
+    local_path_args: dict[str, str | None] | None = None,
+) -> CliResult:
+    """
+    Run `docker scout <args...>`, locally or — with no usable local plugin — on the ssh:// host itself.
+
+    args:
+        args - the scout subcommand argv, without the leading `scout`
+        timeout - seconds allowed for the call (also bounds the SSH handshake on the remote path)
+        host - configured host label, or None for the default host
+        local_path_args - `{param: value}` pairs that may name a local path; each is refused on the
+                          remote path if it exists here (see `_refuse_local_path_args`)
+    returns: CliResult - the same shape from either backend
+    """
+    if should_remote_exec(host, plugin="scout"):
+        _refuse_local_path_args(local_path_args or {})
+        return remote_exec_cli(host, ["scout", *args], timeout=timeout)
     require_plugin("scout")
     return run_docker(["scout", *args], timeout=timeout, host=host)
 
@@ -46,7 +102,8 @@ def scout_cves(
     List vulnerabilities (CVEs) in an image via Docker Scout.
 
     Anonymous scans work for public images; Hub policy enforcement and richer recommendations need
-    `docker login` on the host running this MCP server. Start with `scout_quickview` for a
+    `docker login` on the host that runs the CLI — this server's host, or the target `ssh://` host
+    itself when no local scout plugin is installed. Start with `scout_quickview` for a
     per-severity summary; `scout_sbom` inventories packages without vulnerability matching.
     Does not raise on a non-zero CLI exit (a missing scout plugin still raises) — inspect
     `raw.stderr`.
@@ -114,9 +171,10 @@ def scout_recommendations(
     """
     Suggest base-image upgrades for an image.
 
-    Computed against Docker Scout's catalog; generally needs `docker login` on the host running
-    this MCP server to return useful results for private or rarely-scanned base images. The
-    natural follow-up to `scout_cves` when the fix is a newer base image.
+    Computed against Docker Scout's catalog; generally needs `docker login` on the host that runs the
+    CLI (the target `ssh://` host itself when no local scout plugin is installed) to return useful
+    results for private or rarely-scanned base images. The natural follow-up to `scout_cves` when the
+    fix is a newer base image.
     Does not raise on a non-zero CLI exit (a missing scout plugin still raises) — inspect
     `raw.stderr`.
 
@@ -163,11 +221,14 @@ def scout_compare(
     target. Use it after a rebuild to check the new image against the old (`scout_cves` scans a
     single image).
     Does not raise on a non-zero CLI exit (a missing scout plugin still raises) — inspect
-    `raw.stderr`.
+    `raw.stderr`. Raises ValueError if `to` names a local directory/archive while the call has to run
+    on a remote `ssh://` host (no local scout plugin): the file is not staged, so it would resolve
+    against that host's filesystem instead.
 
     args:
         image - The new / candidate image reference
-        to - Compare against this image reference, directory, or archive
+        to - Compare against this image reference, directory, or archive (a local directory/archive
+                      only when the CLI runs on this host — see above)
         to_env - Compare against an image associated with this Scout environment
         to_latest - Compare against the latest scan of `image`
         only_severity - Filter to severities ("critical", "high", "medium", "low", "unspecified")
@@ -194,7 +255,7 @@ def scout_compare(
     if platform is not None:
         args.extend(["--platform", platform])
     args.append(safe_positional(image, "image"))
-    result = _run_scout(args, host=host)
+    result = _run_scout(args, host=host, local_path_args={"to": to})
     return {"format": format, "result": _maybe_parse_json(result.stdout, format), "raw": result.to_dict()}
 
 
