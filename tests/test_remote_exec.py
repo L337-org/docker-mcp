@@ -153,8 +153,10 @@ def test_no_cd_statement_when_cwd_is_none():
 
 
 def test_timeout_is_rounded_up_with_a_one_second_floor():
-    assert "sleep 31" in _script_body(["true"], timeout=30.2)
-    assert "sleep 1" in _script_body(["true"], timeout=0.1)
+    """The deadline is the watchdog's loop bound (it counts one-second sleeps), rounded up because
+    `sleep` takes whole seconds portably, with a floor of 1 so a sub-second timeout still waits."""
+    assert 'while [ "$i" -lt 31 ]' in _script_body(["true"], timeout=30.2)
+    assert 'while [ "$i" -lt 1 ]' in _script_body(["true"], timeout=0.1)
 
 
 def test_argv_is_shell_quoted_not_concatenated():
@@ -163,21 +165,37 @@ def test_argv_is_shell_quoted_not_concatenated():
     assert "'$HOME'" in body
 
 
-def test_reap_notices_are_suppressed_around_both_waits():
-    """Both waits sit in `{ ... } 2>/dev/null` groups: the shell's async "Terminated" job notice
-    would otherwise land in the command's captured stderr (on every fast call, since killing the
-    still-sleeping watchdog is the normal path). Brace groups, not subshells, so `ec=$?` survives."""
+def test_reap_notice_is_suppressed_around_the_wait():
+    """The shell's async "Terminated" job notice would otherwise land in the command's captured
+    stderr when the watchdog kills it. A brace group, not a subshell, so `ec=$?` survives."""
     body = _script_body(["true"], timeout=5)
     assert "{ wait $pid; ec=$?; } 2>/dev/null" in body
-    assert "{ kill $wpid; wait $wpid; } 2>/dev/null" in body
 
 
 def test_watchdog_stdio_is_detached_from_the_commands_streams():
-    """An orphaned watchdog `sleep` still holding the command's stdout/stderr keeps the stream open
-    for the rest of the timeout window, which a consumer waiting for EOF sees as a fast command
-    hanging for its full timeout."""
+    """A watchdog still holding the command's stdout/stderr keeps the stream open after the command
+    has gone, which a consumer waiting for EOF sees as a hang."""
     body = _script_body(["true"], timeout=5)
-    assert ">/dev/null 2>&1 & wpid=$!" in body
+    assert ">/dev/null 2>&1 &" in body
+
+
+def test_watchdog_self_terminates_rather_than_being_killed():
+    """
+    Regression guard for a stray `sleep` on the remote host, one per call.
+
+    A single `sleep <timeout>` cannot be cleaned up portably: killing the subshell that owns it leaves
+    the `sleep` orphaned (verified on Linux/dash — one stray alive for the rest of the timeout window,
+    which is 30 minutes for a build), and `set -m` plus `kill -- -$wpid` to reach the child hangs on a
+    shell with no controlling terminal, which is what an SSH exec channel provides. So the watchdog
+    counts in one-second sleeps and exits as soon as the command is gone, and nothing kills it.
+    """
+    body = _script_body(["true"], timeout=5)
+    assert "kill $wpid" not in body  # nothing kills the watchdog any more
+    assert "wpid" not in body  # so its pid is never even recorded
+    watchdog = next(line for line in body.splitlines() if "printf t" in line)
+    assert 'while [ "$i" -lt 5 ]' in watchdog  # counts to the timeout
+    assert "sleep 1;" in watchdog  # in short sleeps, so a stray cannot outlive the call by long
+    assert "kill -0 $pid 2>/dev/null || exit 0" in watchdog  # gives up once the command is gone
 
 
 def test_timeout_is_reported_via_a_marker_not_the_signal_status():
@@ -198,8 +216,8 @@ def test_marker_is_written_before_the_kill_not_after():
     intermittent 143). Writing it first means the main shell is provably still blocked.
     """
     body = _script_body(["true"], timeout=5)
-    watchdog = next(line for line in body.splitlines() if "sleep 5" in line)
-    assert watchdog.index('printf t >"$m"') < watchdog.index("kill $pid"), watchdog
+    watchdog = next(line for line in body.splitlines() if "printf t" in line)
+    assert watchdog.index('printf t >"$m"') < watchdog.index("kill $pid 2>/dev/null)"), watchdog
     # Guarded on the command still being alive, so a command that already exited is not marked.
     assert "kill -0 $pid" in watchdog
 

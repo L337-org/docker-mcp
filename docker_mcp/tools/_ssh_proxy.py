@@ -535,10 +535,17 @@ class PosixDialect:
         lines.extend(
             [
                 f"{shlex.join(argv)} & pid=$!",
-                f'(sleep {seconds}; kill -0 $pid 2>/dev/null && {{ printf t >"$m"; kill $pid 2>/dev/null; }})'
-                " >/dev/null 2>&1 & wpid=$!",
+                # The watchdog counts in one-second sleeps and gives up as soon as the command is gone,
+                # so nobody has to kill it: it self-terminates within a second of the command finishing.
+                # A single `sleep <timeout>` cannot be cleaned up portably — killing the subshell that
+                # owns it leaves the `sleep` orphaned (verified on Linux/dash: one stray per call, alive
+                # for the rest of the timeout window), and putting each background job in its own process
+                # group with `set -m` so `kill -- -$wpid` reaches the child hangs outright on a shell with
+                # no controlling terminal, which is exactly what an SSH exec channel provides.
+                f'(i=0; while [ "$i" -lt {seconds} ]; do sleep 1;'
+                " kill -0 $pid 2>/dev/null || exit 0; i=$((i+1)); done;"
+                ' printf t >"$m"; kill $pid 2>/dev/null) >/dev/null 2>&1 &',
                 "{ wait $pid; ec=$?; } 2>/dev/null",
-                "{ kill $wpid; wait $wpid; } 2>/dev/null",
                 f'[ -s "$m" ] && ec={_REMOTE_TIMEOUT_EXIT_CODE}',
                 "exit $ec",
             ]
