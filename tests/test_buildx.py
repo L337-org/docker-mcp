@@ -1,3 +1,5 @@
+import contextlib
+import pathlib
 from unittest.mock import patch
 
 import pytest
@@ -460,3 +462,381 @@ def test_buildx_history_inspect_non_object_wrapped_in_raw():
     with patch("docker_mcp.tools.buildx.run_docker", return_value=_ok("[1, 2, 3]")):
         result = buildx_history_inspect(ref="a1")
     assert result == {"raw": "[1, 2, 3]"}
+
+
+# ---------- remote-exec fallback ----------
+
+
+class _FakeSession:
+    """Records what a bespoke buildx staging session was asked to stage and run."""
+
+    def __init__(self, root="/tmp/docker-mcp-server.stage.abc"):
+        self.root = root
+        self.contexts: list[tuple[str, str | None]] = []
+        self.trees: list[str] = []
+        self.files: list[str] = []
+        self.calls: list[dict] = []
+
+    def stage_build_context(self, context_dir, *, dockerfile=None):
+        self.contexts.append((str(context_dir), dockerfile))
+        return f"{self.root}/context1"
+
+    def stage_tree(self, local_dir):
+        self.trees.append(str(local_dir))
+        return f"{self.root}/tree{len(self.trees)}"
+
+    def stage_file(self, local_file):
+        self.files.append(str(local_file))
+        return f"{self.root}/file{len(self.files)}/{pathlib.Path(local_file).name}"
+
+    def exec(self, argv, *, timeout, max_output_bytes, cwd=None):
+        self.calls.append({"argv": list(argv), "cwd": cwd, "timeout": timeout})
+        from docker_mcp.tools._ssh_proxy import RemoteExecResult
+
+        return RemoteExecResult(returncode=0, stdout=b"", stderr=b"", truncated=False)
+
+
+@contextlib.contextmanager
+def _fake_session_ctx(session):
+    yield session
+
+
+def _remote_build(session):
+    """Patch buildx onto the remote path with a fake staging session."""
+    return (
+        patch("docker_mcp.tools.buildx.should_remote_exec", return_value=True),
+        patch("docker_mcp.tools.buildx.remote_cli_session", lambda *a, **k: _fake_session_ctx(session)),
+        patch("docker_mcp.tools.buildx.run_docker"),
+    )
+
+
+def _argv(session) -> list[str]:
+    return session.calls[0]["argv"]
+
+
+def test_buildx_queries_run_remotely_without_staging_anything():
+    for call, expected_head in (
+        (lambda: buildx_list(host="prod"), ["buildx", "ls"]),
+        (lambda: buildx_inspect(host="prod"), ["buildx", "inspect"]),
+        (lambda: buildx_du(host="prod"), ["buildx", "du"]),
+        (lambda: buildx_imagetools_inspect("alpine:3.19", host="prod"), ["buildx", "imagetools", "inspect"]),
+    ):
+        with (
+            patch("docker_mcp.tools.buildx.should_remote_exec", return_value=True),
+            patch("docker_mcp.tools.buildx.remote_stage_and_exec") as staged,
+            patch("docker_mcp.tools.buildx.remote_exec_cli", return_value=_ok("{}")) as remote,
+        ):
+            call()
+        staged.assert_not_called()
+        assert remote.call_args.args[1][: len(expected_head)] == expected_head
+
+
+def test_buildx_bake_stages_its_working_directory_and_its_files():
+    with (
+        patch("docker_mcp.tools.buildx.should_remote_exec", return_value=True),
+        patch("docker_mcp.tools.buildx.remote_stage_and_exec", return_value=_ok("")) as staged,
+    ):
+        buildx_bake(targets=["app"], files=["docker-bake.hcl"], cwd="/srv/app", host="prod")
+    assert staged.call_args.kwargs["cwd"] == "/srv/app"
+    assert staged.call_args.kwargs["stage_cwd"] is True
+    assert staged.call_args.kwargs["path_values"] == ["docker-bake.hcl"]
+
+
+def test_buildx_bake_target_named_like_a_flag_is_refused():
+    """
+    Targets are appended verbatim to the argv, so an unvalidated one would be parsed as a flag — and it
+    is also why `path_values` is passed explicitly rather than recovered by scanning for `-f`.
+    """
+    with pytest.raises(ValueError, match="parses as a flag"):
+        buildx_bake(targets=["-f"], files=["docker-bake.hcl"], host="prod")
+
+
+def test_buildx_create_and_imagetools_create_stage_only_the_files_they_name():
+    with (
+        patch("docker_mcp.tools.buildx.should_remote_exec", return_value=True),
+        patch("docker_mcp.tools.buildx.remote_stage_and_exec", return_value=_ok("")) as staged,
+    ):
+        buildx_create(name="builder", config="/etc/buildkitd.toml", host="prod")
+    assert staged.call_args.kwargs["path_values"] == ["/etc/buildkitd.toml"]
+    # No working directory is involved, so none is copied.
+    assert staged.call_args.kwargs["stage_cwd"] is False
+
+    with (
+        patch("docker_mcp.tools.buildx.should_remote_exec", return_value=True),
+        patch("docker_mcp.tools.buildx.remote_stage_and_exec", return_value=_ok("")) as staged,
+    ):
+        buildx_imagetools_create("org/app:v1", ["org/app:amd64"], descriptor_files=["desc.json"], host="prod")
+    assert staged.call_args.kwargs["path_values"] == ["desc.json"]
+
+
+def test_buildx_create_without_a_config_needs_no_staging():
+    with (
+        patch("docker_mcp.tools.buildx.should_remote_exec", return_value=True),
+        patch("docker_mcp.tools.buildx.remote_stage_and_exec") as staged,
+        patch("docker_mcp.tools.buildx.remote_exec_cli", return_value=_ok("")) as remote,
+    ):
+        buildx_create(name="builder", host="prod")
+    staged.assert_not_called()
+    remote.assert_called_once()
+
+
+# ---------- buildx_build's bespoke staging ----------
+
+
+def test_buildx_build_stages_the_context_and_runs_in_it(tmp_path):
+    context = tmp_path / "ctx"
+    context.mkdir()
+    (context / "Dockerfile").write_text("FROM alpine\n", encoding="utf-8")
+    session = _FakeSession()
+    with contextlib.ExitStack() as stack:
+        for patcher in _remote_build(session):
+            stack.enter_context(patcher)
+        buildx_build(str(context), tags=["org/app:v1"], host="prod")
+    assert session.contexts == [(str(context), None)]
+    argv = _argv(session)
+    assert argv[0] == "docker" and argv[1] == "buildx"
+    assert argv[-1] == f"{session.root}/context1"  # the context positional points at the staged copy
+    assert session.calls[0]["cwd"] == f"{session.root}/context1"
+
+
+def test_buildx_build_passes_a_url_context_through_untouched(tmp_path):
+    """
+    Staging keys off "is this an existing local directory", the inverse of trying to recognise URL
+    syntax — which cannot be got right from the string alone. A Git/HTTP context is left for the remote
+    CLI to fetch, exactly as the local one would.
+    """
+    session = _FakeSession()
+    url = "https://github.com/org/repo.git#main"
+    with contextlib.ExitStack() as stack:
+        for patcher in _remote_build(session):
+            stack.enter_context(patcher)
+        buildx_build(url, host="prod")
+    assert session.contexts == []
+    assert _argv(session)[-1] == url
+    assert session.calls[0]["cwd"] is None
+
+
+def test_buildx_build_keeps_an_in_context_dockerfile_relative(tmp_path, monkeypatch):
+    """
+    buildx resolves `--file` against the CLI's working directory (verified empirically), so running with
+    the staged context as the working directory lets an in-context Dockerfile stay relative — and it is
+    passed to the exclusion pass so `.dockerignore` cannot drop it.
+    """
+    context = tmp_path / "ctx"
+    context.mkdir()
+    (context / "app.dockerfile").write_text("FROM alpine\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    session = _FakeSession()
+    with contextlib.ExitStack() as stack:
+        for patcher in _remote_build(session):
+            stack.enter_context(patcher)
+        buildx_build(str(context), file="ctx/app.dockerfile", host="prod")
+    assert session.contexts == [(str(context), "app.dockerfile")]
+    argv = _argv(session)
+    assert argv[argv.index("--file") + 1] == "app.dockerfile"
+    assert session.files == []  # already inside the staged context; not copied twice
+
+
+def test_buildx_build_stages_a_dockerfile_outside_the_context(tmp_path):
+    context = tmp_path / "ctx"
+    context.mkdir()
+    outside = tmp_path / "Dockerfile.shared"
+    outside.write_text("FROM alpine\n", encoding="utf-8")
+    session = _FakeSession()
+    with contextlib.ExitStack() as stack:
+        for patcher in _remote_build(session):
+            stack.enter_context(patcher)
+        buildx_build(str(context), file=str(outside), host="prod")
+    assert session.files == [str(outside)]
+    argv = _argv(session)
+    assert argv[argv.index("--file") + 1] == f"{session.root}/file1/Dockerfile.shared"
+    assert session.contexts == [(str(context), None)]
+
+
+def test_buildx_build_stages_paths_inside_composite_specs(tmp_path):
+    """
+    `--build-context name=path` and `--secret id=x,src=path` hide their paths inside the token, so
+    whole-token matching would miss them and the build would read nothing (or the wrong thing) remotely.
+    """
+    context = tmp_path / "ctx"
+    context.mkdir()
+    vendor = tmp_path / "vendor"
+    vendor.mkdir()
+    npmrc = tmp_path / ".npmrc"
+    npmrc.write_text("//registry:_authToken=x\n", encoding="utf-8")
+    session = _FakeSession()
+    with contextlib.ExitStack() as stack:
+        for patcher in _remote_build(session):
+            stack.enter_context(patcher)
+        buildx_build(
+            str(context),
+            build_contexts={"deps": str(vendor)},
+            secret=[f"id=npmrc,src={npmrc}"],
+            host="prod",
+        )
+    argv = _argv(session)
+    assert argv[argv.index("--build-context") + 1] == f"deps={session.root}/tree1"
+    assert argv[argv.index("--secret") + 1] == f"id=npmrc,src={session.root}/file1/.npmrc"
+
+
+def test_buildx_build_leaves_non_path_composite_values_alone(tmp_path):
+    context = tmp_path / "ctx"
+    context.mkdir()
+    session = _FakeSession()
+    with contextlib.ExitStack() as stack:
+        for patcher in _remote_build(session):
+            stack.enter_context(patcher)
+        buildx_build(
+            str(context),
+            build_contexts={"base": "docker-image://alpine:3.19"},
+            secret=["id=token,env=NPM_TOKEN"],
+            host="prod",
+        )
+    argv = _argv(session)
+    assert argv[argv.index("--build-context") + 1] == "base=docker-image://alpine:3.19"
+    assert argv[argv.index("--secret") + 1] == "id=token,env=NPM_TOKEN"
+    assert session.files == [] and session.trees == []
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "needle"),
+    [
+        ({"output": ["type=local,dest=out"]}, "output="),
+        ({"cache_to": ["type=local,dest=/tmp/cache"]}, "cache_to="),
+        ({"cache_from": ["type=local,src=/tmp/cache"]}, "cache_from="),
+        ({"ssh": ["default"]}, "ssh="),
+        # The stdout exemption is `output`-only: a cache has no stdout form, so "-" is just a path
+        # named "-" on the remote host — and for cache_from a missing import is non-fatal, i.e. a
+        # silently uncached build.
+        ({"cache_to": ["type=local,dest=-"]}, "cache_to="),
+        ({"cache_from": ["type=local,src=-"]}, "cache_from="),
+    ],
+)
+def test_buildx_build_refuses_flags_that_would_resolve_on_the_remote_host(tmp_path, kwargs, needle):
+    """
+    Each of these either loses work silently (an output written into a directory that is about to be
+    deleted, a cache on the wrong disk, a *non-fatal* missing cache import) or uses the wrong
+    credentials (`--ssh` reads the remote user's agent). The refusal happens before any connection.
+    """
+    context = tmp_path / "ctx"
+    context.mkdir()
+    session = _FakeSession()
+    with contextlib.ExitStack() as stack:
+        for patcher in _remote_build(session):
+            stack.enter_context(patcher)
+        with pytest.raises(RuntimeError, match=needle):
+            buildx_build(str(context), host="prod", **kwargs)
+    assert session.calls == []
+    assert session.contexts == []
+
+
+def test_buildx_build_allows_a_registry_output_and_stdout_dest(tmp_path):
+    # `dest=-` on `output` is stdout, captured identically on both paths — and buildx itself rejects it
+    # for exporters where it makes no sense ("dest cannot be stdout for local exporter", verified), so
+    # this needs no exporter allow-list of our own.
+    context = tmp_path / "ctx"
+    context.mkdir()
+    session = _FakeSession()
+    with contextlib.ExitStack() as stack:
+        for patcher in _remote_build(session):
+            stack.enter_context(patcher)
+        buildx_build(
+            str(context), output=["type=oci,dest=-"], cache_to=["type=registry,ref=org/app:cache"], host="prod"
+        )
+    assert len(session.calls) == 1
+
+
+def test_buildx_build_uses_the_local_cli_when_it_can(tmp_path):
+    context = tmp_path / "ctx"
+    context.mkdir()
+    with (
+        patch("docker_mcp.tools.buildx.should_remote_exec", return_value=False),
+        patch("docker_mcp.tools.buildx.remote_cli_session") as session_factory,
+        patch("docker_mcp.tools.buildx.run_docker", return_value=_ok("")) as run,
+        patch("docker_mcp.tools.buildx.require_plugin") as require,
+    ):
+        buildx_build(str(context), output=["type=local,dest=out"], ssh=["default"], host="prod")
+    session_factory.assert_not_called()
+    require.assert_called_once_with("buildx")
+    # The refusals are remote-only: locally these flags work exactly as before.
+    assert "--output" in run.call_args.args[0]
+    assert "--ssh" in run.call_args.args[0]
+
+
+def test_buildx_build_refusals_name_the_consequence_for_that_flag(tmp_path):
+    """
+    One shared message for three flags was wrong: nothing is *written* for `cache_from`, and "deleted
+    when the call returns" describes only the output case. Each refusal now explains its own failure.
+    """
+    context = tmp_path / "ctx"
+    context.mkdir()
+    session = _FakeSession()
+    messages = {}
+    for flag, kwargs in (
+        ("output", {"output": ["type=local,dest=out"]}),
+        ("cache_to", {"cache_to": ["type=local,dest=/tmp/c"]}),
+        ("cache_from", {"cache_from": ["type=local,src=/tmp/c"]}),
+    ):
+        with contextlib.ExitStack() as stack:
+            for patcher in _remote_build(session):
+                stack.enter_context(patcher)
+            with pytest.raises(RuntimeError) as excinfo:
+                buildx_build(str(context), host="prod", **kwargs)
+        messages[flag] = str(excinfo.value)
+    assert "deleted when the call returns" in messages["output"]
+    assert "nothing later reads it" in messages["cache_to"]
+    assert "silently run uncached" in messages["cache_from"]
+    assert "written" not in messages["cache_from"]  # nothing is written on an import
+
+
+def test_buildx_build_stages_an_absolute_dockerfile_beside_a_url_context(tmp_path):
+    """
+    With a URL context an *absolute* `--file` is still read from this filesystem — buildx transfers it as
+    a separate dockerfile context (observed: `transferring dockerfile: 46B` plus a parse error from the
+    local file's own contents). So it has to be staged, even though the context is not.
+    """
+    dockerfile = tmp_path / "Dockerfile.remote"
+    dockerfile.write_text("FROM alpine\n", encoding="utf-8")
+    session = _FakeSession()
+    with contextlib.ExitStack() as stack:
+        for patcher in _remote_build(session):
+            stack.enter_context(patcher)
+        buildx_build("https://github.com/org/repo.git", file=str(dockerfile), host="prod")
+    assert session.contexts == []  # the URL context is untouched
+    assert session.files == [str(dockerfile)]
+    argv = _argv(session)
+    assert argv[argv.index("--file") + 1] == f"{session.root}/file1/Dockerfile.remote"
+
+
+def test_buildx_build_leaves_a_relative_dockerfile_beside_a_url_context_alone(tmp_path, monkeypatch):
+    """
+    The mirror case: with a URL context a *relative* `--file` is resolved inside the fetched context, not
+    here (verified — `-f Dockerfile <git-url>` reports "open Dockerfile: no such file" rather than using
+    the identically-named file in the working directory). Resolving it locally would risk staging a
+    same-named file that happens to sit in this server's cwd and silently building something else.
+    """
+    decoy = tmp_path / "Dockerfile"
+    decoy.write_text("FROM decoy\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    session = _FakeSession()
+    with contextlib.ExitStack() as stack:
+        for patcher in _remote_build(session):
+            stack.enter_context(patcher)
+        buildx_build("https://github.com/org/repo.git", file="Dockerfile", host="prod")
+    assert session.files == []  # the decoy in the cwd is not staged
+    argv = _argv(session)
+    assert argv[argv.index("--file") + 1] == "Dockerfile"
+
+
+def test_buildx_build_leaves_a_dockerfile_that_does_not_exist_locally(tmp_path):
+    # Parity: a `--file` naming nothing here is reported by the remote CLI, not turned into a staging error.
+    context = tmp_path / "ctx"
+    context.mkdir()
+    session = _FakeSession()
+    with contextlib.ExitStack() as stack:
+        for patcher in _remote_build(session):
+            stack.enter_context(patcher)
+        buildx_build(str(context), file=str(tmp_path / "absent.dockerfile"), host="prod")
+    assert session.files == []
+    argv = _argv(session)
+    assert argv[argv.index("--file") + 1] == str(tmp_path / "absent.dockerfile")
