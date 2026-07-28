@@ -888,3 +888,27 @@ def test_remote_stage_and_exec_explains_an_unavailable_server_cwd(monkeypatch, t
         with pytest.raises(ValueError, match="own working directory is unavailable"):
             cli_module.remote_stage_and_exec("prod", ["compose", "ps"], cwd=None, timeout=60.0)
     assert session.trees == []
+
+
+def test_remote_stage_and_exec_does_not_expand_tilde_in_cwd_or_path_tokens(monkeypatch, tmp_path):
+    """
+    Parity guard. `subprocess.run(cwd=...)` does not expand `~` (verified: it raises FileNotFoundError
+    for '~/proj'), the docker CLI does not expand argv tokens either, and the compose/stack docstrings
+    promise paths are used verbatim. Expanding here would make the same call succeed remotely and fail
+    locally — the one divergence this backend exists to avoid.
+    """
+    _pin_hosts(monkeypatch, "prod=ssh://ops@prod")
+    session = _FakeSession()
+    with _stage_patched(session):
+        with pytest.raises(ValueError, match="nothing exists at that path"):
+            cli_module.remote_stage_and_exec("prod", ["compose", "up"], cwd="~", timeout=60.0)
+    # And a `~` token is passed through untouched rather than resolved to the server user's home.
+    project = tmp_path / "project"
+    project.mkdir()
+    home_file = "~/docker-compose.yml"
+    with _stage_patched(session):
+        cli_module.remote_stage_and_exec(
+            "prod", ["compose", "-f", home_file, "up"], cwd=project, timeout=60.0, path_values=[home_file]
+        )
+    assert session.calls[-1]["argv"] == ["docker", "compose", "-f", home_file, "up"]
+    assert session.files == []

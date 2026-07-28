@@ -407,7 +407,11 @@ def remote_stage_and_exec(
     _reject_unforwardable(stdin, extra_env)
     url = _ssh_url_for(host, args)
     if cwd is not None:
-        local_cwd = Path(cwd).expanduser()
+        # Verbatim, deliberately: `subprocess.run(cwd=...)` does not expand `~` (verified — it raises
+        # FileNotFoundError for '~/proj'), and the compose/stack docstrings promise paths are used as
+        # given with no shell expansion. Expanding here would make the same call succeed remotely and
+        # fail locally, which is the one divergence this whole backend exists to avoid.
+        local_cwd = Path(cwd)
     else:
         try:
             local_cwd = Path.cwd()
@@ -549,7 +553,10 @@ def _reconcile_path_tokens(
     for value in path_values:
         if not value or value in replacements:
             continue
-        candidate = Path(value).expanduser()
+        # No `~` expansion, for the same parity reason as `cwd` above: the docker CLI receives argv
+        # tokens verbatim and does not expand them either, so a `~`-prefixed value names nothing on
+        # either backend and is passed through for the CLI to report.
+        candidate = Path(value)
         absolute = candidate if candidate.is_absolute() else base / candidate
         try:
             inside = absolute.resolve().is_relative_to(resolved_base)
