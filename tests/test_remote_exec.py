@@ -14,6 +14,7 @@ import shlex
 import signal
 import subprocess
 import sys
+import unittest.mock
 from typing import cast
 
 import paramiko
@@ -225,6 +226,41 @@ def test_marker_is_removed_on_any_exit_not_just_the_happy_path():
 # --- timeout attribution -------------------------------------------------------------------------
 
 
+@contextlib.contextmanager
+def _clock_advanced_past_the_watchdog():
+    """
+    Make an instant fake channel look like it ran long enough for the watchdog to have fired.
+
+    Attribution deliberately requires corroborating elapsed time, so a fake that returns immediately
+    is (correctly) not a timeout. Driving the clock is how a test exercises the raising path without
+    a degenerate timeout value that would sidestep the very check under test.
+    """
+    calls = iter([0.0])  # first reading is the start; every later reading is far in the future
+
+    def fake_monotonic():
+        return next(calls, 10_000.0)
+
+    with unittest.mock.patch("docker_mcp.tools._ssh_proxy.time.monotonic", fake_monotonic):
+        yield
+
+
+def test_timeout_attribution_uses_the_watchdogs_sleep_not_the_raw_timeout():
+    """
+    The two differ whenever the timeout is not a whole number of seconds, and the gap is not benign.
+
+    At `timeout=30.2` the watchdog cannot fire before 31s, so comparing against 30.2 would misattribute
+    a sentinel exit at 30.5s; at `timeout=0.1` the raw threshold goes negative and would misattribute
+    *every* sentinel exit, including an instant one.
+    """
+    # Sub-second timeout: the watchdog still sleeps its 1s floor, so nothing quicker is a timeout.
+    assert _is_remote_timeout(_REMOTE_TIMEOUT_EXIT_CODE, elapsed=0.02, timeout=0.1) is False
+    assert _is_remote_timeout(_REMOTE_TIMEOUT_EXIT_CODE, elapsed=0.5, timeout=0.1) is False
+    assert _is_remote_timeout(_REMOTE_TIMEOUT_EXIT_CODE, elapsed=1.0, timeout=0.1) is True
+    # Fractional timeout: the deadline is the rounded-up 31s, not 30.2s.
+    assert _is_remote_timeout(_REMOTE_TIMEOUT_EXIT_CODE, elapsed=30.5, timeout=30.2) is False
+    assert _is_remote_timeout(_REMOTE_TIMEOUT_EXIT_CODE, elapsed=31.0, timeout=30.2) is True
+
+
 def test_timeout_attribution_requires_the_full_budget_to_have_elapsed():
     """
     The sentinel exit code alone must not decide it.
@@ -270,9 +306,18 @@ _GRANDCHILD_MARKER_SECONDS = 4519
 
 
 def _pids_sleeping_for(seconds: int) -> list[str]:
-    """Pids of `sleep <seconds>` processes, via pgrep. Empty when pgrep finds nothing (exit 1)."""
+    """
+    Pids of `sleep <seconds>` processes, via pgrep. Empty when pgrep finds nothing (exit 1).
+
+    Skips the calling test when `pgrep` is absent — it is not in a minimal container image, and an
+    unavailable probe should not look like a failing assertion.
+    """
     probe = ["pgrep", "-f", f"sleep {seconds}"]
-    return subprocess.run(probe, capture_output=True, text=True, check=False).stdout.split()  # noqa: S603
+    try:
+        completed = subprocess.run(probe, capture_output=True, text=True, check=False)  # noqa: S603
+    except (FileNotFoundError, PermissionError) as exc:
+        pytest.skip(f"pgrep unavailable, cannot inspect stray processes: {exc}")
+    return completed.stdout.split()
 
 
 def _run_script(argv, *, timeout, cwd=None, capture_timeout=30):
@@ -380,11 +425,18 @@ def test_get_dialect_returns_the_posix_implementation():
     assert isinstance(get_dialect(RemoteDialectKind.POSIX), PosixDialect)
 
 
-def test_get_dialect_refuses_windows_with_actionable_guidance():
-    with pytest.raises(RuntimeError, match="not implemented yet") as excinfo:
+def test_get_dialect_refuses_a_non_posix_host_without_claiming_it_is_windows():
+    """
+    Detection routes a failed probe, an unrecognised kernel and a restricted shell to WINDOWS too, so
+    the refusal must not assert the host *is* Windows — it names the causes instead, and points at the
+    log line that records what the host actually reported.
+    """
+    with pytest.raises(RuntimeError, match="no supported POSIX shell") as excinfo:
         get_dialect(RemoteDialectKind.WINDOWS)
     message = str(excinfo.value)
     assert "WSL" in message  # the supported alternative a Windows user needs to be told about
+    assert "restricted shell" in message  # the non-Windows causes are acknowledged
+    assert not message.startswith("Remote-exec fallback: this host needs")  # the old, wrong framing
 
 
 # --- detect_remote_dialect -----------------------------------------------------------------------
@@ -482,18 +534,18 @@ def test_exec_remote_raises_timeout_expired_on_the_watchdog_exit_code():
     """The remote watchdog's 124 becomes the same exception the local subprocess path raises, so
     callers see one contract regardless of which backend ran."""
     channel = FakeChannel(stdout=[b"partial"], exit_status=_REMOTE_TIMEOUT_EXIT_CODE)
-    # timeout=0 so the (instant) fake still counts as having consumed its whole budget, which is what
-    # distinguishes a real timeout from a command that merely exited with the sentinel code.
-    with pytest.raises(subprocess.TimeoutExpired) as excinfo:
-        exec_remote(fake_client(channel), ["docker", "build", "."], max_output_bytes=_CAP, timeout=0)
-    assert excinfo.value.timeout == 0
+    # Advance the clock so the instant fake looks like it consumed its budget: attribution needs the
+    # watchdog to have plausibly fired, which is what separates a timeout from a plain sentinel exit.
+    with _clock_advanced_past_the_watchdog(), pytest.raises(subprocess.TimeoutExpired) as excinfo:
+        exec_remote(fake_client(channel), ["docker", "build", "."], max_output_bytes=_CAP, timeout=7)
+    assert excinfo.value.timeout == 7
     assert excinfo.value.cmd == ["docker", "build", "."]
     assert excinfo.value.output == b"partial"  # output captured before the kill is preserved
 
 
 def test_exec_remote_refuses_a_non_posix_dialect_before_running_anything():
     channel = FakeChannel()
-    with pytest.raises(RuntimeError, match="not implemented yet"):
+    with pytest.raises(RuntimeError, match="no supported POSIX shell"):
         exec_remote(
             fake_client(channel),
             ["docker", "ps"],
@@ -511,8 +563,8 @@ def test_exec_remote_raises_when_the_transport_is_gone():
 
 def test_exec_remote_closes_the_channel_even_when_the_command_raises(monkeypatch):
     channel = FakeChannel(stdout=[b"x"], exit_status=_REMOTE_TIMEOUT_EXIT_CODE)
-    with pytest.raises(subprocess.TimeoutExpired):
-        exec_remote(fake_client(channel), ["docker", "ps"], max_output_bytes=_CAP, timeout=0)
+    with _clock_advanced_past_the_watchdog(), pytest.raises(subprocess.TimeoutExpired):
+        exec_remote(fake_client(channel), ["docker", "ps"], max_output_bytes=_CAP, timeout=7)
     assert channel.closed
 
 
@@ -554,6 +606,6 @@ def test_run_remote_exec_refuses_a_non_posix_host(monkeypatch):
     fake = FakeSshClient(FakeChannel(stdout=[b""], exit_status=127, exit_ready_immediately=True))
     client = cast(paramiko.SSHClient, fake)
     monkeypatch.setattr("docker_mcp.tools._ssh_proxy.connect_ssh_client", lambda *a, **k: client)
-    with pytest.raises(RuntimeError, match="not implemented yet"):
+    with pytest.raises(RuntimeError, match="no supported POSIX shell"):
         run_remote_exec("ssh://win-host", ["docker", "ps"], max_output_bytes=_CAP, timeout=5)
     assert fake.closed

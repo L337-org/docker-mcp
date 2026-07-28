@@ -374,10 +374,23 @@ def ssh_proxy_for_docker_host(docker_host: str, *, timeout: float | None = None)
 # which a command exiting 124 early cannot satisfy.
 _REMOTE_TIMEOUT_EXIT_CODE = 124
 
-# Tolerance when comparing elapsed time against the timeout, for float/latency noise only. A genuine
-# remote timeout always elapses at least `ceil(timeout)` (the watchdog sleeps that long before killing),
-# so this never needs to be generous.
+# Tolerance when comparing elapsed time against the watchdog's deadline, for float/latency noise only.
+# A genuine remote timeout always elapses at least the watchdog's sleep, so this need not be generous.
 _TIMEOUT_ATTRIBUTION_SLACK_SECONDS = 0.25
+
+
+def _watchdog_sleep_seconds(timeout: float) -> int:
+    """
+    Whole seconds the remote watchdog sleeps before killing the command.
+
+    Shared by the wrapper that emits the `sleep` and the attribution check that reasons about when it
+    can have fired, so the two cannot drift apart. `sleep` takes whole seconds portably, hence the
+    round up; the floor of 1 keeps a sub-second timeout from degenerating into `sleep 0`.
+
+    args: timeout - the caller's timeout in seconds
+    returns: int - the watchdog's sleep duration, at least 1
+    """
+    return max(1, math.ceil(timeout))
 
 
 def _is_remote_timeout(returncode: int, elapsed: float, timeout: float) -> bool:
@@ -388,15 +401,21 @@ def _is_remote_timeout(returncode: int, elapsed: float, timeout: float) -> bool:
     legitimately exits with the sentinel code well inside its budget — a container propagating 124
     through `docker run`, say — is reported as the ordinary failure it is rather than as a timeout.
 
+    The comparison is against the watchdog's *effective* sleep, not the caller's raw timeout. Those
+    differ whenever the timeout is not a whole number of seconds, and the difference is not benign: at
+    `timeout=30.2` the watchdog cannot fire before 31s, so testing against 30.2 would misattribute a
+    sentinel exit at 30.5s, and at `timeout=0.1` the raw threshold goes negative and would misattribute
+    *every* sentinel exit. Comparing against the sleep the watchdog actually performs closes both.
+
     args:
         returncode - the exit status the remote wrapper reported
         elapsed - seconds from issuing the command to it completing
         timeout - the caller's timeout for the command
-    returns: bool - True only when the status is the timeout sentinel and the call ran its full budget
+    returns: bool - True only when the status is the sentinel and the watchdog could actually have fired
     """
     if returncode != _REMOTE_TIMEOUT_EXIT_CODE:
         return False
-    return elapsed >= timeout - _TIMEOUT_ATTRIBUTION_SLACK_SECONDS
+    return elapsed >= _watchdog_sleep_seconds(timeout) - _TIMEOUT_ATTRIBUTION_SLACK_SECONDS
 
 
 # Extra local slack past the caller's timeout before we give up on the channel ourselves. The remote
@@ -431,7 +450,6 @@ class RemoteDialectKind(enum.Enum):
 # translated paths. Note WSL reports plain "Linux" and so is (correctly) accepted: sshd running
 # inside a WSL distro is a genuine Linux target, not a Windows one.
 _POSIX_UNAME_VALUES = frozenset({"linux", "darwin", "freebsd", "openbsd", "netbsd", "dragonfly", "sunos", "aix"})
-_NON_POSIX_UNAME_PREFIXES = ("mingw", "msys", "cygwin", "windows")
 
 
 class RemoteDialect(Protocol):
@@ -499,7 +517,7 @@ class PosixDialect:
             cwd - remote directory to run in; a failure to enter it exits 127 without running argv
         returns: str - a complete `sh -c '...'` command string for `Channel.exec_command`
         """
-        seconds = max(1, math.ceil(timeout))
+        seconds = _watchdog_sleep_seconds(timeout)
         # An explicit template, because the bare `mktemp` form is not portable: macOS accepts it, but
         # FreeBSD/OpenBSD/NetBSD require a template argument and would fail here — before running argv
         # at all — on hosts this dialect claims to support.
@@ -541,11 +559,17 @@ def get_dialect(kind: RemoteDialectKind) -> RemoteDialect:
     """
     dialect = _DIALECTS.get(kind)
     if dialect is None:
+        # Deliberately not phrased as "this is a Windows host": `detect_remote_dialect` also routes a
+        # failed probe and an unrecognized `uname -s` here, so a restricted shell or an uncommon Unix
+        # kernel reaches this message too, and calling those Windows would be wrong.
         raise RuntimeError(
-            f"Remote-exec fallback: this host needs the {kind.value!r} command dialect, which is not "
-            f"implemented yet — only POSIX remotes (Linux, macOS/BSD, and sshd running inside WSL) are "
-            f"supported. Install the docker CLI locally to use the local-CLI path against this host "
-            f"instead, or expose the host over a POSIX shell (e.g. run sshd inside the WSL distro)."
+            "Remote-exec fallback: no supported POSIX shell was detected on this host, so the docker "
+            "CLI cannot be run on it. Supported remotes are Linux, macOS/BSD, and sshd running inside "
+            "a WSL distro. Common causes: an sshd whose shell is Windows cmd/PowerShell (a Windows "
+            "dialect is architected but not implemented yet); a `uname` from MSYS/MinGW/Cygwin; a "
+            "restricted shell; or an unrecognized kernel. Preceding log lines record what the host "
+            "reported. Either install the docker CLI locally to use the local-CLI path against this "
+            "host, or expose the host over a POSIX shell (on Windows, run sshd inside the WSL distro)."
         )
     return dialect
 
@@ -569,10 +593,15 @@ def detect_remote_dialect(
 
     This is a *behavioural* probe — "is there a POSIX shell here that will run my script?" — not an
     OS fingerprint, which is why sshd inside a WSL distro is correctly accepted (it answers "Linux"
-    and has real `sh`/`sleep`/`kill`). Anything unrecognised, MSYS/MinGW/Cygwin-flavoured, or that
-    fails to run at all is reported as WINDOWS, i.e. "no POSIX shell reachable" — a locked-down
-    restricted shell lands there too, which is the right outcome when the only consequence is a
-    clear refusal from `get_dialect`.
+    and has real `sh`/`sleep`/`kill`). Only an allow-listed kernel name counts as POSIX; matching on
+    "did `uname` exit 0" would wrongly accept a Windows host with Git Bash or Cygwin on PATH, which
+    answers successfully with `MINGW64_NT-…`.
+
+    Everything else — an MSYS/Cygwin-flavoured value, an unrecognised kernel, a restricted shell, a
+    failed probe — is reported as WINDOWS, which here means only "no supported POSIX shell answered"
+    rather than a claim about the OS. Since `get_dialect`'s refusal therefore cannot name a cause, the
+    observed exit status and output are logged at warning level before returning, so the refusal is
+    diagnosable from the log on its first occurrence.
 
     Cached per host with a short TTL (mirroring `_cli.has_plugin`), so a long-lived server neither
     re-probes on every call nor needs a restart after a remote change.
@@ -600,13 +629,21 @@ def detect_remote_dialect(
                 channel.settimeout(min(timeout, _CONNECT_TIMEOUT_CAP_SECONDS))
             channel.exec_command("uname -s")
             output = channel.recv(_RECV_BUFFER_SIZE).decode("utf-8", errors="replace").strip().lower()
-            if channel.recv_exit_status() == 0 and output:
-                if output in _POSIX_UNAME_VALUES:
-                    kind = RemoteDialectKind.POSIX
-                elif not output.startswith(_NON_POSIX_UNAME_PREFIXES):
-                    # A POSIX-looking kernel we simply haven't listed (an unusual Unix) — refuse
-                    # rather than guess, and say what it reported so the list can be extended.
-                    logger.debug("remote-exec: unrecognized `uname -s` value %r; treating as non-POSIX", output)
+            status = channel.recv_exit_status()
+            if status == 0 and output in _POSIX_UNAME_VALUES:
+                kind = RemoteDialectKind.POSIX
+            else:
+                # Log at warning, not debug: `get_dialect` can only refuse generically (a failed probe,
+                # an MSYS/Cygwin `uname`, a restricted shell and an unlisted kernel all land here), so
+                # this line is the only place recording *what the host actually reported* — without it
+                # the refusal is not diagnosable on first occurrence.
+                logger.warning(
+                    "remote-exec: host %s is not a supported POSIX remote — `uname -s` exited %d and "
+                    "reported %r; remote-exec will be refused for this host",
+                    cache_key,
+                    status,
+                    output,
+                )
         finally:
             channel.close()
     except OSError, EOFError, paramiko.SSHException, RuntimeError:
