@@ -454,6 +454,12 @@ _REMOTE_KILL_GRACE_SECONDS = 10.0
 # trivially fake-able in tests, and at these call rates the wakeups cost nothing measurable.
 _EXEC_POLL_SECONDS = 0.01
 
+# How many extra readiness polls to make after the exit status appears, before accepting that the
+# command's output is finished. Guards against a final chunk surfacing from paramiko's transport
+# thread just after both streams last read as quiet, which would otherwise be dropped silently.
+# Costs at most `_EXIT_SETTLE_POLLS * _EXEC_POLL_SECONDS` once per call, only at the very end.
+_EXIT_SETTLE_POLLS = 5
+
 
 class RemoteDialectKind(enum.Enum):
     """
@@ -754,6 +760,21 @@ def _drain_exec_channel(
         if moved:
             continue  # drain greedily before re-checking for completion
         if channel.exit_status_ready():
+            # Do not break on the first quiet poll. paramiko surfaces data from its transport thread,
+            # so a final chunk can land in the window between the readiness checks above and this one
+            # — the greedy drain cannot help, having already given up — and breaking here loses it
+            # silently, which is worse than truncating loudly because the caller cannot tell. Settle
+            # for a few short polls instead and resume draining if anything appears. This narrows the
+            # window rather than closing it; closing it entirely would mean waiting for EOF, which is
+            # exactly what a command's surviving children make unsafe (see above).
+            settled = False
+            for _ in range(_EXIT_SETTLE_POLLS):
+                if channel.recv_ready() or channel.recv_stderr_ready():
+                    settled = True
+                    break
+                time.sleep(_EXEC_POLL_SECONDS)
+            if settled:
+                continue
             break
         if time.monotonic() >= deadline:
             raise subprocess.TimeoutExpired(cmd=list(argv), timeout=timeout, output=bytes(stdout), stderr=bytes(stderr))

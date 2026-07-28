@@ -565,6 +565,38 @@ def test_exec_remote_drains_stderr_as_well_as_stdout():
     assert result.stderr == b"xyz"
 
 
+class LateChunkChannel(FakeChannel):
+    """
+    A channel whose final chunk only becomes readable after `quiet_polls` empty readiness checks.
+
+    Models the real ordering hazard: paramiko surfaces data from its transport thread, so a chunk can
+    land in the window between both streams last reading as quiet and the exit status being observed.
+    The exit status reads ready throughout, as it does once the server has sent it.
+    """
+
+    def __init__(self, *, quiet_polls: int, chunk: bytes = b"LATE"):
+        super().__init__(stdout=[chunk], exit_ready_immediately=True)
+        self._quiet_polls = quiet_polls
+        self._polls = 0
+
+    def recv_ready(self):
+        self._polls += 1
+        return self._polls > self._quiet_polls and bool(self.stdout_chunks)
+
+
+@pytest.mark.parametrize("quiet_polls", [1, 3, 5])
+def test_exec_remote_captures_output_that_surfaces_after_the_exit_status(quiet_polls):
+    """
+    Breaking on the first quiet poll drops such a chunk *silently*, which is worse than truncating
+    loudly because the caller cannot tell its output is incomplete — an agent would then act on a
+    partial `docker ps` or build log. Reproduced before fixing: the chunk was never read.
+    """
+    channel = LateChunkChannel(quiet_polls=quiet_polls)
+    result = exec_remote(fake_client(channel), ["docker", "ps"], max_output_bytes=_CAP, timeout=5)
+    assert result.stdout == b"LATE"
+    assert not channel.stdout_chunks
+
+
 def test_exec_remote_caps_each_stream_and_flags_truncation():
     channel = FakeChannel(stdout=[b"0123456789"], stderr=[b"abcdefghij"])
     result = exec_remote(fake_client(channel), ["docker", "ps"], max_output_bytes=4, timeout=5)
