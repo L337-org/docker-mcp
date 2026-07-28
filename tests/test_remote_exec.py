@@ -258,6 +258,15 @@ def test_non_positive_timeout_matches_the_local_backends_behaviour(timeout):
     assert channel.executed is None, "the command must not reach the remote host"
 
 
+def test_empty_argv_is_rejected():
+    """The wrapper interpolates the joined argv, so an empty one emits a bare `& pid=$!` and the remote
+    shell dies with a syntax error — a caller bug must not surface as a broken wrapper script."""
+    channel = FakeChannel(stdout=[b"x"])
+    with pytest.raises(ValueError, match="at least the binary"):
+        exec_remote(fake_client(channel), [], max_output_bytes=_CAP, timeout=5)
+    assert channel.executed is None
+
+
 def test_negative_output_cap_is_rejected():
     channel = FakeChannel(stdout=[b"x"])
     with pytest.raises(ValueError, match="must not be negative"):
@@ -562,6 +571,26 @@ def test_detect_remote_dialect_treats_a_failed_probe_as_non_posix():
 
 def test_detect_remote_dialect_treats_a_dead_transport_as_non_posix():
     assert detect_remote_dialect(fake_client(None, transport=False), "ssh://h") is RemoteDialectKind.WINDOWS
+
+
+def test_detect_remote_dialect_warns_on_every_refusal_path(caplog):
+    """
+    `get_dialect`'s refusal cannot name a cause, so this log is the only record of why a host was
+    rejected. Both paths must warn, or the refusal is undiagnosable without reproducing it — the
+    failed-probe path is the least self-evident of the two and was previously only at debug.
+    """
+    with caplog.at_level("WARNING"):
+        detect_remote_dialect(
+            fake_client(FakeChannel(stdout=[b"MINGW64_NT-10.0\n"], exit_ready_immediately=True)), "ssh://a"
+        )
+        detect_remote_dialect(fake_client(None, transport=False), "ssh://b")
+    warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+    assert len(warnings) == 2, [r.getMessage() for r in warnings]
+    answered, failed = warnings
+    assert "mingw64_nt-10.0" in answered.getMessage().lower()  # what the host reported
+    assert "ssh://a" in answered.getMessage()
+    assert "could not be" in failed.getMessage()  # the probe never completed
+    assert "ssh://b" in failed.getMessage()
 
 
 def test_detect_remote_dialect_caches_per_host():

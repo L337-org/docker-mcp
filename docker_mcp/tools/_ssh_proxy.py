@@ -398,6 +398,11 @@ def _validate_exec_args(argv: Sequence[str], timeout: float, max_output_bytes: i
         subprocess.TimeoutExpired - `timeout` is zero or negative
         ValueError - `max_output_bytes` is negative (a caller bug with no local analogue)
     """
+    if not argv:
+        # The wrapper interpolates the joined argv, so an empty one emits a bare `& pid=$!` and the
+        # remote shell dies with "syntax error near unexpected token &" (verified). Fail here instead:
+        # a caller bug should not look like a broken wrapper script.
+        raise ValueError("argv must contain at least the binary to run, got an empty sequence")
     if timeout <= 0:
         raise subprocess.TimeoutExpired(cmd=list(argv), timeout=timeout)
     if max_output_bytes < 0:
@@ -637,9 +642,10 @@ def detect_remote_dialect(
 
     Everything else — an MSYS/Cygwin-flavoured value, an unrecognised kernel, a restricted shell, a
     failed probe — is reported as WINDOWS, which here means only "no supported POSIX shell answered"
-    rather than a claim about the OS. Since `get_dialect`'s refusal therefore cannot name a cause, the
-    observed exit status and output are logged at warning level before returning, so the refusal is
-    diagnosable from the log on its first occurrence.
+    rather than a claim about the OS. Since `get_dialect`'s refusal therefore cannot name a cause, a
+    warning is logged before returning either way, so the refusal is diagnosable on first occurrence:
+    the observed exit status and output when the probe ran, or the underlying error when it could not
+    be completed at all.
 
     Cached per host with a short TTL (mirroring `_cli.has_plugin`), so a long-lived server neither
     re-probes on every call nor needs a restart after a remote change.
@@ -687,7 +693,16 @@ def detect_remote_dialect(
     except OSError, EOFError, paramiko.SSHException, RuntimeError:
         # Probe failure is itself the signal ("no POSIX shell answered"), never a hard error here —
         # get_dialect() is what turns a non-POSIX result into an actionable refusal.
-        logger.debug("remote-exec: `uname -s` probe failed; treating host as non-POSIX", exc_info=True)
+        # Warning, not debug, for the same reason as the branch above: `get_dialect` can only refuse
+        # generically, so this is the only record of *why*. This path is the least self-evident of the
+        # lot — an unreachable host, a dead transport, a shell that never answered — so leaving it at
+        # debug would mean the refusal could not be explained without reproducing it.
+        logger.warning(
+            "remote-exec: host %s is not a supported POSIX remote — the `uname -s` probe could not be "
+            "completed; remote-exec will be refused for this host",
+            cache_key,
+            exc_info=True,
+        )
 
     with _dialect_cache_lock:
         _dialect_cache[cache_key] = (time.monotonic(), kind)
