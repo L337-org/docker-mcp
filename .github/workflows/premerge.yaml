@@ -49,7 +49,7 @@ jobs:
         # satisfied at all — distinct from the import failure checked in the next step.
         run: |
           uv venv .venv-fresh
-          if ! uv pip install --python .venv-fresh . ; then
+          if ! uv pip install --python .venv-fresh/bin/python . ; then
             echo "::error::Fresh resolve of pyproject.toml FAILED: a dependency specifier can no longer be satisfied. This is a resolution failure, not an import failure."
             exit 1
           fi
