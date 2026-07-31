@@ -498,9 +498,24 @@ def finalize_instructions() -> None:
         pass
 
 
+# Acronyms that a naive title-case of a snake_case tool name gets wrong (e.g. "scout_cves" ->
+# "Scout Cves"). Keyed by the title-cased word so `_title_for` can substitute in place.
+_TITLE_ACRONYMS: dict[str, str] = {"Cves": "CVEs", "Sbom": "SBOM"}
+
+
+def _title_for(name: str) -> str:
+    """Human-readable display title for a tool, mechanically derived from its snake_case name
+    (e.g. "container_list" -> "Container List") so every tool has one without hand-authoring ~150
+    of them. Distinct from the schema `title` `_slim_schema` strips — this is the ToolAnnotations
+    field some directories (e.g. the Claude Connectors Directory) require independent of prose."""
+    words = name.replace("_", " ").title().split(" ")
+    return " ".join(_TITLE_ACRONYMS.get(word, word) for word in words)
+
+
 def _annotations_for(name: str, category: ToolCategory) -> ToolAnnotations:
     """Build the ToolAnnotations a client uses to auto-allow reads and gate destructive calls."""
     return ToolAnnotations(
+        title=_title_for(name),
         read_only_hint=category is ToolCategory.READ_ONLY,
         destructive_hint=category is ToolCategory.DESTRUCTIVE,
         idempotent_hint=True if name in _IDEMPOTENT_TOOLS else None,
