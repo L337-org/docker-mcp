@@ -627,6 +627,9 @@ def test_build_default_client_splices_ssh_config_port_into_docker_host(tmp_path,
     config.write_text("Host example.com\n    Port 1234\n")
     monkeypatch.setattr("os.path.expanduser", lambda p: str(config) if p == "~/.ssh/config" else p)
     monkeypatch.setenv("DOCKER_HOST", "ssh://bob@example.com")
+    # This test is about the port-splice only; the family-fallback probe is exercised in its own
+    # tests below and would otherwise make a real connection attempt to "example.com" here.
+    monkeypatch.setattr(system_module, "_ensure_reachable_family", lambda url: url)
     sentinel = MagicMock()
     with patch("docker_mcp.tools.system.docker.from_env", return_value=sentinel) as from_env:
         assert system_module._build_default_client() is sentinel
@@ -638,8 +641,73 @@ def test_build_client_splices_ssh_config_port_for_multi_host_ssh_entry(tmp_path,
     config = tmp_path / "config"
     config.write_text("Host example.com\n    Port 1234\n")
     monkeypatch.setattr("os.path.expanduser", lambda p: str(config) if p == "~/.ssh/config" else p)
+    # See the comment above: isolate the port-splice from the family-fallback probe.
+    monkeypatch.setattr(system_module, "_ensure_reachable_family", lambda url: url)
     host = Host("remote", "ssh://bob@example.com")
     sentinel = MagicMock()
     with patch("docker_mcp.tools.system.docker.DockerClient", return_value=sentinel) as ctor:
         assert system_module._build_client(host) is sentinel
     ctor.assert_called_once_with(base_url="ssh://bob@example.com:1234")
+
+
+# ---------- _ensure_reachable_family: paramiko's narrow IPv4/IPv6 fallback workaround ----------
+
+
+def test_ensure_reachable_family_ignores_non_ssh_url():
+    assert system_module._ensure_reachable_family("tcp://prod:2376") == "tcp://prod:2376"
+
+
+def test_ensure_reachable_family_ignores_hostless_url():
+    assert system_module._ensure_reachable_family("ssh://") == "ssh://"
+
+
+def test_ensure_reachable_family_leaves_literal_ip_unchanged(monkeypatch):
+    # No DNS ambiguity to resolve for a literal address — must not even attempt a probe connection.
+    monkeypatch.setattr(
+        system_module,
+        "connect_socket_with_family_fallback",
+        MagicMock(side_effect=AssertionError("should not be called for a literal IP")),
+    )
+    assert system_module._ensure_reachable_family("ssh://bob@10.1.2.3:2222") == "ssh://bob@10.1.2.3:2222"
+    assert system_module._ensure_reachable_family("ssh://bob@[::1]:2222") == "ssh://bob@[::1]:2222"
+
+
+def test_ensure_reachable_family_splices_in_the_reachable_address(monkeypatch):
+    fake_sock = MagicMock()
+    fake_sock.getpeername.return_value = ("203.0.113.5", 2222)
+    probe = MagicMock(return_value=fake_sock)
+    monkeypatch.setattr(system_module, "connect_socket_with_family_fallback", probe)
+    result = system_module._ensure_reachable_family("ssh://bob@example.com:2222")
+    assert result == "ssh://bob@203.0.113.5:2222"
+    probe.assert_called_once_with("example.com", 2222, system_module._CONNECT_TIMEOUT_CAP_SECONDS)
+    fake_sock.close.assert_called_once()
+
+
+def test_ensure_reachable_family_brackets_an_ipv6_literal_result(monkeypatch):
+    fake_sock = MagicMock()
+    fake_sock.getpeername.return_value = ("2001:db8::1", 22)
+    monkeypatch.setattr(system_module, "connect_socket_with_family_fallback", MagicMock(return_value=fake_sock))
+    assert system_module._ensure_reachable_family("ssh://bob@example.com") == "ssh://bob@[2001:db8::1]:22"
+
+
+def test_ensure_reachable_family_defaults_port_22_when_unspecified(monkeypatch):
+    probe = MagicMock(side_effect=OSError("unreachable"))
+    monkeypatch.setattr(system_module, "connect_socket_with_family_fallback", probe)
+    system_module._ensure_reachable_family("ssh://bob@example.com")
+    probe.assert_called_once_with("example.com", 22, system_module._CONNECT_TIMEOUT_CAP_SECONDS)
+
+
+def test_ensure_reachable_family_leaves_url_alone_when_every_address_fails(monkeypatch):
+    # Every candidate failed — leave the url untouched so the normal (paramiko-native) connection
+    # attempt runs and produces its own error, rather than this helper raising first.
+    monkeypatch.setattr(
+        system_module, "connect_socket_with_family_fallback", MagicMock(side_effect=OSError("all failed"))
+    )
+    assert system_module._ensure_reachable_family("ssh://bob@example.com:2222") == "ssh://bob@example.com:2222"
+
+
+def test_ensure_reachable_family_preserves_username(monkeypatch):
+    fake_sock = MagicMock()
+    fake_sock.getpeername.return_value = ("203.0.113.5", 22)
+    monkeypatch.setattr(system_module, "connect_socket_with_family_fallback", MagicMock(return_value=fake_sock))
+    assert system_module._ensure_reachable_family("ssh://deploy@example.com") == "ssh://deploy@203.0.113.5:22"

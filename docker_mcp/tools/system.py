@@ -1,5 +1,6 @@
 # library of mcp tools relating to the system domain: daemon info/auth and client connection control
 
+import ipaddress
 import os
 import sys
 import threading
@@ -22,7 +23,7 @@ from docker_mcp._hosts import (
     resolve_auto,
 )
 from docker_mcp.server import tool
-from docker_mcp.tools._ssh_proxy import parse_ssh_url
+from docker_mcp.tools._ssh_proxy import _CONNECT_TIMEOUT_CAP_SECONDS, connect_socket_with_family_fallback, parse_ssh_url
 from docker_mcp.tools._utils import classify_host_kernel, close_stream_quietly, env_flag, in_container
 
 # One lazily-built docker-py client per configured host label (the pool). FastMCP runs sync tools
@@ -152,6 +153,59 @@ def _ensure_ssh_port(url: str) -> str:
     return urllib.parse.urlunparse(parsed._replace(netloc=f"{parsed.netloc}:{target.port}"))
 
 
+def _ensure_reachable_family(url: str) -> str:
+    """
+    Work around paramiko's narrow IPv4/IPv6 fallback for an `ssh://` docker-py connection.
+
+    `paramiko.SSHClient.connect()` (used internally by docker-py's `SSHHTTPAdapter`) resolves both
+    address families but only retries the next one on `ECONNREFUSED`/`EHOSTUNREACH` — a timed-out or
+    black-holed IPv6 route (`ETIMEDOUT`, what a broken IPv6 path actually produces) is never retried,
+    so a host that's perfectly reachable over IPv4 fails outright. `tcp://` doesn't have this problem
+    (`urllib3.util.connection.create_connection` catches any `OSError` per attempt) — only `ssh://`
+    needs this. See `_ssh_proxy.connect_socket_with_family_fallback`'s docstring for the full story.
+
+    Rather than reaching into docker-py's `SSHHTTPAdapter` internals (undocumented, and it always
+    builds its own fresh `paramiko.SSHClient` with no hook to accept a pre-connected socket), this
+    probes every resolved address itself with that same broad-fallback helper, then splices whichever
+    address actually answered into the URL as a literal IP — so docker-py's own (unmodified) connect
+    resolves trivially to the one address already proven reachable, the same trick `_ensure_ssh_port`
+    above already uses to work around a different docker-py quirk. One extra short-lived probe
+    connection per client build; `_get_client`'s pool means that happens once per host, not per call.
+
+    A URL that isn't `ssh://`, has no hostname, or is already a literal address (no family ambiguity
+    to resolve) is returned unchanged, as is one where every resolved address fails to connect — in
+    that last case the normal (paramiko-native) connection attempt still runs and produces its own
+    error, rather than this helper raising first.
+
+    args: url: str - a DOCKER_HOST/host URL; only `ssh://` URLs are affected
+    returns: str - `url` unchanged, or with its hostname replaced by the literal address that answered
+    """
+    if not is_ssh_url(url):
+        return url
+    parsed = urllib.parse.urlparse(url)
+    hostname = parsed.hostname
+    if not hostname:
+        return url
+    try:
+        ipaddress.ip_address(hostname)
+    except ValueError:
+        pass
+    else:
+        return url  # already a literal address; no family ambiguity to resolve
+    port = parsed.port or 22
+    try:
+        sock = connect_socket_with_family_fallback(hostname, port, _CONNECT_TIMEOUT_CAP_SECONDS)
+    except OSError:
+        return url
+    try:
+        peer_host = sock.getpeername()[0]
+    finally:
+        sock.close()
+    literal = f"[{peer_host}]" if ":" in peer_host else peer_host
+    userinfo = f"{parsed.username}@" if parsed.username else ""
+    return urllib.parse.urlunparse(parsed._replace(netloc=f"{userinfo}{literal}:{port}"))
+
+
 def _build_default_client() -> docker.DockerClient:
     """Client for DOCKER_HOST when set (via from_env, honoring its TLS env), else the resolved endpoint.
 
@@ -160,7 +214,7 @@ def _build_default_client() -> docker.DockerClient:
     """
     docker_host = os.environ.get("DOCKER_HOST")
     if docker_host:
-        fixed = _ensure_ssh_port(docker_host)
+        fixed = _ensure_reachable_family(_ensure_ssh_port(docker_host))
         if fixed != docker_host:
             return docker.from_env(environment={**os.environ, "DOCKER_HOST": fixed})
         return docker.from_env()
@@ -206,7 +260,7 @@ def _build_client(host: Host) -> docker.DockerClient:
     tls = _tls_config_for(host)
     if host.url is None:
         return docker.DockerClient(tls=tls) if tls is not None else docker.DockerClient()
-    url = _ensure_ssh_port(host.url)
+    url = _ensure_reachable_family(_ensure_ssh_port(host.url))
     return docker.DockerClient(base_url=url, tls=tls) if tls is not None else docker.DockerClient(base_url=url)
 
 

@@ -1,3 +1,4 @@
+import errno
 import os
 import socket
 import threading
@@ -10,6 +11,7 @@ import pytest
 from docker_mcp.tools._ssh_proxy import (
     SshDialStdioProxy,
     SshTarget,
+    connect_socket_with_family_fallback,
     connect_ssh_client,
     paramiko_dial_stdio_factory,
     parse_ssh_url,
@@ -94,13 +96,17 @@ def test_parse_ssh_url_explicit_values_win_over_config(tmp_path, monkeypatch):
 def test_connect_ssh_client_mirrors_docker_py_defaults(monkeypatch):
     monkeypatch.setattr("os.path.exists", lambda _path: False)
     fake_client = MagicMock()
+    fake_sock = MagicMock()
+    probe = MagicMock(return_value=fake_sock)
+    monkeypatch.setattr("docker_mcp.tools._ssh_proxy.connect_socket_with_family_fallback", probe)
     with patch("docker_mcp.tools._ssh_proxy.paramiko.SSHClient", return_value=fake_client) as ssh_client_cls:
         result = connect_ssh_client("ssh://bob@example.com:2222")
     assert result is fake_client
     ssh_client_cls.assert_called_once_with()
     fake_client.load_system_host_keys.assert_called_once()
     fake_client.set_missing_host_key_policy.assert_called_once()
-    fake_client.connect.assert_called_once_with(hostname="example.com", port=2222, username="bob")
+    fake_client.connect.assert_called_once_with(hostname="example.com", port=2222, username="bob", sock=fake_sock)
+    probe.assert_called_once_with("example.com", 2222, None)
 
 
 def test_connect_ssh_client_omits_port_when_unresolved(monkeypatch):
@@ -109,12 +115,17 @@ def test_connect_ssh_client_omits_port_when_unresolved(monkeypatch):
     # left out entirely rather than passed through as None.
     monkeypatch.setattr("os.path.exists", lambda _path: False)
     fake_client = MagicMock()
+    probe = MagicMock(return_value=MagicMock())
+    monkeypatch.setattr("docker_mcp.tools._ssh_proxy.connect_socket_with_family_fallback", probe)
     with patch("docker_mcp.tools._ssh_proxy.paramiko.SSHClient", return_value=fake_client):
         connect_ssh_client("ssh://bob@example.com")
     kwargs = fake_client.connect.call_args.kwargs
     assert "port" not in kwargs
     assert kwargs["hostname"] == "example.com"
     assert kwargs["username"] == "bob"
+    # The raw connect probe still needs a concrete port even though paramiko's own kwarg is omitted
+    # (paramiko defaults an *absent* port kwarg to 22, but getaddrinfo needs an explicit int).
+    probe.assert_called_once_with("example.com", 22, None)
 
 
 def test_connect_ssh_client_passes_key_filename_and_proxycommand(tmp_path, monkeypatch):
@@ -123,6 +134,8 @@ def test_connect_ssh_client_passes_key_filename_and_proxycommand(tmp_path, monke
     monkeypatch.setattr("os.path.expanduser", lambda p: str(config) if p == "~/.ssh/config" else p)
     fake_client = MagicMock()
     fake_proxy_command = MagicMock()
+    probe = MagicMock(side_effect=AssertionError("should not be called when a ProxyCommand is in play"))
+    monkeypatch.setattr("docker_mcp.tools._ssh_proxy.connect_socket_with_family_fallback", probe)
     with (
         patch("docker_mcp.tools._ssh_proxy.paramiko.SSHClient", return_value=fake_client),
         patch("docker_mcp.tools._ssh_proxy.paramiko.ProxyCommand", return_value=fake_proxy_command) as proxy_cmd_cls,
@@ -130,6 +143,8 @@ def test_connect_ssh_client_passes_key_filename_and_proxycommand(tmp_path, monke
         connect_ssh_client("ssh://myhost")
     kwargs = fake_client.connect.call_args.kwargs
     assert kwargs["key_filename"].endswith("id_deploy")
+    # A ProxyCommand already supplies its own sock (e.g. `ssh -W %h:%p` to a bastion) — there is no
+    # hostname:port of ours to probe for family fallback, so `sock` must stay the ProxyCommand.
     assert kwargs["sock"] is fake_proxy_command
     proxy_cmd_cls.assert_called_once_with("ssh -W myhost:22 bastion")
 
@@ -137,12 +152,16 @@ def test_connect_ssh_client_passes_key_filename_and_proxycommand(tmp_path, monke
 def test_connect_ssh_client_omits_timeout_kwargs_when_unset(monkeypatch):
     monkeypatch.setattr("os.path.exists", lambda _path: False)
     fake_client = MagicMock()
+    probe = MagicMock(return_value=MagicMock())
+    monkeypatch.setattr("docker_mcp.tools._ssh_proxy.connect_socket_with_family_fallback", probe)
     with patch("docker_mcp.tools._ssh_proxy.paramiko.SSHClient", return_value=fake_client):
         connect_ssh_client("ssh://bob@example.com")
     kwargs = fake_client.connect.call_args.kwargs
     assert "timeout" not in kwargs
     assert "banner_timeout" not in kwargs
     assert "auth_timeout" not in kwargs
+    # No timeout given -> the probe connect is unbounded too (paramiko's own None-timeout default).
+    probe.assert_called_once_with("example.com", 22, None)
 
 
 def test_connect_ssh_client_bounds_connect_banner_and_auth_phases_when_timeout_given(monkeypatch):
@@ -151,12 +170,17 @@ def test_connect_ssh_client_bounds_connect_banner_and_auth_phases_when_timeout_g
     # could still hang past run_docker's own deadline in one of the un-bounded phases.
     monkeypatch.setattr("os.path.exists", lambda _path: False)
     fake_client = MagicMock()
+    probe = MagicMock(return_value=MagicMock())
+    monkeypatch.setattr("docker_mcp.tools._ssh_proxy.connect_socket_with_family_fallback", probe)
     with patch("docker_mcp.tools._ssh_proxy.paramiko.SSHClient", return_value=fake_client):
         connect_ssh_client("ssh://bob@example.com", timeout=5.0)
     kwargs = fake_client.connect.call_args.kwargs
     assert kwargs["timeout"] == 5.0
     assert kwargs["banner_timeout"] == 5.0
     assert kwargs["auth_timeout"] == 5.0
+    # The same bound governs the raw-connect probe (paramiko skips its own connect phase once a
+    # pre-connected sock is supplied, so this is the only place that timeout is actually enforced).
+    probe.assert_called_once_with("example.com", 22, 5.0)
 
 
 def test_connect_ssh_client_caps_a_large_timeout(monkeypatch):
@@ -164,12 +188,15 @@ def test_connect_ssh_client_caps_a_large_timeout(monkeypatch):
     # long: the handshake bound is capped at _CONNECT_TIMEOUT_CAP_SECONDS (30s).
     monkeypatch.setattr("os.path.exists", lambda _path: False)
     fake_client = MagicMock()
+    probe = MagicMock(return_value=MagicMock())
+    monkeypatch.setattr("docker_mcp.tools._ssh_proxy.connect_socket_with_family_fallback", probe)
     with patch("docker_mcp.tools._ssh_proxy.paramiko.SSHClient", return_value=fake_client):
         connect_ssh_client("ssh://bob@example.com", timeout=1800.0)
     kwargs = fake_client.connect.call_args.kwargs
     assert kwargs["timeout"] == 30.0
     assert kwargs["banner_timeout"] == 30.0
     assert kwargs["auth_timeout"] == 30.0
+    probe.assert_called_once_with("example.com", 22, 30.0)
 
 
 def test_connect_ssh_client_wraps_connection_failure_with_guidance(monkeypatch):
@@ -177,11 +204,100 @@ def test_connect_ssh_client_wraps_connection_failure_with_guidance(monkeypatch):
     monkeypatch.setattr("os.path.exists", lambda _path: False)
     fake_client = MagicMock()
     fake_client.connect.side_effect = paramiko.AuthenticationException("no auth methods")
+    monkeypatch.setattr(
+        "docker_mcp.tools._ssh_proxy.connect_socket_with_family_fallback", MagicMock(return_value=MagicMock())
+    )
     with patch("docker_mcp.tools._ssh_proxy.paramiko.SSHClient", return_value=fake_client):
         with pytest.raises(RuntimeError, match="Could not establish the SSH connection"):
             connect_ssh_client("ssh://bob@example.com")
     # The half-open client is closed rather than leaked on the failure path.
     fake_client.close.assert_called_once()
+
+
+def test_connect_ssh_client_wraps_family_fallback_probe_failure_with_guidance(monkeypatch):
+    # The probe itself (not just paramiko's connect()) can raise OSError when every address fails —
+    # that must be wrapped with the same actionable guidance, not a bare socket error.
+    monkeypatch.setattr("os.path.exists", lambda _path: False)
+    fake_client = MagicMock()
+    monkeypatch.setattr(
+        "docker_mcp.tools._ssh_proxy.connect_socket_with_family_fallback",
+        MagicMock(side_effect=OSError("all addresses failed")),
+    )
+    with patch("docker_mcp.tools._ssh_proxy.paramiko.SSHClient", return_value=fake_client):
+        with pytest.raises(RuntimeError, match="Could not establish the SSH connection"):
+            connect_ssh_client("ssh://bob@example.com")
+    fake_client.connect.assert_not_called()
+    fake_client.close.assert_called_once()
+
+
+# ---------- connect_socket_with_family_fallback ----------
+
+
+def test_connect_socket_with_family_fallback_first_family_succeeds(monkeypatch):
+    addrinfo = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("192.0.2.1", 22))]
+    monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: addrinfo)
+    fake_sock = MagicMock()
+    monkeypatch.setattr(socket, "socket", MagicMock(return_value=fake_sock))
+
+    result = connect_socket_with_family_fallback("example.com", 22, 5.0)
+
+    assert result is fake_sock
+    fake_sock.settimeout.assert_called_once_with(5.0)
+    fake_sock.connect.assert_called_once_with(("192.0.2.1", 22))
+    fake_sock.close.assert_not_called()
+
+
+def test_connect_socket_with_family_fallback_falls_back_after_a_timeout(monkeypatch):
+    # The case paramiko itself gets wrong: an ETIMEDOUT on the first family (what a broken/black-holed
+    # IPv6 route actually produces) must still fall through to the next resolved address.
+    addrinfo = [
+        (socket.AF_INET6, socket.SOCK_STREAM, 6, "", ("2001:db8::1", 22, 0, 0)),
+        (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("192.0.2.1", 22)),
+    ]
+    monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: addrinfo)
+
+    fake_ipv6_sock = MagicMock()
+    fake_ipv6_sock.connect.side_effect = OSError(errno.ETIMEDOUT, "Operation timed out")
+    fake_ipv4_sock = MagicMock()
+    sockets = iter([fake_ipv6_sock, fake_ipv4_sock])
+    monkeypatch.setattr(socket, "socket", MagicMock(side_effect=lambda *a: next(sockets)))
+
+    result = connect_socket_with_family_fallback("example.com", 22, 5.0)
+
+    assert result is fake_ipv4_sock
+    fake_ipv6_sock.close.assert_called_once()
+    fake_ipv4_sock.connect.assert_called_once_with(("192.0.2.1", 22))
+
+
+def test_connect_socket_with_family_fallback_raises_last_error_when_all_fail(monkeypatch):
+    addrinfo = [
+        (socket.AF_INET6, socket.SOCK_STREAM, 6, "", ("2001:db8::1", 22, 0, 0)),
+        (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("192.0.2.1", 22)),
+    ]
+    monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: addrinfo)
+
+    fake_ipv6_sock = MagicMock()
+    fake_ipv6_sock.connect.side_effect = OSError(errno.ETIMEDOUT, "Operation timed out")
+    fake_ipv4_sock = MagicMock()
+    fake_ipv4_sock.connect.side_effect = OSError(errno.ECONNREFUSED, "Connection refused")
+    sockets = iter([fake_ipv6_sock, fake_ipv4_sock])
+    monkeypatch.setattr(socket, "socket", MagicMock(side_effect=lambda *a: next(sockets)))
+
+    with pytest.raises(OSError, match="Connection refused"):
+        connect_socket_with_family_fallback("example.com", 22, 5.0)
+    fake_ipv6_sock.close.assert_called_once()
+    fake_ipv4_sock.close.assert_called_once()
+
+
+def test_connect_socket_with_family_fallback_no_timeout_leaves_socket_default(monkeypatch):
+    addrinfo = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("192.0.2.1", 22))]
+    monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: addrinfo)
+    fake_sock = MagicMock()
+    monkeypatch.setattr(socket, "socket", MagicMock(return_value=fake_sock))
+
+    connect_socket_with_family_fallback("example.com", 22, None)
+
+    fake_sock.settimeout.assert_not_called()
 
 
 def test_paramiko_dial_stdio_factory_opens_session_and_execs_dial_stdio():

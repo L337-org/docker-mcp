@@ -80,6 +80,47 @@ class SshTarget:
     proxycommand: str | None
 
 
+def connect_socket_with_family_fallback(hostname: str, port: int, timeout: float | None) -> socket.socket:
+    """
+    Connect a plain TCP socket to hostname:port, trying every resolved address family in turn.
+
+    `paramiko.SSHClient.connect()` already resolves both address families (`getaddrinfo(..., AF_UNSPEC,
+    ...)`) and loops over the results, but only advances to the next address when the connect attempt
+    raises `ECONNREFUSED` or `EHOSTUNREACH` — verified by reading the installed paramiko's
+    `client.py:_families_and_addresses`/`connect`. A timed-out or black-holed IPv6 route (`ETIMEDOUT`,
+    what a broken IPv6 path actually produces — packets vanish, nothing rejects) is re-raised
+    immediately instead, so a host that's perfectly reachable over IPv4 fails outright. This mirrors
+    `urllib3.util.connection.create_connection` instead (a bare `except OSError` per attempt, no errno
+    filtering — the same reason `tcp://` connections don't have this problem), and is meant to be
+    handed to `paramiko.SSHClient.connect(sock=..., ...)`, which skips its own resolution/connect loop
+    entirely once a socket is already supplied.
+
+    args:
+        hostname: str - the target to resolve; a literal IP is accepted too (single result, no fallback)
+        port: int - the target port
+        timeout: float | None - per-attempt connect timeout in seconds; None waits indefinitely
+    returns: socket.socket - already connected to the first address that accepted
+    raises: OSError - every resolved address failed to connect (the last error is re-raised); a
+        `socket.gaierror` (a subclass of OSError) if `hostname` cannot be resolved at all
+    """
+    last_error: OSError | None = None
+    for family, socktype, proto, _canonname, sockaddr in socket.getaddrinfo(
+        hostname, port, socket.AF_UNSPEC, socket.SOCK_STREAM
+    ):
+        sock = socket.socket(family, socktype, proto)
+        try:
+            if timeout is not None:
+                sock.settimeout(timeout)
+            sock.connect(sockaddr)
+            return sock
+        except OSError as exc:
+            sock.close()
+            last_error = exc
+    if last_error is not None:
+        raise last_error
+    raise OSError(f"getaddrinfo({hostname!r}, {port}) returned no usable addresses")
+
+
 def parse_ssh_url(url: str) -> SshTarget:
     """
     Parse a DOCKER_HOST=ssh://... URL into paramiko connection parameters.
@@ -154,6 +195,12 @@ def connect_ssh_client(docker_host: str, *, timeout: float | None = None) -> par
     `_CONNECT_TIMEOUT_CAP_SECONDS` so a large operation timeout (e.g. an 1800s build) still fails an
     unreachable host fast rather than hanging for the whole operation budget.
 
+    Unless a `~/.ssh/config` `ProxyCommand` is in play (which already supplies its own `sock` — a
+    bastion/jump-host connection has no hostname:port of ours to resolve), the raw TCP connect is
+    made via `connect_socket_with_family_fallback` and handed to paramiko as `sock=`, so this falls
+    back from IPv6 to IPv4 on any connect failure rather than paramiko's own narrower
+    ECONNREFUSED/EHOSTUNREACH-only retry (see that function's docstring).
+
     A connection failure (auth, unknown host key, unreachable host) is re-raised as a `RuntimeError`
     with actionable guidance rather than a bare paramiko/socket exception.
 
@@ -172,14 +219,19 @@ def connect_ssh_client(docker_host: str, *, timeout: float | None = None) -> par
         connect_kwargs["port"] = target.port
     if target.key_filename:
         connect_kwargs["key_filename"] = target.key_filename
-    if target.proxycommand:
-        connect_kwargs["sock"] = paramiko.ProxyCommand(target.proxycommand)
+    bounded: float | None = None
     if timeout is not None:
         bounded = min(timeout, _CONNECT_TIMEOUT_CAP_SECONDS)
         connect_kwargs["timeout"] = bounded
         connect_kwargs["banner_timeout"] = bounded
         connect_kwargs["auth_timeout"] = bounded
+    if target.proxycommand:
+        connect_kwargs["sock"] = paramiko.ProxyCommand(target.proxycommand)
     try:
+        if not target.proxycommand:
+            connect_kwargs["sock"] = connect_socket_with_family_fallback(
+                target.hostname, target.port if target.port is not None else 22, bounded
+            )
         client.connect(**connect_kwargs)
     except (paramiko.SSHException, OSError) as exc:
         client.close()
