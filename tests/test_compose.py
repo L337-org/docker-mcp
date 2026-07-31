@@ -1,10 +1,12 @@
-from unittest.mock import patch
+import contextlib
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from docker_mcp.tools._cli import CliResult
 from docker_mcp.tools.compose import (
     _global_args,
+    _split_cp_arg,
     compose_build,
     compose_config,
     compose_cp,
@@ -43,6 +45,24 @@ def _ok(stdout: str = "", stderr: str = "") -> CliResult:
 
 def _fail(stderr: str, returncode: int = 1) -> CliResult:
     return CliResult(returncode=returncode, stdout="", stderr=stderr, truncated=False)
+
+
+def _fake_session() -> MagicMock:
+    session = MagicMock()
+    session.stage_tree.return_value = "/tmp/remote/tree1"
+    session.stage_file.return_value = "/tmp/remote/file1"
+    session.reserve_path.return_value = "/tmp/remote/fetch1"
+    return session
+
+
+def _session_cm(session):
+    """A `remote_cli_session`-shaped context manager yielding a pre-built fake session."""
+
+    @contextlib.contextmanager
+    def _cm(host, *, timeout):
+        yield session
+
+    return _cm
 
 
 # ---------- _global_args ----------
@@ -595,24 +615,6 @@ def test_compose_list_runs_remotely_without_staging_anything():
     assert remote.call_args.args == ("prod", ["compose", "ls", "--format", "json"])
 
 
-def test_compose_cp_is_refused_on_the_remote_path_and_names_the_alternatives():
-    """
-    Its whole purpose is the *local* side of the copy, which running the CLI on the far host cannot be.
-    The SDK-backed archive tools do the same job against any daemon with no local CLI at all, so the
-    refusal points at them rather than half-implementing a download.
-    """
-    with (
-        patch("docker_mcp.tools.compose.should_remote_exec", return_value=True),
-        patch("docker_mcp.tools.compose.remote_stage_and_exec") as staged,
-        patch("docker_mcp.tools.compose.run_docker") as run,
-    ):
-        with pytest.raises(RuntimeError, match="container_archive_put") as excinfo:
-            compose_cp("web:/etc/app.conf", "/tmp/app.conf", host="prod")
-    assert "container_archive_get_to_file" in str(excinfo.value)
-    staged.assert_not_called()
-    run.assert_not_called()
-
-
 def test_compose_cp_still_works_on_the_local_path():
     with (
         patch("docker_mcp.tools.compose.should_remote_exec", return_value=False),
@@ -620,6 +622,215 @@ def test_compose_cp_still_works_on_the_local_path():
     ):
         compose_cp("web:/etc/app.conf", "/tmp/app.conf")
     assert run.call_args.args[0][-2:] == ["web:/etc/app.conf", "/tmp/app.conf"]
+
+
+def test_compose_cp_prefers_the_local_cli_even_when_ssh_is_configured():
+    """A usable local CLI always wins — the remote session is never even opened."""
+    with (
+        patch("docker_mcp.tools.compose.should_remote_exec", return_value=False),
+        patch("docker_mcp.tools.compose.remote_cli_session") as session_cm,
+        patch("docker_mcp.tools.compose.run_docker", return_value=_ok("")),
+    ):
+        compose_cp("web:/etc/app.conf", "/tmp/app.conf", host="prod")
+    session_cm.assert_not_called()
+
+
+# ---------- compose_cp: remote-exec fallback ----------
+
+
+def test_split_cp_arg_recognizes_a_service_path_reference():
+    assert _split_cp_arg("web:/app/log.txt") == ("web", "/app/log.txt")
+
+
+def test_split_cp_arg_treats_a_posix_absolute_path_as_local():
+    assert _split_cp_arg("/tmp/log.txt") == ("", "/tmp/log.txt")
+
+
+def test_split_cp_arg_treats_a_dot_relative_path_as_local():
+    # "./file:name.txt" looks like it has a "file" service, but the leading "." marks it explicitly local.
+    assert _split_cp_arg("./file:name.txt") == ("", "./file:name.txt")
+
+
+def test_split_cp_arg_treats_a_windows_absolute_path_as_local(monkeypatch):
+    # os.path.isabs reflects the platform docker-mcp-server itself runs on; simulate the Windows
+    # answer here rather than relying on the CI runner's own platform.
+    monkeypatch.setattr("docker_mcp.tools.compose.os.path.isabs", lambda p: p.startswith("C:\\"))
+    assert _split_cp_arg("C:\\Users\\me\\log.txt") == ("", "C:\\Users\\me\\log.txt")
+
+
+def test_split_cp_arg_treats_a_bare_relative_path_with_no_colon_as_local():
+    assert _split_cp_arg("log.txt") == ("", "log.txt")
+
+
+def test_compose_cp_remote_stages_the_project_dir_then_the_local_source(tmp_path):
+    """host->container: the local source is staged (as a file or a tree) alongside the project dir."""
+    source_file = tmp_path / "log.txt"
+    source_file.write_text("hi", encoding="utf-8")
+    session = _fake_session()
+    with (
+        patch("docker_mcp.tools.compose.should_remote_exec", return_value=True),
+        patch("docker_mcp.tools.compose.remote_cli_session", _session_cm(session)),
+        patch("docker_mcp.tools.compose.run_in_session", return_value=_ok("")) as run_in_session,
+    ):
+        result = compose_cp(str(source_file), "web:/app/log.txt", project_dir=str(tmp_path), host="prod")
+    assert result == {"returncode": 0, "stdout": "", "stderr": "", "truncated": False}
+    session.stage_tree.assert_any_call(tmp_path)  # the project_dir
+    session.stage_file.assert_called_once_with(source_file)
+    full_args = run_in_session.call_args.args[1]
+    assert full_args == ["compose", "cp", "/tmp/remote/file1", "web:/app/log.txt"]
+    assert run_in_session.call_args.kwargs["cwd"] == "/tmp/remote/tree1"
+    session.reserve_path.assert_not_called()
+    session.fetch_path.assert_not_called()
+
+
+def test_compose_cp_remote_stages_a_local_source_directory_as_a_tree(tmp_path):
+    source_dir = tmp_path / "assets"
+    source_dir.mkdir()
+    session = _fake_session()
+    with (
+        patch("docker_mcp.tools.compose.should_remote_exec", return_value=True),
+        patch("docker_mcp.tools.compose.remote_cli_session", _session_cm(session)),
+        patch("docker_mcp.tools.compose.run_in_session", return_value=_ok("")),
+    ):
+        compose_cp(str(source_dir), "web:/app/assets", project_dir=str(tmp_path), host="prod")
+    session.stage_tree.assert_any_call(source_dir)
+    session.stage_file.assert_not_called()
+
+
+def test_compose_cp_remote_fetches_a_container_result_on_success(tmp_path):
+    """container->host: a fresh scratch path is reserved and fetched back only once the copy succeeds."""
+    session = _fake_session()
+    local_dest = tmp_path / "log.txt"
+    with (
+        patch("docker_mcp.tools.compose.should_remote_exec", return_value=True),
+        patch("docker_mcp.tools.compose.remote_cli_session", _session_cm(session)),
+        patch("docker_mcp.tools.compose.run_in_session", return_value=_ok("")) as run_in_session,
+    ):
+        compose_cp("web:/app/log.txt", str(local_dest), project_dir=str(tmp_path), host="prod")
+    session.reserve_path.assert_called_once()
+    full_args = run_in_session.call_args.args[1]
+    assert full_args == ["compose", "cp", "web:/app/log.txt", "/tmp/remote/fetch1"]
+    session.fetch_path.assert_called_once_with("/tmp/remote/fetch1", local_dest)
+
+
+def test_compose_cp_remote_does_not_fetch_when_the_copy_fails(tmp_path):
+    """A failed remote `docker compose cp` is reported in the result, exactly like the local path — the
+    fallback never raises for an ordinary copy failure, and there is nothing worth fetching."""
+    session = _fake_session()
+    with (
+        patch("docker_mcp.tools.compose.should_remote_exec", return_value=True),
+        patch("docker_mcp.tools.compose.remote_cli_session", _session_cm(session)),
+        patch("docker_mcp.tools.compose.run_in_session", return_value=_fail("no container found")),
+    ):
+        result = compose_cp("web:/app/log.txt", str(tmp_path / "log.txt"), project_dir=str(tmp_path), host="prod")
+    assert result["returncode"] != 0
+    assert "no container found" in result["stderr"]
+    session.fetch_path.assert_not_called()
+
+
+def test_compose_cp_remote_passes_through_ambiguous_direction_untouched(tmp_path):
+    """Neither side looks like SERVICE:PATH (or both do): stage nothing beyond project_dir, and let the
+    real remote CLI give the same validation error `docker compose cp` would locally."""
+    session = _fake_session()
+    with (
+        patch("docker_mcp.tools.compose.should_remote_exec", return_value=True),
+        patch("docker_mcp.tools.compose.remote_cli_session", _session_cm(session)),
+        patch(
+            "docker_mcp.tools.compose.run_in_session", return_value=_fail("unknown copy direction")
+        ) as run_in_session,
+    ):
+        result = compose_cp("/tmp/a.txt", "/tmp/b.txt", project_dir=str(tmp_path), host="prod")
+    assert result["returncode"] != 0
+    full_args = run_in_session.call_args.args[1]
+    assert full_args == ["compose", "cp", "/tmp/a.txt", "/tmp/b.txt"]
+    session.stage_file.assert_not_called()
+    session.reserve_path.assert_not_called()
+
+
+def test_compose_cp_remote_refuses_an_existing_local_destination_before_opening_a_session(tmp_path):
+    existing = tmp_path / "already-here.txt"
+    existing.write_text("here", encoding="utf-8")
+    with (
+        patch("docker_mcp.tools.compose.should_remote_exec", return_value=True),
+        patch("docker_mcp.tools.compose.remote_cli_session") as session_cm,
+    ):
+        with pytest.raises(FileExistsError, match="already exists"):
+            compose_cp("web:/app/log.txt", str(existing), host="prod")
+    session_cm.assert_not_called()
+
+
+def test_compose_cp_remote_passes_index_all_containers_and_project_name_through(tmp_path):
+    session = _fake_session()
+    with (
+        patch("docker_mcp.tools.compose.should_remote_exec", return_value=True),
+        patch("docker_mcp.tools.compose.remote_cli_session", _session_cm(session)),
+        patch("docker_mcp.tools.compose.run_in_session", return_value=_ok("")) as run_in_session,
+    ):
+        compose_cp(
+            "web:/app/log.txt",
+            str(tmp_path / "log.txt"),
+            index=3,
+            all_containers=True,
+            project_name="myproj",
+            files=["docker-compose.yml"],
+            project_dir=str(tmp_path),
+            host="prod",
+        )
+    full_args = run_in_session.call_args.args[1]
+    assert full_args[:1] == ["compose"]
+    assert "-f" in full_args and "docker-compose.yml" in full_args
+    assert "--project-name" in full_args and "myproj" in full_args
+    assert "cp" in full_args
+    assert "--index" in full_args and "3" in full_args
+    assert "--all" in full_args
+
+
+def test_compose_cp_remote_passes_timeout_seconds_through(tmp_path):
+    session = _fake_session()
+    with (
+        patch("docker_mcp.tools.compose.should_remote_exec", return_value=True),
+        patch("docker_mcp.tools.compose.remote_cli_session", _session_cm(session)),
+        patch("docker_mcp.tools.compose.run_in_session", return_value=_ok("")) as run_in_session,
+    ):
+        compose_cp(
+            "web:/app/log.txt", str(tmp_path / "log.txt"), project_dir=str(tmp_path), timeout_seconds=42.0, host="prod"
+        )
+    assert run_in_session.call_args.kwargs["timeout"] == 42.0
+
+
+def test_compose_cp_remote_raises_when_project_dir_is_unusable(tmp_path):
+    with (
+        patch("docker_mcp.tools.compose.should_remote_exec", return_value=True),
+        patch("docker_mcp.tools.compose.remote_cli_session") as session_cm,
+    ):
+        with pytest.raises(ValueError, match="not a usable project directory"):
+            compose_cp(
+                "web:/app/log.txt", str(tmp_path / "out.txt"), project_dir=str(tmp_path / "missing"), host="prod"
+            )
+    session_cm.assert_not_called()
+
+
+def test_compose_cp_remote_raises_when_the_local_source_is_missing(tmp_path):
+    session = _fake_session()
+    with (
+        patch("docker_mcp.tools.compose.should_remote_exec", return_value=True),
+        patch("docker_mcp.tools.compose.remote_cli_session", _session_cm(session)),
+    ):
+        with pytest.raises(ValueError, match="does not exist"):
+            compose_cp(str(tmp_path / "missing.txt"), "web:/app/log.txt", project_dir=str(tmp_path), host="prod")
+
+
+def test_compose_cp_remote_propagates_a_staging_failure(tmp_path):
+    """A staging/fetch infrastructure failure (as opposed to an ordinary copy failure) raises, matching
+    how every other remote-exec'd compose tool's staging failures already raise."""
+    session = _fake_session()
+    session.stage_tree.side_effect = ValueError("past the staging limit")
+    with (
+        patch("docker_mcp.tools.compose.should_remote_exec", return_value=True),
+        patch("docker_mcp.tools.compose.remote_cli_session", _session_cm(session)),
+    ):
+        with pytest.raises(ValueError, match="past the staging limit"):
+            compose_cp("web:/app/log.txt", str(tmp_path / "out.txt"), project_dir=str(tmp_path), host="prod")
 
 
 def test_compose_run_command_tokens_are_not_mistaken_for_compose_files():
@@ -651,14 +862,12 @@ def test_compose_exec_command_tokens_are_not_mistaken_for_compose_files():
     assert staged.call_args.kwargs["path_values"] == []
 
 
-def test_compose_cp_docstring_does_not_promise_staging_it_refuses():
+def test_compose_cp_docstring_now_carries_the_staging_clause_like_every_other_project_dir_tool():
     """
-    Mechanical guard rather than a note to remember: the staging clause was applied to every tool with a
-    `project_dir`, and `compose_cp` is the one where the remote path is a refusal, so nothing is ever
-    copied. A future sweep must not put it back.
+    `compose_cp` used to be the one project_dir-taking tool that refused rather than staged, and its
+    docstring deliberately omitted this clause; now that it stages like everything else, it should
+    carry the same clause instead of being a silent exception to the sweep that put it everywhere.
     """
     assert compose_cp.__doc__ is not None
-    assert "copied to the target host" not in compose_cp.__doc__
-    # ...and every other project_dir-taking tool must still carry it, so this guard cannot be satisfied
-    # by dropping the clause everywhere.
+    assert "copied to the target host" in compose_cp.__doc__
     assert "copied to the target host" in (compose_up.__doc__ or "")

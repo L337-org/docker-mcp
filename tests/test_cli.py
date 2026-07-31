@@ -343,6 +343,15 @@ def test_require_plugin_raises_when_missing():
             require_plugin("buildx")
 
 
+def test_require_plugin_message_names_ssh_as_an_alternative_to_installing():
+    # compose/buildx/scout all share this helper and all support the remote-exec fallback, so the
+    # message should point at it alongside the install guidance rather than naming only one remedy.
+    with patch("docker_mcp.tools._cli.has_plugin", return_value=False):
+        with pytest.raises(RuntimeError, match="DOCKER_MCP_SERVER_HOSTS") as excinfo:
+            require_plugin("scout")
+    assert "ssh://" in str(excinfo.value)
+
+
 def test_require_plugin_silent_when_present():
     with patch("docker_mcp.tools._cli.has_plugin", return_value=True):
         require_plugin("compose")

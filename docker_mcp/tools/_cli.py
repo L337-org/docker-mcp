@@ -264,13 +264,23 @@ def has_plugin(name: str) -> bool:
 
 
 def require_plugin(name: str) -> None:
-    """Raise RuntimeError with an actionable message if the named CLI plugin is unavailable."""
+    """
+    Raise RuntimeError with an actionable message if the named CLI plugin is unavailable.
+
+    Every caller reaches this only after `should_remote_exec` has already returned False for the
+    target host, which means that host is not reached over ssh:// (an ssh:// host with no local
+    plugin runs the call there instead of raising here). So alongside installing the plugin, pointing
+    this host at an ssh:// endpoint that already has it is always a live alternative — named in the
+    message for the three plugins that share this helper (compose, buildx, scout), all of which
+    support that fallback.
+    """
     if not has_plugin(name):
         raise RuntimeError(
-            f"Docker CLI plugin {name!r} is not installed or not available on PATH. "
-            f"On Docker Desktop it ships by default; on a plain Docker Engine install, "
-            f"install it via your distribution's docker-{name}-plugin package "
-            f"(or follow the upstream docs)."
+            f"Docker CLI plugin {name!r} is not installed or not available on PATH. Install it "
+            f"(Docker Desktop ships it by default; on a plain Docker Engine install, use your "
+            f"distribution's docker-{name}-plugin package, or follow the upstream docs) — or point "
+            f"this host at an ssh:// endpoint that already has it, via DOCKER_MCP_SERVER_HOSTS: the "
+            f"call then runs there automatically instead."
         )
 
 
