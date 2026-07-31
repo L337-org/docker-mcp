@@ -64,6 +64,18 @@ CI job stayed green, because CI installs `--locked` against a lockfile pinning m
 superseded it. When adding a direct dependency whose *import surface* we touch, consider whether a
 major-version cap plus a pin guard belongs with it.
 
+**A required `Check fresh resolve still imports` job** (`premerge.yaml`) closes the blind spot that
+let the 2.2.0 incident through: every job above installs with `uv sync --locked`, so none of them
+ever resolve what a fresh `uvx`/`pip install` actually gets from the bare `pyproject.toml`
+specifiers — only the pinned, known-good set in `uv.lock`. This job does, via `uv pip install`
+(the pip-compatible interface, which never reads or writes `uv.lock`) into a throwaway venv, then
+runs `import docker_mcp` and `docker-mcp-server --version` against that install. It reports a
+resolution failure (a specifier no longer satisfiable) and an import failure (resolved fine, but
+broke on import) as distinct errors, since they call for different fixes. This is a PR/push gate,
+not a schedule — it complements rather than replaces the weekly canary's published-package install
+smoke below, which exercises the actual shipped artefact rather than a hypothetical resolve of the
+current tree.
+
 A **weekly canary** (`.github/workflows/canary.yaml`, Mondays + dispatch) hunts platform/ecosystem
 drift premerge CI can't see: wheels-only (`--only-binary :all:`) dependency resolution for Intel
 macOS / ARM macOS / Windows against both the repo `pyproject.toml` and the latest published PyPI
