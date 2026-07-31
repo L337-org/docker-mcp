@@ -20,6 +20,53 @@ concurrency:
 # Jobs
 jobs:
 
+  fresh-resolve-import:
+    # Answers a question `uv sync --locked` (used by every other job here) cannot: would a
+    # CLEAN install of what we're about to ship actually import? `uv sync --locked` only ever
+    # sees the pinned, known-good set recorded in uv.lock, never the set a fresh `uvx`/`pip
+    # install` would resolve from the bare pyproject.toml specifiers today. mcp 2.0.0
+    # (2026-07-28) proved the gap: it resolved cleanly against our then-uncapped `mcp>=1.27.1`
+    # and removed `mcp.server.fastmcp`, so `import docker_mcp` died on every fresh install while
+    # every uv.lock-pinned CI job here stayed green (see the mcp cap comment in pyproject.toml).
+    # `uv pip install` is the pip-compatible interface — unlike `uv sync`, it never
+    # reads or writes uv.lock, so it resolves purely from [project.dependencies].
+    runs-on: [ubuntu-latest]
+    name: Check fresh resolve still imports
+    steps:
+      - name: Check out source repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python environment
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+
+      - name: Resolve and install from pyproject.toml, ignoring uv.lock
+        # A failure here is a resolve/build/install failure (an unsatisfiable specifier, a
+        # sdist needing a toolchain we don't have, a transient fetch error) — distinct from
+        # the import failure checked in the next step. The log above this line has the cause.
+        run: |
+          uv venv .venv-fresh
+          if ! uv pip install --python .venv-fresh/bin/python . ; then
+            echo "::error::Fresh resolve/install of pyproject.toml FAILED (see the uv output above for the cause) — this is a resolve/install failure, not an import failure."
+            exit 1
+          fi
+
+      - name: Import the freshly-resolved install
+        run: |
+          if ! .venv-fresh/bin/python -c "import docker_mcp"; then
+            echo "::error::pyproject.toml resolved fine, but 'import docker_mcp' FAILED against the freshly-resolved dependency set. An admitted dependency release broke our import surface (see the mcp 2.0.0 incident in CLAUDE.md) — tighten the offending dependency's cap."
+            exit 1
+          fi
+
+      - name: Run the entry point against the freshly-resolved install
+        # main() handles --version (print version, exit) before any daemon/network contact,
+        # so this needs no Docker and catches a failure in main() itself, not just the import.
+        run: .venv-fresh/bin/docker-mcp-server --version
+
   pytest-run:
     runs-on: [ubuntu-latest]
     name: Run pytest
