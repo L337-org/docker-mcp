@@ -12,9 +12,13 @@
 # *stage* that directory on the far host before running there (`_cli.py:remote_stage_and_exec`);
 # `compose_list` takes the exec-only path. Consequences worth knowing: the whole directory is copied
 # (nothing can tell which files a Compose file references, so an oversized one is refused with a limit
-# error), registry credentials come from the remote user's `~/.docker/config.json`, and `compose_cp` is
-# refused outright because its host side is a local path with nothing to stage it to.
+# error), and registry credentials come from the remote user's `~/.docker/config.json`. `compose_cp` is
+# bespoke rather than going through `remote_stage_and_exec` like the rest of this module: one side of
+# the copy is a local path outside the compose file's working directory, which that helper has no
+# concept of relaying (see `_remote_compose_cp`).
 
+import os
+from pathlib import Path
 from typing import Literal
 
 from docker_mcp.server import tool
@@ -22,10 +26,12 @@ from docker_mcp.tools._cli import (
     CliResult,
     parse_json_or_ndjson,
     raise_on_cli_failure,
+    remote_cli_session,
     remote_exec_cli,
     remote_stage_and_exec,
     require_plugin,
     run_docker,
+    run_in_session,
     safe_positional,
     should_remote_exec,
 )
@@ -760,6 +766,110 @@ def compose_top(
     return _run_compose(args, cwd=project_dir, timeout=_TIMEOUT_QUERY, host=host).to_dict()
 
 
+def _split_cp_arg(arg: str) -> tuple[str, str]:
+    """
+    Split a `compose cp` SRC/DEST argument into `(service, path)`, mirroring `docker compose cp`'s own
+    `splitCpArg` (verified against docker/compose's `pkg/compose/cp.go`, which is byte-for-byte the
+    same algorithm plain `docker cp` uses): an absolute local path is never a container reference;
+    otherwise the text before the first `:` is the service name, unless it starts with `.` (an
+    explicit relative local path like `./file:name.txt`). `os.path.isabs` — rather than hand-rolling
+    the Windows drive-letter check `splitCpArg` needs — already reflects *this* host's own platform,
+    which is exactly what "is this a local path" needs to mean here.
+
+    Used only to decide which side needs staging/fetching for the remote-exec fallback below; the
+    real CLI, local or remote, still does its own parsing of the literal argv either way.
+
+    args: arg - one of `compose_cp`'s `source`/`dest` values
+    returns: tuple[str, str] - `(service, path)` if `arg` names a container path, else `("", arg)`
+    """
+    if os.path.isabs(arg):
+        return "", arg
+    service, sep, path = arg.partition(":")
+    if not sep or service.startswith("."):
+        return "", arg
+    return service, path
+
+
+def _remote_compose_cp(
+    source: str,
+    dest: str,
+    *,
+    index: int,
+    all_containers: bool,
+    project_dir: str | None,
+    files: list[str] | None,
+    project_name: str | None,
+    timeout_seconds: float,
+    host: str | None,
+) -> CliResult:
+    """
+    Run `compose cp` on the target `ssh://` host, relaying whichever side of the copy is local.
+
+    Always stages `project_dir` first — compose needs to resolve the project/service the same way
+    every other compose subcommand does — then branches on which side `_split_cp_arg` identifies as
+    the container reference: a local source is staged like any other input (host->container); a local
+    destination gets a fresh scratch path reserved for the remote command to write into, fetched back
+    once it succeeds (container->host). When neither or both sides look like `SERVICE:PATH`, the call
+    is passed through with no staging on either side — the real remote CLI gives the same validation
+    error `docker compose cp` would locally (e.g. "copying between services is not supported").
+
+    Because the actual copy always runs through the real remote CLI, every documented parameter
+    behaves exactly as it does locally — `--all`, `--index`, `project_dir`/`files` and the result
+    shape all come along for free. The one behavior with no remote equivalent: a container->host copy
+    is refused up front if the local destination already exists, since only this host — not the
+    remote one — knows that, and `reserve_path` guarantees the remote command starts from a path that
+    does not exist yet (matching what a fresh local destination would look like).
+    """
+    ctr_src, _ = _split_cp_arg(source)
+    ctr_dst, _ = _split_cp_arg(dest)
+    local_dest: Path | None = None
+    if ctr_src and not ctr_dst:
+        local_dest = Path(dest).expanduser()
+        if local_dest.exists():
+            raise FileExistsError(
+                f"compose_cp: refusing to fetch {source!r} to {dest!r}: the destination already exists on "
+                f"this host. The remote-exec fallback only creates a new path there, matching the state the "
+                f"remote command starts from — remove the existing path first, or choose a different one."
+            )
+
+    local_cwd = Path(project_dir).expanduser() if project_dir else Path.cwd()
+    if not local_cwd.is_dir():
+        detail = "it exists but is not a directory" if local_cwd.exists() else "nothing exists at that path"
+        raise ValueError(
+            f"Cannot run `docker compose cp` on the remote host: {str(local_cwd)!r} is not a usable project "
+            f"directory on this host ({detail}), and it is what would be copied over."
+        )
+
+    subcommand_args = [*_global_args(files, project_name, None), "cp"]
+    if index != 1:
+        subcommand_args.extend(["--index", str(index)])
+    if all_containers:
+        subcommand_args.append("--all")
+
+    with remote_cli_session(host, timeout=timeout_seconds) as session:
+        staged_tree = session.stage_tree(local_cwd)
+        if ctr_dst and not ctr_src:
+            local_source = Path(source).expanduser()
+            if not local_source.exists():
+                raise ValueError(f"compose_cp: {source!r} does not exist on this host.")
+            staged_source = (
+                session.stage_tree(local_source) if local_source.is_dir() else session.stage_file(local_source)
+            )
+            full_args = ["compose", *subcommand_args, staged_source, dest]
+            result = run_in_session(session, full_args, cwd=staged_tree, timeout=timeout_seconds)
+        elif local_dest is not None:
+            scratch = session.reserve_path()
+            full_args = ["compose", *subcommand_args, source, scratch]
+            result = run_in_session(session, full_args, cwd=staged_tree, timeout=timeout_seconds)
+            if result.returncode == 0:
+                session.fetch_path(scratch, local_dest)
+        else:
+            full_args = ["compose", *subcommand_args, source, dest]
+            result = run_in_session(session, full_args, cwd=staged_tree, timeout=timeout_seconds)
+
+    return result
+
+
 @tool()
 def compose_cp(
     source: str,
@@ -779,43 +889,49 @@ def compose_cp(
     MCP server, read/written as the server's user (same host exposure as the file-path archive
     tools — see SECURITY.md). Copying to stdout (`dest="-"`) is unsupported; use
     `container_archive_get`.
-    Does not raise on a non-zero CLI exit — inspect `returncode`/`stderr` in the result. Raises
-    RuntimeError when this server has no local compose plugin and the target is an `ssh://` host: the
-    transfer's whole point is the *local* path, which running the CLI remotely cannot honour — use
-    `container_archive_put` / `container_archive_get_to_file` there instead (both talk to the daemon
-    directly and need no local CLI; `compose_ps` gives you the container name).
+    Does not raise on a non-zero CLI exit — inspect `returncode`/`stderr` in the result. With no local
+    compose plugin and an `ssh://` target, runs the real `docker compose cp` on that host instead and
+    relays whichever side of the copy is local over the same SSH connection — every parameter above
+    behaves the same either way, since the actual copy always runs through the real CLI. The one
+    difference: a container->host copy is refused with `RuntimeError` if the local destination already
+    exists, since only this host (not the remote one) knows that. `unix://`/`tcp://`+TLS hosts with no
+    local plugin are not covered by this fallback (no shell to run the CLI on) and still raise
+    `RuntimeError` — use `container_archive_put` (host to container) or `container_archive_get_to_file`
+    (container to host) there instead; both talk to the daemon directly and need no local CLI
+    (`compose_ps` gives you the container name).
 
     args:
         source - `SERVICE:SRC_PATH` or a host path
         dest - `SERVICE:DEST_PATH` or a host path (not "-")
         index - Container index when the service has multiple replicas (default 1)
         all_containers - Copy to/from all containers of the service (`--all`)
-        project_dir - Dir with the compose file (default: server cwd)
+        project_dir - Dir with the compose file (default: server cwd; copied to the target host if no local plugin)
         files - Explicit compose file paths (repeatable, `-f`)
         project_name - Compose project name override
         timeout_seconds - Subprocess timeout (default 300s)
     returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
     """
+    source = safe_positional(source, "source")
+    dest = safe_positional(dest, "dest")
     if should_remote_exec(host, plugin="compose"):
-        # Everything else in this module stages its inputs and runs remotely; this one cannot. One side
-        # of the copy is a path on *this* host, and remote-exec has no way to be on both sides at once —
-        # pulling a file back would be a second, download-shaped mechanism for a job the SDK-backed
-        # archive tools already do against any daemon, with no local CLI involved.
-        raise RuntimeError(
-            "compose_cp cannot run against this host: this server has no local compose plugin, so the CLI "
-            "would run on the target host over SSH, where the non-container side of the copy "
-            f"({source!r} / {dest!r}) names a path on that host rather than this one. Use "
-            "`container_archive_put` (host to container) or `container_archive_get_to_file` (container to "
-            "host) instead — they talk to the daemon directly and need no local CLI; `compose_ps` gives "
-            "you the container name."
-        )
+        return _remote_compose_cp(
+            source,
+            dest,
+            index=index,
+            all_containers=all_containers,
+            project_dir=project_dir,
+            files=files,
+            project_name=project_name,
+            timeout_seconds=timeout_seconds,
+            host=host,
+        ).to_dict()
     args = [*_global_args(files, project_name, None), "cp"]
     if index != 1:
         args.extend(["--index", str(index)])
     if all_containers:
         args.append("--all")
-    args.append(safe_positional(source, "source"))
-    args.append(safe_positional(dest, "dest"))
+    args.append(source)
+    args.append(dest)
     return _run_compose(args, cwd=project_dir, timeout=timeout_seconds, host=host).to_dict()
 
 

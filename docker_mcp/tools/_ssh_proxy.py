@@ -39,6 +39,7 @@ from typing import IO, Protocol, cast
 import paramiko
 
 from docker_mcp._hosts import is_ssh_url
+from docker_mcp.tools._utils import assert_host_writable, stream_to_file
 
 logger = logging.getLogger(__name__)
 
@@ -567,6 +568,9 @@ _STAGING_EXTRACT_TIMEOUT_SECONDS = 300.0
 # Bookkeeping commands print a path at most; anything beyond this is an error message we want to see
 # in full but need not retain megabytes of.
 _STAGING_OUTPUT_CAP_BYTES = 65_536
+# Read size for streaming a fetched file through `stream_to_file` — matches `_RECV_BUFFER_SIZE`'s
+# order of magnitude for the proxy's own socket reads, comfortably larger than SFTP's own packet size.
+_FETCH_CHUNK_BYTES = 32_768
 
 
 class RemoteDialectKind(enum.Enum):
@@ -608,6 +612,8 @@ class RemoteDialect(Protocol):
     def remove_tree_argv(self, path: str) -> list[str]: ...
 
     def extract_tar_argv(self, archive: str, dest: str) -> list[str]: ...
+
+    def create_tar_argv(self, source: str, archive: str) -> list[str]: ...
 
     def join_path(self, *parts: str) -> str: ...
 
@@ -766,6 +772,24 @@ class PosixDialect:
         returns: list[str] - argv for the extraction
         """
         return ["tar", "-xf", archive, "-C", dest]
+
+    def create_tar_argv(self, source: str, archive: str) -> list[str]:
+        """
+        Argv packing a remote path into an uncompressed tar, for fetching it back over SFTP.
+
+        The inverse of `extract_tar_argv`: `source`'s parent directory becomes `tar`'s `-C` base and
+        only its basename is added, so the archive's sole top-level member is that basename — whether
+        `source` is a file or a directory — matching what local extraction expects to recreate under
+        the caller's real destination. Uncompressed for the same reason `_tar_local_tree` is: nothing
+        on the fetching side assumes `gzip`.
+
+        args:
+            source - absolute remote path (file or directory) to pack
+            archive - absolute remote path to write the tar to
+        returns: list[str] - argv for the archive creation
+        """
+        parent, name = posixpath.split(source)
+        return ["tar", "-cf", archive, "-C", parent or "/", name]
 
     def join_path(self, *parts: str) -> str:
         """
@@ -1294,6 +1318,16 @@ class RemoteStagingSession:
         self._dialect = get_dialect(dialect_kind)
         self._slots = 0
 
+    def _new_slot_path(self, kind: str) -> str:
+        """
+        Reserve the next numbered path under the session root, without creating anything there.
+
+        args: kind - short label for the slot, for legibility while debugging on the remote host
+        returns: str - an absolute remote path, guaranteed unused within this session
+        """
+        self._slots += 1
+        return self._dialect.join_path(self.root, f"{kind}{self._slots}")
+
     def _new_slot(self, kind: str) -> tuple[str, str]:
         """
         Create the next numbered subdirectory under the session root.
@@ -1301,10 +1335,9 @@ class RemoteStagingSession:
         args: kind - short label for the slot, for legibility while debugging on the remote host
         returns: tuple[str, str] - (the new directory, a sibling path to use for its upload archive)
         """
-        self._slots += 1
-        directory = self._dialect.join_path(self.root, f"{kind}{self._slots}")
+        directory = self._new_slot_path(kind)
         self._sftp.mkdir(directory, mode=0o700)
-        return directory, self._dialect.join_path(self.root, f"{kind}{self._slots}.tar")
+        return directory, f"{directory}.tar"
 
     def join(self, *parts: str) -> str:
         """
@@ -1472,6 +1505,128 @@ class RemoteStagingSession:
         with contextlib.closing(archive):
             self._upload_and_extract(archive, destination=destination, archive_path=archive_path)
         return destination
+
+    def reserve_path(self) -> str:
+        """
+        Reserve a fresh, not-yet-existing path under the session root, for a remote command to create.
+
+        Unlike `stage_file`/`stage_tree`, nothing is uploaded and nothing is created here — the path is
+        merely guaranteed unused. Handing this to a command that writes to a path (`docker compose cp
+        SERVICE:PATH <this>`) gives it the same "does not exist yet" starting state a fresh local
+        destination would have, so it produces the same file-or-directory result `docker cp`'s own
+        semantics would from that state — `fetch_path` then brings whatever it produced back down.
+
+        returns: str - an absolute remote path, guaranteed not to already exist in this session
+        """
+        return self._new_slot_path("fetch")
+
+    def _remote_is_dir(self, remote_path: str) -> bool:
+        """True if `remote_path` is a directory on the remote host; False if it's anything else."""
+        result = self.exec(
+            ["test", "-d", remote_path],
+            timeout=_STAGING_CONTROL_TIMEOUT_SECONDS,
+            max_output_bytes=_STAGING_OUTPUT_CAP_BYTES,
+        )
+        return result.returncode == 0
+
+    def _fetch_file(self, remote_path: str, local_dest: Path) -> None:
+        """Fetch a single remote file straight to `local_dest`, via `stream_to_file`'s safe write."""
+        size = self._sftp.stat(remote_path).st_size
+        if size is not None and size > _MAX_STAGE_BYTES:
+            raise ValueError(
+                f"Refusing to fetch {remote_path!r} from the remote host: it is {size // (1024 * 1024)} MiB, "
+                f"past the staging limit of {_MAX_STAGE_BYTES // (1024 * 1024)} MiB."
+            )
+        with self._sftp.open(remote_path, "rb") as handle:
+            handle.prefetch()
+            chunks = iter(lambda: handle.read(_FETCH_CHUNK_BYTES), b"")
+            stream_to_file(chunks, str(local_dest), overwrite=False)
+
+    def _fetch_directory(self, remote_path: str, local_dest: Path) -> None:
+        """
+        Fetch a remote directory to `local_dest`: pack it remotely, download the tar, extract locally.
+
+        Mirrors `_upload_and_extract` in reverse. The byte cap is checked against the packed archive
+        before it is downloaded (cheap: the remote host already made it); the entry-count cap can only
+        be checked once the archive is local, since nothing short of downloading or a second remote
+        round trip would tell us how many members it holds. `tarfile`'s "data" extraction filter — the
+        ordinary safe default (PEP 706) — is what actually stops a member from escaping `local_dest`'s
+        parent via `..` or an absolute path; the caps above stop it from being oversized, not malicious.
+        """
+        archive_path = f"{self._new_slot_path('fetchout')}.tar"
+        self._control(
+            self._dialect.create_tar_argv(remote_path, archive_path),
+            timeout=_STAGING_EXTRACT_TIMEOUT_SECONDS,
+            what="pack the result for download",
+        )
+        try:
+            size = self._sftp.stat(archive_path).st_size
+            if size is not None and size > _MAX_STAGE_BYTES:
+                raise ValueError(
+                    f"Refusing to fetch {remote_path!r} from the remote host: the result is "
+                    f"{size // (1024 * 1024)} MiB, past the staging limit of {_MAX_STAGE_BYTES // (1024 * 1024)} MiB."
+                )
+            archive = tempfile.TemporaryFile()
+            try:
+                self._sftp.getfo(archive_path, archive)
+                archive.seek(0)
+                with tarfile.open(fileobj=archive, mode="r") as bundle:
+                    members = bundle.getmembers()
+                    if len(members) > _MAX_STAGE_FILES:
+                        raise ValueError(
+                            f"Refusing to fetch {remote_path!r} from the remote host: the result holds "
+                            f"{len(members)} entries, past the staging limit of {_MAX_STAGE_FILES}."
+                        )
+                    assert_host_writable(str(local_dest))
+                    bundle.extractall(path=local_dest.parent, filter="data")
+            finally:
+                archive.close()
+        finally:
+            self._control(
+                self._dialect.remove_tree_argv(archive_path),
+                timeout=_STAGING_CONTROL_TIMEOUT_SECONDS,
+                what="remove the temporary download archive",
+            )
+        extracted = local_dest.parent / posixpath.basename(remote_path.rstrip("/"))
+        if extracted != local_dest:
+            extracted.rename(local_dest)
+
+    def fetch_path(self, remote_path: str, local_dest: Path | str) -> None:
+        """
+        Bring a path a remote command just produced (via `reserve_path`) back to a local destination.
+
+        The inverse of `stage_file`/`stage_tree`: probes whether `remote_path` is a file or a
+        directory (only the command that produced it knows), then fetches accordingly — a file
+        directly over SFTP, a directory by packing it remotely and extracting the download locally.
+        `local_dest` must not already exist: the whole point of `reserve_path` is that the remote
+        command started from a clean slate, so this does too rather than merging into or silently
+        overwriting something already there.
+
+        args:
+            remote_path - absolute remote path a command wrote to (typically a `reserve_path` result)
+            local_dest - local path to create; refused if it already exists
+        raises:
+            FileExistsError - `local_dest` already exists
+            ValueError - `local_dest`'s parent is not a directory, or the fetched payload exceeds the
+                         staging limits
+            RuntimeError - the remote path is missing, or packing/removing it remotely failed
+        """
+        local_dest = Path(local_dest).expanduser()
+        if local_dest.exists():
+            raise FileExistsError(
+                f"Refusing to fetch {remote_path!r} to {str(local_dest)!r}: the destination already exists "
+                f"on this host. The remote-exec fallback only creates a new path, matching the state the "
+                f"remote command started from — remove the existing path first, or choose a different one."
+            )
+        if not local_dest.parent.is_dir():
+            raise ValueError(
+                f"Cannot fetch {remote_path!r} to {str(local_dest)!r}: {str(local_dest.parent)!r} is not a "
+                f"directory on this host."
+            )
+        if self._remote_is_dir(remote_path):
+            self._fetch_directory(remote_path, local_dest)
+        else:
+            self._fetch_file(remote_path, local_dest)
 
     def exec(
         self,

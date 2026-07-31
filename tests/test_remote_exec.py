@@ -13,6 +13,8 @@ import io
 import logging
 import os
 import pathlib
+import posixpath
+import re
 import shlex
 import signal
 import stat
@@ -942,8 +944,27 @@ class ScriptedChannel(FakeChannel):
         self._exit_status = status
 
 
+class FakeSFTPFile:
+    """Minimal `paramiko.SFTPFile` stand-in: readable, a no-op `prefetch`, a context manager."""
+
+    def __init__(self, data: bytes):
+        self._buf = io.BytesIO(data)
+
+    def prefetch(self, file_size=None, max_concurrent_requests=None):
+        pass
+
+    def read(self, size=-1):
+        return self._buf.read(size)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+
 class FakeSFTPClient:
-    """In-memory SFTP subsystem recording directories created and payloads uploaded."""
+    """In-memory SFTP subsystem recording directories created and payloads uploaded/downloaded."""
 
     def __init__(self, *, sees_exec_filesystem: bool = True):
         self.dirs: list[tuple[str, int]] = []
@@ -951,11 +972,23 @@ class FakeSFTPClient:
         self.stats: list[str] = []
         self.closed = False
         self._sees_exec_filesystem = sees_exec_filesystem
+        # Populated either directly by a test (simulating a file already on the remote host) or by
+        # ScriptedHost.respond() when it sees a `tar -cf` command — the download-direction counterpart
+        # of `uploads`.
+        self.remote_files: dict[str, bytes] = {}
+        # Paths a fetch-path test wants to behave as genuinely absent (ENOENT), distinct from a path
+        # simply not registered above — those still get the generic MagicMock the filesystem-guard
+        # tests rely on, so this must be opted into explicitly rather than inferred.
+        self.missing: set[str] = set()
 
     def stat(self, path):
         self.stats.append(path)
         if not self._sees_exec_filesystem:
             raise FileNotFoundError(f"No such file: {path}")
+        if path in self.missing:
+            raise FileNotFoundError(f"No such file: {path}")
+        if path in self.remote_files:
+            return unittest.mock.MagicMock(st_size=len(self.remote_files[path]))
         return unittest.mock.MagicMock()
 
     def mkdir(self, path, mode=0o777):
@@ -966,6 +999,12 @@ class FakeSFTPClient:
 
     def put(self, localpath, remotepath, confirm=True):
         self.uploads[remotepath] = pathlib.Path(localpath).read_bytes()
+
+    def getfo(self, remotepath, fl, callback=None, prefetch=True, max_concurrent_prefetch_requests=None):
+        fl.write(self.remote_files[remotepath])
+
+    def open(self, remotepath, mode="rb"):
+        return FakeSFTPFile(self.remote_files[remotepath])
 
     def close(self):
         self.closed = True
@@ -981,7 +1020,9 @@ class ScriptedHost:
 
     _STAGE_ROOT = "/tmp/docker-mcp-server.stage.abc12345"
 
-    def __init__(self, *, uname=b"Linux\n", temp_dir=_STAGE_ROOT, failures=None, sftp=None):
+    def __init__(
+        self, *, uname=b"Linux\n", temp_dir=_STAGE_ROOT, failures=None, sftp=None, directories=None, remote_content=None
+    ):
         self.commands: list[str] = []
         self.uname = uname
         self.temp_dir = temp_dir
@@ -989,6 +1030,39 @@ class ScriptedHost:
         self.sftp = sftp if sftp is not None else FakeSFTPClient()
         self.sftp_opens = 0
         self.closed = False
+        # Fetch-direction fixtures: which remote paths are directories, and what a `tar -cf` of one
+        # should contain. `remote_content[path]` is `bytes` for a file, `dict[str, bytes]` for a
+        # directory (relative path -> content, packed under the directory's own basename), or
+        # `list[tuple[str, bytes]]` for a test that needs to control tar member names directly (e.g.
+        # a member crafted to escape the extraction directory).
+        self.directories: set[str] = directories or set()
+        self.remote_content: dict = remote_content or {}
+
+    def _pack(self, source: str) -> bytes:
+        """Build the tar `tar -cf archive -C parent name` would produce for a registered fixture."""
+        content = self.remote_content[source]
+        name = posixpath.basename(source)
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w") as bundle:
+            if isinstance(content, bytes):
+                info = tarfile.TarInfo(name=name)
+                info.size = len(content)
+                bundle.addfile(info, io.BytesIO(content))
+            elif isinstance(content, dict):
+                dir_info = tarfile.TarInfo(name=name)
+                dir_info.type = tarfile.DIRTYPE
+                dir_info.mode = 0o755
+                bundle.addfile(dir_info)
+                for relative, data in content.items():
+                    info = tarfile.TarInfo(name=f"{name}/{relative}")
+                    info.size = len(data)
+                    bundle.addfile(info, io.BytesIO(data))
+            else:  # list[tuple[str, bytes]]: member names used verbatim, no `name/` prefix
+                for member_name, data in content:
+                    info = tarfile.TarInfo(name=member_name)
+                    info.size = len(data)
+                    bundle.addfile(info, io.BytesIO(data))
+        return buf.getvalue()
 
     def respond(self, command):
         self.commands.append(command)
@@ -999,6 +1073,14 @@ class ScriptedHost:
             return self.uname, b"", 0
         if "mktemp -d" in command:
             return f"{self.temp_dir}\n".encode(), b"", 0
+        is_dir_probe = re.search(r"\btest -d (\S+)", command)
+        if is_dir_probe:
+            return b"", b"", 0 if is_dir_probe.group(1) in self.directories else 1
+        create_tar = re.search(r"\btar -cf (\S+) -C (\S+) (\S+)", command)
+        if create_tar:
+            archive, parent, name = create_tar.groups()
+            self.sftp.remote_files[archive] = self._pack(posixpath.join(parent, name))
+            return b"", b"", 0
         return b"", b"", 0
 
     def get_transport(self):
@@ -1465,3 +1547,141 @@ def test_missing_docker_py_helpers_fail_only_the_call_that_needs_them(tmp_path, 
             session.stage_build_context(_context(tmp_path, ""))
         # Staging a plain tree does its own tarring, so it keeps working.
         assert session.stage_tree(_project(tmp_path / "p"))
+
+
+# --- staging: reserve_path / fetch_path (the download direction) ------------------------------------
+
+
+def test_create_tar_argv_packs_the_basename_under_its_parent():
+    dialect = PosixDialect()
+    assert dialect.create_tar_argv("/tmp/root/out3", "/tmp/root/out3.tar") == [
+        "tar",
+        "-cf",
+        "/tmp/root/out3.tar",
+        "-C",
+        "/tmp/root",
+        "out3",
+    ]
+
+
+def test_reserve_path_gives_each_call_a_fresh_unused_path():
+    host = ScriptedHost()
+    with _staging(host) as session:
+        first = session.reserve_path()
+        second = session.reserve_path()
+    assert first != second
+    # Unlike stage_tree/stage_file, nothing is created for a reserved path — the caller's own
+    # command is what's expected to create it.
+    assert not host.sftp.dirs
+    assert not host.sftp.uploads
+
+
+def test_fetch_path_pulls_a_remote_file_directly(tmp_path):
+    host = ScriptedHost()
+    remote_path = f"{ScriptedHost._STAGE_ROOT}/fetch1"
+    host.sftp.remote_files[remote_path] = b"hello from the container"
+    local_dest = tmp_path / "out.txt"
+    with _staging(host) as session:
+        session.fetch_path(remote_path, local_dest)
+    assert local_dest.read_bytes() == b"hello from the container"
+    assert host.ran(f"test -d {remote_path}")
+    assert not host.ran("tar -cf")  # a file never goes through the tar path
+
+
+def test_fetch_path_pulls_a_remote_directory_via_tar(tmp_path):
+    remote_path = f"{ScriptedHost._STAGE_ROOT}/fetch1"
+    host = ScriptedHost(
+        directories={remote_path},
+        remote_content={remote_path: {"a.txt": b"A", "sub/b.txt": b"B"}},
+    )
+    local_dest = tmp_path / "outdir"
+    with _staging(host) as session:
+        session.fetch_path(remote_path, local_dest)
+    assert (local_dest / "a.txt").read_bytes() == b"A"
+    assert (local_dest / "sub" / "b.txt").read_bytes() == b"B"
+    # The temporary download archive is packed beside the source and removed once fetched, mirroring
+    # how an uploaded one is cleaned up during staging.
+    archive_path = f"{ScriptedHost._STAGE_ROOT}/fetchout1.tar"
+    assert host.ran(f"tar -cf {archive_path} -C {ScriptedHost._STAGE_ROOT} fetch1")
+    assert host.ran(f"rm -rf {archive_path}")
+
+
+def test_fetch_path_refuses_an_existing_local_destination(tmp_path):
+    host = ScriptedHost()
+    remote_path = f"{ScriptedHost._STAGE_ROOT}/fetch1"
+    host.sftp.remote_files[remote_path] = b"data"
+    local_dest = tmp_path / "already-here.txt"
+    local_dest.write_text("existing")
+    with _staging(host) as session:
+        with pytest.raises(FileExistsError, match="already exists"):
+            session.fetch_path(remote_path, local_dest)
+    assert local_dest.read_text() == "existing"  # untouched
+    assert not host.ran(f"test -d {remote_path}")  # refused before ever contacting the remote
+
+
+def test_fetch_path_refuses_when_local_dest_parent_is_missing(tmp_path):
+    host = ScriptedHost()
+    remote_path = f"{ScriptedHost._STAGE_ROOT}/fetch1"
+    host.sftp.remote_files[remote_path] = b"data"
+    with _staging(host) as session:
+        with pytest.raises(ValueError, match="not a directory"):
+            session.fetch_path(remote_path, tmp_path / "nope" / "out.txt")
+
+
+def test_fetch_path_raises_when_the_remote_path_is_missing(tmp_path):
+    host = ScriptedHost()
+    remote_path = f"{ScriptedHost._STAGE_ROOT}/fetch1"
+    host.sftp.missing.add(remote_path)
+    with _staging(host) as session:
+        with pytest.raises(FileNotFoundError):
+            session.fetch_path(remote_path, tmp_path / "out.txt")
+
+
+def test_fetch_path_refuses_an_oversized_file(tmp_path, monkeypatch):
+    monkeypatch.setattr("docker_mcp.tools._ssh_proxy._MAX_STAGE_BYTES", 4)
+    host = ScriptedHost()
+    remote_path = f"{ScriptedHost._STAGE_ROOT}/fetch1"
+    host.sftp.remote_files[remote_path] = b"this is definitely too big"
+    with _staging(host) as session:
+        with pytest.raises(ValueError, match="past the staging limit"):
+            session.fetch_path(remote_path, tmp_path / "out.txt")
+
+
+def test_fetch_path_refuses_an_oversized_directory_by_bytes(tmp_path, monkeypatch):
+    monkeypatch.setattr("docker_mcp.tools._ssh_proxy._MAX_STAGE_BYTES", 4)
+    remote_path = f"{ScriptedHost._STAGE_ROOT}/fetch1"
+    host = ScriptedHost(directories={remote_path}, remote_content={remote_path: {"big.bin": b"x" * 4096}})
+    with _staging(host) as session:
+        with pytest.raises(ValueError, match="past the staging limit"):
+            session.fetch_path(remote_path, tmp_path / "outdir")
+    # Refused before extraction, but the remote archive is still cleaned up.
+    assert host.ran("rm -rf")
+    assert not (tmp_path / "outdir").exists()
+
+
+def test_fetch_path_refuses_a_directory_with_too_many_entries(tmp_path, monkeypatch):
+    monkeypatch.setattr("docker_mcp.tools._ssh_proxy._MAX_STAGE_FILES", 2)
+    remote_path = f"{ScriptedHost._STAGE_ROOT}/fetch1"
+    content = {f"f{i}": b"x" for i in range(5)}
+    host = ScriptedHost(directories={remote_path}, remote_content={remote_path: content})
+    with _staging(host) as session:
+        with pytest.raises(ValueError, match="past the staging limit"):
+            session.fetch_path(remote_path, tmp_path / "outdir")
+    assert not (tmp_path / "outdir").exists()
+
+
+def test_fetch_path_refuses_an_archive_member_that_escapes_the_destination(tmp_path):
+    """
+    A well-behaved `docker compose cp`/`tar` would never produce this, but the whole point of
+    `tarfile`'s "data" extraction filter is not needing to trust that: a member naming a path outside
+    the destination is refused rather than silently written there.
+    """
+    remote_path = f"{ScriptedHost._STAGE_ROOT}/fetch1"
+    evil = [("../escaped.txt", b"pwned")]
+    host = ScriptedHost(directories={remote_path}, remote_content={remote_path: evil})
+    with _staging(host) as session:
+        with pytest.raises(tarfile.TarError, match="outside the destination"):
+            session.fetch_path(remote_path, tmp_path / "outdir")
+    assert not (tmp_path / "escaped.txt").exists()
+    # Cleaned up remotely even though extraction failed.
+    assert host.ran("rm -rf")
