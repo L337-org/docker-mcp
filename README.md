@@ -8,11 +8,15 @@
 
 More than just a fully featured [MCP](https://modelcontextprotocol.io) server that lets AI agents manage Docker — containers, images, networks, volumes, swarm services, secrets, configs, nodes, plugins, etc., it helps you create workflows to easily manage your Docker environments.
 
+It gives you much more control and flexibility than calling the Docker CLI directly: each operation is exposed as its own typed tool, annotated read-only or destructive. This means a client can auto-approve reads while always confirming destructive calls, and the whole server can also be switched into a read-only or no-destructive mode as a blanket safeguard. Results come back as structured, bounded data rather than raw CLI text for the agent to parse, which cuts down on misreads of truncated or ambiguous command output.
+
 For simple cases, you can just install and go with no configuration required - once loaded it will discover your local Docker socket and expose the full command surface to your AI agent. For more advanced users it can [manage multiple Docker daemons](#managing-several-daemons), e.g. both your local dev environment and also a remote production environment [over TCP, TLS or SSH](#talking-to-a-remote-daemon) in a single session. It can also be configured to mark some daemons as read-only, so you can monitor them without the risk of making accidental changes.
 
 It can even be run on a machine [without Docker installed](#no-local-docker) and manage remote daemons over SSH, TLS or TCP (some features require SSH). The AI itself does not require shell or SSH access.
 
 The MCP server also exposes things like logs and stats as resources so that you can monitor and triage, enabling you to [answer questions](#example-prompts) like 'why did my container crash?', 'what is the state of my swarm?', 'am I suffering memory pressure?', 'what is the disk usage of my volumes?', 'what differences are there between my test and production systems?', and more...
+
+Documentation is built for the agent, not just the person configuring it: an MCP resource exposes the Docker SDK reference in-session (with a tool-callable fallback for clients that can't read resources), and a live tool-catalog resource reports exactly what's registered under the current configuration. Each tool's own description names its nearest siblings and when to prefer each, states preconditions and side effects in plain language, and is honest about when it can still fail — so an agent can pick the right tool on the first try among 150+ options, not guess.
 
 docker-mcp-server is optimized to work efficiently with the new generation of MCP clients that support lazy tool loading. For clients that still eagerly load all tools, the server can optionally be configured to exclude tools from a subset of domains (e.g. exclude 'swarm' and 'scout' tools) to reduce the tool list size. It's also possible to put the MCP server into 'read-only' or 'no-destructive' modes that prevent any tools with write or destructive capabilities from being registered, which again reduces the footprint.
 
