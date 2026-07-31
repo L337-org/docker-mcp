@@ -292,7 +292,7 @@ def _registered_resource_uris(hosts_value: str | None) -> set[str]:
     code = (
         "import asyncio, docker_mcp; from docker_mcp.server import mcp; "
         "u=[str(r.uri) for r in asyncio.run(mcp.list_resources())]"
-        "+[t.uriTemplate for t in asyncio.run(mcp.list_resource_templates())]; "
+        "+[t.uri_template for t in asyncio.run(mcp.list_resource_templates())]; "
         "print('\\n'.join(u))"
     )
     out = subprocess.run(  # noqa: S603 — fixed argv, sys.executable, no shell
