@@ -12,12 +12,6 @@ MANIFEST = _ROOT / "manifest.json"
 UV_LOCK = _ROOT / "uv.lock"
 
 
-def _version_tuple(version: str, length: int = 4) -> tuple[int, ...]:
-    parts = [int(p) for p in version.split(".")]
-    parts += [0] * (length - len(parts))
-    return tuple(parts[:length])
-
-
 def _dependency_name(requirement: str) -> str:
     match = re.match(r"[A-Za-z0-9][A-Za-z0-9._-]*", requirement)
     assert match, f"could not parse a dependency name from {requirement!r}"
@@ -73,45 +67,26 @@ def test_intel_macos_cryptography_pin_not_relaxed():
     )
 
 
-def test_mcp_major_cap_not_relaxed():
-    """
-    mcp 2.0.0 removed `mcp.server.fastmcp`, which `server.py` imports FastMCP from, so an
-    uncapped `mcp` resolves to a release that cannot import this package. That is not
-    hypothetical: the published 2.2.0 shipped uncapped and `uvx docker-mcp-server` failed at
-    import on a clean machine, while CI stayed green because it installs `--locked` against a
-    lockfile pinning 1.x. Lifting this cap needs the `mcp.server.mcpserver` migration first.
-    """
-    data = tomllib.loads(PYPROJECT.read_text())
-    deps = data["project"]["dependencies"]
-
-    mcp_deps = [d for d in deps if _dependency_name(d) == "mcp"]
-    assert mcp_deps, "no direct 'mcp' dependency found in pyproject.toml"
-    assert len(mcp_deps) == 1, f"expected exactly one 'mcp' dependency, found: {mcp_deps!r}"
-
-    dep = mcp_deps[0]
-    assert not _admits(dep, "2.0.0"), (
-        f"the mcp dependency {dep!r} allows 2.0.0, which removed `mcp.server.fastmcp` — `import "
-        "docker_mcp` then fails outright. Port `server.py` to `mcp.server.mcpserver` before lifting "
-        "this cap; note `<=2` allows 2.0.0 and so is not a cap."
-    )
-
-
 def test_the_declared_mcp_bound_matches_what_the_code_imports():
     """
-    The cap and the import have to agree, and only one of them is in pyproject: assert the
-    module we import FastMCP from is the one the *locked* mcp actually provides. Catches a
-    lockfile that drifts past the cap as well as a cap raised without porting the import.
+    `server.py` imports its MCP server class from a specific `mcp.*` submodule; assert that module
+    is one the *locked* mcp actually provides. This is the permanent guard for the class of failure
+    that bit the published 2.2.0 release: mcp 2.0.0 removed `mcp.server.fastmcp` (which `server.py`
+    used to import `FastMCP` from), but CI stayed green because it installs `--locked` against a
+    lockfile still pinning 1.x, so a *fresh* resolve broke at import while every test passed. Unlike
+    that incident's hotfix (a version cap), this test needs no cap to stay current — it fails
+    whenever an installed mcp stops providing the import path the code actually uses, including a
+    future major bump, with no reliance on remembering to add a new cap first.
     """
     import importlib.util
 
     from docker_mcp import server as server_module
 
     source = Path(server_module.__file__).read_text(encoding="utf-8")
-    match = re.search(r"from (mcp[\w.]*) import FastMCP", source)
-    assert match, "server.py no longer imports FastMCP from an `mcp.*` module — update this guard"
+    match = re.search(r"from (mcp[\w.]*) import MCPServer", source)
+    assert match, "server.py no longer imports MCPServer from an `mcp.*` module — update this guard"
     assert importlib.util.find_spec(match.group(1)) is not None, (
-        f"server.py imports FastMCP from {match.group(1)!r}, which the installed mcp does not "
-        "provide — the pyproject cap and the code disagree"
+        f"server.py imports MCPServer from {match.group(1)!r}, which the installed mcp does not provide"
     )
 
 

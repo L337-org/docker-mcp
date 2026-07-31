@@ -55,14 +55,20 @@ non-required `Check docs mirror` job flags a PR that edits `CLAUDE.md` or
 `.github/copilot-instructions.md` without the other (see the MIRROR RULE above) — it's a prompt to
 double-check, not a merge blocker.
 
-**Two dependency caps exist because a fresh resolve can break what `--locked` CI cannot see**, both
+**A dependency cap exists because a fresh resolve can break what `--locked` CI cannot see**,
 enforced by `tests/test_pyproject_pins.py`: `cryptography<49` on Intel macOS (49 dropped the
-universal2 wheel), and **`mcp<2`** — mcp 2.0.0 removed `mcp.server.fastmcp`, which `server.py` imports
-`FastMCP` from (it moved to `mcp.server.mcpserver`), so 2.x needs a port rather than a bump. The
-published 2.2.0 shipped uncapped and `uvx docker-mcp-server` was dead on arrival at import while every
-CI job stayed green, because CI installs `--locked` against a lockfile pinning mcp 1.x; 2.2.1
-superseded it. When adding a direct dependency whose *import surface* we touch, consider whether a
-major-version cap plus a pin guard belongs with it.
+universal2 wheel). When adding a direct dependency whose *import surface* we touch, consider
+whether a major-version cap plus a pin guard belongs with it.
+
+An `mcp<2` cap of this kind existed briefly: mcp 2.0.0 removed `mcp.server.fastmcp`, which
+`server.py` imported `FastMCP` from, and an uncapped 2.2.0 shipped dead on arrival at import while
+every CI job stayed green, because CI installs `--locked` against a lockfile pinning mcp 1.x;
+2.2.1 hotfixed the cap. `server.py` has since been ported to `mcp.server.mcpserver.MCPServer` and
+the cap lifted. Rather than re-adding a cap for the next major (there is no known 3.x
+incompatibility to guard against), `tests/test_pyproject_pins.py::
+test_the_declared_mcp_bound_matches_what_the_code_imports` is a living guard: it fails whenever
+the installed mcp stops providing the import path `server.py` actually uses, with no reliance on
+remembering to add a cap first.
 
 **A required `Check fresh resolve still imports` job** (`premerge.yaml`) closes the blind spot that
 let the 2.2.0 incident through: every job above installs with `uv sync --locked`, so none of them
@@ -95,7 +101,7 @@ contact — the canary's entry-point smoke depends on it.
 The `docker_mcp` package is the entry point. `docker_mcp/__init__.py` defines `main()` and side-effect-imports the `server` and `tools` submodules (which registers all `@tool()` decorators). `docker_mcp/__main__.py` calls `main()` so `python -m docker_mcp` works; the installed `docker-mcp` console script also targets `docker_mcp:main`.
 
 ### Server singleton (`docker_mcp/server.py`)
-Instantiates `FastMCP`, exports the `mcp` object, and exports the `tool` and `prompt` registration helpers. **Tool modules import `tool`; prompt modules import `prompt`** — both gate on `DOCKER_MCP_SERVER_DISABLE` (never import from `mcp` directly in those modules — that would create circular imports). `@mcp.resource()` modules still import `mcp` (plus `is_domain_disabled` / `register_resource_domains` for section gating).
+Instantiates `MCPServer` (from `mcp.server.mcpserver`), exports the `mcp` object, and exports the `tool` and `prompt` registration helpers. **Tool modules import `tool`; prompt modules import `prompt`** — both gate on `DOCKER_MCP_SERVER_DISABLE` (never import from `mcp` directly in those modules — that would create circular imports). `@mcp.resource()` modules still import `mcp` (plus `is_domain_disabled` / `register_resource_domains` for section gating).
 
 ```python
 from docker_mcp.server import tool     # tool modules
@@ -113,7 +119,7 @@ The decorator also records each tool's **domain** — the leaf of its defining m
 
 A handful of tools have **no domain at all** — `_NO_DOMAIN_TOOLS` (today just `docs_lookup`) — because their value isn't tied to any single Docker feature area being enabled or disabled. `_domain_for` returns `None` for these, and `None` short-circuits the `_domain_enabled` check entirely, so `DOCKER_MCP_SERVER_DISABLE` can never drop them (not even by their own name). This mirrors `@prompt(domain=None)`'s identical "cross-cutting, always available" semantics for prompts. They still register/deregister normally under `DOCKER_MCP_SERVER_READONLY`/`_NO_DESTRUCTIVE` based on their own category (a domain-less tool should still be `READ_ONLY` for this to matter in practice).
 
-**Server `instructions` router.** `server.py` also builds the FastMCP `instructions` string — the text a client pre-loads into context alongside the server name and tool names, *before* any per-tool schema. For a lazy-loading client (e.g. Claude Code, which fetches tool schemas on demand) that's the main always-in-context surface we control, so it's written as a **router**, not docs: a per-domain one-liner mapping user vocabulary onto the domain keyword a tool search will hit, plus a few tool-selection caveats. It deliberately does not enumerate tools (that's the `docker-mcp://tool-catalog` resource). It's built dynamically by `build_instructions()` from `_DOMAIN_BLURBS`, emitting a domain's line **only when that domain has a registered tool** — so `DOCKER_MCP_SERVER_DISABLE` / `_READONLY` / `_NO_DESTRUCTIVE` are all honored through the one registration flag, and the router never advertises a domain whose tools didn't register. `finalize_instructions()` (called from `docker_mcp/__init__.py` *after* every tool module imports) writes the result through to `mcp._mcp_server.instructions` — FastMCP's `instructions` is a read-only property whose value is read at `run()` time, so a late write propagates to the MCP initialize handshake; the `_mcp_server` reach-in is guarded like `_slim_schema`. **A new tool *domain* needs a `_DOMAIN_BLURBS` entry** or the router silently omits it (`tests/test_server.py` checks the router tracks the registered domain set).
+**Server `instructions` router.** `server.py` also builds the MCPServer `instructions` string — the text a client pre-loads into context alongside the server name and tool names, *before* any per-tool schema. For a lazy-loading client (e.g. Claude Code, which fetches tool schemas on demand) that's the main always-in-context surface we control, so it's written as a **router**, not docs: a per-domain one-liner mapping user vocabulary onto the domain keyword a tool search will hit, plus a few tool-selection caveats. It deliberately does not enumerate tools (that's the `docker-mcp://tool-catalog` resource). It's built dynamically by `build_instructions()` from `_DOMAIN_BLURBS`, emitting a domain's line **only when that domain has a registered tool** — so `DOCKER_MCP_SERVER_DISABLE` / `_READONLY` / `_NO_DESTRUCTIVE` are all honored through the one registration flag, and the router never advertises a domain whose tools didn't register. `finalize_instructions()` (called from `docker_mcp/__init__.py` *after* every tool module imports) writes the result through to `mcp._lowlevel_server.instructions` — MCPServer's `instructions` is a read-only property whose value is read at `run()` time, so a late write propagates to the MCP initialize handshake; the `_lowlevel_server` reach-in is guarded like `_slim_schema`. **A new tool *domain* needs a `_DOMAIN_BLURBS` entry** or the router silently omits it (`tests/test_server.py` checks the router tracks the registered domain set).
 
 ### Multi-daemon host registry (`docker_mcp/_hosts.py`)
 

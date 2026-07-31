@@ -12,13 +12,13 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, NoReturn
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 from mcp.types import ToolAnnotations
 
 import docker_mcp._hosts as _hosts
 from docker_mcp._env import env_flag, read_env
 
-mcp = FastMCP("docker-mcp-server")
+mcp = MCPServer("docker-mcp-server")
 
 
 class ToolCategory(Enum):
@@ -211,7 +211,7 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
 }
 
 # Destructive tools whose effect is idempotent — re-running has no additional effect (the targets
-# are already gone). Surfaced via ToolAnnotations.idempotentHint so clients can treat retries as safe.
+# are already gone). Surfaced via ToolAnnotations.idempotent_hint so clients can treat retries as safe.
 _IDEMPOTENT_TOOLS = frozenset({"container_prune", "image_prune", "network_prune", "volume_prune", "buildx_prune"})
 
 # The optional per-call parameter that selects which configured host a daemon-targeting tool acts on.
@@ -486,13 +486,14 @@ def finalize_instructions() -> None:
     Set the server's `instructions` from the actually-registered surface — called once after every tool
     module has imported (docker_mcp/__init__.py), so the switch-dependent registration is already known.
 
-    FastMCP.instructions is a read-only property backed by the low-level server's `instructions`, which is
-    read at run() time (create_initialization_options), so writing it through here after registration
-    propagates to the MCP initialize handshake. Reaching into `_mcp_server` is guarded the same way as the
-    schema-title strip below: a FastMCP refactor degrades to "instructions stay unset" rather than raising.
+    MCPServer.instructions is a read-only property backed by the low-level server's `instructions`, which
+    is read at run() time (create_initialization_options), so writing it through here after registration
+    propagates to the MCP initialize handshake. Reaching into `_lowlevel_server` is guarded the same way as
+    the schema-title strip below: an MCPServer refactor degrades to "instructions stay unset" rather than
+    raising.
     """
     try:
-        mcp._mcp_server.instructions = build_instructions()
+        mcp._lowlevel_server.instructions = build_instructions()
     except AttributeError:
         pass
 
@@ -500,9 +501,9 @@ def finalize_instructions() -> None:
 def _annotations_for(name: str, category: ToolCategory) -> ToolAnnotations:
     """Build the ToolAnnotations a client uses to auto-allow reads and gate destructive calls."""
     return ToolAnnotations(
-        readOnlyHint=category is ToolCategory.READ_ONLY,
-        destructiveHint=category is ToolCategory.DESTRUCTIVE,
-        idempotentHint=True if name in _IDEMPOTENT_TOOLS else None,
+        read_only_hint=category is ToolCategory.READ_ONLY,
+        destructive_hint=category is ToolCategory.DESTRUCTIVE,
+        idempotent_hint=True if name in _IDEMPOTENT_TOOLS else None,
     )
 
 
@@ -667,7 +668,7 @@ def _host_guard_needed() -> bool:
 
 def _wrap_with_host_guard(func: Callable, name: str, category: ToolCategory) -> Callable:
     """Wrap a daemon-targeting tool so the host guard runs before it (when `_host_guard_needed()` —
-    multi-host, or a single host flagged (ro)). Preserves the signature so FastMCP builds the same
+    multi-host, or a single host flagged (ro)). Preserves the signature so MCPServer builds the same
     schema/fn_metadata, and matches the func's sync/async-ness."""
     signature = inspect.signature(func)
 
@@ -720,7 +721,7 @@ def tool(**kwargs: Any) -> Callable[[Callable], Callable]:
             return func
         # Daemon-targeting tools (those declaring a `host` param) get a call-time host guard when there's
         # something to enforce — multiple hosts, or a single host flagged (ro); wrap before registering so
-        # FastMCP builds the schema from the wrapper, whose signature mirrors the original. A single
+        # MCPServer builds the schema from the wrapper, whose signature mirrors the original. A single
         # writable host (and host-agnostic tools) register func unchanged.
         target = func
         if _has_host_param(func) and _host_guard_needed():
@@ -728,8 +729,8 @@ def tool(**kwargs: Any) -> Callable[[Callable], Callable]:
         decorated = mcp.tool(annotations=_annotations_for(name, category), **kwargs)(target)
         # Slim the advertised input schema (drop information-free titles, nullable-anyOf null branches,
         # and redundant `additionalProperties: true`), then apply the host-param surgery (enum + required
-        # in multi-host, or strip it in single-host). Both reach into FastMCP internals
-        # (`_tool_manager.get_tool(...).parameters`); guard it so a future FastMCP refactor degrades to
+        # in multi-host, or strip it in single-host). Both reach into MCPServer internals
+        # (`_tool_manager.get_tool(...).parameters`); guard it so a future MCPServer refactor degrades to
         # "schema not slimmed" (a test catches that) rather than crashing the server at import time.
         try:
             registered_tool = mcp._tool_manager.get_tool(kwargs.get("name") or name)

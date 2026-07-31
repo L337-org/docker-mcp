@@ -267,33 +267,33 @@ def test_registered_tools_carry_annotations_matching_their_category():
         ann = registered.annotations
         assert ann is not None, f"{name} has no ToolAnnotations"
         category = TOOL_CATEGORIES[name]
-        assert ann.readOnlyHint is (category is ToolCategory.READ_ONLY), name
-        assert ann.destructiveHint is (category is ToolCategory.DESTRUCTIVE), name
+        assert ann.read_only_hint is (category is ToolCategory.READ_ONLY), name
+        assert ann.destructive_hint is (category is ToolCategory.DESTRUCTIVE), name
 
 
 def test_annotations_for_read_only():
     ann = _annotations_for("container_list", ToolCategory.READ_ONLY)
-    assert ann.readOnlyHint is True
-    assert ann.destructiveHint is False
+    assert ann.read_only_hint is True
+    assert ann.destructive_hint is False
 
 
 def test_annotations_for_mutating():
     ann = _annotations_for("container_run", ToolCategory.MUTATING)
-    assert ann.readOnlyHint is False
-    assert ann.destructiveHint is False
+    assert ann.read_only_hint is False
+    assert ann.destructive_hint is False
 
 
 def test_annotations_for_destructive_prune_is_idempotent():
     ann = _annotations_for("image_prune", ToolCategory.DESTRUCTIVE)
-    assert ann.readOnlyHint is False
-    assert ann.destructiveHint is True
-    assert ann.idempotentHint is True
+    assert ann.read_only_hint is False
+    assert ann.destructive_hint is True
+    assert ann.idempotent_hint is True
 
 
 def test_annotations_for_destructive_non_prune_not_marked_idempotent():
     ann = _annotations_for("container_remove", ToolCategory.DESTRUCTIVE)
-    assert ann.destructiveHint is True
-    assert ann.idempotentHint is None
+    assert ann.destructive_hint is True
+    assert ann.idempotent_hint is None
 
 
 # ---------- env-switch logic ----------
