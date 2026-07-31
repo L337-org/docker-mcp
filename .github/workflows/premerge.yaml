@@ -45,12 +45,13 @@ jobs:
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
 
       - name: Resolve and install from pyproject.toml, ignoring uv.lock
-        # A failure here is a resolution/build failure — a specifier that can no longer be
-        # satisfied at all — distinct from the import failure checked in the next step.
+        # A failure here is a resolve/build/install failure (an unsatisfiable specifier, a
+        # sdist needing a toolchain we don't have, a transient fetch error) — distinct from
+        # the import failure checked in the next step. The log above this line has the cause.
         run: |
           uv venv .venv-fresh
           if ! uv pip install --python .venv-fresh/bin/python . ; then
-            echo "::error::Fresh resolve of pyproject.toml FAILED: a dependency specifier can no longer be satisfied. This is a resolution failure, not an import failure."
+            echo "::error::Fresh resolve/install of pyproject.toml FAILED (see the uv output above for the cause) — this is a resolve/install failure, not an import failure."
             exit 1
           fi
 
