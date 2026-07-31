@@ -1606,6 +1606,26 @@ def test_fetch_path_pulls_a_remote_directory_via_tar(tmp_path):
     assert host.ran(f"rm -rf {archive_path}")
 
 
+def test_fetch_path_refuses_when_the_intermediate_extraction_path_already_exists(tmp_path):
+    """
+    The tar's top-level member is named after `remote_path`'s basename, so extraction lands at
+    `local_dest.parent / <that basename>` before the final rename to `local_dest`. If something
+    unrelated already occupies that intermediate path, `extractall` would merge into it rather than
+    fail — refused upfront instead, before any remote work happens.
+    """
+    remote_path = f"{ScriptedHost._STAGE_ROOT}/fetch1"
+    host = ScriptedHost(directories={remote_path}, remote_content={remote_path: {"a.txt": b"A"}})
+    local_dest = tmp_path / "outdir"
+    (tmp_path / "fetch1").mkdir()
+    (tmp_path / "fetch1" / "unrelated.txt").write_text("do not touch", encoding="utf-8")
+    with _staging(host) as session:
+        with pytest.raises(FileExistsError, match="already exists"):
+            session.fetch_path(remote_path, local_dest)
+    assert (tmp_path / "fetch1" / "unrelated.txt").read_text() == "do not touch"
+    assert not local_dest.exists()
+    assert not host.ran("tar -cf")  # refused before any remote work
+
+
 def test_fetch_path_refuses_an_existing_local_destination(tmp_path):
     host = ScriptedHost()
     remote_path = f"{ScriptedHost._STAGE_ROOT}/fetch1"

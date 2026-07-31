@@ -1552,7 +1552,20 @@ class RemoteStagingSession:
         round trip would tell us how many members it holds. `tarfile`'s "data" extraction filter — the
         ordinary safe default (PEP 706) — is what actually stops a member from escaping `local_dest`'s
         parent via `..` or an absolute path; the caps above stop it from being oversized, not malicious.
+
+        The tar's sole top-level member is `remote_path`'s basename, so it lands at
+        `local_dest.parent / <that basename>` before the final rename to `local_dest` — refused
+        upfront, before any remote work, if that intermediate path already exists: `extractall` would
+        otherwise merge into an existing directory there rather than fail, before this function ever
+        gets to the rename that would have caught the collision.
         """
+        extracted = local_dest.parent / posixpath.basename(remote_path.rstrip("/"))
+        if extracted.exists():
+            raise FileExistsError(
+                f"Cannot fetch {remote_path!r} to {str(local_dest)!r}: the temporary extraction path "
+                f"{str(extracted)!r} already exists on this host, and extracting into it could merge with "
+                f"unrelated content there. Remove it, or choose a different destination."
+            )
         archive_path = f"{self._new_slot_path('fetchout')}.tar"
         self._control(
             self._dialect.create_tar_argv(remote_path, archive_path),
@@ -1587,7 +1600,6 @@ class RemoteStagingSession:
                 timeout=_STAGING_CONTROL_TIMEOUT_SECONDS,
                 what="remove the temporary download archive",
             )
-        extracted = local_dest.parent / posixpath.basename(remote_path.rstrip("/"))
         if extracted != local_dest:
             extracted.rename(local_dest)
 
