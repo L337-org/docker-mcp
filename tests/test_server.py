@@ -28,6 +28,7 @@ from docker_mcp.server import (
     _seen_tool_names,
     _should_register,
     _slim_schema,
+    _title_for,
     _tool_registry,
     _wrap_with_host_guard,
     mcp,
@@ -271,8 +272,29 @@ def test_registered_tools_carry_annotations_matching_their_category():
         assert ann.destructive_hint is (category is ToolCategory.DESTRUCTIVE), name
 
 
+def test_registered_tools_carry_a_title_distinct_from_their_name():
+    # Directory review (e.g. the Claude Connectors Directory) reads `title` mechanically, independent
+    # of description quality — a tool missing one fails review however good its docstring is.
+    for name, registered in _registered_tools().items():
+        ann = registered.annotations
+        assert ann is not None and ann.title, f"{name} has no title annotation"
+        assert ann.title != name, f"{name}'s title is just its own name, not a human-readable label"
+
+
+def test_title_for_title_cases_and_despaces_the_name():
+    assert _title_for("container_list") == "Container List"
+    assert _title_for("buildx_imagetools_create") == "Buildx Imagetools Create"
+
+
+def test_title_for_fixes_known_acronyms():
+    # A naive .title() gets these wrong ("Scout Cves"/"Scout Sbom") since they're not real words.
+    assert _title_for("scout_cves") == "Scout CVEs"
+    assert _title_for("scout_sbom") == "Scout SBOM"
+
+
 def test_annotations_for_read_only():
     ann = _annotations_for("container_list", ToolCategory.READ_ONLY)
+    assert ann.title == "Container List"
     assert ann.read_only_hint is True
     assert ann.destructive_hint is False
 
