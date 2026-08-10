@@ -109,8 +109,10 @@ def _context_host(name: str) -> str | None:
 def resolve_local() -> str | None:
     """
     The platform-local daemon socket — first existing well-known location, Docker Desktop / rootless
-    first. Context-bypassing. Returns None to let from_env() apply its platform default (e.g. the
-    Windows named pipe, which has nothing to probe on disk).
+    first. Context-bypassing by design: `local` means the machine's own socket, never wherever a CLI
+    context happens to point. Returns None to let from_env() apply its platform default (e.g. the
+    Windows named pipe, which has nothing to probe on disk) — which is context-free because that call
+    goes through `system._from_env_no_context`.
     """
     if sys.platform == "win32":  # pyright: ignore[reportUnreachable]
         return None
@@ -136,8 +138,12 @@ def resolve_auto() -> str | None:
     """
     The daemon a context-aware `docker` with no DOCKER_HOST would use: the active CLI context's
     endpoint (DOCKER_CONTEXT / config.json currentContext -> its meta.json Host), else the local-socket
-    probe. docker-py's from_env() is context-blind, so we resolve the context ourselves. Returns None
-    to let from_env() apply its own platform default.
+    probe. Returns None to let from_env() apply its own platform default.
+
+    We resolve the context ourselves rather than delegating. docker-py's from_env() was context-blind
+    until 7.2.0 and now does its own resolution, but we keep ours and switch its off (see
+    `system._from_env_no_context`): the result has to be pinned at `load()` and shared with the docker
+    CLI shell-out, neither of which a per-client-build lookup inside docker-py can give us.
     """
     name = _active_context_name()
     if name and name != "default":

@@ -445,7 +445,10 @@ def test_build_default_client_honors_docker_host(monkeypatch):
         patch("docker_mcp.tools.system.docker.DockerClient") as ctor,
     ):
         assert system_module._build_default_client() is sentinel
-    from_env.assert_called_once_with()  # DOCKER_HOST goes through from_env (which applies its TLS env)
+    # DOCKER_HOST goes through from_env (which applies its TLS env). use_context=False keeps docker-py
+    # >=7.2.0 from resolving a CLI context itself — redundant on this branch (an env-derived base_url
+    # already short-circuits it) but asserted so the guarantee doesn't rest on that coincidence.
+    from_env.assert_called_once_with(use_context=False)
     ctor.assert_not_called()
 
 
@@ -468,7 +471,35 @@ def test_build_default_client_falls_back_to_from_env(monkeypatch):
         patch("docker_mcp.tools.system.docker.from_env", return_value=sentinel) as from_env,
     ):
         assert system_module._build_default_client() is sentinel
-    from_env.assert_called_once_with()
+    # This is the branch that actually needed the pin: no DOCKER_HOST and nothing from resolve_auto,
+    # so docker-py >=7.2.0 would otherwise resolve the active CLI context here — re-deciding the host
+    # at client-build time, which is exactly what pinning resolution at load() exists to prevent.
+    from_env.assert_called_once_with(use_context=False)
+
+
+def test_build_default_client_keeps_the_context_pin_when_it_rewrites_the_url(monkeypatch):
+    # The one branch where the pin travels alongside another kwarg: an ssh:// DOCKER_HOST rewritten by
+    # the port/address-family fixups is passed via `environment=`, and use_context must survive that.
+    monkeypatch.setenv("DOCKER_HOST", "ssh://bob@example.com")
+    sentinel = MagicMock()
+    with (
+        patch("docker_mcp.tools.system._ensure_ssh_port", side_effect=lambda url: url),
+        patch("docker_mcp.tools.system._ensure_reachable_family", return_value="ssh://bob@10.0.0.9:22"),
+        patch("docker_mcp.tools.system.docker.from_env", return_value=sentinel) as from_env,
+    ):
+        assert system_module._build_default_client() is sentinel
+    kwargs = from_env.call_args.kwargs
+    assert kwargs["use_context"] is False
+    assert kwargs["environment"]["DOCKER_HOST"] == "ssh://bob@10.0.0.9:22"
+
+
+def test_from_env_no_context_pins_the_kwarg_and_forwards_the_rest():
+    # The single choke point every from_env call goes through, so the pin can't be forgotten at a new
+    # call site. A caller must not be able to override it back on.
+    sentinel = MagicMock()
+    with patch("docker_mcp.tools.system.docker.from_env", return_value=sentinel) as from_env:
+        assert system_module._from_env_no_context(timeout=7) is sentinel
+    from_env.assert_called_once_with(use_context=False, timeout=7)
 
 
 # ---------- multi-host: pool routing, per-host TLS, scoped close, host-aware self-guard ----------

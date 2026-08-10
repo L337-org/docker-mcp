@@ -22,7 +22,14 @@ classifiers = [
 dependencies = [
     # [ssh] pulls paramiko so `ssh://` DOCKER_HOST works through the pure-Python transport — no
     # system `ssh` binary, so it works identically on the host and inside the container images.
-    "docker[ssh]>=7.1.0",
+    # Floor is 7.2.0 because system.py:_build_default_client passes `use_context=False` to
+    # `docker.from_env()`, a kwarg 7.2.0 introduced: 7.2.0 also made from_env resolve the active
+    # Docker CLI context itself, which would duplicate (and could contradict) the context resolution
+    # _hosts.py already does and pins at startup. On 7.1.0 that kwarg is not popped and reaches
+    # kwargs_from_env as an unexpected argument, so this is a hard floor, not a preference —
+    # tests/test_pyproject_pins.py::test_the_declared_docker_floor_supports_the_kwarg_the_code_passes
+    # fails the day an installed docker-py stops accepting it.
+    "docker[ssh]>=7.2.0",
     "httpx>=0.28.1",
     # server.py imports MCPServer from mcp.server.mcpserver (mcp 2.0.0 removed the 1.x
     # mcp.server.fastmcp.FastMCP surface this used to import). No upper cap: unlike that break,
