@@ -141,7 +141,7 @@ def resolve_auto() -> str | None:
     probe. Returns None to let from_env() apply its own platform default.
 
     We resolve the context ourselves rather than delegating. docker-py's from_env() was context-blind
-    until 7.2.0 and now does its own resolution, but we keep ours and switch its off (see
+    until 7.2.0 and now does its own resolution, but we keep ours and switch theirs off (see
     `system._from_env_no_context`): the result has to be pinned at `load()` and shared with the docker
     CLI shell-out, neither of which a per-client-build lookup inside docker-py can give us.
     """
