@@ -124,7 +124,7 @@ def test_get_hosts_resource_returns_the_configured_hosts():
     payload = json.loads(get_hosts_resource())
     assert isinstance(payload, list) and len(payload) == 1
     assert payload[0]["default"] is True
-    assert set(payload[0]) == {"name", "url", "read_only", "tls", "default"}
+    assert set(payload[0]) == {"name", "url", "read_only", "non_destructive", "tls", "default"}
 
 
 # ---------- DOCKER_MCP_SERVER_DISABLE also hides a disabled domain's doc sections ----------

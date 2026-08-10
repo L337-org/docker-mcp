@@ -464,7 +464,8 @@ def build_instructions(registered_domains: set[str] | None = None) -> str:
         caveats.append(
             f"Multiple hosts are configured ({_hosts.labels()}): read-only tools take `host=<label>` "
             "(omit → the default, the first listed); mutating/destructive tools require an explicit "
-            "`host`; a host marked `(ro)` rejects writes. See the `docker-mcp://hosts` resource."
+            "`host`; a host marked `(ro)` rejects writes, and one marked `(nd)` rejects destructive "
+            "calls only. See the `docker-mcp://hosts` resource."
         )
     if caveats:
         lines += ["", "Picking the right tool:"]
@@ -600,6 +601,12 @@ def _is_host_write(name: str, category: ToolCategory) -> bool:
     return category in (ToolCategory.MUTATING, ToolCategory.DESTRUCTIVE) and name not in _CONNECTION_CONTROL
 
 
+def _is_host_destructive(name: str, category: ToolCategory) -> bool:
+    """A host-targeting *destructive* call: a DESTRUCTIVE tool that is not connection-control. This
+    is what the per-host (nd) marker blocks, while still allowing READ_ONLY/MUTATING calls."""
+    return category is ToolCategory.DESTRUCTIVE and name not in _CONNECTION_CONTROL
+
+
 def _host_param_description(name: str, category: ToolCategory) -> str:
     """The advertised `host` description in multi-host mode — the enum carries the valid labels."""
     if _is_host_write(name, category):
@@ -616,27 +623,43 @@ def _raise_read_only(name: str, label: str, category: ToolCategory) -> NoReturn:
     )
 
 
+def _raise_non_destructive(name: str, label: str, category: ToolCategory) -> NoReturn:
+    """Refuse a DESTRUCTIVE call to a host carrying the per-host (nd) marker (distinct from the
+    DOCKER_MCP_SERVER_NO_DESTRUCTIVE switch, which drops destructive tools from the surface entirely)."""
+    raise RuntimeError(
+        f"{name}: host {label!r} is non-destructive (configured with the (nd) marker); refusing this "
+        f"{category.value} operation. For a fully non-destructive server use DOCKER_MCP_SERVER_NO_DESTRUCTIVE."
+    )
+
+
 def _enforce_host_guard(name: str, category: ToolCategory, host: str | None) -> None:
     """
     Central call-time guard for a daemon-targeting tool. Wired whenever there is something to enforce:
-    multiple hosts (host selection + per-host (ro) refusal) or a single host flagged (ro). Raises when a
-    write omits `host` in multi-host mode, when `host` is not a configured label, or when a write targets
-    an (ro) host. Read-only and connection-control tools may omit `host` (None -> default / all).
+    multiple hosts (host selection + per-host (ro)/(nd) refusal) or a single host flagged (ro) or (nd).
+    Raises when a write omits `host` in multi-host mode, when `host` is not a configured label, when a
+    write targets an (ro) host, or when a destructive call targets an (nd) host. A host carrying both
+    markers is refused by the (ro) check first — (ro) is strictly stronger, so (nd) never fires for it.
+    Read-only and connection-control tools may omit `host` (None -> default / all).
     """
     known = _hosts.labels()
     write = _is_host_write(name, category)
+    destructive = _is_host_destructive(name, category)
     if host is None:
         # Multi-host: a write must name its target. Single-host: the schema carries no host param to
-        # pass, but an (ro) default host must still refuse writes.
+        # pass, but an (ro)/(nd) default host must still refuse writes/destructive calls.
         if write and _hosts.is_multi():
             raise RuntimeError(f"{name}: 'host' is required when multiple hosts are configured; choose one of {known}.")
         if write and _hosts.is_read_only():
             _raise_read_only(name, _hosts.default().label, category)
+        if destructive and _hosts.is_non_destructive():
+            _raise_non_destructive(name, _hosts.default().label, category)
         return
     if host not in known:
         raise RuntimeError(f"{name}: unknown host {host!r}; configured hosts: {known}.")
     if write and _hosts.is_read_only(host):
         _raise_read_only(name, host, category)
+    if destructive and _hosts.is_non_destructive(host):
+        _raise_non_destructive(name, host, category)
 
 
 def _apply_host_schema(parameters: Any, name: str, category: ToolCategory) -> None:
@@ -676,15 +699,16 @@ def _apply_host_schema(parameters: Any, name: str, category: ToolCategory) -> No
 
 def _host_guard_needed() -> bool:
     """Whether daemon-targeting tools need the call-time host guard wrapped on. Two cases: multiple hosts
-    (host selection + per-host (ro) refusal), or a single host flagged (ro) (refuse writes even though the
-    schema carries no host param). A single writable host needs no guard — today's footprint-neutral path."""
-    return _hosts.is_multi() or _hosts.is_read_only()
+    (host selection + per-host (ro)/(nd) refusal), or a single host flagged (ro) or (nd) (refuse
+    writes/destructive calls even though the schema carries no host param). A single unrestricted host
+    needs no guard — today's footprint-neutral path."""
+    return _hosts.is_multi() or _hosts.is_read_only() or _hosts.is_non_destructive()
 
 
 def _wrap_with_host_guard(func: Callable, name: str, category: ToolCategory) -> Callable:
     """Wrap a daemon-targeting tool so the host guard runs before it (when `_host_guard_needed()` —
-    multi-host, or a single host flagged (ro)). Preserves the signature so MCPServer builds the same
-    schema/fn_metadata, and matches the func's sync/async-ness."""
+    multi-host, or a single host flagged (ro) or (nd)). Preserves the signature so MCPServer builds
+    the same schema/fn_metadata, and matches the func's sync/async-ness."""
     signature = inspect.signature(func)
 
     def _host_of(args: tuple, kwargs: dict) -> str | None:

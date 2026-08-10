@@ -351,7 +351,8 @@ def host_list() -> list[dict]:
     tool.
 
     returns: list[dict] - one per host: name; url (resolved daemon URL, null = docker-py platform
-        default); read_only; tls (whether a per-host cert dir is configured); default (the omitted-host fallback)
+        default); read_only; non_destructive (blocks destructive calls only); tls (whether a per-host
+        cert dir is configured); default (the omitted-host fallback)
     """
     hosts = _host_registry()
     default_label = _default_host().label if hosts else None
@@ -360,6 +361,7 @@ def host_list() -> list[dict]:
             "name": host.label,
             "url": host.url,
             "read_only": host.read_only,
+            "non_destructive": host.non_destructive,
             "tls": host.cert_dir is not None,
             "default": host.label == default_label,
         }
@@ -591,10 +593,13 @@ def _connection_help(exc: BaseException, host: Host | None) -> str:
 
 
 def _host_tag(host: Host) -> str:
-    """A host's label with brief `(ro, remote)` annotations, for the boot roster of the other hosts."""
+    """A host's label with brief `(ro, remote)`/`(nd, remote)` annotations, for the boot roster of
+    the other hosts. `nd` only shows when `ro` is absent, since `ro` already implies it."""
     tags = []
     if host.read_only:
         tags.append("ro")
+    elif host.non_destructive:
+        tags.append("nd")
     if host.url and not host.url.startswith(("unix://", "npipe://")):
         tags.append("remote")
     return host.label + (f" ({', '.join(tags)})" if tags else "")

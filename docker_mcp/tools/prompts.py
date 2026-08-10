@@ -399,10 +399,10 @@ def audit_docker_contexts() -> str:
     return (
         "Audit what daemon(s) this server targets — its own host registry first, then the host's Docker contexts:\n"
         "1. Call `host_list` (or read `docker-mcp://hosts`) for the hosts configured via DOCKER_MCP_SERVER_HOSTS:\n"
-        "   each `name`, resolved `url`, `read_only`/`tls` flags, and which is the `default` (used when a\n"
-        "   tool's `host` is omitted). With a single host this is just the one resolved daemon. These URLs are\n"
-        "   resolved (auto/local/context) and pinned at server startup — a later `docker context use` does not\n"
-        "   move them; restart to re-resolve.\n"
+        "   each `name`, resolved `url`, `read_only`/`non_destructive`/`tls` flags, and which is the\n"
+        "   `default` (used when a tool's `host` is omitted). With a single host this is just the one\n"
+        "   resolved daemon. These URLs are resolved (auto/local/context) and pinned at server startup —\n"
+        "   a later `docker context use` does not move them; restart to re-resolve.\n"
         "2. Call `context_list` and present the table of contexts (name, current, daemon endpoint, description).\n"
         "3. Highlight which context is `Current=true`. That's the one the docker CLI uses by default, but note\n"
         "   it only affects a host configured as `auto`/`local` — an explicit URL or a multi-host registry pins\n"
@@ -916,7 +916,7 @@ def survey_hosts() -> str:
     return (
         "Survey every Docker host this server is configured for. Change nothing on any host:\n"
         "1. Read `docker-mcp://hosts` (or call `host_list`) for the configured hosts: each `name`, "
-        "resolved `url`, `read_only`, `tls`, and which is the `default`.\n"
+        "resolved `url`, `read_only`, `non_destructive`, `tls`, and which is the `default`.\n"
         "2. For each host, ping it and read `system_info` with `host=<name>`: report reachability, ServerVersion, "
         "OperatingSystem, and container/image counts. A host may be unreachable — note it and move on; the "
         "others are independent.\n"
@@ -927,6 +927,6 @@ def survey_hosts() -> str:
         "read-only?.\n"
         "Driving multi-host tools: read-only tools take `host=<name>` (omit to use the default — the first "
         "configured); mutating/destructive tools REQUIRE an explicit `host`; a host marked read-only `(ro)` "
-        "rejects every write. End with a one-line health verdict per host and name the one most worth "
-        "attention. Recommend nothing destructive."
+        "rejects every write, and one marked `(nd)` rejects destructive calls only. End with a one-line "
+        "health verdict per host and name the one most worth attention. Recommend nothing destructive."
     )

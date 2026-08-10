@@ -325,6 +325,17 @@ def test_host_tag_annotates_ro_and_remote():
     assert system_module._host_tag(Host(label="def", url=None)) == "def"  # platform default counts as local
 
 
+def test_host_tag_annotates_nd_when_not_also_ro():
+    assert (
+        system_module._host_tag(Host(label="prod", url="tcp://prod:2376", non_destructive=True)) == "prod (nd, remote)"
+    )
+    # (ro) wins the tag display too, since it's strictly stronger than (nd).
+    assert (
+        system_module._host_tag(Host(label="prod", url="tcp://prod:2376", read_only=True, non_destructive=True))
+        == "prod (ro, remote)"
+    )
+
+
 def test_close_client_quietly_swallows_close_errors():
     client = MagicMock()
     client.close.side_effect = RuntimeError("already broken")
