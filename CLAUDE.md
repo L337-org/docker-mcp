@@ -55,21 +55,10 @@ non-required `Check docs mirror` job flags a PR that edits `CLAUDE.md` or
 `.github/copilot-instructions.md` without the other (see the MIRROR RULE above) — it's a prompt to
 double-check, not a merge blocker.
 
-**A dependency cap exists because a fresh resolve can break what `--locked` CI cannot see**,
-enforced by `tests/test_pyproject_pins.py`. `cryptography>=50` is the current example — a floor,
-not a cap, and deliberately unconditional (including on Intel macOS). It replaced an earlier
-`cryptography<49; platform_system == 'Darwin' and platform_machine == 'x86_64'` cap once the
-vulnerable range grew to include a fix (GHSA, Dependabot alert #16) that cap was blocking: no
-x86_64/universal2 macOS wheel has shipped since 49.0.0 (confirmed permanent, not transient), so
-Intel macOS now needs Rust + OpenSSL 3.x to build it from source — see README's Requirements and
-Security considerations sections, which recommend the container image as the toolchain-free
-alternative. **A platform-scoped upper bound doesn't make `uv lock` fork the resolution** unless
-something else forces a genuine per-platform conflict (verified empirically) — so the old cap
-silently held *every* platform back on the vulnerable version, not just the one it named. The
-weekly canary's wheels-only check (`.github/workflows/canary.yaml`) is scoped to exempt only
-`cryptography` on `x86_64-apple-darwin`, not `--only-binary :all:` generally, so a *different*
-dependency losing its wheel there still fails loudly. When adding a direct dependency whose
-*import surface* we touch, consider whether a major-version cap plus a pin guard belongs with it.
+**A dependency cap can be worth adding when a fresh resolve could break what `--locked` CI
+cannot see** — enforced, where one exists, via `tests/test_pyproject_pins.py`. When adding a
+direct dependency whose *import surface* we touch, consider whether a major-version cap plus a
+pin guard belongs with it.
 
 An `mcp<2` cap of this kind existed briefly: mcp 2.0.0 removed `mcp.server.fastmcp`, which
 `server.py` imported `FastMCP` from, and an uncapped 2.2.0 shipped dead on arrival at import while

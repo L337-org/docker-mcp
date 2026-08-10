@@ -282,7 +282,6 @@ name = "docker-mcp-server"
 version = "2.2.3"
 source = { editable = "." }
 dependencies = [
-    { name = "cryptography" },
     { name = "docker", extra = ["ssh"] },
     { name = "httpx" },
     { name = "mcp" },
@@ -300,7 +299,6 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "cryptography", specifier = ">=50" },
     { name = "docker", extras = ["ssh"], specifier = ">=7.1.0" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "mcp", specifier = ">=2.0.0" },

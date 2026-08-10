@@ -12,12 +12,6 @@ MANIFEST = _ROOT / "manifest.json"
 UV_LOCK = _ROOT / "uv.lock"
 
 
-def _dependency_name(requirement: str) -> str:
-    match = re.match(r"[A-Za-z0-9][A-Za-z0-9._-]*", requirement)
-    assert match, f"could not parse a dependency name from {requirement!r}"
-    return match.group(0)
-
-
 def _admits(requirement: str, version: str) -> bool:
     """
     Whether a requirement's specifiers allow `version` to be installed.
@@ -34,35 +28,6 @@ def _admits(requirement: str, version: str) -> bool:
     returns: bool - True if that version satisfies the requirement
     """
     return Requirement(requirement).specifier.contains(version)
-
-
-def test_cryptography_floor_is_not_capped_below_the_fix():
-    """
-    Dependabot doesn't get an automatic Copilot review (bots aren't billable for premium
-    requests), so a regression here must be caught by a hard, deterministic CI failure instead of
-    relying on review. See the pyproject.toml comment: cryptography<50 admits the vulnerable range
-    for GHSA (Dependabot alert #16, high severity). We deliberately require >=50 on every
-    platform — including Intel macOS, which has had no x86_64/universal2 wheel since 49.0.0 and
-    must build from source (Rust + OpenSSL 3.x) — rather than caching everyone on a known-vulnerable
-    version to keep one platform wheel-only. Don't reintroduce a platform-scoped cap below 50.
-    """
-    data = tomllib.loads(PYPROJECT.read_text())
-    deps = data["project"]["dependencies"]
-
-    cryptography_deps = [d for d in deps if _dependency_name(d) == "cryptography"]
-    assert cryptography_deps, "no direct 'cryptography' dependency found in pyproject.toml"
-    assert len(cryptography_deps) == 1, f"expected exactly one 'cryptography' dependency, found: {cryptography_deps!r}"
-
-    dep = cryptography_deps[0]
-    assert "platform_system" not in dep and "platform_machine" not in dep, (
-        f"the cryptography dependency {dep!r} is scoped to a platform marker — this pin must apply "
-        "unconditionally, or Intel macOS would silently stay on a vulnerable version while every "
-        "other platform gets the fix."
-    )
-    assert not _admits(dep, "49.0"), (
-        f"the cryptography pin {dep!r} admits 49.0, which is within the vulnerable range fixed by 50.0.0 "
-        "(GHSA, Dependabot alert #16). See the pyproject.toml comment before relaxing this floor."
-    )
 
 
 def test_the_declared_mcp_bound_matches_what_the_code_imports():

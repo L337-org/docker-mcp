@@ -52,16 +52,8 @@ jobs:
         # --only-binary :all: makes resolution fail if any dependency lacks a wheel for the
         # target platform — a source-build fallback is exactly the breakage this hunts (users
         # without a Rust/C toolchain). pyproject.toml resolution covers [project].dependencies
-        # only (the uvx install surface, not dev groups).
-        #
-        # cryptography is a deliberate, documented exception on x86_64-apple-darwin only (see the
-        # pyproject.toml comment): >=50 is required to fix a high-severity CVE, but no macOS
-        # x86_64/universal2 wheel has existed since 49.0.0, confirmed permanent, not transient. Per
-        # the exemption pattern below, it gets --no-binary rather than dropping :all: for that one
-        # target — a *different* dependency losing its x86_64-apple-darwin wheel, or cryptography
-        # losing a wheel on aarch64-apple-darwin/Windows, still fails loudly here. If another
-        # deliberately sdist-only dep ever enters the tree, add it the same way rather than
-        # dropping :all: for everyone.
+        # only (the uvx install surface, not dev groups). If a deliberately sdist-only dep ever
+        # enters the tree, exempt it per-package rather than dropping :all:.
         run: |
           set -euo pipefail
           if [ "$GITHUB_EVENT_NAME" != "pull_request" ]; then
@@ -70,16 +62,12 @@ jobs:
           fi
           failed=0
           for target in x86_64-apple-darwin aarch64-apple-darwin x86_64-pc-windows-msvc; do
-            no_binary=()
-            if [ "$target" = "x86_64-apple-darwin" ]; then
-              no_binary=(--no-binary cryptography)
-            fi
             echo "::group::$target (repo pyproject.toml)"
             # stdout (the compiled lock) is discarded — only resolution success matters. Don't
             # use `-o /dev/null`: uv writes output atomically via a sibling temp file, which
             # fails inside /dev.
             if ! uv pip compile pyproject.toml --python-platform "$target" --python-version 3.14 \
-                --only-binary :all: "${no_binary[@]}" > /dev/null; then
+                --only-binary :all: > /dev/null; then
               echo "::error::wheels-only resolution FAILED for $target against the repo pyproject.toml — the next release would not install there"
               failed=1
             fi
@@ -89,7 +77,7 @@ jobs:
             if [ "$GITHUB_EVENT_NAME" != "pull_request" ]; then
               echo "::group::$target (published docker-mcp-server==$latest)"
               if ! echo "docker-mcp-server==$latest" | uv pip compile - --python-platform "$target" \
-                  --python-version 3.14 --only-binary :all: "${no_binary[@]}" > /dev/null; then
+                  --python-version 3.14 --only-binary :all: > /dev/null; then
                 echo "::error::wheels-only resolution FAILED for $target against published $latest — an upstream dep dropped wheels under a shipped release"
                 failed=1
               fi
