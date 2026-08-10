@@ -33,7 +33,8 @@ dependencies = [
     # Pulled in transitively by docker, but we import requests.exceptions directly
     # (container_wait catches ReadTimeout), so declare it explicitly.
     "requests>=2.26.0",
-    # Pulled in transitively via mcp -> pyjwt[crypto]. GHSA (Dependabot alert #16, high severity:
+    # Would otherwise only be pulled in transitively via mcp -> pyjwt[crypto]; declared directly
+    # here to enforce the floor below. GHSA (Dependabot alert #16, high severity:
     # a PKCS#7 EnvelopedData decryption Bleichenbacher oracle) requires >=50 to fix, but 49.x
     # onward ships no macOS x86_64/universal2 wheel at all (arm64-only) — confirmed against every
     # release through 50.0.0, so this isn't transient. On Intel macOS the resolver falls back to a
