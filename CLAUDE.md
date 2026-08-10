@@ -55,20 +55,15 @@ non-required `Check docs mirror` job flags a PR that edits `CLAUDE.md` or
 `.github/copilot-instructions.md` without the other (see the MIRROR RULE above) — it's a prompt to
 double-check, not a merge blocker.
 
-**A dependency cap can be worth adding when a fresh resolve could break what `--locked` CI
-cannot see** — enforced, where one exists, via `tests/test_pyproject_pins.py`. When adding a
-direct dependency whose *import surface* we touch, consider whether a major-version cap plus a
-pin guard belongs with it.
-
-An `mcp<2` cap of this kind existed briefly: mcp 2.0.0 removed `mcp.server.fastmcp`, which
-`server.py` imported `FastMCP` from, and an uncapped 2.2.0 shipped dead on arrival at import while
-every CI job stayed green, because CI installs `--locked` against a lockfile pinning mcp 1.x;
-2.2.1 hotfixed the cap. `server.py` has since been ported to `mcp.server.mcpserver.MCPServer` and
-the cap lifted. Rather than re-adding a cap for the next major (there is no known 3.x
-incompatibility to guard against), `tests/test_pyproject_pins.py::
-test_the_declared_mcp_bound_matches_what_the_code_imports` is a living guard: it fails whenever
-the installed mcp stops providing the import path `server.py` actually uses, with no reliance on
-remembering to add a cap first.
+An `mcp<2` cap existed briefly: mcp 2.0.0 removed `mcp.server.fastmcp`, which `server.py` imported
+`FastMCP` from, and an uncapped 2.2.0 shipped dead on arrival at import while every CI job stayed
+green, because CI installs `--locked` against a lockfile pinning mcp 1.x; 2.2.1 hotfixed the cap.
+`server.py` has since been ported to `mcp.server.mcpserver.MCPServer` and the cap lifted. Rather
+than re-adding a cap for the next major (there is no known 3.x incompatibility to guard against),
+`tests/test_pyproject_pins.py::test_the_declared_mcp_bound_matches_what_the_code_imports` is a
+living guard: it fails whenever the installed mcp stops providing the import path `server.py`
+actually uses, with no reliance on remembering to add a cap first. When adding a direct dependency
+whose *import surface* we touch, consider whether a cap or a guard like this belongs with it.
 
 **A required `Check fresh resolve still imports` job** (`premerge.yaml`) closes the blind spot that
 let the 2.2.0 incident through: every job above installs with `uv sync --locked`, so none of them
