@@ -1,7 +1,45 @@
 # library of mcp tools relating to plugin management
 
+import threading
+
+from docker import auth
+from docker.types.daemon import CancellableStream
+
 from docker_mcp.server import tool
+from docker_mcp.tools._utils import close_stream_quietly, host_read_path
 from docker_mcp.tools.system import _get_client
+
+# Cap on progress records collected from a push stream, so a chatty registry can't grow the reply
+# without bound. Reported back as "truncated" rather than silently dropped.
+_MAX_PUSH_PROGRESS = 200
+
+
+@tool()
+def plugin_create(name: str, plugin_data_dir: str, gzip: bool = False, host: str | None = None) -> dict:
+    """
+    Build a plugin from a local plugin data directory and install it under `name`.
+
+    The counterpart to `plugin_install`, which pulls an already-published plugin from a registry:
+    use this only for a plugin rootfs you built yourself, and `plugin_install` for anything on a
+    registry. `plugin_data_dir` is read on the machine running this server (not on the daemon
+    host), must already contain a `config.json` manifest and a `rootfs` directory, and is tarred
+    client-side and posted to the daemon — in a container it must be a bind mount or the path
+    resolves to nothing. The new plugin is created **disabled**: call `plugin_configure` for any
+    settings it declares, then `plugin_enable` to activate it. Raises if the directory is missing
+    or lacks `config.json`/`rootfs`, or if `name` is already installed (remove it first with
+    `plugin_remove`). Unlike the other create tools, this stamps no provenance labels — the Engine
+    API's plugin-create call accepts none.
+
+    args:
+        name - Local name for the plugin, `author/name:tag`; the `:latest` tag is optional and
+            is the default if omitted
+        plugin_data_dir - Path on this server's filesystem to the plugin data directory
+            (containing `config.json` and `rootfs`)
+        gzip - Compress the uploaded directory with gzip (default False)
+    returns: dict - The created plugin's attrs ({"Id", "Name", "Enabled", "Settings", "Config"})
+    """
+    path = host_read_path(plugin_data_dir)
+    return _get_client(host).plugins.create(name, str(path), gzip=gzip).attrs
 
 
 @tool()
@@ -37,6 +75,102 @@ def plugin_install(remote: str, local_name: str | None = None, host: str | None 
     returns: dict - The installed plugin's attrs ({"Id", "Name", "Enabled", "Settings", "Config"})
     """
     return _get_client(host).plugins.install(remote, local_name=local_name).attrs
+
+
+@tool()
+def plugin_push(name: str, timeout_seconds: float = 300.0, host: str | None = None) -> dict:
+    """
+    Push an installed plugin to its registry.
+
+    The write-side counterpart to `plugin_install` (which pulls) and the publish step after
+    `plugin_create` builds a plugin locally: `name` must already be the registry-qualified name the
+    plugin is installed under, since — unlike `image_push` — there is no plugin equivalent of
+    `image_tag` to rename it first, so create it under the target name. The plugin does not need to
+    be enabled. Credentials come from `system_login`, or from `~/.docker/config.json` if the host
+    ran `docker login`. Does NOT raise when the registry rejects the push: an authentication or
+    quota failure arrives as a final progress record and is surfaced as the `error` key, so check
+    that key rather than assuming success. Raises `RuntimeError` if the installed docker-py is too
+    old to expose the internals below, and `docker.errors.APIError` if the plugin isn't installed.
+
+    Bypasses docker-py's `Plugin.push()`/`APIClient.push_plugin()`, which cannot work: both POST to
+    `/plugins/{name}/pull`, a route the Engine does not define (push is `/plugins/{name}/push`), so
+    they 404 against any daemon. Bug present since the method was written in 2017 and still in
+    docker-py `main`; it survives because upstream has no test covering it. This calls the correct
+    endpoint through docker-py's private request helpers, in the manner of `system_logout`'s
+    `api._auth_configs` reach-in, and fails loudly if those internals change shape.
+
+    Caveat for `ssh://` daemons: docker-py can't cancel an SSH stream, so the `timeout_seconds`
+    watchdog can't interrupt a push that stalls with the connection still open — the same limitation
+    `container_logs` carries in follow mode. The call still returns normally once the registry
+    answers or the stream ends.
+
+    args:
+        name - Installed plugin name to push, `[registry/]author/name:tag`; `:latest` if the tag is
+            omitted. A bare `author/name` pushes to Docker Hub
+        timeout_seconds - Max wall-clock seconds to wait on the push stream before returning what
+            was collected (default 300); raise it for a large plugin over a slow link
+    returns: dict - {"name", "progress": [<decoded status dicts>], "truncated": bool, "error": str
+        or None} — `error` is non-None only when the registry reported a failure
+    """
+    api = _get_client(host).api
+    # docker-py exposes no working public path here (see docstring), so we drive its private request
+    # helpers directly. Resolved via getattr — like system_logout's _auth_configs reach-in — so the
+    # absence of any of them surfaces as the explicit message below rather than an AttributeError from
+    # inside the call (and so a type checker isn't asked to vouch for a private attribute).
+    build_url = getattr(api, "_url", None)
+    post = getattr(api, "_post", None)
+    raise_for_status = getattr(api, "_raise_for_status", None)
+    stream_helper = getattr(api, "_stream_helper", None)
+    if build_url is None or post is None or raise_for_status is None or stream_helper is None:
+        missing = sorted(
+            attr
+            for attr, fn in (
+                ("_url", build_url),
+                ("_post", post),
+                ("_raise_for_status", raise_for_status),
+                ("_stream_helper", stream_helper),
+            )
+            if fn is None
+        )
+        raise RuntimeError(
+            f"the installed docker-py no longer exposes {', '.join(missing)} on APIClient, which "
+            "plugin_push needs to reach POST /plugins/{name}/push; push the plugin with "
+            "`docker plugin push` until this tool is updated"
+        )
+    registry, _ = auth.resolve_repository_name(name)
+    header = auth.get_config_header(api, registry)
+    headers = {"X-Registry-Auth": header} if header else {}
+    # stream=True is required: _stream_helper reads the chunked body incrementally. (push_plugin omits
+    # it — a second latent bug there, harmless only because the wrong URL never returns a stream.)
+    response = post(build_url("/plugins/{0}/push", name), headers=headers, stream=True)
+    raise_for_status(response)
+    progress: list = []
+    truncated = False
+    # Wrapped in CancellableStream (public, and what docker-py hands back from its own streaming
+    # calls) because closing the *response* does not bound anything: Response.close() sets
+    # http.client's `fp` to None without interrupting a read already blocked on the socket, so the
+    # call still hangs until the registry answers and then dies in `_close_conn` with an
+    # AttributeError on that None — losing the collected records. CancellableStream.close() shuts
+    # the socket down, which does unblock the read, and turns the resulting ProtocolError/OSError
+    # into StopIteration so the loop ends and the partial progress below is returned as documented.
+    # This is also how container_logs/system_events get their bound — docker-py wraps those for us.
+    stream = CancellableStream(stream_helper(response, decode=True), response)
+    timer = threading.Timer(timeout_seconds, lambda: close_stream_quietly(stream))
+    timer.start()
+    try:
+        for record in stream:
+            progress.append(record)
+            if len(progress) >= _MAX_PUSH_PROGRESS:
+                truncated = True
+                break
+    finally:
+        timer.cancel()
+        # Both: the stream to tear the socket down on the truncation break, the response to release
+        # the pooled connection. Either may already be shut; close_stream_quietly swallows that.
+        close_stream_quietly(stream)
+        close_stream_quietly(response)
+    error = next((r.get("error") for r in reversed(progress) if isinstance(r, dict) and r.get("error")), None)
+    return {"name": name, "progress": progress, "truncated": truncated, "error": error}
 
 
 @tool()

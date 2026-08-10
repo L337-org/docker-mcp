@@ -10,6 +10,7 @@ from docker_mcp.tools.images import (
     image_list,
     image_load,
     image_prune,
+    image_prune_builds,
     image_pull,
     image_push,
     image_remove,
@@ -102,6 +103,25 @@ def test_image_prune():
     with _patch() as mock_client:
         mock_client.return_value.images.prune.return_value = {"SpaceReclaimed": 200}
         assert image_prune() == {"SpaceReclaimed": 200}
+
+
+def test_image_prune_builds_passes_no_args_by_default():
+    # Every arg is version-gated (API v1.39+), so an unqualified prune must send none of them
+    # rather than passing explicit Nones/False through to an older daemon.
+    with _patch() as mock_client:
+        mock_client.return_value.images.prune_builds.return_value = {"SpaceReclaimed": 300}
+        assert image_prune_builds() == {"SpaceReclaimed": 300}
+    mock_client.return_value.images.prune_builds.assert_called_once_with()
+
+
+def test_image_prune_builds_forwards_supplied_args():
+    with _patch() as mock_client:
+        mock_client.return_value.images.prune_builds.return_value = {"CachesDeleted": ["c1"], "SpaceReclaimed": 400}
+        result = image_prune_builds(filters={"until": "24h"}, keep_storage=1024, all=True)
+    assert result == {"CachesDeleted": ["c1"], "SpaceReclaimed": 400}
+    mock_client.return_value.images.prune_builds.assert_called_once_with(
+        filters={"until": "24h"}, keep_storage=1024, all=True
+    )
 
 
 def test_image_load():

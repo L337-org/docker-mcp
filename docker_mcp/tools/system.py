@@ -6,6 +6,7 @@ import sys
 import threading
 import urllib.parse
 from pathlib import Path
+from typing import Any
 
 import docker
 import requests.exceptions
@@ -206,20 +207,47 @@ def _ensure_reachable_family(url: str) -> str:
     return urllib.parse.urlunparse(parsed._replace(netloc=f"{userinfo}{literal}:{port}"))
 
 
+def _from_env_no_context(**kwargs: Any) -> docker.DockerClient:
+    """
+    `docker.from_env` with docker-py's own Docker-context resolution switched off.
+
+    **Every `from_env` call in this package must go through here** (a single choke point rather than a
+    convention to remember). docker-py 7.2.0 made `from_env` resolve the active Docker CLI context
+    whenever the environment yields no `base_url` — which is *our* job, not its: `_hosts.resolve_auto`
+    already reads `DOCKER_CONTEXT` / config.json `currentContext`, and the answer is pinned at
+    `load()` so a mid-session `docker context use` cannot silently move a label (restart to
+    re-resolve). A second, independent resolution would reintroduce that drift and could disagree with
+    the endpoint the CLI shell-out targets for the same label. This is why `docker[ssh]>=7.2.0` is a
+    hard floor: on 7.1.0 the kwarg is not popped and reaches `kwargs_from_env` as an unexpected
+    argument.
+
+    args: kwargs - forwarded to `docker.from_env` (e.g. `environment=`)
+    returns: docker.DockerClient - a client that never consults a CLI context on its own
+    """
+    # pyright's bundled typeshed stub for `docker` predates 7.2.0 and so lacks `use_context`, while the
+    # runtime signature is `**kwargs` and accepts it. tests/test_pyproject_pins.py::
+    # test_the_declared_docker_floor_supports_the_kwarg_the_code_passes is the real check.
+    return docker.from_env(use_context=False, **kwargs)  # pyright: ignore[reportCallIssue]
+
+
 def _build_default_client() -> docker.DockerClient:
     """Client for DOCKER_HOST when set (via from_env, honoring its TLS env), else the resolved endpoint.
 
     auto/local resolution lives in docker_mcp._hosts now (the pure registry layer); resolve_auto() is
     the relocated _resolve_default_base_url().
+
+    Goes through `_from_env_no_context` on all three paths — see there for why. Two of them are safe
+    only incidentally (an env-derived `base_url` short-circuits docker-py's context lookup), so the
+    guarantee deliberately doesn't rest on that.
     """
     docker_host = os.environ.get("DOCKER_HOST")
     if docker_host:
         fixed = _ensure_reachable_family(_ensure_ssh_port(docker_host))
         if fixed != docker_host:
-            return docker.from_env(environment={**os.environ, "DOCKER_HOST": fixed})
-        return docker.from_env()
+            return _from_env_no_context(environment={**os.environ, "DOCKER_HOST": fixed})
+        return _from_env_no_context()
     base_url = resolve_auto()
-    return docker.DockerClient(base_url=base_url) if base_url else docker.from_env()
+    return docker.DockerClient(base_url=base_url) if base_url else _from_env_no_context()
 
 
 def _tls_from_dir(cert_dir: str) -> docker.TLSConfig:

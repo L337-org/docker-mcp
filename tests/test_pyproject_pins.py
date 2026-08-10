@@ -53,6 +53,39 @@ def test_the_declared_mcp_bound_matches_what_the_code_imports():
     )
 
 
+def test_the_declared_docker_floor_supports_the_kwarg_the_code_passes():
+    """
+    `_build_default_client` passes `use_context=False` to `docker.from_env()` so docker-py never
+    resolves a Docker CLI context behind our back — `_hosts.py` does that itself and pins the answer
+    at startup. That kwarg arrived in docker-py 7.2.0; on 7.1.0 `from_env` does not pop it and it
+    reaches `kwargs_from_env` as an unexpected argument, so an install below the floor raises
+    TypeError on the *first* client build rather than at import — invisible to a smoke test that only
+    imports the package.
+
+    Checked by introspection rather than by comparing version strings: this stays true if docker-py
+    renames the release that carries the kwarg, and fails if a future version drops it (at which
+    point the call site needs revisiting, not the floor). Mirrors the mcp guard above — assert what
+    the code actually depends on, not a number someone has to remember to update.
+    """
+    import inspect
+
+    import docker
+
+    source = (Path(inspect.getfile(docker.DockerClient)).parent / "client.py").read_text(encoding="utf-8")
+    assert "use_context" in source, (
+        "the installed docker-py's from_env no longer mentions `use_context`, which "
+        "system.py:_build_default_client passes — revisit that call site and the declared floor"
+    )
+
+    dependencies = tomllib.loads(PYPROJECT.read_text())["project"]["dependencies"]
+    declared = [d for d in dependencies if Requirement(d).name == "docker"]
+    assert declared, "no direct 'docker' dependency found in pyproject.toml"
+    assert not _admits(declared[0], "7.1.0"), (
+        f"{declared[0]!r} admits docker-py 7.1.0, which does not accept `use_context` — a fresh "
+        "resolve could install it and every client build would raise TypeError"
+    )
+
+
 # The release pipeline's preflight job re-asserts these against the release tag; the tests
 # below catch the drift earlier, at PR time. server.json is intentionally NOT checked — its
 # committed version is stale by design and stamped from the tag at release time.
