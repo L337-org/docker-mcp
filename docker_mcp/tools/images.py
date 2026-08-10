@@ -262,6 +262,36 @@ def image_prune(filters: dict | None = None, host: str | None = None) -> dict:
 
 
 @tool()
+def image_prune_builds(
+    filters: dict | None = None,
+    keep_storage: int | None = None,
+    all: bool | None = None,
+    host: str | None = None,
+) -> dict:
+    """
+    Delete the daemon's build cache to reclaim disk space.
+
+    Prunes the *build cache* — a separate Engine resource from the images `image_prune` removes,
+    so run both to reclaim everything a build leaves behind. Prefer `buildx_prune` when the build
+    ran on a non-default buildx builder (that builder keeps its own cache, invisible here) or when
+    you need buildx's disk-ceiling flags; this tool needs no CLI plugin and works over any
+    transport, including a daemon with no local `docker` binary. Inventory first with `system_df`
+    (its `BuildCache` entry) or `buildx_du`. Destructive and immediate: later builds must re-run
+    the steps whose cache was removed. Passing any of `filters`, `keep_storage`, or `all` requires
+    Docker API v1.39+ and raises `InvalidVersion` on an older daemon — omit all three to prune with
+    the daemon's own defaults on any version.
+
+    args:
+        filters - Narrow which cache records to remove, e.g. {"until": "24h"} (a duration or
+            timestamp relative to the daemon's clock); omit to let the daemon prune unused cache
+        keep_storage - Bytes of cache to keep, e.g. 5368709120 for 5 GiB; omit for no floor
+        all - Remove all types of build cache, not just the unused records
+    returns: dict - {"CachesDeleted": [...], "SpaceReclaimed": <bytes>}
+    """
+    return _get_client(host).images.prune_builds(**drop_none(filters=filters, keep_storage=keep_storage, all=all))
+
+
+@tool()
 def image_load(data: bytes | None = None, from_file: str | None = None, host: str | None = None) -> list:
     """
     Load an image from a tarball produced by `image_save`, from in-band bytes or a file on the server host.

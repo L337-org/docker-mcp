@@ -81,6 +81,7 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "image_remove": ToolCategory.DESTRUCTIVE,
     "image_search": ToolCategory.READ_ONLY,
     "image_prune": ToolCategory.DESTRUCTIVE,
+    "image_prune_builds": ToolCategory.DESTRUCTIVE,
     "image_load": ToolCategory.MUTATING,
     "image_save": ToolCategory.MUTATING,  # can write a file on the server host (dest_path)
     "image_tag": ToolCategory.MUTATING,
@@ -136,6 +137,7 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "swarm_unlock_key": ToolCategory.READ_ONLY,
     "swarm_join_tokens": ToolCategory.READ_ONLY,
     # plugins
+    "plugin_create": ToolCategory.MUTATING,
     "plugin_inspect": ToolCategory.READ_ONLY,
     "plugin_install": ToolCategory.MUTATING,
     "plugin_list": ToolCategory.READ_ONLY,
@@ -212,7 +214,9 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
 
 # Destructive tools whose effect is idempotent — re-running has no additional effect (the targets
 # are already gone). Surfaced via ToolAnnotations.idempotent_hint so clients can treat retries as safe.
-_IDEMPOTENT_TOOLS = frozenset({"container_prune", "image_prune", "network_prune", "volume_prune", "buildx_prune"})
+_IDEMPOTENT_TOOLS = frozenset(
+    {"container_prune", "image_prune", "image_prune_builds", "network_prune", "volume_prune", "buildx_prune"}
+)
 
 # The optional per-call parameter that selects which configured host a daemon-targeting tool acts on.
 _HOST_PARAM = "host"

@@ -1,7 +1,36 @@
 # library of mcp tools relating to plugin management
 
 from docker_mcp.server import tool
+from docker_mcp.tools._utils import host_read_path
 from docker_mcp.tools.system import _get_client
+
+
+@tool()
+def plugin_create(name: str, plugin_data_dir: str, gzip: bool = False, host: str | None = None) -> dict:
+    """
+    Build a plugin from a local plugin data directory and install it under `name`.
+
+    The counterpart to `plugin_install`, which pulls an already-published plugin from a registry:
+    use this only for a plugin rootfs you built yourself, and `plugin_install` for anything on a
+    registry. `plugin_data_dir` is read on the machine running this server (not on the daemon
+    host), must already contain a `config.json` manifest and a `rootfs` directory, and is tarred
+    client-side and posted to the daemon — in a container it must be a bind mount or the path
+    resolves to nothing. The new plugin is created **disabled**: call `plugin_configure` for any
+    settings it declares, then `plugin_enable` to activate it. Raises if the directory is missing
+    or lacks `config.json`/`rootfs`, or if `name` is already installed (remove it first with
+    `plugin_remove`). Unlike the other create tools, this stamps no provenance labels — the Engine
+    API's plugin-create call accepts none.
+
+    args:
+        name - Local name for the plugin, `author/name:tag`; the `:latest` tag is optional and
+            is the default if omitted
+        plugin_data_dir - Path on this server's filesystem to the plugin data directory
+            (containing `config.json` and `rootfs`)
+        gzip - Compress the uploaded directory with gzip (default False)
+    returns: dict - The created plugin's attrs ({"Id", "Name", "Enabled", "Settings", "Config"})
+    """
+    path = host_read_path(plugin_data_dir)
+    return _get_client(host).plugins.create(name, str(path), gzip=gzip).attrs
 
 
 @tool()

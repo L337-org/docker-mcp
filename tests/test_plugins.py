@@ -2,6 +2,7 @@ from unittest.mock import MagicMock, patch
 
 from docker_mcp.tools.plugins import (
     plugin_configure,
+    plugin_create,
     plugin_disable,
     plugin_enable,
     plugin_inspect,
@@ -14,6 +15,29 @@ from docker_mcp.tools.plugins import (
 
 def _patch():
     return patch("docker_mcp.tools.plugins._get_client")
+
+
+def test_plugin_create():
+    plugin = MagicMock()
+    plugin.attrs = {"Id": "p1", "Enabled": False}
+    with _patch() as mock_client:
+        mock_client.return_value.plugins.create.return_value = plugin
+        result = plugin_create("me/myplugin:latest", "/srv/plugin-data", gzip=True)
+    assert result == {"Id": "p1", "Enabled": False}
+    mock_client.return_value.plugins.create.assert_called_once_with("me/myplugin:latest", "/srv/plugin-data", gzip=True)
+
+
+def test_plugin_create_expands_a_user_relative_data_dir():
+    # The dir is read on this host, so it goes through host_read_path (expanduser + the
+    # in-container "that path isn't a bind mount" guard) rather than reaching the SDK raw.
+    plugin = MagicMock()
+    plugin.attrs = {"Id": "p1"}
+    with _patch() as mock_client:
+        mock_client.return_value.plugins.create.return_value = plugin
+        plugin_create("me/myplugin", "~/plugin-data")
+    passed = mock_client.return_value.plugins.create.call_args.args[1]
+    assert not passed.startswith("~")
+    assert passed.endswith("plugin-data")
 
 
 def test_plugin_inspect():
