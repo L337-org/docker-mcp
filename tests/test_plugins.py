@@ -1,4 +1,5 @@
 import pytest
+import urllib3
 
 from unittest.mock import MagicMock, patch
 
@@ -110,6 +111,27 @@ def test_plugin_push_omits_the_auth_header_when_no_credentials_are_cached():
         mock_client.return_value.api = api
         plugin_push("me/myplugin")
     assert api._post.call_args.kwargs["headers"] == {}
+
+
+def test_plugin_push_returns_what_it_collected_when_the_watchdog_cuts_the_stream():
+    # The timeout contract: closing the stream mid-push must yield the records gathered so far,
+    # not an exception. Cancelling shuts the socket down, which surfaces to the reader as a
+    # ProtocolError — the shape CancellableStream converts to StopIteration. Iterating the raw
+    # _stream_helper generator (as this did before) let that error escape and lost the progress,
+    # and closing the response didn't bound the wait at all: Response.close() leaves a read already
+    # blocked on the socket blocked, then trips over its own None `fp` in _close_conn afterwards.
+    def _cut_off():
+        yield {"status": "Preparing"}
+        yield {"status": "Pushing"}
+        raise urllib3.exceptions.ProtocolError("Connection broken")
+
+    api = _push_api([])
+    api._stream_helper.return_value = _cut_off()
+    with _patch() as mock_client:
+        mock_client.return_value.api = api
+        result = plugin_push("me/myplugin", timeout_seconds=0.05)
+    assert result["progress"] == [{"status": "Preparing"}, {"status": "Pushing"}]
+    assert result["error"] is None
 
 
 def test_plugin_push_raises_a_clear_error_if_docker_py_drops_the_internals_it_uses():

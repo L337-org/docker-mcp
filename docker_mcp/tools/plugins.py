@@ -3,6 +3,7 @@
 import threading
 
 from docker import auth
+from docker.types.daemon import CancellableStream
 
 from docker_mcp.server import tool
 from docker_mcp.tools._utils import close_stream_quietly, host_read_path
@@ -140,18 +141,28 @@ def plugin_push(name: str, timeout_seconds: float = 300.0, host: str | None = No
     raise_for_status(response)
     progress: list = []
     truncated = False
-    # Closing the response unblocks a read stalled on an unresponsive registry, giving a hard time
-    # bound; _stream_helper yields from response.raw, so the response is what has to be closed.
-    timer = threading.Timer(timeout_seconds, lambda: close_stream_quietly(response))
+    # Wrapped in CancellableStream (public, and what docker-py hands back from its own streaming
+    # calls) because closing the *response* does not bound anything: Response.close() sets
+    # http.client's `fp` to None without interrupting a read already blocked on the socket, so the
+    # call still hangs until the registry answers and then dies in `_close_conn` with an
+    # AttributeError on that None — losing the collected records. CancellableStream.close() shuts
+    # the socket down, which does unblock the read, and turns the resulting ProtocolError/OSError
+    # into StopIteration so the loop ends and the partial progress below is returned as documented.
+    # This is also how container_logs/system_events get their bound — docker-py wraps those for us.
+    stream = CancellableStream(stream_helper(response, decode=True), response)
+    timer = threading.Timer(timeout_seconds, lambda: close_stream_quietly(stream))
     timer.start()
     try:
-        for record in stream_helper(response, decode=True):
+        for record in stream:
             progress.append(record)
             if len(progress) >= _MAX_PUSH_PROGRESS:
                 truncated = True
                 break
     finally:
         timer.cancel()
+        # Both: the stream to tear the socket down on the truncation break, the response to release
+        # the pooled connection. Either may already be shut; close_stream_quietly swallows that.
+        close_stream_quietly(stream)
         close_stream_quietly(response)
     error = next((r.get("error") for r in reversed(progress) if isinstance(r, dict) and r.get("error")), None)
     return {"name": name, "progress": progress, "truncated": truncated, "error": error}
