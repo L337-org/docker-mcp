@@ -65,6 +65,7 @@ class Host:
     label: str
     url: str | None
     read_only: bool = False
+    non_destructive: bool = False
     cert_dir: str | None = None
 
     @property
@@ -153,24 +154,28 @@ def _fail(message: str) -> NoReturn:
     raise HostConfigError(message)
 
 
-def _parse_markers(text: str, context: str) -> tuple[str, bool, str | None]:
-    """Strip trailing (ro)/(tls=<dir>) markers (any order, case-insensitive) off an endpoint string,
-    returning (endpoint, read_only, cert_dir)."""
+def _parse_markers(text: str, context: str) -> tuple[str, bool, bool, str | None]:
+    """Strip trailing (ro)/(nd)/(tls=<dir>) markers (any order, case-insensitive) off an endpoint
+    string, returning (endpoint, read_only, non_destructive, cert_dir). (ro) and (nd) may combine
+    with no error — (ro) is strictly stronger and wins at enforcement time (see server.py)."""
     read_only = False
+    non_destructive = False
     cert_dir: str | None = None
     while (match := _TRAILING_MARKER.search(text)) is not None:
         body = match.group(1).strip()
         low = body.lower()
         if low == "ro":
             read_only = True
+        elif low == "nd":
+            non_destructive = True
         elif low.startswith("tls="):
             cert_dir = body[len("tls=") :].strip()  # preserve the path's case
             if not cert_dir:
                 _fail(f"{context!r}: (tls=) needs a directory, e.g. (tls=/etc/docker/prod)")
         else:
-            _fail(f"{context!r}: unknown marker '({body})'; only (ro) and (tls=<dir>) are allowed")
+            _fail(f"{context!r}: unknown marker '({body})'; only (ro), (nd), and (tls=<dir>) are allowed")
         text = text[: match.start()].rstrip()
-    return text.strip(), read_only, cert_dir
+    return text.strip(), read_only, non_destructive, cert_dir
 
 
 def _readable(path: Path) -> bool:
@@ -211,7 +216,7 @@ def _validate_cert_dir(label: str, cert_dir: str) -> None:
 
 def _make_host(label: str, raw_endpoint: str, context: str) -> Host:
     """Build a Host from one endpoint spec: parse markers, validate, and resolve to a concrete URL."""
-    endpoint, read_only, cert_dir = _parse_markers(raw_endpoint.strip(), context)
+    endpoint, read_only, non_destructive, cert_dir = _parse_markers(raw_endpoint.strip(), context)
     low = endpoint.lower()
     if cert_dir is not None:
         if not low.startswith("tcp://"):
@@ -229,7 +234,7 @@ def _make_host(label: str, raw_endpoint: str, context: str) -> Host:
             f"host {label!r}: unrecognized endpoint {endpoint!r} "
             f"(use 'auto', 'local', or a unix:// / tcp:// / ssh:// / npipe:// URL)"
         )
-    return Host(label=label, url=url, read_only=read_only, cert_dir=cert_dir)
+    return Host(label=label, url=url, read_only=read_only, non_destructive=non_destructive, cert_dir=cert_dir)
 
 
 def _legacy_host() -> Host:
@@ -339,6 +344,11 @@ def labels() -> list[str]:
 def is_read_only(host: str | None = None) -> bool:
     """Whether the named (or default) host is flagged read-only."""
     return resolve(host).read_only
+
+
+def is_non_destructive(host: str | None = None) -> bool:
+    """Whether the named (or default) host is flagged non-destructive (blocks DESTRUCTIVE calls only)."""
+    return resolve(host).non_destructive
 
 
 def is_multi() -> bool:

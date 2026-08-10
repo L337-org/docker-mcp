@@ -39,6 +39,13 @@ def test_bare_read_only_marker():
     assert reg["default"].url == "ssh://ops@prod"
 
 
+def test_bare_non_destructive_marker():
+    reg = parse_registry("ssh://ops@prod(nd)")
+    assert reg["default"].non_destructive is True
+    assert reg["default"].read_only is False
+    assert reg["default"].url == "ssh://ops@prod"
+
+
 def test_bare_auto_keyword(stub_resolution):
     assert parse_registry("auto")["default"].url == "unix:///auto.sock"
 
@@ -64,6 +71,11 @@ def test_labeled_multi_preserves_order_and_markers(stub_resolution):
     assert list(reg) == ["local", "prod"]
     assert reg["local"] == Host(label="local", url="unix:///auto.sock")
     assert reg["prod"] == Host(label="prod", url="ssh://ops@prod", read_only=True)
+
+
+def test_labeled_multi_with_non_destructive_marker(stub_resolution):
+    reg = parse_registry("local=auto, prod=ssh://ops@prod(nd)")
+    assert reg["prod"] == Host(label="prod", url="ssh://ops@prod", non_destructive=True)
 
 
 def test_single_labeled_entry_is_not_multi(stub_resolution):
@@ -132,6 +144,14 @@ def test_tls_markers_combine_in_any_order(tmp_path):
         reg = parse_registry(f"prod={spec}")
         assert reg["prod"].read_only is True
         assert reg["prod"].cert_dir == str(certs)
+
+
+def test_ro_and_nd_markers_combine_in_any_order():
+    for spec in ("ssh://h(ro)(nd)", "ssh://h(nd)(ro)"):
+        reg = parse_registry(f"prod={spec}")
+        assert reg["prod"].read_only is True
+        assert reg["prod"].non_destructive is True
+        assert reg["prod"].url == "ssh://h"
 
 
 def test_tls_marker_expands_user(tmp_path, monkeypatch):
@@ -209,6 +229,12 @@ def test_accessors(monkeypatch, stub_resolution):
     assert hosts.is_read_only("prod") is True
     assert hosts.is_read_only("local") is False
     assert hosts.registry() == hosts._registry and hosts.registry() is not hosts._registry
+
+
+def test_is_non_destructive_accessor(monkeypatch, stub_resolution):
+    monkeypatch.setattr(hosts, "_registry", parse_registry("local=auto, prod=ssh://h(nd)"))
+    assert hosts.is_non_destructive("prod") is True
+    assert hosts.is_non_destructive("local") is False
 
 
 def test_single_host_is_not_multi(monkeypatch, stub_resolution):

@@ -194,9 +194,9 @@ def get_tool_catalog() -> str:
 def get_hosts_resource() -> str:
     """
     The Docker hosts configured via DOCKER_MCP_SERVER_HOSTS — the same data as the `host_list` tool:
-    each host's name, resolved daemon URL, read_only / tls flags, and which one is the default used when
-    a tool's `host` argument is omitted. The resolved default is observable here but is not itself a
-    selectable label.
+    each host's name, resolved daemon URL, read_only / non_destructive / tls flags, and which one is
+    the default used when a tool's `host` argument is omitted. The resolved default is observable
+    here but is not itself a selectable label.
 
     returns: str - JSON list, one object per configured host
     """

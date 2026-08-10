@@ -112,6 +112,15 @@ def test_apply_host_schema_noop_without_host_property(monkeypatch):
     assert schema == {"type": "object", "properties": {"name": {"type": "string"}}}
 
 
+def test_apply_host_schema_unaffected_by_non_destructive_marker(monkeypatch):
+    # (nd) changes call-time enforcement only — the advertised schema is identical to a plain host.
+    _set_multi_host(monkeypatch, spec="local=auto, prod=ssh://h(nd)")
+    schema = _host_schema()
+    _apply_host_schema(schema, "container_remove", ToolCategory.DESTRUCTIVE)
+    assert schema["properties"]["host"]["enum"] == ["local", "prod"]
+    assert "host" in schema["required"]
+
+
 # ---------- host param: call-time guard ----------
 
 
@@ -149,6 +158,29 @@ def test_guard_checks_unknown_host_even_for_connection_control(monkeypatch):
         _enforce_host_guard("system_close", ToolCategory.MUTATING, "typo")
 
 
+def test_guard_allows_mutating_write_to_non_destructive_host(monkeypatch):
+    _set_multi_host(monkeypatch, spec="local=auto, prod=ssh://h(nd)")
+    _enforce_host_guard("container_start", ToolCategory.MUTATING, "prod")  # no raise
+
+
+def test_guard_rejects_destructive_write_to_non_destructive_host(monkeypatch):
+    _set_multi_host(monkeypatch, spec="local=auto, prod=ssh://h(nd)")
+    with pytest.raises(RuntimeError, match="non-destructive"):
+        _enforce_host_guard("container_remove", ToolCategory.DESTRUCTIVE, "prod")
+
+
+def test_guard_allows_connection_control_on_non_destructive_host(monkeypatch):
+    _set_multi_host(monkeypatch, spec="local=auto, prod=ssh://h(nd)")
+    _enforce_host_guard("system_close", ToolCategory.MUTATING, "prod")  # conn-control always exempt
+
+
+def test_guard_rejects_destructive_write_to_read_only_and_non_destructive_host(monkeypatch):
+    # A host with both markers is refused by (ro) first — it's strictly stronger.
+    _set_multi_host(monkeypatch, spec="local=auto, prod=ssh://h(ro)(nd)")
+    with pytest.raises(RuntimeError, match="read-only"):
+        _enforce_host_guard("container_remove", ToolCategory.DESTRUCTIVE, "prod")
+
+
 # ---------- host param: single-host (ro) enforcement ----------
 
 
@@ -174,11 +206,29 @@ def test_guard_allows_write_on_single_writable_host(monkeypatch):
     _enforce_host_guard("container_remove", ToolCategory.DESTRUCTIVE, None)  # no raise
 
 
+def test_guard_refuses_destructive_write_to_single_non_destructive_host(monkeypatch):
+    _set_single_host(monkeypatch, "ssh://h(nd)")
+    with pytest.raises(RuntimeError, match="non-destructive"):
+        _enforce_host_guard("container_remove", ToolCategory.DESTRUCTIVE, None)
+
+
+def test_guard_allows_mutating_write_on_single_non_destructive_host(monkeypatch):
+    _set_single_host(monkeypatch, "ssh://h(nd)")
+    _enforce_host_guard("container_start", ToolCategory.MUTATING, None)  # no raise
+
+
+def test_guard_allows_read_on_single_non_destructive_host(monkeypatch):
+    _set_single_host(monkeypatch, "ssh://h(nd)")
+    _enforce_host_guard("container_list", ToolCategory.READ_ONLY, None)  # no raise
+
+
 def test_host_guard_needed_matrix(monkeypatch):
     _set_single_host(monkeypatch, "ssh://h(ro)")
     assert _host_guard_needed() is True  # single (ro): wrap to refuse writes
+    monkeypatch.setattr(_hosts, "_registry", parse_registry("ssh://h(nd)"))
+    assert _host_guard_needed() is True  # single (nd): wrap to refuse destructive calls
     monkeypatch.setattr(_hosts, "_registry", parse_registry("ssh://h"))
-    assert _host_guard_needed() is False  # single writable: footprint-neutral, no wrap
+    assert _host_guard_needed() is False  # single unrestricted: footprint-neutral, no wrap
     monkeypatch.setattr(_hosts, "_registry", parse_registry("a=ssh://x, b=ssh://y"))
     assert _host_guard_needed() is True  # multi-host
 
@@ -218,6 +268,18 @@ def test_wrap_guards_an_async_tool(monkeypatch):
     assert asyncio.run(wrapped(container_id="abc", host="local")) == "removed abc on local"
 
 
+def test_wrap_enforces_non_destructive_guard(monkeypatch):
+    _set_multi_host(monkeypatch, spec="local=auto, prod=ssh://h(nd)")
+
+    def container_remove(container_id: str, host: str | None = None) -> str:
+        return f"removed {container_id} on {host}"
+
+    wrapped = _wrap_with_host_guard(container_remove, "container_remove", ToolCategory.DESTRUCTIVE)
+    with pytest.raises(RuntimeError, match="non-destructive"):
+        wrapped(container_id="abc", host="prod")
+    assert wrapped(container_id="abc", host="local") == "removed abc on local"
+
+
 # ---------- host_list ----------
 
 
@@ -236,6 +298,15 @@ def test_list_hosts_reports_registry(monkeypatch):
     assert [r["name"] for r in rows] == ["local", "prod"]
     assert rows[0]["default"] is True and rows[1]["default"] is False
     assert rows[1]["read_only"] is True
+
+
+def test_list_hosts_reports_non_destructive(monkeypatch):
+    from docker_mcp.tools.system import host_list
+
+    _set_multi_host(monkeypatch, spec="local=auto, prod=ssh://h(nd)")
+    rows = host_list()
+    assert rows[1]["non_destructive"] is True
+    assert rows[0]["non_destructive"] is False
 
 
 def _registered_tools() -> dict:
@@ -928,6 +999,11 @@ def test_single_read_only_host_still_strips_host_param_end_to_end():
     assert "host" not in schema.get("properties", {})
 
 
+def test_single_non_destructive_host_still_strips_host_param_end_to_end():
+    schema = _tool_schema_in(["DOCKER_MCP_SERVER_HOSTS=ssh://h(nd)"], "container_remove")
+    assert "host" not in schema.get("properties", {})
+
+
 def test_single_read_only_host_refuses_write_end_to_end():
     # Proves the guard is actually wrapped onto write tools at import time for a single (ro) host.
     code = (
@@ -945,6 +1021,23 @@ def test_single_read_only_host_refuses_write_end_to_end():
     assert "REFUSED" in out
 
 
+def test_single_non_destructive_host_refuses_destructive_write_end_to_end():
+    # Proves the guard is actually wrapped onto destructive tools at import time for a single (nd) host.
+    code = (
+        "from docker_mcp.tools import containers\n"
+        "try:\n"
+        "    containers.container_remove('x')\n"
+        "    print('NOGUARD')\n"
+        "except RuntimeError as e:\n"
+        "    print('REFUSED' if 'non-destructive' in str(e) else 'OTHER')\n"
+    )
+    env = _env_with(["DOCKER_MCP_SERVER_HOSTS=ssh://h(nd)"])
+    out = subprocess.run(  # noqa: S603
+        [sys.executable, "-c", code], capture_output=True, text=True, env=env, check=True
+    ).stdout
+    assert "REFUSED" in out
+
+
 def test_multi_host_router_caveat_present_end_to_end():
     code = "import docker_mcp; print(docker_mcp.mcp.instructions)"
     env = _env_with(["DOCKER_MCP_SERVER_HOSTS=local=ssh://a, prod=ssh://b(ro)"])
@@ -953,6 +1046,15 @@ def test_multi_host_router_caveat_present_end_to_end():
     ).stdout
     assert "Multiple hosts are configured" in out
     assert "['local', 'prod']" in out
+
+
+def test_multi_host_router_caveat_mentions_non_destructive_end_to_end():
+    code = "import docker_mcp; print(docker_mcp.mcp.instructions)"
+    env = _env_with(["DOCKER_MCP_SERVER_HOSTS=local=ssh://a, prod=ssh://b(nd)"])
+    out = subprocess.run(  # noqa: S603
+        [sys.executable, "-c", code], capture_output=True, text=True, env=env, check=True
+    ).stdout
+    assert "(nd)" in out
 
 
 def test_sdk_tool_threads_host_to_get_client(monkeypatch):
