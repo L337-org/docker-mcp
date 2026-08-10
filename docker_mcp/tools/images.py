@@ -277,14 +277,17 @@ def image_prune_builds(
     you need buildx's disk-ceiling flags; this tool needs no CLI plugin and works over any
     transport, including a daemon with no local `docker` binary. Inventory first with `system_df`
     (its `BuildCache` entry) or `buildx_du`. Destructive and immediate: later builds must re-run
-    the steps whose cache was removed. Passing any of `filters`, `keep_storage`, or `all` requires
-    Docker API v1.39+ and raises `InvalidVersion` on an older daemon — omit all three to prune with
-    the daemon's own defaults on any version.
+    the steps whose cache was removed. Needs Docker API v1.31+; passing any of `filters`,
+    `keep_storage`, or `all` needs v1.39+ and raises `InvalidVersion` on an older daemon — omit all
+    three to prune with the daemon's own defaults.
 
     args:
         filters - Narrow which cache records to remove, e.g. {"until": "24h"} (a duration or
-            timestamp relative to the daemon's clock); omit to let the daemon prune unused cache
-        keep_storage - Bytes of cache to keep, e.g. 5368709120 for 5 GiB; omit for no floor
+            timestamp relative to the daemon's clock); also accepts `id`, `parent`, `type`,
+            `description`, `inuse`, `shared`, `private`; omit to let the daemon prune unused cache
+        keep_storage - Bytes of cache to keep, e.g. 5368709120 for 5 GiB; omit for no floor. The
+            Engine renamed this `reserved-space` at API v1.48 and still honors the old name; the
+            newer `max-used-space`/`min-free-space` ceilings are reachable only via `buildx_prune`
         all - Remove all types of build cache, not just the unused records
     returns: dict - {"CachesDeleted": [...], "SpaceReclaimed": <bytes>}
     """

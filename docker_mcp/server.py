@@ -379,7 +379,7 @@ def tool_catalog() -> dict[str, Any]:
 _DOMAIN_BLURBS: dict[str, str] = {
     "containers": "run/create/start/stop/restart/kill/remove, logs, stats, top, exec, diff, commit, archive/cp, "
     "wait, rename",
-    "images": "pull/push/build/tag/remove/save/load/history, search",
+    "images": "pull/push/build/tag/remove/save/load/history, search, prune (dangling images, build cache)",
     "networks": "create/connect/disconnect/inspect/remove",
     "volumes": "create/list/inspect/remove",
     "compose": "Docker Compose v2 (up/down/ps/logs/build/run/exec/...); CLI-backed",
@@ -393,7 +393,7 @@ _DOMAIN_BLURBS: dict[str, str] = {
     "scout": "CVE scan, SBOM, base-image recommendations; CLI-backed",
     "context": "docker CLI contexts; CLI-backed",
     "registry": "OCI registries + Docker Hub over HTTPS; no daemon needed",
-    "plugins": "plugin lifecycle (install/enable/disable/configure/upgrade/remove)",
+    "plugins": "plugin lifecycle (create/install/enable/disable/configure/upgrade/remove)",
     "system": "ping, version, info, df (disk usage), events, login, logout, host_list (configured daemons)",
 }
 
