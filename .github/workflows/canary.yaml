@@ -52,8 +52,16 @@ jobs:
         # --only-binary :all: makes resolution fail if any dependency lacks a wheel for the
         # target platform — a source-build fallback is exactly the breakage this hunts (users
         # without a Rust/C toolchain). pyproject.toml resolution covers [project].dependencies
-        # only (the uvx install surface, not dev groups). If a deliberately sdist-only dep ever
-        # enters the tree, exempt it per-package rather than dropping :all:.
+        # only (the uvx install surface, not dev groups).
+        #
+        # cryptography is a deliberate, documented exception on x86_64-apple-darwin only (see the
+        # pyproject.toml comment): >=50 is required to fix a high-severity CVE, but no macOS
+        # x86_64/universal2 wheel has existed since 49.0.0, confirmed permanent, not transient. Per
+        # the exemption pattern below, it gets --no-binary rather than dropping :all: for that one
+        # target — a *different* dependency losing its x86_64-apple-darwin wheel, or cryptography
+        # losing a wheel on aarch64-apple-darwin/Windows, still fails loudly here. If another
+        # deliberately sdist-only dep ever enters the tree, add it the same way rather than
+        # dropping :all: for everyone.
         run: |
           set -euo pipefail
           if [ "$GITHUB_EVENT_NAME" != "pull_request" ]; then
@@ -62,12 +70,16 @@ jobs:
           fi
           failed=0
           for target in x86_64-apple-darwin aarch64-apple-darwin x86_64-pc-windows-msvc; do
+            no_binary=()
+            if [ "$target" = "x86_64-apple-darwin" ]; then
+              no_binary=(--no-binary cryptography)
+            fi
             echo "::group::$target (repo pyproject.toml)"
             # stdout (the compiled lock) is discarded — only resolution success matters. Don't
             # use `-o /dev/null`: uv writes output atomically via a sibling temp file, which
             # fails inside /dev.
             if ! uv pip compile pyproject.toml --python-platform "$target" --python-version 3.14 \
-                --only-binary :all: > /dev/null; then
+                --only-binary :all: "${no_binary[@]}" > /dev/null; then
               echo "::error::wheels-only resolution FAILED for $target against the repo pyproject.toml — the next release would not install there"
               failed=1
             fi
@@ -77,7 +89,7 @@ jobs:
             if [ "$GITHUB_EVENT_NAME" != "pull_request" ]; then
               echo "::group::$target (published docker-mcp-server==$latest)"
               if ! echo "docker-mcp-server==$latest" | uv pip compile - --python-platform "$target" \
-                  --python-version 3.14 --only-binary :all: > /dev/null; then
+                  --python-version 3.14 --only-binary :all: "${no_binary[@]}" > /dev/null; then
                 echo "::error::wheels-only resolution FAILED for $target against published $latest — an upstream dep dropped wheels under a shipped release"
                 failed=1
               fi
@@ -95,7 +107,8 @@ jobs:
     if: github.event_name != 'pull_request'
     name: Install smoke (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
+    # 20, not 15: macos-15-intel now source-builds cryptography (brew install + Rust compile).
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -111,6 +124,18 @@ jobs:
           # Pinned (matching the Dockerfile's uv image tag) so this step never needs the
           # live "resolve latest" fetch to raw.githubusercontent.com.
           version: "0.11.21"
+
+      - name: Point the build at Homebrew's OpenSSL 3.x (Intel macOS only)
+        # macos-15-intel ships OpenSSL 1.1.1w (see actions/runner-images); cryptography >=44
+        # dropped OpenSSL 1.1.x support and now requires 3.0+. No x86_64 wheel exists (see
+        # resolve-crossplatform above), so this install source-builds — the Rust toolchain is
+        # already on the runner, but it still needs a compatible OpenSSL to link against.
+        if: matrix.os == 'macos-15-intel'
+        run: |
+          brew install openssl@3
+          prefix="$(brew --prefix openssl@3)"
+          echo "OPENSSL_DIR=$prefix" >> "$GITHUB_ENV"
+          echo "PKG_CONFIG_PATH=$prefix/lib/pkgconfig" >> "$GITHUB_ENV"
 
       - name: Import smoke (full tool-registration path, no daemon needed)
         run: uv run --no-project --python 3.14 --with docker-mcp-server python -c "import docker_mcp"

@@ -36,34 +36,32 @@ def _admits(requirement: str, version: str) -> bool:
     return Requirement(requirement).specifier.contains(version)
 
 
-def test_intel_macos_cryptography_pin_not_relaxed():
+def test_cryptography_floor_is_not_capped_below_the_fix():
     """
-    Dependabot doesn't get an automatic Copilot review (bots aren't billable for
-    premium requests), so a bump here must be caught by a hard, deterministic
-    CI failure instead of relying on review. See the pyproject.toml comment:
-    cryptography>=49 dropped the macosx_10_9_universal2 wheel, breaking `uvx`
-    installs on Intel macOS.
+    Dependabot doesn't get an automatic Copilot review (bots aren't billable for premium
+    requests), so a regression here must be caught by a hard, deterministic CI failure instead of
+    relying on review. See the pyproject.toml comment: cryptography<50 admits the vulnerable range
+    for GHSA (Dependabot alert #16, high severity). We deliberately require >=50 on every
+    platform — including Intel macOS, which has had no x86_64/universal2 wheel since 49.0.0 and
+    must build from source (Rust + OpenSSL 3.x) — rather than caching everyone on a known-vulnerable
+    version to keep one platform wheel-only. Don't reintroduce a platform-scoped cap below 50.
     """
     data = tomllib.loads(PYPROJECT.read_text())
     deps = data["project"]["dependencies"]
 
     cryptography_deps = [d for d in deps if _dependency_name(d) == "cryptography"]
     assert cryptography_deps, "no direct 'cryptography' dependency found in pyproject.toml"
+    assert len(cryptography_deps) == 1, f"expected exactly one 'cryptography' dependency, found: {cryptography_deps!r}"
 
-    intel_macos_deps = [
-        d for d in cryptography_deps if "platform_system == 'Darwin'" in d and "platform_machine == 'x86_64'" in d
-    ]
-    assert intel_macos_deps, (
-        "the Intel-macOS cryptography pin is missing: no 'cryptography' dependency is scoped to "
-        f"platform_system == 'Darwin' and platform_machine == 'x86_64'; found: {cryptography_deps!r}"
+    dep = cryptography_deps[0]
+    assert "platform_system" not in dep and "platform_machine" not in dep, (
+        f"the cryptography dependency {dep!r} is scoped to a platform marker — this pin must apply "
+        "unconditionally, or Intel macOS would silently stay on a vulnerable version while every "
+        "other platform gets the fix."
     )
-    assert len(intel_macos_deps) == 1, f"expected exactly one Intel-macOS cryptography pin, found: {intel_macos_deps!r}"
-
-    dep = intel_macos_deps[0]
     assert not _admits(dep, "49.0"), (
-        f"the Intel-macOS cryptography pin {dep!r} allows 49.0, which has no x86_64 macOS wheel — the "
-        "resolver then falls back to a source build needing a newer Rust toolchain than many users have. "
-        "See the pyproject.toml comment before lifting this cap."
+        f"the cryptography pin {dep!r} admits 49.0, which is within the vulnerable range fixed by 50.0.0 "
+        "(GHSA, Dependabot alert #16). See the pyproject.toml comment before relaxing this floor."
     )
 
 

@@ -33,16 +33,20 @@ dependencies = [
     # Pulled in transitively by docker, but we import requests.exceptions directly
     # (container_wait catches ReadTimeout), so declare it explicitly.
     "requests>=2.26.0",
-    # Pulled in transitively via mcp -> pyjwt[crypto]. cryptography 49.x dropped
-    # the macosx_10_9_universal2 wheel and now ships an arm64-only macOS wheel, so
-    # on Intel (x86_64) macOS the resolver falls back to a source build needing a
-    # newer Rust toolchain than many users have (breaking `uvx` installs). 48.x
-    # still ships a universal2 wheel that works there. Scoped to Intel macOS via an
-    # environment marker so every other platform (incl. macOS arm64) can still take
-    # 49.x where wheels exist. Capped here (not in tool.uv.constraint-dependencies,
-    # which uvx ignores) so the cap ships in the package metadata. Lift when x86_64
-    # macOS wheels return upstream.
-    "cryptography<49; platform_system == 'Darwin' and platform_machine == 'x86_64'",
+    # Pulled in transitively via mcp -> pyjwt[crypto]. GHSA (Dependabot alert #16, high severity:
+    # a PKCS#7 EnvelopedData decryption Bleichenbacher oracle) requires >=50 to fix, but 49.x
+    # onward ships no macOS x86_64/universal2 wheel at all (arm64-only) — confirmed against every
+    # release through 50.0.0, so this isn't transient. On Intel macOS the resolver falls back to a
+    # source build, needing Rust (cryptography's build backend is `maturin`) and OpenSSL 3.0+
+    # (support for 1.1.x was dropped). Previously capped at <49 to keep Intel-macOS installs
+    # wheel-only, but that leaves every platform on the vulnerable 48.x line (see README's Security
+    # considerations for why "scoped to one platform" didn't actually work: a lone upper-bound
+    # marker doesn't force uv to fork the resolution, so the whole lockfile stayed on 48.x).
+    # Deliberately staying on a known, fixed floor rather than risking silently-vulnerable code:
+    # Intel macOS installs now require Rust + OpenSSL 3.x (README documents this and the
+    # container-image alternative, which needs neither). Guarded by
+    # tests/test_pyproject_pins.py::test_cryptography_floor_is_not_capped_below_the_fix.
+    "cryptography>=50",
 ]
 
 [project.scripts]
