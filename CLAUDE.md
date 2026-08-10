@@ -412,6 +412,33 @@ When the high-level SDK has no method for an operation (e.g. swarm node removal,
 
 **Verify against the source, not just the rendered docs, and treat "the method exists" as separate from "the method works."** The rendered docs show a method's docstring, not the URL it builds, so a method can be documented, importable, and still non-functional. `plugin_push` is the standing example: docker-py's `Plugin.push()` / `APIClient.push_plugin()` both POST to `/plugins/{name}/pull`, a route the Engine does not define (push is `POST /plugins/{name}/push`), so they 404 against every daemon — a copy-paste from the pull method present since 2017 and still in `main`, surviving because upstream has no test covering it. Where a *documented* method is provably broken, the fallback ladder is: (1) another public SDK path, (2) the correct endpoint through docker-py's private request helpers (`_url`/`_post`/`_raise_for_status`/`_stream_helper`), resolved via `getattr` and guarded so a missing helper raises an actionable message rather than an `AttributeError` — the same treatment as `system_logout`'s `api._auth_configs` reach-in and `stage_build_context`'s use of docker-py's `tar`/`exclude_paths`, (3) a CLI shell-out, if the domain is already CLI-backed. Each such reach-in must name the bug and the escape hatch in the tool's docstring, so it can be removed when upstream fixes it. **Confirm the real route from the Engine API spec (`moby/moby`'s `api/swagger.yaml`) before writing a hand-built path.**
 
+### SDK audit exclusions (deliberate non-candidates)
+
+A recurring cloud routine audits the docker-py surface for coverage gaps and for low-level
+`client.api.*` calls a high-level method could replace. The decisions below were made once, on the
+merits, and are **not** to be re-proposed — a periodic audit has no memory of last time, so without
+this list it re-files the same rejected candidates forever. Removing an entry is a real decision;
+say why. **Anything deliberately not wrapped, or wrapped in an unobvious way, belongs here.**
+
+- **`Plugin.push()` / `APIClient.push_plugin()`** — never migrate `plugin_push` onto these. They are
+  broken upstream (wrong URL, see above); our hand-built endpoint call is the working path, not
+  technical debt to be tidied away. Revisit only if upstream fixes the URL, at which point the
+  reach-in should be replaced by the public method.
+- **`Container.attach` / `attach_socket` / `resize`** — real methods, deliberately unwrapped: they
+  open an interactive bidirectional stream/TTY, which does not fit a request/response tool call.
+  `container_exec` covers scripted one-shot execution.
+- **`service_rollback`'s `api.inspect_service` + `api.update_service`** — stays low-level
+  permanently. The high-level `Service`/`ServiceCollection` expose no `rollback`.
+- **`system_logout`'s `api._auth_configs`** — stays low-level permanently. There is no `logout`
+  anywhere in the SDK and no server-side session to end, so there is nothing to migrate to.
+
+The audit must also **check the latest published docker-py, not the pinned one**: `uv.lock` is
+routinely behind what `pyproject.toml`'s floor lets a fresh `uvx`/`pip install` resolve, so auditing
+the installed tree alone misses whatever published users are already running. And it should flag
+**deprecated** surface we still depend on, not only missing coverage — e.g. `image_prune_builds`'s
+`keep_storage`, which the Engine renamed `reserved-space` at API v1.48 — so a migration happens on
+our schedule rather than when removal breaks us.
+
 Docker SDK docs: https://docker-py.readthedocs.io/en/stable/index.html  
 Docker SDK low-level API: https://docker-py.readthedocs.io/en/stable/api.html  
 Docker SDK GitHub: https://github.com/docker/docker-py
