@@ -1,3 +1,5 @@
+import pytest
+
 from unittest.mock import MagicMock, patch
 
 from docker_mcp.tools.plugins import (
@@ -8,6 +10,7 @@ from docker_mcp.tools.plugins import (
     plugin_inspect,
     plugin_install,
     plugin_list,
+    plugin_push,
     plugin_remove,
     plugin_upgrade,
 )
@@ -15,6 +18,21 @@ from docker_mcp.tools.plugins import (
 
 def _patch():
     return patch("docker_mcp.tools.plugins._get_client")
+
+
+def _push_api(records, *, spec_missing=()):
+    """
+    A stand-in for APIClient wired for plugin_push: `records` is what the stream yields.
+
+    `spec_missing` deletes private helpers from the mock so `hasattr` reports them absent, letting
+    the version-guard branch be exercised without a real old docker-py.
+    """
+    api = MagicMock()
+    api._url.side_effect = lambda fmt, *args: "http://d/v1.45" + fmt.format(*args)
+    api._stream_helper.return_value = iter(records)
+    for attr in spec_missing:
+        delattr(api, attr)
+    return api
 
 
 def test_plugin_create():
@@ -38,6 +56,70 @@ def test_plugin_create_expands_a_user_relative_data_dir():
     passed = mock_client.return_value.plugins.create.call_args.args[1]
     assert not passed.startswith("~")
     assert passed.endswith("plugin-data")
+
+
+def test_plugin_push_targets_the_push_endpoint_not_docker_pys_broken_pull_url():
+    # The whole reason this tool bypasses APIClient.push_plugin: that method POSTs to
+    # /plugins/{name}/pull, a route the Engine does not define. Pin the correct path.
+    api = _push_api([{"status": "Preparing"}, {"status": "Pushed"}])
+    with _patch() as mock_client:
+        mock_client.return_value.api = api
+        result = plugin_push("me/myplugin:latest")
+    assert api._url.call_args.args[0] == "/plugins/{0}/push"
+    assert api._post.call_args.args[0].endswith("/plugins/me/myplugin:latest/push")
+    # A chunked body has to be read incrementally, so the POST must be streamed.
+    assert api._post.call_args.kwargs["stream"] is True
+    assert result == {
+        "name": "me/myplugin:latest",
+        "progress": [{"status": "Preparing"}, {"status": "Pushed"}],
+        "truncated": False,
+        "error": None,
+    }
+
+
+def test_plugin_push_surfaces_a_registry_error_without_raising():
+    # A rejected push arrives as a record in the stream, not an exception — the tool must not
+    # report success, but it also must not raise (mirroring image_push).
+    api = _push_api([{"status": "Preparing"}, {"error": "denied: requested access to the resource is denied"}])
+    with _patch() as mock_client:
+        mock_client.return_value.api = api
+        result = plugin_push("me/myplugin")
+    assert result["error"] == "denied: requested access to the resource is denied"
+
+
+def test_plugin_push_caps_a_chatty_progress_stream():
+    api = _push_api([{"status": f"layer {i}"} for i in range(500)])
+    with _patch() as mock_client:
+        mock_client.return_value.api = api
+        result = plugin_push("me/myplugin")
+    assert result["truncated"] is True
+    assert len(result["progress"]) == 200
+
+
+def test_plugin_push_sends_registry_auth_when_credentials_are_cached():
+    api = _push_api([{"status": "Pushed"}])
+    with _patch() as mock_client, patch("docker_mcp.tools.plugins.auth.get_config_header", return_value="dG9rZW4="):
+        mock_client.return_value.api = api
+        plugin_push("me/myplugin")
+    assert api._post.call_args.kwargs["headers"] == {"X-Registry-Auth": "dG9rZW4="}
+
+
+def test_plugin_push_omits_the_auth_header_when_no_credentials_are_cached():
+    api = _push_api([{"status": "Pushed"}])
+    with _patch() as mock_client, patch("docker_mcp.tools.plugins.auth.get_config_header", return_value=None):
+        mock_client.return_value.api = api
+        plugin_push("me/myplugin")
+    assert api._post.call_args.kwargs["headers"] == {}
+
+
+def test_plugin_push_raises_a_clear_error_if_docker_py_drops_the_internals_it_uses():
+    # The tool depends on undocumented docker-py helpers; a refactor upstream must surface as an
+    # actionable message naming the escape hatch, not an AttributeError from inside the call.
+    api = _push_api([], spec_missing=("_stream_helper",))
+    with _patch() as mock_client:
+        mock_client.return_value.api = api
+        with pytest.raises(RuntimeError, match="_stream_helper"):
+            plugin_push("me/myplugin")
 
 
 def test_plugin_inspect():

@@ -1,8 +1,16 @@
 # library of mcp tools relating to plugin management
 
+import threading
+
+from docker import auth
+
 from docker_mcp.server import tool
-from docker_mcp.tools._utils import host_read_path
+from docker_mcp.tools._utils import close_stream_quietly, host_read_path
 from docker_mcp.tools.system import _get_client
+
+# Cap on progress records collected from a push stream, so a chatty registry can't grow the reply
+# without bound. Reported back as "truncated" rather than silently dropped.
+_MAX_PUSH_PROGRESS = 200
 
 
 @tool()
@@ -66,6 +74,87 @@ def plugin_install(remote: str, local_name: str | None = None, host: str | None 
     returns: dict - The installed plugin's attrs ({"Id", "Name", "Enabled", "Settings", "Config"})
     """
     return _get_client(host).plugins.install(remote, local_name=local_name).attrs
+
+
+@tool()
+def plugin_push(name: str, timeout_seconds: float = 300.0, host: str | None = None) -> dict:
+    """
+    Push an installed plugin to its registry.
+
+    The write-side counterpart to `plugin_install` (which pulls) and the publish step after
+    `plugin_create` builds a plugin locally: `name` must already be the registry-qualified name the
+    plugin is installed under, since — unlike `image_push` — there is no plugin equivalent of
+    `image_tag` to rename it first, so create it under the target name. The plugin does not need to
+    be enabled. Credentials come from `system_login`, or from `~/.docker/config.json` if the host
+    ran `docker login`. Does NOT raise when the registry rejects the push: an authentication or
+    quota failure arrives as a final progress record and is surfaced as the `error` key, so check
+    that key rather than assuming success. Raises `RuntimeError` if the installed docker-py is too
+    old to expose the internals below, and `docker.errors.APIError` if the plugin isn't installed.
+
+    Bypasses docker-py's `Plugin.push()`/`APIClient.push_plugin()`, which cannot work: both POST to
+    `/plugins/{name}/pull`, a route the Engine does not define (push is `/plugins/{name}/push`), so
+    they 404 against any daemon. Bug present since the method was written in 2017 and still in
+    docker-py `main`; it survives because upstream has no test covering it. This calls the correct
+    endpoint through docker-py's private request helpers, in the manner of `system_logout`'s
+    `api._auth_configs` reach-in, and fails loudly if those internals change shape.
+
+    args:
+        name - Installed plugin name to push, `[registry/]author/name:tag`; `:latest` if the tag is
+            omitted. A bare `author/name` pushes to Docker Hub
+        timeout_seconds - Max wall-clock seconds to wait on the push stream before returning what
+            was collected (default 300); raise it for a large plugin over a slow link
+    returns: dict - {"name", "progress": [<decoded status dicts>], "truncated": bool, "error": str
+        or None} — `error` is non-None only when the registry reported a failure
+    """
+    api = _get_client(host).api
+    # docker-py exposes no working public path here (see docstring), so we drive its private request
+    # helpers directly. Resolved via getattr — like system_logout's _auth_configs reach-in — so the
+    # absence of any of them surfaces as the explicit message below rather than an AttributeError from
+    # inside the call (and so a type checker isn't asked to vouch for a private attribute).
+    build_url = getattr(api, "_url", None)
+    post = getattr(api, "_post", None)
+    raise_for_status = getattr(api, "_raise_for_status", None)
+    stream_helper = getattr(api, "_stream_helper", None)
+    if build_url is None or post is None or raise_for_status is None or stream_helper is None:
+        missing = sorted(
+            attr
+            for attr, fn in (
+                ("_url", build_url),
+                ("_post", post),
+                ("_raise_for_status", raise_for_status),
+                ("_stream_helper", stream_helper),
+            )
+            if fn is None
+        )
+        raise RuntimeError(
+            f"the installed docker-py no longer exposes {', '.join(missing)} on APIClient, which "
+            "plugin_push needs to reach POST /plugins/{name}/push; push the plugin with "
+            "`docker plugin push` until this tool is updated"
+        )
+    registry, _ = auth.resolve_repository_name(name)
+    header = auth.get_config_header(api, registry)
+    headers = {"X-Registry-Auth": header} if header else {}
+    # stream=True is required: _stream_helper reads the chunked body incrementally. (push_plugin omits
+    # it — a second latent bug there, harmless only because the wrong URL never returns a stream.)
+    response = post(build_url("/plugins/{0}/push", name), headers=headers, stream=True)
+    raise_for_status(response)
+    progress: list = []
+    truncated = False
+    # Closing the response unblocks a read stalled on an unresponsive registry, giving a hard time
+    # bound; _stream_helper yields from response.raw, so the response is what has to be closed.
+    timer = threading.Timer(timeout_seconds, lambda: close_stream_quietly(response))
+    timer.start()
+    try:
+        for record in stream_helper(response, decode=True):
+            progress.append(record)
+            if len(progress) >= _MAX_PUSH_PROGRESS:
+                truncated = True
+                break
+    finally:
+        timer.cancel()
+        close_stream_quietly(response)
+    error = next((r.get("error") for r in reversed(progress) if isinstance(r, dict) and r.get("error")), None)
+    return {"name": name, "progress": progress, "truncated": truncated, "error": error}
 
 
 @tool()

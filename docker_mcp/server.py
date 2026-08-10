@@ -140,6 +140,7 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "plugin_create": ToolCategory.MUTATING,
     "plugin_inspect": ToolCategory.READ_ONLY,
     "plugin_install": ToolCategory.MUTATING,
+    "plugin_push": ToolCategory.MUTATING,
     "plugin_list": ToolCategory.READ_ONLY,
     "plugin_configure": ToolCategory.MUTATING,
     "plugin_disable": ToolCategory.MUTATING,
@@ -393,7 +394,7 @@ _DOMAIN_BLURBS: dict[str, str] = {
     "scout": "CVE scan, SBOM, base-image recommendations; CLI-backed",
     "context": "docker CLI contexts; CLI-backed",
     "registry": "OCI registries + Docker Hub over HTTPS; no daemon needed",
-    "plugins": "plugin lifecycle (create/install/enable/disable/configure/upgrade/remove)",
+    "plugins": "plugin lifecycle (create/install/push/enable/disable/configure/upgrade/remove)",
     "system": "ping, version, info, df (disk usage), events, login, logout, host_list (configured daemons)",
 }
 
