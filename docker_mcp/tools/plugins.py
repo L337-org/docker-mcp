@@ -99,6 +99,11 @@ def plugin_push(name: str, timeout_seconds: float = 300.0, host: str | None = No
     endpoint through docker-py's private request helpers, in the manner of `system_logout`'s
     `api._auth_configs` reach-in, and fails loudly if those internals change shape.
 
+    Caveat for `ssh://` daemons: docker-py can't cancel an SSH stream, so the `timeout_seconds`
+    watchdog can't interrupt a push that stalls with the connection still open — the same limitation
+    `container_logs` carries in follow mode. The call still returns normally once the registry
+    answers or the stream ends.
+
     args:
         name - Installed plugin name to push, `[registry/]author/name:tag`; `:latest` if the tag is
             omitted. A bare `author/name` pushes to Docker Hub
