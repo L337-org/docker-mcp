@@ -95,7 +95,8 @@ jobs:
     if: github.event_name != 'pull_request'
     name: Install smoke (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
+    # 20, not 15: macos-15-intel now source-builds cryptography (brew install + Rust compile).
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -111,6 +112,18 @@ jobs:
           # Pinned (matching the Dockerfile's uv image tag) so this step never needs the
           # live "resolve latest" fetch to raw.githubusercontent.com.
           version: "0.11.21"
+
+      - name: Point the build at Homebrew's OpenSSL 3.x (Intel macOS only)
+        # macos-15-intel ships OpenSSL 1.1.1w (see actions/runner-images); cryptography >=44
+        # dropped OpenSSL 1.1.x support and now requires 3.0+. No x86_64 wheel exists (see
+        # resolve-crossplatform above), so this install source-builds — the Rust toolchain is
+        # already on the runner, but it still needs a compatible OpenSSL to link against.
+        if: matrix.os == 'macos-15-intel'
+        run: |
+          brew install openssl@3
+          prefix="$(brew --prefix openssl@3)"
+          echo "OPENSSL_DIR=$prefix" >> "$GITHUB_ENV"
+          echo "PKG_CONFIG_PATH=$prefix/lib/pkgconfig" >> "$GITHUB_ENV"
 
       - name: Import smoke (full tool-registration path, no daemon needed)
         run: uv run --no-project --python 3.14 --with docker-mcp-server python -c "import docker_mcp"

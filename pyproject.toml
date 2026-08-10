@@ -33,16 +33,6 @@ dependencies = [
     # Pulled in transitively by docker, but we import requests.exceptions directly
     # (container_wait catches ReadTimeout), so declare it explicitly.
     "requests>=2.26.0",
-    # Pulled in transitively via mcp -> pyjwt[crypto]. cryptography 49.x dropped
-    # the macosx_10_9_universal2 wheel and now ships an arm64-only macOS wheel, so
-    # on Intel (x86_64) macOS the resolver falls back to a source build needing a
-    # newer Rust toolchain than many users have (breaking `uvx` installs). 48.x
-    # still ships a universal2 wheel that works there. Scoped to Intel macOS via an
-    # environment marker so every other platform (incl. macOS arm64) can still take
-    # 49.x where wheels exist. Capped here (not in tool.uv.constraint-dependencies,
-    # which uvx ignores) so the cap ships in the package metadata. Lift when x86_64
-    # macOS wheels return upstream.
-    "cryptography<49; platform_system == 'Darwin' and platform_machine == 'x86_64'",
 ]
 
 [project.scripts]
