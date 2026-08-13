@@ -107,9 +107,30 @@ macOS, `status` fatal as a variable name in zsh, `jq -s` applied to something th
 array. A JSON Schema makes that entire class of mistake unrepresentable. Nothing in the skill can,
 because the CLI has no machine-readable description of its own flags.
 
-One honest qualification: only 3 of those 591 parameters carry an `enum`. Constrained *values* are
-documented in prose on both sides, so the server's advantage is over argument names, types and
-requiredness rather than over the set of legal values.
+One honest qualification, narrower than it used to be: 12 of those 591 parameters carry an `enum`,
+up from 3. That is still only 2%, and the values of the other 98% are documented in prose on both
+sides, so the server's advantage is mostly over argument names, types and requiredness rather than
+over the set of legal values.
+
+Constraining the sets that *are* closed turned up something worth stating plainly, because it cuts
+against the assumption that a wrong CLI value simply gets rejected:
+
+- `docker scout cves --only-severity CRITICAL` exits 0 and reports "No vulnerable packages
+  detected" for an image that the same command with `critical` reports three critical CVEs for.
+  Scout matches severity case-sensitively and silently filters everything out otherwise. Uppercase
+  is the spelling Scout prints in its own output (`✗ CRITICAL CVE-2026-42496`), so it is the
+  likelier one to copy, and the failure presents as a clean security report.
+- `docker network create --scope bogus` succeeds and records `scope=bogus` on the network.
+
+Both are now schema-validation errors on the server, raised before anything executes. The skill
+cannot enforce either, but it is not helpless: its Scout reference now carries an explicit warning
+about the casing, added as a direct result of this finding. The real distinction is that a warning
+is advisory and a schema is not. So the argument-correctness advantage is less "the server catches
+bad flags sooner" than "some bad values are never caught at all, and only the server can make them
+unrepresentable".
+
+The cost was small: +139 tokens of schema, minus 42 tokens of docstring prose the enums now carry,
+so roughly +97 tokens net across the whole 159-tool surface.
 
 **Searchability goes the other way.** The skill is plain files on disk, so the model can grep the
 entire corpus in one command and read a whole file when it wants breadth. An MCP server offers no

@@ -13,6 +13,8 @@
 # fallback in `_cli.py`. `stack_deploy` is the only one that reads local files, so it is the only one
 # that stages its working directory; the queries and `stack rm` name nothing local.
 
+from typing import Literal
+
 from docker_mcp.server import tool
 from docker_mcp.tools._cli import (
     CliResult,
@@ -103,7 +105,7 @@ def stack_deploy(
     compose_files: list[str],
     with_registry_auth: bool = False,
     prune: bool = False,
-    resolve_image: str | None = None,
+    resolve_image: Literal["always", "changed", "never"] | None = None,
     detach: bool = True,
     cwd: str | None = None,
     timeout_seconds: float = _TIMEOUT_DEPLOY,
@@ -124,7 +126,7 @@ def stack_deploy(
         compose_files - One or more Compose file paths (repeated `-c`; later override earlier). At least one required.
         with_registry_auth - Send registry credentials to swarm agents (needed for private images)
         prune - Remove services no longer defined in the Compose file
-        resolve_image - Image-digest resolution: "always" (default), "changed", or "never"
+        resolve_image - Image-digest resolution; omit for the CLI default ("always")
         detach - Return immediately after submitting specs (True) vs wait for convergence (False)
         cwd - Working directory for resolving relative Compose paths (defaults to the server's cwd;
                       copied to the target host if no local docker CLI)

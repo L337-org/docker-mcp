@@ -791,6 +791,44 @@ def _key_anywhere(node, target: str, *, match=lambda v: True) -> bool:
     return False
 
 
+# Parameters whose legal values are a genuinely closed set, each verified against a primary source
+# (the subcommand's own `--help`, or docker-py's documented value list) rather than inferred. Keyed
+# tool -> param -> expected enum. Guards against a Literal being loosened back to a bare `str`,
+# which would silently restore the failure modes below.
+_EXPECTED_ENUMS = {
+    "compose_config": {"format": ["yaml", "json"]},
+    "compose_up": {"pull": ["always", "missing", "never"]},
+    "network_create": {"scope": ["local", "global", "swarm"]},
+    "stack_deploy": {"resolve_image": ["always", "changed", "never"]},
+    "scout_cves": {
+        "format": ["packages", "sarif", "spdx", "gitlab", "markdown", "sbom"],
+        "only_severity": ["critical", "high", "medium", "low", "unspecified"],
+    },
+    "scout_compare": {
+        "format": ["json", "markdown", "text"],
+        "only_severity": ["critical", "high", "medium", "low", "unspecified"],
+    },
+    "scout_sbom": {"format": ["list", "json", "spdx", "cyclonedx"]},
+}
+
+
+def test_closed_value_sets_are_advertised_as_enums():
+    # Two of these convert a *silent wrong answer* into a validation error, which is why they are
+    # asserted rather than left to the docstring: `docker scout cves --only-severity CRITICAL`
+    # exits 0 reporting "No vulnerable packages detected" on an image whose lowercase `critical`
+    # run reports three, and the daemon records an unrecognised `--scope` verbatim on the network.
+    tools = _registered_tools()
+    for tool_name, params in _EXPECTED_ENUMS.items():
+        assert tool_name in tools, f"{tool_name} is not registered"
+        properties = tools[tool_name].parameters["properties"]
+        for param, expected in params.items():
+            assert param in properties, f"{tool_name}.{param} missing from the advertised schema"
+            schema = properties[param]
+            # A list-valued param carries its enum on `items`; a scalar carries it directly.
+            found = schema.get("enum") or schema.get("items", {}).get("enum")
+            assert found == expected, f"{tool_name}.{param} advertises enum {found!r}, expected {expected!r}"
+
+
 def test_no_registered_tool_schema_carries_title_annotations():
     # pydantic stamps an information-free `title` on every property/$def and the top-level schema;
     # _slim_schema drops them (~10% of the advertised tool surface). Assert none survive.
@@ -872,6 +910,28 @@ def test_slim_schema_keeps_schema_valued_additional_properties():
     schema = {"type": "object", "additionalProperties": {"type": "string"}}
     _slim_schema(schema)
     assert schema["additionalProperties"] == {"type": "string"}
+
+
+def test_slim_schema_preserves_enum_including_through_a_nullable_collapse():
+    # The slim exists to delete information-free noise, and an enum is the opposite of that: it is
+    # the only thing in the advertised schema that stops an out-of-set value. A `Literal[...] | None`
+    # param arrives as a nullable anyOf, so the enum has to survive the hoist as well as the walk.
+    schema = {
+        "type": "object",
+        "properties": {
+            "plain": {"enum": ["yaml", "json"], "type": "string", "default": "yaml"},
+            "nullable": {
+                "anyOf": [{"enum": ["always", "missing", "never"], "type": "string"}, {"type": "null"}],
+                "default": None,
+            },
+            "in_items": {"items": {"enum": ["critical", "high"], "type": "string"}, "type": "array"},
+        },
+    }
+    _slim_schema(schema)
+    props = schema["properties"]
+    assert props["plain"]["enum"] == ["yaml", "json"]
+    assert "anyOf" not in props["nullable"] and props["nullable"]["enum"] == ["always", "missing", "never"]
+    assert props["in_items"]["items"]["enum"] == ["critical", "high"]
 
 
 # ---------- prompt + doc-resource disabling (DOCKER_MCP_SERVER_DISABLE covers more than tools) ----------

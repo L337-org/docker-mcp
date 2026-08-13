@@ -23,10 +23,15 @@ def image_build(
     labels: dict | None = None,
     cache_from: list | None = None,
     target: str | None = None,
+    # Not an enum: alongside bridge/host/none/container:<id> this accepts any user-defined network
+    # name, so the set is open by construction.
     network_mode: str | None = None,
     squash: bool = False,
     extra_hosts: dict | None = None,
     platform: str | None = None,
+    # Not an enum: docker-py documents this only as "Isolation technology used during build" with
+    # no value list, and the real set is platform-dependent (Windows-only in practice), so there is
+    # no closed set to assert from a primary source.
     isolation: str | None = None,
     use_config_proxy: bool = True,
     host: str | None = None,
