@@ -13,7 +13,7 @@
 # fallback in `_cli.py`. `stack_deploy` is the only one that reads local files, so it is the only one
 # that stages its working directory; the queries and `stack rm` name nothing local.
 
-from typing import Literal
+from typing import Literal, get_args
 
 from docker_mcp.server import tool
 from docker_mcp.tools._cli import (
@@ -35,8 +35,12 @@ _TIMEOUT_QUERY = 60.0
 _TIMEOUT_DEPLOY = 1800.0
 _TIMEOUT_RM = 300.0
 
-# `docker stack deploy --resolve-image` accepts exactly these values.
-_RESOLVE_IMAGE_CHOICES = frozenset({"always", "changed", "never"})
+# `docker stack deploy --resolve-image` accepts exactly these values. The alias is the single
+# source: it types the parameter (so pydantic advertises the enum and rejects an out-of-set value
+# before the body runs) and the frozenset below is derived from it, so the advertised set and the
+# defensive check for direct callers cannot drift apart.
+ResolveImage = Literal["always", "changed", "never"]
+_RESOLVE_IMAGE_CHOICES = frozenset(get_args(ResolveImage))
 
 
 # JSON output is requested with the `{{json .}}` Go template rather than the `--format json`
@@ -105,7 +109,7 @@ def stack_deploy(
     compose_files: list[str],
     with_registry_auth: bool = False,
     prune: bool = False,
-    resolve_image: Literal["always", "changed", "never"] | None = None,
+    resolve_image: ResolveImage | None = None,
     detach: bool = True,
     cwd: str | None = None,
     timeout_seconds: float = _TIMEOUT_DEPLOY,
