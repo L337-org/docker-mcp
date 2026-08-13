@@ -599,7 +599,9 @@ def tool_list(
         category - Exact category; omit for all three
         keyword - Case-insensitive substring over tool names, summaries and parameter names
     returns: dict - {"matched": int, "tools": [{"name", "domain", "category", "summary"}],
-                     "domains": {domain: count}, "hidden_by_configuration": {domain: count},
-                     "switches", "filters"}
+                     "domains": {domain: count}, "no_domain": int,
+                     "hidden_by_configuration": {domain: count}, "switches", "filters"}. Every
+                     `domains` key is a value `domain` accepts; `no_domain` counts the domain-less
+                     tools, whose rows carry `domain: null` and which no `domain` value selects.
     """
     return query_catalog(domain=domain, category=category, keyword=keyword)

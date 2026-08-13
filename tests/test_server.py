@@ -499,14 +499,25 @@ def test_query_catalog_filters_by_category():
     assert {row["name"] for row in result["tools"]} == expected
 
 
-def test_query_catalog_keyword_matches_name_summary_and_parameter_names():
-    # Name.
+def test_query_catalog_keyword_matches_a_tool_name():
     assert "container_prune" in {row["name"] for row in query_catalog(keyword="prune")["tools"]}
-    # Parameter name: `host` is a parameter, not part of most names or summaries.
-    by_param = {row["name"] for row in query_catalog(keyword="host")["tools"]}
-    assert "container_list" in by_param and "host" not in "container_list"
-    # Summary text: `swarm_init`'s name does not contain "cluster" but its summary does.
-    assert all("swarm" in row["name"] or True for row in query_catalog(keyword="swarm")["tools"])
+
+
+def test_query_catalog_keyword_matches_a_parameter_name():
+    # `host` is a parameter on most tools and appears in no tool name, so a match proves the
+    # parameter names are searched rather than the name alone.
+    matched = {row["name"] for row in query_catalog(keyword="host")["tools"]}
+    assert "container_list" in matched
+    assert "host" not in "container_list"
+
+
+def test_query_catalog_keyword_matches_summary_text():
+    # "vulnerabilit" appears in one summary (scout_cves) and in no tool name or parameter name, so a
+    # match can only have come from the summary. Anchored on a term with that property rather than
+    # one that also occurs in a name, or the assertion would pass without the summary being searched.
+    assert not any("vulnerabilit" in row["name"] for row in query_catalog()["tools"])
+    matched = {row["name"] for row in query_catalog(keyword="vulnerabilit")["tools"]}
+    assert matched == {"scout_cves"}
 
 
 def test_query_catalog_keyword_is_case_insensitive():
@@ -517,6 +528,18 @@ def test_query_catalog_combines_filters():
     result = query_catalog(domain="containers", category="destructive")
     assert result["matched"] > 0
     assert all(r["domain"] == "containers" and r["category"] == "destructive" for r in result["tools"])
+
+
+def test_query_catalog_domain_keys_are_all_usable_as_filters():
+    # Every advertised domain has to be a value `domain=` accepts, returning exactly that count.
+    # Domain-less tools are counted separately rather than under "", which would look selectable and
+    # match nothing, costing a caller a wasted call to find out.
+    catalog = query_catalog()
+    assert "" not in catalog["domains"]
+    for name, count in catalog["domains"].items():
+        assert query_catalog(domain=name)["matched"] == count, f"domain {name!r} is not a usable filter"
+    assert catalog["no_domain"] == len(_NO_DOMAIN_TOOLS)
+    assert catalog["matched"] == sum(catalog["domains"].values()) + catalog["no_domain"]
 
 
 def test_query_catalog_returns_an_explicit_empty_result_rather_than_raising():

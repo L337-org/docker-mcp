@@ -366,7 +366,10 @@ def query_catalog(
         domain - Exact domain name to restrict to, or None for every domain
         category - Exact category value ("read_only"/"mutating"/"destructive"), or None for all
         keyword - Case-insensitive substring matched against name, summary and parameter names
-    returns: dict - {"matched", "tools", "domains", "hidden_by_configuration", "switches", "filters"}
+    returns: dict - {"matched", "tools", "domains", "no_domain", "hidden_by_configuration", "switches",
+                    "filters"}. `domains` and `hidden_by_configuration` are keyed by real domain
+                    names only; `no_domain` counts the always-registered domain-less tools, whose
+                    rows carry `domain: None` and which no `domain=` value selects.
     """
     wanted = keyword.lower() if keyword else None
     rows = []
@@ -391,19 +394,31 @@ def query_catalog(
                 "summary": record.summary,
             }
         )
-    registered = [r for r in _tool_registry.values() if r.registered]
+    # Both maps are keyed by real domain names only, so every key is a value `domain=` accepts.
+    # The `_NO_DOMAIN_TOOLS` are counted separately rather than under an empty-string key: "" is not
+    # a domain, `domain=""` would match nothing (their rows carry `domain: None`), and offering it as
+    # if it were selectable is the kind of near-miss that costs a caller a wasted call to discover.
     counts: dict[str, int] = {}
-    for record in registered:
-        counts[record.domain or ""] = counts.get(record.domain or "", 0) + 1
-    hidden: dict[str, int] = {}
+    no_domain = 0
     for record in _tool_registry.values():
         if not record.registered:
-            hidden[record.domain or ""] = hidden.get(record.domain or "", 0) + 1
+            continue
+        if record.domain is None:
+            no_domain += 1
+        else:
+            counts[record.domain] = counts.get(record.domain, 0) + 1
+    hidden: dict[str, int] = {}
+    for record in _tool_registry.values():
+        # A domain-less tool cannot be hidden *by domain*; only a category switch could drop one, and
+        # `switches` already reports that, so it would be misleading to attribute it to a domain here.
+        if not record.registered and record.domain is not None:
+            hidden[record.domain] = hidden.get(record.domain, 0) + 1
     return {
         "matched": len(rows),
         "tools": rows,
         # Always present, so a query matching nothing still shows what does exist to search instead.
         "domains": dict(sorted(counts.items())),
+        "no_domain": no_domain,
         "hidden_by_configuration": dict(sorted(hidden.items())),
         "switches": {
             "DOCKER_MCP_SERVER_READONLY": READONLY,
