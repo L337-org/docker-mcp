@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from docker_mcp.tools._cli import has_plugin
+from tests.integration.conftest import fail_unless_environmental
 from docker_mcp.tools.buildx import (
     buildx_build,
     buildx_du,
@@ -32,8 +33,8 @@ def _require_buildx_plugin():
 
 @pytest.fixture
 def build_context(tmp_path: Path) -> Path:
-    (tmp_path / "Dockerfile").write_text(_DOCKERFILE)
-    (tmp_path / "hello.txt").write_text("hello\n")
+    (tmp_path / "Dockerfile").write_text(_DOCKERFILE, encoding="utf-8")
+    (tmp_path / "hello.txt").write_text("hello\n", encoding="utf-8")
     return tmp_path
 
 
@@ -71,8 +72,12 @@ def test_buildx_imagetools_inspect_alpine_returns_manifest():
         # A slow registry makes the inspect subprocess time out (run_docker raises rather than
         # returning non-zero); skip cleanly instead of failing on a network hiccup.
         pytest.skip("buildx imagetools inspect timed out (slow registry/network); skipping")
-    if result["returncode"] != 0:
-        pytest.skip(f"buildx imagetools inspect unreachable (registry/network?): {result['stderr'][:200]}")
+    fail_unless_environmental(
+        returncode=result["returncode"],
+        stderr=result["stderr"],
+        stdout=result["stdout"],
+        what="buildx imagetools inspect",
+    )
     assert result["stdout"].strip().startswith("{")
 
 

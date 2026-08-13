@@ -87,7 +87,7 @@ roughly level, with the server ahead on unusual or easily-confused operations an
 the common ones.
 
 **Getting the arguments right is where the server is properly ahead**, and this is the substantial
-half. Across 593 parameters, every one carries a declared type, 79% carry an explicit default and
+half. Across 591 parameters, every one carries a declared type, 79% carry an explicit default and
 123 are marked required. That schema is enforced by the client before the call reaches the server,
 so a wrong argument name or type is rejected as a validation error with nothing executed. The skill
 composes a shell string, and a wrong flag is caught by Docker itself at execution, which may be
@@ -100,7 +100,7 @@ macOS, `status` fatal as a variable name in zsh, `jq -s` applied to something th
 array. A JSON Schema makes that entire class of mistake unrepresentable. Nothing in the skill can,
 because the CLI has no machine-readable description of its own flags.
 
-One honest qualification: only 3 of those 593 parameters carry an `enum`. Constrained *values* are
+One honest qualification: only 3 of those 591 parameters carry an `enum`. Constrained *values* are
 documented in prose on both sides, so the server's advantage is over argument names, types and
 requiredness rather than over the set of legal values.
 

@@ -647,14 +647,14 @@ def test_ensure_ssh_port_leaves_url_alone_when_ssh_config_port_is_malformed(tmp_
     # A non-integer `Port` in ~/.ssh/config makes parse_ssh_url raise ValueError (int() failure) —
     # must not propagate out of this helper; leave docker-py's own validation to surface the error.
     config = tmp_path / "config"
-    config.write_text("Host example.com\n    Port notanumber\n")
+    config.write_text("Host example.com\n    Port notanumber\n", encoding="utf-8")
     monkeypatch.setattr("os.path.expanduser", lambda p: str(config) if p == "~/.ssh/config" else p)
     assert system_module._ensure_ssh_port("ssh://bob@example.com") == "ssh://bob@example.com"
 
 
 def test_ensure_ssh_port_splices_in_ssh_config_port(tmp_path, monkeypatch):
     config = tmp_path / "config"
-    config.write_text("Host example.com\n    Port 1234\n")
+    config.write_text("Host example.com\n    Port 1234\n", encoding="utf-8")
     monkeypatch.setattr("os.path.expanduser", lambda p: str(config) if p == "~/.ssh/config" else p)
     assert system_module._ensure_ssh_port("ssh://bob@example.com") == "ssh://bob@example.com:1234"
 
@@ -666,7 +666,7 @@ def test_ensure_ssh_port_unchanged_when_config_has_no_port(monkeypatch):
 
 def test_build_default_client_splices_ssh_config_port_into_docker_host(tmp_path, monkeypatch):
     config = tmp_path / "config"
-    config.write_text("Host example.com\n    Port 1234\n")
+    config.write_text("Host example.com\n    Port 1234\n", encoding="utf-8")
     monkeypatch.setattr("os.path.expanduser", lambda p: str(config) if p == "~/.ssh/config" else p)
     monkeypatch.setenv("DOCKER_HOST", "ssh://bob@example.com")
     # This test is about the port-splice only; the family-fallback probe is exercised in its own
@@ -681,7 +681,7 @@ def test_build_default_client_splices_ssh_config_port_into_docker_host(tmp_path,
 def test_build_client_splices_ssh_config_port_for_multi_host_ssh_entry(tmp_path, monkeypatch):
     _set_multi(monkeypatch)
     config = tmp_path / "config"
-    config.write_text("Host example.com\n    Port 1234\n")
+    config.write_text("Host example.com\n    Port 1234\n", encoding="utf-8")
     monkeypatch.setattr("os.path.expanduser", lambda p: str(config) if p == "~/.ssh/config" else p)
     # See the comment above: isolate the port-splice from the family-fallback probe.
     monkeypatch.setattr(system_module, "_ensure_reachable_family", lambda url: url)

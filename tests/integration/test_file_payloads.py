@@ -9,6 +9,7 @@ from docker.errors import DockerException
 
 from docker_mcp.tools.containers import container_create, container_export, container_remove
 from docker_mcp.tools.images import image_inspect, image_load, image_pull, image_save
+from tests.integration.conftest import fail_unless_environmental_error
 
 _IMAGE = "alpine:3"
 
@@ -19,7 +20,7 @@ def _require_alpine():
     try:
         image_pull("alpine", tag="3")
     except DockerException as exc:
-        pytest.skip(f"could not pull {_IMAGE}: {exc}")
+        fail_unless_environmental_error(exc, what=f"pulling {_IMAGE}")
     yield
 
 

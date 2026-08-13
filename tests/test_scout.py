@@ -4,6 +4,7 @@ import pytest
 
 from docker_mcp.tools._cli import CliResult
 from docker_mcp.tools.scout import (
+    _JSON_FORMATS,
     _maybe_parse_json,
     scout_compare,
     scout_cves,
@@ -46,15 +47,22 @@ def test_maybe_parse_json_returns_raw_when_json_invalid():
 # ---------- scout_cves ----------
 
 
-def test_scout_cves_minimal_args_and_default_json_format():
-    with patch("docker_mcp.tools.scout.run_docker", return_value=_ok('{"vulnerabilities": []}')) as run:
+def test_scout_cves_defaults_to_a_format_scout_actually_accepts():
+    """`docker scout cves` has no plain "json" format, so the old default failed on every call.
+
+    Its accepted values are packages/sarif/spdx/gitlab/markdown/sbom. This asserts the default is
+    one of those and is a JSON-emitting one, so the parsed-`result` contract still holds.
+    """
+    with patch("docker_mcp.tools.scout.run_docker", return_value=_ok('{"runs": []}')) as run:
         result = scout_cves("alpine:3.19")
     args = run.call_args.args[0]
     assert args[:2] == ["scout", "cves"]
-    assert args[args.index("--format") + 1] == "json"
+    passed = args[args.index("--format") + 1]
+    assert passed in {"packages", "sarif", "spdx", "gitlab", "markdown", "sbom"}
+    assert passed in _JSON_FORMATS
     assert args[-1] == "alpine:3.19"
-    assert result["format"] == "json"
-    assert result["result"] == {"vulnerabilities": []}
+    assert result["format"] == passed
+    assert result["result"] == {"runs": []}
     assert result["raw"]["returncode"] == 0
 
 
@@ -74,32 +82,40 @@ def test_scout_cves_flags_set_correctly():
     assert args[args.index("--platform") + 1] == "linux/amd64"
 
 
-def test_scout_cves_sarif_format_returned_as_text():
-    sarif_text = '{"$schema":"https://example.com/sarif"}'
-    with patch("docker_mcp.tools.scout.run_docker", return_value=_ok(sarif_text)) as run:
+def test_scout_cves_sarif_is_parsed_because_sarif_is_json():
+    """SARIF is a JSON schema. Keying the parse on the literal string "json" left it unparsed."""
+    with patch("docker_mcp.tools.scout.run_docker", return_value=_ok('{"$schema":"https://x/sarif"}')) as run:
         result = scout_cves("alpine:3.19", format="sarif")
     args = run.call_args.args[0]
     assert args[args.index("--format") + 1] == "sarif"
     assert result["format"] == "sarif"
-    assert result["result"] == sarif_text
+    assert result["result"] == {"$schema": "https://x/sarif"}
+
+
+def test_scout_cves_markdown_is_returned_verbatim():
+    with patch("docker_mcp.tools.scout.run_docker", return_value=_ok("## CVEs\n- none")):
+        result = scout_cves("alpine:3.19", format="markdown")
+    assert result["result"] == "## CVEs\n- none"
 
 
 # ---------- scout_quickview ----------
 
 
-def test_scout_quickview_parses_json():
-    body = '{"critical": 0, "high": 2}'
-    with patch("docker_mcp.tools.scout.run_docker", return_value=_ok(body)):
+def test_scout_quickview_never_passes_a_format_flag():
+    """`docker scout quickview` has no --format flag; passing one failed with "unknown flag"."""
+    body = "Target  alpine:3.19\n  0C  2H"
+    with patch("docker_mcp.tools.scout.run_docker", return_value=_ok(body)) as run:
         result = scout_quickview("alpine:3.19")
-    assert result["result"] == {"critical": 0, "high": 2}
+    assert "--format" not in run.call_args.args[0]
+    assert result["result"] == body
+    assert "format" not in result
 
 
-def test_scout_quickview_text_format_unparsed():
-    with patch("docker_mcp.tools.scout.run_docker", return_value=_ok("Image: alpine:3.19\nCritical: 0")) as run:
-        result = scout_quickview("alpine:3.19", format="text")
-    args = run.call_args.args[0]
-    assert args[args.index("--format") + 1] == "text"
-    assert "Critical: 0" in result["result"]
+def test_scout_quickview_rejects_a_format_argument():
+    """The parameter is gone rather than accepted-and-ignored, so a caller cannot silently get
+    output in a shape the tool never produced."""
+    with pytest.raises(TypeError):
+        scout_quickview("alpine:3.19", format="text")  # type: ignore[call-arg]
 
 
 # ---------- scout_recommendations ----------
@@ -199,7 +215,7 @@ def test_scout_runs_remotely_when_no_local_plugin_is_available():
     # runs there instead of raising. The plugin probe must not gate the remote path.
     with (
         patch("docker_mcp.tools.scout.should_remote_exec", return_value=True) as should,
-        patch("docker_mcp.tools.scout.remote_exec_cli", return_value=_ok('{"vulnerabilities": []}')) as remote,
+        patch("docker_mcp.tools.scout.remote_exec_cli", return_value=_ok('{"runs": []}')) as remote,
         patch("docker_mcp.tools.scout.run_docker") as run,
         patch("docker_mcp.tools.scout.require_plugin") as require,
     ):
@@ -207,9 +223,9 @@ def test_scout_runs_remotely_when_no_local_plugin_is_available():
     run.assert_not_called()
     require.assert_not_called()
     should.assert_called_once_with("prod", plugin="scout")
-    assert remote.call_args.args == ("prod", ["scout", "cves", "--format", "json", "alpine:3.19"])
+    assert remote.call_args.args == ("prod", ["scout", "cves", "--format", "sarif", "alpine:3.19"])
     assert remote.call_args.kwargs == {"timeout": 300.0}
-    assert result["result"] == {"vulnerabilities": []}  # identical parsing either way
+    assert result["result"] == {"runs": []}  # SARIF-shaped, matching the default; parsed identically either way
 
 
 def test_scout_uses_the_local_cli_when_it_can():

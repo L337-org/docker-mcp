@@ -18,6 +18,7 @@ from docker_mcp.tools.resources import (
     get_container_stats_resource,
     list_container_resources,
 )
+from tests.integration.conftest import fail_unless_environmental_error
 
 
 @pytest.fixture
@@ -38,8 +39,8 @@ def healthy_container():
             name=name,
             extra_kwargs={"healthcheck": healthcheck},
         )
-    except Exception as exc:  # noqa: BLE001 — image pull / run can fail on a constrained CI; skip cleanly
-        pytest.skip(f"could not start the healthcheck container (pull/run failed?): {exc}")
+    except Exception as exc:  # noqa: BLE001 — narrowed below: only a named environmental cause skips
+        fail_unless_environmental_error(exc, what="starting the healthcheck container")
     yield name
     container_remove(name, force=True)
 
@@ -61,8 +62,8 @@ def log_emitting_container():
             command=["sh", "-c", "sleep 2; echo READY_MARKER; sleep 120"],
             name=name,
         )
-    except Exception as exc:  # noqa: BLE001 — image pull / run can fail on a constrained CI; skip cleanly
-        pytest.skip(f"could not start the log-emitting container (pull/run failed?): {exc}")
+    except Exception as exc:  # noqa: BLE001 — narrowed below: only a named environmental cause skips
+        fail_unless_environmental_error(exc, what="starting the log-emitting container")
     yield name
     container_remove(name, force=True)
 

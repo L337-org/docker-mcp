@@ -6,6 +6,7 @@ import uuid
 import pytest
 
 from docker_mcp.tools.networks import network_create, network_list, network_remove
+from tests.integration.conftest import fail_unless_environmental_error
 
 
 @pytest.fixture
@@ -14,8 +15,8 @@ def managed_network():
     name = f"dmcp-it-{uuid.uuid4().hex[:8]}"
     try:
         attrs = network_create(name, driver="bridge")
-    except Exception as exc:  # noqa: BLE001 — network create can fail on a constrained CI; skip cleanly
-        pytest.skip(f"could not create the test network: {exc}")
+    except Exception as exc:  # noqa: BLE001 — narrowed below: only a named environmental cause skips
+        fail_unless_environmental_error(exc, what="creating the test network")
     yield name, attrs
     network_remove(name)
 

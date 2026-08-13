@@ -882,7 +882,8 @@ def buildx_create(
         use - Set the new builder as the current one
         bootstrap - Boot the builder immediately
         platforms - Platforms the builder advertises
-        config - Path to a buildkitd config file (copied to the target host if no local plugin)
+        config - Path to a buildkitd config file (copied to the target host if no local plugin);
+            passed as `--buildkitd-config`, so this argument needs buildx >= 0.17
         node_name - Node name within the builder (for multi-node builders)
         append - Append a node to an existing builder named `name`
     returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
@@ -899,7 +900,10 @@ def buildx_create(
     if platforms:
         args.extend(["--platform", ",".join(platforms)])
     if config is not None:
-        args.extend(["--config", config])
+        # buildx renamed `--config` to `--buildkitd-config` in v0.17; the old spelling still parses
+        # as a hidden alias but no longer appears in `--help`, so it is a removal risk rather than a
+        # supported option. Using the current name means this argument needs buildx >= 0.17.
+        args.extend(["--buildkitd-config", config])
     if node_name is not None:
         args.extend(["--node", node_name])
     if append:

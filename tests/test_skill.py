@@ -84,7 +84,7 @@ def skill_files() -> list[Path]:
 
 def test_the_skill_has_frontmatter_naming_it_after_its_own_directory():
     """A skill whose `name` disagrees with its directory does not load."""
-    text = _SKILL_MD.read_text()
+    text = _SKILL_MD.read_text(encoding="utf-8")
     match = re.match(r"^---\n(.*?)\n---\n", text, re.S)
     assert match, "SKILL.md must open with a YAML frontmatter block"
     yaml = pytest.importorskip("yaml")
@@ -102,7 +102,7 @@ def test_no_tool_permission_frontmatter_preapproves_destructive_commands():
     All three spellings are checked: `tools`/`disallowedTools` are the documented skill fields, and
     `allowed-tools` is the slash-command spelling that is easy to reach for by mistake.
     """
-    text = _SKILL_MD.read_text()
+    text = _SKILL_MD.read_text(encoding="utf-8")
     match = re.match(r"^---\n(.*?)\n---\n", text, re.S)
     assert match
     frontmatter = match.group(1)
@@ -114,7 +114,7 @@ def test_every_referenced_skill_file_exists(skill_files):
     """A dead `reference/x.md` pointer strands the agent mid-task with no fallback."""
     missing = set()
     for path in skill_files:
-        for ref in re.findall(r"(?:reference|workflows)/[a-z-]+\.md", path.read_text()):
+        for ref in re.findall(r"(?:reference|workflows)/[a-z-]+\.md", path.read_text(encoding="utf-8")):
             if not (_SKILL_DIR / ref).is_file():
                 missing.add(f"{path.name} -> {ref}")
     assert not missing, f"broken cross-references: {sorted(missing)}"
@@ -122,7 +122,7 @@ def test_every_referenced_skill_file_exists(skill_files):
 
 def test_every_reference_and_workflow_file_is_reachable_from_the_router(skill_files):
     """SKILL.md is the only file loaded up front, so anything it never names is dead weight."""
-    router = _SKILL_MD.read_text()
+    router = _SKILL_MD.read_text(encoding="utf-8")
     orphans = [
         f"{p.parent.name}/{p.name}"
         for p in skill_files
@@ -135,11 +135,11 @@ def test_the_skill_carries_its_own_licence_and_points_back_at_this_repo():
     """The skill is meant to be downloadable on its own, so attribution cannot live only in the repo."""
     licence = _SKILL_DIR / "LICENSE"
     assert licence.is_file(), "skills/l337-docker/LICENSE is missing"
-    licence_text = licence.read_text()
+    licence_text = licence.read_text(encoding="utf-8")
     assert "MIT License" in licence_text
     assert "Gavin Lucas" in licence_text
 
-    router = _SKILL_MD.read_text()
+    router = _SKILL_MD.read_text(encoding="utf-8")
     assert "github.com/L337-org/docker-mcp" in router
     assert "MIT" in router
 
@@ -151,8 +151,8 @@ def test_the_skill_is_excluded_from_the_other_channels_artifacts():
     ship ~140 KB of markdown the bundle never reads, and leaving it in the Docker build context
     uploads it to the daemon on every image build for nothing.
     """
-    assert "skills/" in (_REPO_ROOT / ".mcpbignore").read_text().splitlines()
-    assert "skills" in (_REPO_ROOT / ".dockerignore").read_text().splitlines()
+    assert "skills/" in (_REPO_ROOT / ".mcpbignore").read_text(encoding="utf-8").splitlines()
+    assert "skills" in (_REPO_ROOT / ".dockerignore").read_text(encoding="utf-8").splitlines()
 
 
 # --------------------------------------------------------------------------------------------
@@ -166,7 +166,7 @@ def test_provenance_labels_use_one_lowercase_prefix(skill_files):
     daemon while resources remain."""
     offenders = []
     for path in skill_files:
-        for found in re.findall(r"[A-Za-z0-9_.-]*docker-skill\.[a-z]+", path.read_text()):
+        for found in re.findall(r"[A-Za-z0-9_.-]*docker-skill\.[a-z]+", path.read_text(encoding="utf-8")):
             if not found.startswith(_LABEL_PREFIX):
                 offenders.append(f"{path.name}: {found}")
     assert not offenders, f"non-canonical provenance labels: {offenders}"
@@ -176,7 +176,7 @@ def test_the_skill_does_not_claim_the_mcp_servers_provenance_label(skill_files):
     """Stamping `docker-mcp-server.managed` from the skill would attribute its resources to the
     server. The label may only be *mentioned* as a separate footprint to check, never applied."""
     for path in skill_files:
-        for line in path.read_text().splitlines():
+        for line in path.read_text(encoding="utf-8").splitlines():
             if "docker-mcp-server.managed" in line and "--label" in line:
                 pytest.fail(f"{path.name} stamps the MCP server's label: {line.strip()}")
 
@@ -189,21 +189,21 @@ def test_the_skill_does_not_claim_the_mcp_servers_provenance_label(skill_files):
 def test_no_snippet_uses_the_rejected_until_now(skill_files):
     """`docker events --until now` fails: "failed to parse value as time or duration"."""
     for path in skill_files:
-        for span in _fenced_lines(path.read_text()):
+        for span in _fenced_lines(path.read_text(encoding="utf-8")):
             assert "--until now" not in span, f"{path.name}: {span.strip()}"
 
 
 def test_no_snippet_depends_on_the_timeout_binary(skill_files):
     """`timeout(1)` is GNU coreutils and is absent from stock macOS, where these snippets run."""
     for path in skill_files:
-        for span in _fenced_lines(path.read_text()):
+        for span in _fenced_lines(path.read_text(encoding="utf-8")):
             assert not re.search(r"\btimeout\s+\d+\s+docker\b", span), f"{path.name}: {span.strip()}"
 
 
 def test_no_shell_snippet_declares_a_variable_named_status(skill_files):
     """`status` is read-only in zsh; `local status=...` aborts the function with a fatal error."""
     for path in skill_files:
-        for span in _fenced_lines(path.read_text()):
+        for span in _fenced_lines(path.read_text(encoding="utf-8")):
             assert not re.search(r"\blocal\b[^;]*\bstatus\b\s*=", span), f"{path.name}: {span.strip()}"
             assert not re.search(r"^\s*status=", span), f"{path.name}: {span.strip()}"
 
@@ -212,7 +212,7 @@ def test_compose_ls_is_not_slurped_and_compose_ps_is(skill_files):
     """The Compose plugin disagrees with itself: `ps --format json` is NDJSON, `ls --format json` is
     already an array. `jq -s` on the array yields a nested `[[...]]` that then fails to iterate."""
     for path in skill_files:
-        for span in _fenced_lines(path.read_text()):
+        for span in _fenced_lines(path.read_text(encoding="utf-8")):
             if "compose ls" in span and "--format json" in span:
                 assert "jq -s" not in span, f"{path.name} slurps an array: {span.strip()}"
             if "compose ps" in span and "--format json" in span and "| jq" in span:
@@ -237,7 +237,7 @@ def test_compose_ls_is_not_slurped_and_compose_ps_is(skill_files):
 def test_streaming_commands_are_bounded_in_every_snippet(skill_files, command, required, why):
     """The skill tells the agent to bound every stream; its own examples must not contradict it."""
     for path in skill_files:
-        for span in _command_spans(path.read_text()):
+        for span in _command_spans(path.read_text(encoding="utf-8")):
             stripped = span.strip()
             if not re.search(rf"{re.escape(command)}\b", stripped):
                 continue
@@ -254,7 +254,7 @@ def test_streaming_commands_are_bounded_in_every_snippet(skill_files, command, r
 def _parity_domain_counts() -> dict[str, int]:
     """`### containers (25) - ...` and `### networks (7) / volumes (5) - ...` headings."""
     counts: dict[str, int] = {}
-    for heading in re.findall(r"^### (.+)$", _COMPARISON_MD.read_text(), re.M):
+    for heading in re.findall(r"^### (.+)$", _COMPARISON_MD.read_text(encoding="utf-8"), re.M):
         for domain, count in re.findall(r"([a-z]+) \((\d+)\)", heading):
             counts[domain] = int(count)
     return counts
@@ -280,15 +280,15 @@ def test_parity_tool_counts_match_the_live_catalog():
 
 def test_parity_names_every_registered_prompt():
     """Each MCP prompt must map to a workflow, or the skill quietly loses that guidance."""
-    parity = _COMPARISON_MD.read_text()
+    parity = _COMPARISON_MD.read_text(encoding="utf-8")
     missing = [p["name"] for p in tool_catalog()["prompts"] if p["name"] not in parity]
     assert not missing, f"prompts absent from MCP_VS_SKILLS.md: {missing}"
 
 
 def test_every_tool_domain_is_routed_somewhere_in_the_skill():
     """A domain nobody can find is not covered, whatever the comparison doc claims."""
-    router = _SKILL_MD.read_text()
-    combined = router + "".join(p.read_text() for p in _skill_files())
+    router = _SKILL_MD.read_text(encoding="utf-8")
+    combined = router + "".join(p.read_text(encoding="utf-8") for p in _skill_files())
     for domain in _catalog_domain_counts():
         if domain == "uncategorised":
             continue
