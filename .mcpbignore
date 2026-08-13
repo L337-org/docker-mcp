@@ -9,6 +9,9 @@ server/venv/
 # Tests, tooling, CI, and dev metadata add nothing at runtime.
 tests/
 scripts/
+# The agent skill is a separate artifact (its own release archives) and an *alternative* to this
+# server, not part of it — packing it here would ship ~140 KB of markdown the bundle never reads.
+skills/
 .github/
 .idea/
 .vscode/
@@ -26,6 +29,7 @@ DOCKERHUB.md
 
 # Agent / project docs not needed inside the bundle.
 CLAUDE.md
+MCP_VS_SKILLS.md
 SECURITY.md
 CONTRIBUTING.md
 CODE_OF_CONDUCT.md

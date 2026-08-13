@@ -20,6 +20,7 @@ wheels
 .cursor
 .claude
 tests
+skills
 .DS_Store
 *~
 *.bak
