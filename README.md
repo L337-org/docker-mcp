@@ -385,6 +385,38 @@ claude mcp add docker-mcp-server-readonly \
   -- uvx --from git+https://github.com/L337-org/docker-mcp.git docker-mcp-server
 ```
 
+## Or don't use a server at all: the `l337-docker` agent skill
+
+A fair question about any MCP server is whether it needs to be one. This repo answers it in the open: [`skills/l337-docker/`](https://github.com/L337-org/docker-mcp/tree/main/skills/l337-docker) is a **Claude Code agent skill** that drives Docker purely through the `docker` CLI - no server process, no Python, nothing beyond a `docker` binary (plus `jq` and `curl` for a few registry recipes).
+
+It exists to mark the ceiling of the skill approach honestly, so you can judge the trade rather than take our word for it. It is written to be as good as that approach gets: a router plus per-domain references and workflows, every command verified against a real daemon, and its shell snippets executed by CI so they cannot drift. For a single local daemon and everyday work, **it may well be all you need - if so, use it.**
+
+Where it stops is not coverage but **enforcement**. The skill's safety rules are instructions in a prompt; the server's are refusals in code:
+
+| | MCP server | `l337-docker` skill |
+|---|---|---|
+| Read-only / no-destructive modes | Enforced - the tools are never registered | A written rule the agent is asked to follow |
+| Per-daemon write protection (`(ro)`/`(nd)`) | Enforced at the call boundary | Not available |
+| Self-termination guard | Enforced | A written rule |
+| Output bounding | Enforced, with a `truncated` flag | A written rule (`--tail`, `--no-stream`) |
+| Multi-daemon targeting | Resolved and pinned at startup | Ambient Docker contexts, which can move mid-session |
+| Requirements | Python ≥3.14, or a container | A `docker` binary |
+
+The distinction matters most where it is easiest to overlook: a rule in a prompt can be skipped under pressure, or talked around by a prompt injection sitting in a container log the agent just read. A tool that was never registered cannot be called at all. So prefer the server for anything pointed at production, or wherever you need a guarantee rather than an instruction - and prefer the skill when the stakes are low and the simplicity is worth more.
+
+**[MCP_VS_SKILLS.md](https://github.com/L337-org/docker-mcp/blob/main/MCP_VS_SKILLS.md)** is the full, honest comparison: measured token cost for both - the skill is far cheaper on an eager-loading client (~140 tokens idle against the server's ~48,500 at full surface, or ~19,200 trimmed to the domains you actually use), while the server is ~2-3x cheaper *per task* on a lazy-loading one - plus what each genuinely does better and a tool-by-tool coverage map of all 159 tools, 31 prompts and the resources.
+
+To install, download the archive from a [release](https://github.com/L337-org/docker-mcp/releases) and extract it into your skills directory. It is rooted at `l337-docker/`, so it lands correctly as-is:
+
+```bash
+# personal (all projects)
+tar -xzf l337-docker-skill-<version>.tar.gz -C ~/.claude/skills
+# or per-project, checked into version control
+tar -xzf l337-docker-skill-<version>.tar.gz -C .claude/skills
+```
+
+Verify it with the accompanying checksum (`sha256sum -c l337-docker-skill-<version>.tar.gz.sha256`); the archive is byte-reproducible, so rebuilding from the tag gives the same hash. The skill and the server can coexist - they label the resources they create differently and neither reads the other's.
+
 ## Security considerations
 
 Connecting this server to an AI agent grants it the same level of access as a local Docker CLI session against the configured daemon. That is broad: the daemon's socket is effectively root-equivalent on the host running it. Treat the agent as a privileged user and weigh the risks below before enabling the server.
@@ -415,6 +447,7 @@ Connecting this server to an AI agent grants it the same level of access as a lo
 | GHCR (container) | [ghcr.io/l337-org/docker-mcp-server](https://github.com/L337-org/docker-mcp/pkgs/container/docker-mcp-server) |
 | Docker Hub (container) | [gavinlucas/docker-mcp-server](https://hub.docker.com/r/gavinlucas/docker-mcp-server) |
 | Desktop Extension (.mcpb) | [GitHub Releases](https://github.com/L337-org/docker-mcp/releases) |
+| `l337-docker` agent skill (.tar.gz) | [GitHub Releases](https://github.com/L337-org/docker-mcp/releases) |
 | Official MCP Registry | [io.github.L337-org/docker-mcp-server](https://registry.modelcontextprotocol.io/v0.1/servers/io.github.L337-org%2Fdocker-mcp-server/versions) |
 | Glama | [docker-mcp-server](https://glama.ai/mcp/servers/L337-org/docker-mcp) |
 | mcp.so | [docker-mcp-server](https://mcp.so/servers/docker-1ae67d) |
