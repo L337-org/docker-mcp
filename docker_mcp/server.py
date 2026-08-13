@@ -10,7 +10,7 @@ import inspect
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, NoReturn
+from typing import Any, NoReturn, cast
 
 from mcp.server.mcpserver import MCPServer
 from mcp.types import ToolAnnotations
@@ -710,7 +710,11 @@ def _host_guard_needed() -> bool:
     return _hosts.is_multi() or _hosts.is_read_only() or _hosts.is_non_destructive()
 
 
-def _wrap_with_host_guard(func: Callable, name: str, category: ToolCategory) -> Callable:
+# The `[F: Callable[..., Any]]` type parameter on this and on `tool` below is what lets a decorator
+# say "returns exactly what it was given". The bare `Callable` these used to return carries no
+# parameter list, which silently disabled argument checking for every call to every decorated tool,
+# in the tests as well as at internal call sites.
+def _wrap_with_host_guard[F: Callable[..., Any]](func: F, name: str, category: ToolCategory) -> F:
     """Wrap a daemon-targeting tool so the host guard runs before it (when `_host_guard_needed()` —
     multi-host, or a single host flagged (ro) or (nd)). Preserves the signature so MCPServer builds
     the same schema/fn_metadata, and matches the func's sync/async-ness."""
@@ -731,7 +735,11 @@ def _wrap_with_host_guard(func: Callable, name: str, category: ToolCategory) -> 
             return await func(*args, **kwargs)
 
         async_wrapper.__signature__ = signature  # pyright: ignore[reportAttributeAccessIssue]
-        return async_wrapper
+        # cast because functools.wraps is opaque to the type checker: it produces a _Wrapped[...],
+        # not the wrapped function's own type. The claim being made is true at run time -- the
+        # signature assigned just above is the original's, which is exactly what callers and
+        # MCPServer's schema builder see.
+        return cast(F, async_wrapper)
 
     @functools.wraps(func)
     def wrapper(*args: Any, **kwargs: Any) -> Any:
@@ -739,10 +747,10 @@ def _wrap_with_host_guard(func: Callable, name: str, category: ToolCategory) -> 
         return func(*args, **kwargs)
 
     wrapper.__signature__ = signature  # pyright: ignore[reportAttributeAccessIssue]
-    return wrapper
+    return cast(F, wrapper)  # see the note on the async branch
 
 
-def tool(**kwargs: Any) -> Callable[[Callable], Callable]:
+def tool[F: Callable[..., Any]](**kwargs: Any) -> Callable[[F], F]:
     """
     Register an @mcp.tool with central classification — the drop-in `@tool()` every tool module uses.
 
@@ -752,7 +760,7 @@ def tool(**kwargs: Any) -> Callable[[Callable], Callable]:
     attach the matching ToolAnnotations.
     """
 
-    def decorator(func: Callable) -> Callable:
+    def decorator(func: F) -> F:
         name = func.__name__
         domain = _domain_for(func)
         category = TOOL_CATEGORIES.get(name, ToolCategory.MUTATING)

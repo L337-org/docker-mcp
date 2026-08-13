@@ -30,4 +30,4 @@ def test_scout_quickview_alpine_runs_with_default_arguments():
         what="scout quickview",
     )
     assert result["result"] is not None
-    assert "format" not in result  # quickview has no --format flag; see DM-21
+    assert "format" not in result  # quickview defines no --format flag, so the tool must not send one

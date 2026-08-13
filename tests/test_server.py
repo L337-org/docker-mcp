@@ -1,6 +1,7 @@
 import ast
 import inspect
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -833,6 +834,54 @@ def test_closed_value_sets_are_advertised_as_enums():
             assert sorted(found) == sorted(expected), (
                 f"{tool_name}.{param} advertises enum {found!r}, expected {expected!r}"
             )
+
+
+def test_pyright_still_checks_arguments_at_tool_call_sites(tmp_path):
+    # The @tool() decorator used to be typed `Callable[[Callable], Callable]`. A bare `Callable`
+    # carries no parameter list, so pyright -- a required CI gate that covers `tests` as well as
+    # `docker_mcp` -- silently checked nothing about how any of the 159 tools were called, and
+    # these three deliberate errors all passed it.
+    #
+    # This asserts the property rather than the mechanism: a structural check (that the decorator
+    # is still generic) would keep passing if someone reannotated the return type while leaving
+    # the type parameter in place, which is exactly the regression worth catching. Costs about a
+    # second, because pyright reuses the project's own configuration and environment.
+    pyright = shutil.which("pyright")
+    if pyright is None:
+        pytest.skip("pyright is not installed; it is a dev dependency, so the CI gate always has it")
+    # One deliberate error per line, so each can be asserted independently. Keep the line numbers
+    # in `expected` below in step with this source.
+    probe = tmp_path / "probe.py"
+    probe.write_text(
+        "from docker_mcp.tools.stack import stack_deploy\n"
+        'stack_deploy("web", compose_files=["c.yml"], resolve_image="sometimes")\n'
+        'stack_deploy(123, compose_files=["c.yml"])\n'
+        'stack_deploy("web", compose_files=["c.yml"], no_such_kwarg=True)\n'
+    )
+    result = subprocess.run(  # noqa: S603 — fixed argv, resolved binary, no shell; trusted test input
+        [pyright, "--outputjson", str(probe)],
+        capture_output=True,
+        text=True,
+        cwd=Path(__file__).resolve().parents[1],
+        timeout=300,
+    )
+    rules_by_line: dict[int, set[str]] = {}
+    for diagnostic in json.loads(result.stdout)["generalDiagnostics"]:
+        rules_by_line.setdefault(diagnostic["range"]["start"]["line"] + 1, set()).add(diagnostic.get("rule", ""))
+    # Keyed on line and rule id rather than message text: pyright's prose is human-readable output
+    # and can be reworded between versions, whereas the rule a diagnostic carries and the line it
+    # lands on are stable. Per-line also proves each error is caught individually, where matching
+    # substrings across the pooled output could let one diagnostic satisfy two assertions.
+    expected = {
+        2: ("reportArgumentType", "a value outside a Literal's set"),
+        3: ("reportArgumentType", "an int for a str parameter"),
+        4: ("reportCallIssue", "an unknown keyword argument"),
+    }
+    for line, (rule, what) in expected.items():
+        assert rule in rules_by_line.get(line, set()), (
+            f"{what} went unreported on line {line}: pyright is no longer checking arguments at tool "
+            f"call sites. Rules reported per line: {rules_by_line}"
+        )
 
 
 def test_no_registered_tool_schema_carries_title_annotations():

@@ -251,6 +251,15 @@ All publishing runs through one workflow on each **published GitHub Release** (n
   values for `isolation`), leave it a `str` and record why at the parameter, so a later pass does
   not re-propose it. `tests/test_server.py::test_closed_value_sets_are_advertised_as_enums` pins
   the current set.
+- **The `@tool()` decorator is generic (`def tool[F: Callable[..., Any]](...) -> Callable[[F], F]`)
+  so pyright checks arguments at every tool call site**, in tests and at internal callers alike.
+  Annotating it as a bare `Callable` erases the parameter list and silently disables that checking
+  everywhere: a wrong type, an unknown keyword and a value outside a `Literal` all passed the gate
+  until this was fixed. `tests/test_server.py::test_pyright_still_checks_arguments_at_tool_call_sites`
+  runs pyright over those three deliberate errors, so it also fails if only the return annotation is
+  loosened while the type parameter stays. A test that must pass a deliberately invalid value marks
+  that one call `# pyright: ignore[reportArgumentType]` with a reason, rather than being softened to
+  a legal one.
 - Line length limit: 120 characters (enforced by ruff and flake8).
 
 ## Provenance labels
