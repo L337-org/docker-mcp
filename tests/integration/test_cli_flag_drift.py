@@ -77,8 +77,16 @@ def _run_help(argv: list[str]) -> subprocess.CompletedProcess[str]:
     if docker is None:
         pytest.skip("no docker binary on PATH")
     try:
+        # Decode explicitly rather than via `text=True`, which uses the locale codec and can
+        # raise UnicodeDecodeError on a Windows console defaulting to cp1252. This matches
+        # `run_docker`, which captures bytes and decodes UTF-8 with errors="replace".
         return subprocess.run(  # noqa: S603
-            [docker, *argv, "--help"], capture_output=True, text=True, timeout=30, check=False
+            [docker, *argv, "--help"],
+            capture_output=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+            check=False,
         )
     except subprocess.TimeoutExpired:
         pytest.skip(f"`docker {' '.join(argv)} --help` timed out after 30s")
@@ -88,7 +96,7 @@ def _collect() -> list[tuple[str, str, list[str], list[str]]]:
     """(qualified name, cli, subcommand path, flags) for every statically-readable tool."""
     found = []
     for module, (cli, _) in _CLI_MODULES.items():
-        source = (_SRC / f"{module}.py").read_text()
+        source = (_SRC / f"{module}.py").read_text(encoding="utf-8")
         tree = ast.parse(source)
         for fn in [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)]:
             segment = ast.get_source_segment(source, fn) or ""

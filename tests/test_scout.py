@@ -3,8 +3,8 @@ from unittest.mock import patch
 import pytest
 
 from docker_mcp.tools._cli import CliResult
-from docker_mcp.tools import scout as scout_module
 from docker_mcp.tools.scout import (
+    _JSON_FORMATS,
     _maybe_parse_json,
     scout_compare,
     scout_cves,
@@ -59,7 +59,7 @@ def test_scout_cves_defaults_to_a_format_scout_actually_accepts():
     assert args[:2] == ["scout", "cves"]
     passed = args[args.index("--format") + 1]
     assert passed in {"packages", "sarif", "spdx", "gitlab", "markdown", "sbom"}
-    assert passed in scout_module._JSON_FORMATS
+    assert passed in _JSON_FORMATS
     assert args[-1] == "alpine:3.19"
     assert result["format"] == passed
     assert result["result"] == {"runs": []}

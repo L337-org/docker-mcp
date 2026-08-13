@@ -55,7 +55,7 @@ def _extract_shell_function(path: Path, name: str) -> str:
     Fails loudly rather than skipping if it is missing: a renamed or deleted helper means the skill
     no longer documents the behaviour these tests claim to cover.
     """
-    for block in re.findall(r"```bash\n(.*?)```", path.read_text(), re.S):
+    for block in re.findall(r"```bash\n(.*?)```", path.read_text(encoding="utf-8"), re.S):
         if block.lstrip().startswith(f"{name}()"):
             return block
     raise AssertionError(f"{name}() is no longer a bash snippet in {path.name}")
