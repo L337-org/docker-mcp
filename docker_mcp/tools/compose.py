@@ -126,7 +126,7 @@ def compose_up(
     profiles: list[str] | None = None,
     services: list[str] | None = None,
     build: bool = False,
-    pull: str | None = None,
+    pull: Literal["always", "missing", "never"] | None = None,
     remove_orphans: bool = False,
     wait: bool = False,
     timeout_seconds: float = _TIMEOUT_UP,
@@ -146,7 +146,7 @@ def compose_up(
         profiles - Profiles to activate
         services - Specific services to bring up (default: all)
         build - Build images before starting
-        pull - Pull strategy: "always", "missing", "never", or "policy" (compose default)
+        pull - Pull strategy; omit to use each service's own `pull_policy`
         remove_orphans - Remove containers for services not in the compose file
         wait - Block until services are healthy (adds `--wait`)
         timeout_seconds - Subprocess timeout (default 600s)
@@ -298,7 +298,7 @@ def compose_config(
     project_name: str | None = None,
     profiles: list[str] | None = None,
     services_only: bool = False,
-    format: str = "yaml",
+    format: Literal["yaml", "json"] = "yaml",
     host: str | None = None,
 ) -> dict:
     """
@@ -314,7 +314,7 @@ def compose_config(
         project_name - Compose project name override
         profiles - Profiles to activate before rendering
         services_only - List service names only (`--services`)
-        format - "yaml" (default) or "json"
+        format - Render as YAML (default) or JSON
     returns: dict - {"config": str|dict|None, "raw": <CliResult dict>};
                     `config` is a parsed dict when format="json" and parsing succeeds,
                     otherwise the rendered text from stdout.
@@ -654,6 +654,9 @@ def compose_images(
 def compose_port(
     service: str,
     private_port: int,
+    # Not an enum: compose performs no validation on this flag at all (tcp/udp/sctp and a bogus
+    # value are indistinguishable in its output), so the accepted set cannot be established from
+    # the tool itself, and guessing one risks refusing a value compose would have honoured.
     protocol: str = "tcp",
     index: int = 1,
     project_dir: str | None = None,

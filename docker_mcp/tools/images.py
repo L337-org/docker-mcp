@@ -23,10 +23,16 @@ def image_build(
     labels: dict | None = None,
     cache_from: list | None = None,
     target: str | None = None,
+    # Not an enum: alongside bridge/host/none/container:<id> this accepts any user-defined network
+    # name, so the set is open by construction.
     network_mode: str | None = None,
     squash: bool = False,
     extra_hosts: dict | None = None,
     platform: str | None = None,
+    # Not an enum: the accepted set is platform-dependent, and docker-py -- which is the call path
+    # here -- documents no values at all, only "Isolation technology used during build". The
+    # "default"/"process"/"hyperv" in the docstring are Docker's documented *Windows* values, given
+    # as examples rather than as a closed set to validate against.
     isolation: str | None = None,
     use_config_proxy: bool = True,
     host: str | None = None,
@@ -59,7 +65,8 @@ def image_build(
         squash - Squash all new layers into one (experimental; requires daemon flag)
         extra_hosts - Additional /etc/hosts entries during build; dict of hostname→ip
         platform - Target platform, e.g. "linux/amd64" (single platform only; use buildx for multi)
-        isolation - Windows isolation technology ("default", "process", "hyperv")
+        isolation - Isolation technology, passed to the daemon as given; platform-dependent, so not
+                      validated here (Windows documents "default", "process", "hyperv")
         use_config_proxy - Forward proxy env vars from Docker client config to build
     returns: dict - The built image's full inspect payload (as `docker inspect`)
     """

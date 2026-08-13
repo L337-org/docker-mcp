@@ -16,6 +16,7 @@
 
 import json
 from pathlib import Path
+from typing import Literal
 
 from docker_mcp.server import tool
 from docker_mcp.tools._cli import (
@@ -29,6 +30,12 @@ from docker_mcp.tools._cli import (
 
 # Scout calls are CDN-backed network queries; 5 minutes is plenty for any one image.
 _TIMEOUT_SCOUT = 300.0
+
+# Scout's severity vocabulary, shared by `cves` and `compare`. Closed set, verified against
+# `docker scout cves --help` ("Filter by severity, comma separated (default [], accepts:
+# critical, high, medium, low, unspecified])"). Constraining it as a Literal makes an invalid
+# value a schema-validation failure rather than a CLI error the agent has to interpret.
+Severity = Literal["critical", "high", "medium", "low", "unspecified"]
 
 
 def _refuse_local_path_args(candidates: dict[str, str | None]) -> None:
@@ -99,9 +106,9 @@ def _maybe_parse_json(text: str, format: str) -> dict | list | str | None:
 def scout_cves(
     image: str,
     only_fixed: bool = False,
-    only_severity: list[str] | None = None,
+    only_severity: list[Severity] | None = None,
     ignore_base: bool = False,
-    format: str = "sarif",
+    format: Literal["packages", "sarif", "spdx", "gitlab", "markdown", "sbom"] = "sarif",
     platform: str | None = None,
     host: str | None = None,
 ) -> dict:
@@ -118,12 +125,11 @@ def scout_cves(
     args:
         image - Image reference (a tag or a digest)
         only_fixed - Only report CVEs with a fixed version available
-        only_severity - Filter to severities: "critical", "high", "medium", "low", "unspecified"
+        only_severity - Filter to these severities (omit for all)
         ignore_base - Exclude CVEs introduced by the base image
-        format - Output format. JSON documents, parsed into `result`: "sarif" (default, the
-            standard vulnerability-report schema), "spdx", "gitlab", "sbom". Plain text, returned
-            verbatim: "packages" (Scout's own default, grouped by package), "markdown". Note there
-            is no plain "json" for this subcommand
+        format - Parsed into `result` as JSON: "sarif" (default, the standard vulnerability-report
+            schema), "spdx", "gitlab", "sbom". Returned verbatim as text: "packages" (Scout's own
+            default, grouped by package), "markdown". There is no plain "json" for this subcommand
         platform - Platform of the image to analyze, e.g. "linux/amd64"
     returns: dict - {"format": <format>, "result": <parsed-json-or-raw-text>,
                      "raw": <CliResult dict>}
@@ -217,9 +223,9 @@ def scout_compare(
     to: str | None = None,
     to_env: str | None = None,
     to_latest: bool = False,
-    only_severity: list[str] | None = None,
+    only_severity: list[Severity] | None = None,
     ignore_unchanged: bool = False,
-    format: str = "json",
+    format: Literal["json", "markdown", "text"] = "json",
     platform: str | None = None,
     host: str | None = None,
 ) -> dict:
@@ -240,9 +246,9 @@ def scout_compare(
                       only when the CLI runs on this host — see above)
         to_env - Compare against an image associated with this Scout environment
         to_latest - Compare against the latest scan of `image`
-        only_severity - Filter to severities ("critical", "high", "medium", "low", "unspecified")
+        only_severity - Filter to these severities (omit for all)
         ignore_unchanged - Exclude unchanged packages from the diff
-        format - Output format: "json" (default), "markdown", or "text"
+        format - Output format; only "json" (the default) is parsed into `result`
         platform - Platform of the image to analyze
     returns: dict - {"format": <format>, "result": <parsed-json-or-raw-text>,
                      "raw": <CliResult dict>}
@@ -271,7 +277,7 @@ def scout_compare(
 @tool()
 def scout_sbom(
     image: str,
-    format: str = "spdx",
+    format: Literal["list", "json", "spdx", "cyclonedx"] = "spdx",
     platform: str | None = None,
     host: str | None = None,
 ) -> dict:
@@ -287,8 +293,8 @@ def scout_sbom(
 
     args:
         image - Image reference
-        format - SBOM format: "spdx" (default, SPDX JSON), "cyclonedx" (CycloneDX JSON),
-                      "json" (Scout's native JSON), "list" (plain-text package list)
+        format - "spdx" (default, SPDX JSON), "cyclonedx" (CycloneDX JSON), "json" (Scout's native
+                      JSON), or "list" (plain-text package list)
         platform - Platform of the image to analyze
     returns: dict - {"format", "result", "raw": <CliResult dict>}. `result` is a parsed dict when
                     `format` is "spdx"/"cyclonedx"/"json" and stdout parses cleanly; for "list" or a

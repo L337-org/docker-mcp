@@ -239,6 +239,18 @@ All publishing runs through one workflow on each **published GitHub Release** (n
 - Every new `docker_mcp/tools/<module>.py` must have a matching `tests/test_<module>.py`.
 - Tool functions are decorated with `@tool()` (imported from `docker_mcp.server`) and must have a `TOOL_CATEGORIES` entry in `docker_mcp/server.py`.
 - **Bound any externally-sourced bytes before buffering/parsing them, and parse safely.** CLI output is capped in `run_docker` (`MAX_CLI_OUTPUT_BYTES`); registry HTTP bodies are streamed and capped at `_MAX_RESPONSE_BYTES` (`registry.py`) since registries are agent-pointed/untrusted (the cap is on the *decoded* stream, so it also stops a decompression bomb). New code that reads an untrusted file or network body must apply a similar bound. Always `json.loads` (never `eval`); if YAML is ever parsed in Python use `yaml.safe_load` only — today no module parses YAML (Compose YAML is read by the `docker` CLI, not us).
+- **A parameter whose legal values are a genuinely closed set is typed `Literal[...]`, not `str`.**
+  Pydantic turns that into an `enum` in the advertised `inputSchema` (`_slim_schema` preserves it,
+  proven by a test) so an out-of-set value fails validation before anything executes, and the
+  docstring then drops the value list rather than repeating it. Verify the set against a primary
+  source - the subcommand's own `--help`, or docker-py's documented value list - never from
+  memory: `docker scout cves --only-severity CRITICAL` exits 0 reporting no vulnerabilities on an
+  image with three critical CVEs, and the daemon records an unrecognised `--scope` verbatim, so a
+  wrong value is not reliably rejected by Docker itself. Where the set is *not* provably closed
+  (compose validates `--protocol` not at all; buildx drivers are pluggable; docker-py documents no
+  values for `isolation`), leave it a `str` and record why at the parameter, so a later pass does
+  not re-propose it. `tests/test_server.py::test_closed_value_sets_are_advertised_as_enums` pins
+  the current set.
 - Line length limit: 120 characters (enforced by ruff and flake8).
 
 ## Provenance labels

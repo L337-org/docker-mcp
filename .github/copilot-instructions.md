@@ -130,6 +130,18 @@ All publishing runs through one workflow on each **published GitHub Release**: `
 - New Docker functionality goes in the matching `docker_mcp/tools/<domain>.py` — do not create new tool files without a corresponding entry in `docker_mcp/tools/__init__.py` and a matching test file.
 - Tool functions are decorated with `@tool()` (imported from `docker_mcp.server`) and **must have a `TOOL_CATEGORIES` entry** in `docker_mcp/server.py`. A new tool module is a new domain - also add a `_DOMAIN_BLURBS` entry so the `instructions` router advertises it. A PR adding a tool must also bump the domain's count in `MCP_VS_SKILLS.md` (and cover the CLI equivalent in the matching `reference/` file); `tests/test_skill.py` derives the counts from `tool_catalog()`, so an unbumped count fails CI - a genuinely uncoverable tool belongs under "Structural gaps", not omitted silently.
 - A daemon-targeting tool declares `host: str | None = None` (last parameter) and threads it to `_get_client(host)` / `run_docker(..., host=host)`; it is intentionally **not** documented in the docstring `args:` (the `@tool()` decorator generates its description and strips/enum-injects it per mode — see the host-registry section). Registry/hub and context tools omit `host`.
+- **A parameter whose legal values are a genuinely closed set is typed `Literal[...]`, not `str`.**
+  Pydantic turns that into an `enum` in the advertised `inputSchema` (`_slim_schema` preserves it,
+  proven by a test) so an out-of-set value fails validation before anything executes, and the
+  docstring then drops the value list rather than repeating it. Verify the set against a primary
+  source - the subcommand's own `--help`, or docker-py's documented value list - never from
+  memory: `docker scout cves --only-severity CRITICAL` exits 0 reporting no vulnerabilities on an
+  image with three critical CVEs, and the daemon records an unrecognised `--scope` verbatim, so a
+  wrong value is not reliably rejected by Docker itself. Where the set is *not* provably closed
+  (compose validates `--protocol` not at all; buildx drivers are pluggable; docker-py documents no
+  values for `isolation`), leave it a `str` and record why at the parameter, so a later pass does
+  not re-propose it. `tests/test_server.py::test_closed_value_sets_are_advertised_as_enums` pins
+  the current set.
 - Line length limit: 120 characters.
 - **Bound any externally-sourced bytes before buffering/parsing them, and parse safely.** CLI output is capped in `run_docker` (`MAX_CLI_OUTPUT_BYTES`); registry HTTP bodies are streamed and capped at `_MAX_RESPONSE_BYTES` in `registry.py` (registries are agent-pointed/untrusted; the cap is on the *decoded* stream, so it also stops a decompression bomb). New code reading an untrusted file or network body must apply a similar bound. Always `json.loads` (never `eval`); if YAML is ever parsed in Python, `yaml.safe_load` only — today nothing parses YAML in Python (Compose YAML is read by the `docker` CLI). Flag a PR that buffers an untrusted body unbounded.
 - Do not add comments that describe what the code does — only add comments for non-obvious constraints or workarounds.

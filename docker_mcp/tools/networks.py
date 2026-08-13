@@ -1,5 +1,7 @@
 # library of mcp tools relating to network management
 
+from typing import Literal
+
 from docker_mcp.server import tool
 from docker_mcp.tools._labels import managed_filter, with_provenance
 from docker_mcp.tools._utils import drop_none
@@ -17,7 +19,7 @@ def network_create(
     labels: dict | None = None,
     enable_ipv6: bool = False,
     attachable: bool | None = None,
-    scope: str | None = None,
+    scope: Literal["local", "global", "swarm"] | None = None,
     ingress: bool | None = None,
     host: str | None = None,
 ) -> dict:
@@ -39,7 +41,7 @@ def network_create(
         labels - Labels to set on the network
         enable_ipv6 - Enable IPv6 networking
         attachable - Allow standalone containers to attach (swarm overlay networks)
-        scope - Network scope: "local", "global", or "swarm"
+        scope - Network scope; the driver picks a sensible default when omitted
         ingress - Make this an ingress network for swarm routing-mesh
     returns: dict - The created network's attrs (Id, Name, Driver, Scope, IPAM)
     """

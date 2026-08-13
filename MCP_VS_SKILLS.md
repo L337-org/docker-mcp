@@ -107,9 +107,22 @@ macOS, `status` fatal as a variable name in zsh, `jq -s` applied to something th
 array. A JSON Schema makes that entire class of mistake unrepresentable. Nothing in the skill can,
 because the CLI has no machine-readable description of its own flags.
 
-One honest qualification: only 3 of those 591 parameters carry an `enum`. Constrained *values* are
-documented in prose on both sides, so the server's advantage is over argument names, types and
-requiredness rather than over the set of legal values.
+One honest qualification: only 12 of those 591 parameters carry an `enum`. The other 98% have their
+legal values documented in prose on both sides, so the server's advantage is mostly over argument
+names, types and requiredness rather than over the set of legal values.
+
+Where the values *are* constrained it matters more than it sounds, because a wrong CLI value is not
+always rejected. `docker scout cves --only-severity CRITICAL` exits 0 and reports "No vulnerable
+packages detected" for an image that `--only-severity critical` reports three critical CVEs for:
+severity is matched case-sensitively, a non-matching value filters every finding out, and the
+empty result is worded as a clean scan. `--exit-code` does not catch it either, since it counts
+what survived the filter. `docker network create --scope bogus` likewise succeeds, recording the
+unrecognised scope on the network.
+
+On the server both are schema-validation errors before anything runs. The skill can only warn, as
+its Scout reference does, and a warning is advisory where a schema is not. So the argument
+advantage is less "the server catches bad flags sooner" than "some bad values are never caught at
+all, and only a schema can make them unrepresentable".
 
 **Searchability goes the other way.** The skill is plain files on disk, so the model can grep the
 entire corpus in one command and read a whole file when it wants breadth. An MCP server offers no

@@ -314,6 +314,8 @@ def buildx_build(
     cache_to: list[str] | None = None,
     builder: str | None = None,
     sbom: str | None = None,
+    # Not an enum: accepts "true"/"false"/"min"/"max" *or* an arbitrary `key=value,...` attestation
+    # config string, so the value space is open.
     provenance: str | None = None,
     attest: list[str] | None = None,
     secret: list[str] | None = None,
@@ -856,6 +858,8 @@ def buildx_prune(
 @tool()
 def buildx_create(
     name: str | None = None,
+    # Not an enum: buildx drivers are pluggable (docker, docker-container, kubernetes, remote,
+    # cloud, ...) and the set grows with the plugin, so pinning it would date badly.
     driver: str | None = None,
     driver_opts: dict | None = None,
     use: bool = False,
