@@ -37,9 +37,10 @@ Uppercase is the spelling Scout uses in its own output (`✗ CRITICAL CVE-2026-4
 easy mistake to make, and the result looks like a clean scan rather than an error. Always pass
 these lowercase: `critical`, `high`, `medium`, `low`, `unspecified`.
 
-`--exit-code` does not protect you here: it counts what survived the filter, so `-e
---only-severity CRITICAL` exits 0 on the same image that `-e --only-severity critical` exits 2 on.
-The scan did run either way (the `packages` count is identical); only the filter differed.
+`--exit-code` does not protect you here: it counts what survived the filter, so
+`-e --only-severity CRITICAL` exits 0 on the same image that `-e --only-severity critical`
+exits 2 on. The scan did run either way (the `packages` count is identical); only the filter
+differed.
 
 `--only-fixed` is the important half: a critical with no upstream fix available is not something
 the user can act on today, and mixing the two makes the report look unmanageable. Report fixable

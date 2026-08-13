@@ -122,8 +122,8 @@ against the assumption that a wrong CLI value simply gets rejected:
   likelier one to copy, and the failure presents as a clean security report: the scan really did
   run (the package count is identical), the findings were simply filtered out, and the empty-state
   message is the one written for a genuinely clean image. `--exit-code` is no protection either,
-  because it counts what survived the filter: `-e --only-severity CRITICAL` exits 0 where `-e
-  --only-severity critical` exits 2.
+  because it counts what survived the filter: `-e --only-severity CRITICAL` exits 0 where
+  `-e --only-severity critical` exits 2.
 - `docker network create --scope bogus` succeeds and records `scope=bogus` on the network.
 
 Both are now schema-validation errors on the server, raised before anything executes. The skill
