@@ -826,7 +826,13 @@ def test_closed_value_sets_are_advertised_as_enums():
             schema = properties[param]
             # A list-valued param carries its enum on `items`; a scalar carries it directly.
             found = schema.get("enum") or schema.get("items", {}).get("enum")
-            assert found == expected, f"{tool_name}.{param} advertises enum {found!r}, expected {expected!r}"
+            assert found is not None, f"{tool_name}.{param} advertises no enum, expected {expected!r}"
+            # Compared as a sorted multiset: order carries no meaning in JSON Schema, so pinning
+            # pydantic's emission order would assert an implementation detail. Sorting still catches
+            # a missing, extra or duplicated value, which is the whole promise here.
+            assert sorted(found) == sorted(expected), (
+                f"{tool_name}.{param} advertises enum {found!r}, expected {expected!r}"
+            )
 
 
 def test_no_registered_tool_schema_carries_title_annotations():
