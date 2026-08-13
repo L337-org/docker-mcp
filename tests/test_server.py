@@ -25,6 +25,7 @@ from docker_mcp.server import (
     _enforce_host_guard,
     _host_guard_needed,
     _parse_domains,
+    query_catalog,
     _prompt_registry,
     _seen_tool_names,
     _should_register,
@@ -479,6 +480,95 @@ def test_tool_catalog_reports_switch_state_and_domain_counts():
     assert catalog["unknown_disabled_domains"] == []
 
 
+# ---------- catalog queries (query_catalog) ----------
+
+
+def test_query_catalog_filters_by_domain():
+    result = query_catalog(domain="scout")
+    assert result["matched"] == len(result["tools"]) > 0
+    assert {row["domain"] for row in result["tools"]} == {"scout"}
+    assert result["filters"]["domain"] == "scout"
+
+
+def test_query_catalog_filters_by_category():
+    result = query_catalog(category="destructive")
+    assert result["matched"] > 0
+    assert {row["category"] for row in result["tools"]} == {"destructive"}
+    # Cross-checked against the central map, so this cannot pass by echoing its own filter back.
+    expected = {name for name, cat in TOOL_CATEGORIES.items() if cat is ToolCategory.DESTRUCTIVE}
+    assert {row["name"] for row in result["tools"]} == expected
+
+
+def test_query_catalog_keyword_matches_a_tool_name():
+    assert "container_prune" in {row["name"] for row in query_catalog(keyword="prune")["tools"]}
+
+
+def test_query_catalog_keyword_matches_a_parameter_name():
+    # `host` is a parameter on most tools and appears in no tool name, so a match proves the
+    # parameter names are searched rather than the name alone.
+    matched = {row["name"] for row in query_catalog(keyword="host")["tools"]}
+    assert "container_list" in matched
+    assert "host" not in "container_list"
+
+
+def test_query_catalog_keyword_matches_summary_text():
+    # "vulnerabilit" appears in one summary (scout_cves) and in no tool name or parameter name, so a
+    # match can only have come from the summary. Anchored on a term with that property rather than
+    # one that also occurs in a name, or the assertion would pass without the summary being searched.
+    assert not any("vulnerabilit" in row["name"] for row in query_catalog()["tools"])
+    matched = {row["name"] for row in query_catalog(keyword="vulnerabilit")["tools"]}
+    assert matched == {"scout_cves"}
+
+
+def test_query_catalog_keyword_is_case_insensitive():
+    assert query_catalog(keyword="PRUNE")["matched"] == query_catalog(keyword="prune")["matched"] > 0
+
+
+def test_query_catalog_combines_filters():
+    result = query_catalog(domain="containers", category="destructive")
+    assert result["matched"] > 0
+    assert all(r["domain"] == "containers" and r["category"] == "destructive" for r in result["tools"])
+
+
+def test_query_catalog_domain_keys_are_all_usable_as_filters():
+    # Every advertised domain has to be a value `domain=` accepts, returning exactly that count.
+    # Domain-less tools are counted separately rather than under "", which would look selectable and
+    # match nothing, costing a caller a wasted call to find out.
+    catalog = query_catalog()
+    assert "" not in catalog["domains"]
+    for name, count in catalog["domains"].items():
+        assert query_catalog(domain=name)["matched"] == count, f"domain {name!r} is not a usable filter"
+    assert catalog["no_domain"] == len(_NO_DOMAIN_TOOLS)
+    assert catalog["matched"] == sum(catalog["domains"].values()) + catalog["no_domain"]
+
+
+def test_query_catalog_returns_an_explicit_empty_result_rather_than_raising():
+    # A definitive negative is the point: "nothing matches" has to be distinguishable from a failure,
+    # which is what a client's fuzzy description search can never assert.
+    result = query_catalog(keyword="zzz-no-such-capability")
+    assert result["matched"] == 0
+    assert result["tools"] == []
+    # Still tells the caller what does exist, so an empty result is recoverable without a second guess.
+    assert result["domains"]
+
+
+def test_query_catalog_rows_carry_a_one_line_summary_not_the_full_description():
+    rows = query_catalog(domain="volumes")["tools"]
+    assert rows
+    for row in rows:
+        assert row["summary"], f"{row['name']} has no summary"
+        assert "\n" not in row["summary"]
+        # The docstring's first line, not the whole thing: a full definition would be far longer.
+        assert len(row["summary"]) < 200
+
+
+def test_query_catalog_summary_matches_the_docstring_first_line():
+    summary = {row["name"]: row["summary"] for row in query_catalog(domain="volumes")["tools"]}["volume_create"]
+    from docker_mcp.tools.volumes import volume_create
+
+    assert summary == (volume_create.__doc__ or "").strip().splitlines()[0].strip()
+
+
 # ---------- end-to-end registration under the env switches (separate processes) ----------
 
 
@@ -506,6 +596,45 @@ def _env_with(assignments: list[str]) -> dict:
         key, _, value = assignment.partition("=")
         env[key] = value
     return env
+
+
+def _catalog_in_child(env_vars: list[str]) -> dict:
+    """Run query_catalog() in a child process under the given env switches."""
+    code = "import json, docker_mcp; from docker_mcp.server import query_catalog; print(json.dumps(query_catalog()))"
+    result = subprocess.run(  # noqa: S603 — fixed argv, sys.executable, no shell; trusted test input
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        env=_env_with(env_vars),
+        check=True,
+    )
+    return json.loads(result.stdout)
+
+
+def test_catalog_never_lists_a_tool_the_configuration_dropped():
+    # The catalog reports what registered, so a disabled domain's tools are absent rather than
+    # listed-and-flagged. Advertising a capability the server will refuse leaks its existence.
+    catalog = _catalog_in_child(["DOCKER_MCP_SERVER_DISABLE=scout,swarm"])
+    assert "scout" not in catalog["domains"] and "swarm" not in catalog["domains"]
+    assert not [row for row in catalog["tools"] if row["domain"] in {"scout", "swarm"}]
+    # But the configuration stays auditable in aggregate: the counts say how many are hidden.
+    assert catalog["hidden_by_configuration"]["scout"] > 0
+    assert catalog["hidden_by_configuration"]["swarm"] > 0
+
+
+def test_catalog_excludes_tools_dropped_by_the_read_only_switch():
+    catalog = _catalog_in_child(["DOCKER_MCP_SERVER_READONLY=1"])
+    assert {row["category"] for row in catalog["tools"]} == {"read_only"}
+    assert catalog["switches"]["DOCKER_MCP_SERVER_READONLY"] is True
+
+
+def test_tool_list_survives_every_domain_being_disabled():
+    # It is in _NO_DOMAIN_TOOLS precisely so a client can still ask what is left; a catalog that
+    # disappears exactly when the surface is most reduced would be useless.
+    every_domain = ",".join(sorted({r.domain for r in _tool_registry.values() if r.domain}))
+    names = _registered_names([f"DOCKER_MCP_SERVER_DISABLE={every_domain}"])
+    assert "tool_list" in names
+    assert names == set(_NO_DOMAIN_TOOLS)
 
 
 def _names_by_category(*categories: ToolCategory) -> set[str]:

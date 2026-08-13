@@ -209,8 +209,9 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "hub_tags": ToolCategory.READ_ONLY,
     "hub_repo_info": ToolCategory.READ_ONLY,
     "hub_rate_limit": ToolCategory.READ_ONLY,
-    # docs (no domain — always registered, see _NO_DOMAIN_TOOLS)
+    # docs and catalog (no domain — always registered, see _NO_DOMAIN_TOOLS)
     "docs_lookup": ToolCategory.READ_ONLY,
+    "tool_list": ToolCategory.READ_ONLY,
 }
 
 # Destructive tools whose effect is idempotent — re-running has no additional effect (the targets
@@ -259,6 +260,11 @@ class ToolRecord:
     domain: str | None
     category: ToolCategory
     registered: bool
+    # Captured at registration so a catalog query needs no reach-in to MCPServer's tool manager:
+    # `summary` is the docstring's first line (the one-liner a briefing shows instead of a full
+    # definition), `params` the declared parameter names (so "which tools take a host?" is answerable).
+    summary: str = ""
+    params: tuple[str, ...] = ()
 
 
 # Every tool the `@tool()` decorator has processed this run, whether or not it was registered (the
@@ -300,7 +306,7 @@ def is_domain_disabled(domain: str | None) -> bool:
 # Tools with no domain at all — never gated by DOCKER_MCP_SERVER_DISABLE, since their value doesn't
 # correspond to a specific Docker feature area being enabled/disabled. Mirrors `@prompt(domain=None)`'s
 # identical "cross-cutting, always available" semantics for prompts (see `docs_lookup` in resources.py).
-_NO_DOMAIN_TOOLS: frozenset[str] = frozenset({"docs_lookup"})
+_NO_DOMAIN_TOOLS: frozenset[str] = frozenset({"docs_lookup", "tool_list"})
 
 
 def _domain_for(func: Callable) -> str | None:
@@ -326,6 +332,101 @@ def _should_register(category: ToolCategory, *, readonly: bool, no_destructive: 
 def _domain_enabled(domain: str, disabled: frozenset[str]) -> bool:
     """Decide whether a tool's domain survives the DOCKER_MCP_SERVER_DISABLE switch."""
     return domain not in disabled
+
+
+def _summary_for(func: Callable[..., Any]) -> str:
+    """
+    First line of a tool's docstring -- the one-liner a catalog row carries instead of the full text.
+
+    The house docstring format puts a standalone summary sentence first, so the first non-empty line
+    is the summary by construction. Returns "" for an undocumented tool rather than raising, since a
+    missing summary should degrade the catalog row, not prevent registration.
+    """
+    for line in (func.__doc__ or "").strip().splitlines():
+        if line.strip():
+            return line.strip()
+    return ""
+
+
+def query_catalog(
+    domain: str | None = None,
+    category: str | None = None,
+    keyword: str | None = None,
+) -> dict[str, Any]:
+    """
+    Registered tools matching the given filters, as compact rows.
+
+    Only registered tools are listed. A tool dropped by a read-only switch or a disabled domain is
+    absent rather than present-and-flagged: advertising a capability the server will refuse leaks its
+    existence and invites a bypass attempt. What each domain is *hiding* is still visible in
+    aggregate through `hidden_by_configuration`, so the configuration stays auditable without naming
+    the tools it removed.
+
+    args:
+        domain - Exact domain name to restrict to, or None for every domain
+        category - Exact category value ("read_only"/"mutating"/"destructive"), or None for all
+        keyword - Case-insensitive substring matched against name, summary and parameter names
+    returns: dict - {"matched", "tools", "domains", "no_domain", "hidden_by_configuration", "switches",
+                    "filters"}. `domains` and `hidden_by_configuration` are keyed by real domain
+                    names only; `no_domain` counts the always-registered domain-less tools, whose
+                    rows carry `domain: None` and which no `domain=` value selects.
+    """
+    wanted = keyword.lower() if keyword else None
+    rows = []
+    for record in sorted(_tool_registry.values(), key=lambda r: (r.domain or "", r.name)):
+        if not record.registered:
+            continue
+        if domain is not None and record.domain != domain:
+            continue
+        if category is not None and record.category.value != category:
+            continue
+        if wanted is not None and not (
+            wanted in record.name.lower()
+            or wanted in record.summary.lower()
+            or any(wanted in param.lower() for param in record.params)
+        ):
+            continue
+        rows.append(
+            {
+                "name": record.name,
+                "domain": record.domain,
+                "category": record.category.value,
+                "summary": record.summary,
+            }
+        )
+    # Both maps are keyed by real domain names only, so every key is a value `domain=` accepts.
+    # The `_NO_DOMAIN_TOOLS` are counted separately rather than under an empty-string key: "" is not
+    # a domain, `domain=""` would match nothing (their rows carry `domain: None`), and offering it as
+    # if it were selectable is the kind of near-miss that costs a caller a wasted call to discover.
+    counts: dict[str, int] = {}
+    no_domain = 0
+    for record in _tool_registry.values():
+        if not record.registered:
+            continue
+        if record.domain is None:
+            no_domain += 1
+        else:
+            counts[record.domain] = counts.get(record.domain, 0) + 1
+    hidden: dict[str, int] = {}
+    for record in _tool_registry.values():
+        # A domain-less tool cannot be hidden *by domain*; only a category switch could drop one, and
+        # `switches` already reports that, so it would be misleading to attribute it to a domain here.
+        if not record.registered and record.domain is not None:
+            hidden[record.domain] = hidden.get(record.domain, 0) + 1
+    return {
+        "matched": len(rows),
+        "tools": rows,
+        # Always present, so a query matching nothing still shows what does exist to search instead.
+        "domains": dict(sorted(counts.items())),
+        "no_domain": no_domain,
+        "hidden_by_configuration": dict(sorted(hidden.items())),
+        "switches": {
+            "DOCKER_MCP_SERVER_READONLY": READONLY,
+            "DOCKER_MCP_SERVER_NO_DESTRUCTIVE": NO_DESTRUCTIVE,
+            "DOCKER_MCP_SERVER_DISABLE": sorted(DISABLED_DOMAINS),
+        },
+        "filters": {"domain": domain, "category": category, "keyword": keyword},
+    }
 
 
 def tool_catalog() -> dict[str, Any]:
@@ -768,7 +869,14 @@ def tool[F: Callable[..., Any]](**kwargs: Any) -> Callable[[F], F]:
             domain is None or _domain_enabled(domain, DISABLED_DOMAINS)
         )
         _seen_tool_names.add(name)
-        _tool_registry[name] = ToolRecord(name=name, domain=domain, category=category, registered=registered)
+        _tool_registry[name] = ToolRecord(
+            name=name,
+            domain=domain,
+            category=category,
+            registered=registered,
+            summary=_summary_for(func),
+            params=tuple(inspect.signature(func).parameters),
+        )
         if not registered:
             return func
         # Daemon-targeting tools (those declaring a `host` param) get a call-time host guard when there's
