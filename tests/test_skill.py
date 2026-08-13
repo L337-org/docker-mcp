@@ -108,13 +108,19 @@ def test_the_skill_conforms_to_the_open_agent_skills_specification():
     assert match
     meta = yaml.safe_load(match.group(1))
 
-    name = meta.get("name", "")
+    # Assert the type before the shape. YAML infers types, so `description: 123` reaches `len()` as
+    # an int and `description: [a, b]` is a two-element list that sails through the length check
+    # entirely. Without these, a malformed frontmatter either fails with an opaque TypeError or,
+    # worse, passes.
+    name = meta.get("name")
+    assert isinstance(name, str), f"`name` must be a string, got {type(name).__name__}"
     assert re.fullmatch(r"[a-z0-9]+(-[a-z0-9]+)*", name), f"{name!r} must be lowercase and hyphenated"
     assert len(name) <= 64, "spec caps `name` at 64 characters"
     assert name == _SKILL_DIR.name, "the spec requires `name` to match the skill's directory"
 
-    description = meta.get("description", "")
-    assert description, "`description` is required"
+    description = meta.get("description")
+    assert isinstance(description, str), f"`description` must be a string, got {type(description).__name__}"
+    assert description.strip(), "`description` is required and cannot be blank"
     assert len(description) <= 1024, f"spec caps `description` at 1024 characters, got {len(description)}"
 
 
