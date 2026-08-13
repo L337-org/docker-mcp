@@ -10,13 +10,14 @@ import pytest
 import docker_mcp  # noqa: F401 — side-effect import: docker_mcp/__init__ runs _hosts.load() to pin the registry
 import docker_mcp._hosts as _hosts_mod
 from docker_mcp._hosts import parse_registry
-from docker_mcp.server import TOOL_CATEGORIES
+from docker_mcp.server import query_catalog, TOOL_CATEGORIES
 from docker_mcp.tools.resources import (
     DOCKER_DOCS_BASE_URL,
     EXTERNAL_SECTIONS,
     SDK_SECTIONS,
     _MAX_DOCS_RESPONSE_BYTES,
     docs_lookup,
+    tool_list,
     get_container_logs_resource,
     get_container_stats_resource,
     get_docs_section,
@@ -473,3 +474,46 @@ def test_multi_host_registers_node_uris_end_to_end():
     uris = _registered_resource_uris("local=ssh://a, prod=ssh://b")
     assert {"docker:///nodes", "docker://{host}/nodes"} <= uris
     assert "docker://nodes" not in uris
+
+
+# ---------- tool_list: tool-callable mirror of docker-mcp://tool-catalog ----------
+
+
+def test_tool_list_mirrors_query_catalog():
+    # The tool is a thin pass-through, so behaviour cannot drift between the two entry points -- the
+    # same reason docs_lookup calls list_docs_sections()/get_docs_section() rather than duplicating them.
+    assert tool_list(domain="volumes") == query_catalog(domain="volumes")
+    assert tool_list(category="destructive", keyword="prune") == query_catalog(category="destructive", keyword="prune")
+
+
+def test_tool_list_gives_a_client_without_resources_the_same_registered_surface():
+    # The acceptance question this answers: a client that cannot read MCP resources must not be
+    # second-class. Every tool the catalog resource reports as registered is reachable through here.
+    from docker_mcp.server import tool_catalog
+
+    via_resource = {t["name"] for t in tool_catalog()["tools"] if t["registered"]}
+    via_tool = {row["name"] for row in tool_list()["tools"]}
+    assert via_tool == via_resource
+
+
+def test_tool_list_briefing_on_a_domain_is_far_cheaper_than_the_definitions_it_replaces():
+    # The point of one-line rows: orienting in an unfamiliar domain should not cost what fetching
+    # every definition in it costs. Compared against the real advertised descriptions.
+    import asyncio
+
+    from docker_mcp.server import mcp
+
+    rows = tool_list(domain="buildx")["tools"]
+    assert rows
+    briefing = sum(len(row["summary"]) for row in rows)
+    registered = {t.name: t for t in asyncio.run(mcp.list_tools())}
+    definitions = sum(len(registered[row["name"]].description or "") for row in rows)
+    assert briefing * 4 < definitions, f"briefing {briefing} chars vs {definitions} of definitions"
+
+
+def test_tool_list_is_registered_and_read_only():
+    from docker_mcp.server import _NO_DOMAIN_TOOLS, TOOL_CATEGORIES, ToolCategory, _tool_registry
+
+    assert TOOL_CATEGORIES["tool_list"] is ToolCategory.READ_ONLY
+    assert "tool_list" in _NO_DOMAIN_TOOLS
+    assert _tool_registry["tool_list"].domain is None

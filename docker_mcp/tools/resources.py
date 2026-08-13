@@ -1,11 +1,12 @@
 # library of mcp resources for viewing docker SDK and CLI-feature documentation
 
 import json
+from typing import Literal
 
 import httpx
 
 import docker_mcp._hosts as _hosts
-from docker_mcp.server import is_domain_disabled, mcp, register_resource_domains, tool, tool_catalog
+from docker_mcp.server import is_domain_disabled, mcp, query_catalog, register_resource_domains, tool, tool_catalog
 from docker_mcp.tools._utils import package_version
 from docker_mcp.tools.system import _get_client, host_list
 from docker_mcp.tools.containers import _read_log_tail, _read_stats_summary
@@ -569,3 +570,36 @@ def docs_lookup(section: str | None = None) -> str:
     if section is None:
         return list_docs_sections()
     return get_docs_section(section)
+
+
+@tool()
+def tool_list(
+    domain: str | None = None,
+    category: Literal["read_only", "mutating", "destructive"] | None = None,
+    keyword: str | None = None,
+) -> dict:
+    """
+    List this server's registered tools as compact rows, filtered by domain, category or keyword.
+
+    A tool-callable mirror of `docker-mcp://tool-catalog` for clients that can't read MCP resources
+    (e.g. Claude Desktop, Cursor), and the only way to ask what no per-tool description search can
+    express: which tools are destructive, which accept a `host`, what this server actually
+    registered. Use it to brief on an unfamiliar area (`domain="buildx"` returns one line per tool
+    rather than ~13 full definitions), to check blast radius (`category="destructive"`), or to
+    establish that nothing matches — `matched: 0` is a definitive negative, which a client's fuzzy
+    search cannot give. Covers this server's own surface; `docs_lookup` covers external Docker
+    reference documentation. Rows are summaries, not definitions — fetch a tool's own definition for
+    its parameters. Read-only, never raises on a query matching nothing, and always registered even
+    when DOCKER_MCP_SERVER_DISABLE drops every domain. A tool dropped by a switch or a disabled
+    domain is absent rather than flagged; `hidden_by_configuration` reports how many each domain
+    hides.
+
+    args:
+        domain - Exact domain name (see any result's `domains` key); omit for every domain
+        category - Exact category; omit for all three
+        keyword - Case-insensitive substring over tool names, summaries and parameter names
+    returns: dict - {"matched": int, "tools": [{"name", "domain", "category", "summary"}],
+                     "domains": {domain: count}, "hidden_by_configuration": {domain: count},
+                     "switches", "filters"}
+    """
+    return query_catalog(domain=domain, category=category, keyword=keyword)
