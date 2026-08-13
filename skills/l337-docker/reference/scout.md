@@ -50,7 +50,7 @@ Further narrowing:
 docker scout cves <image> --only-package-type deb,apk        # OS packages only
 docker scout cves <image> --only-package 'openssl|libssl'
 docker scout cves <image> --format sarif --output scan.sarif  # for CI / code scanning
-docker scout cves <image> --format only-packages
+docker scout cves <image> --format packages           # Scout's own default, grouped by package
 ```
 
 Write large reports to a **file** with `--output` and summarise. Never stream a full CVE dump into

@@ -75,9 +75,16 @@ def _run_scout(
     return run_docker(["scout", *args], timeout=timeout, host=host)
 
 
+# Scout format values that emit JSON, across every subcommand that takes `--format`. Scout names
+# these after the *schema* rather than the encoding ("sarif", "spdx", "cyclonedx", "gitlab", "sbom"
+# are all JSON documents), so keying the parse on the literal string "json" only ever worked for
+# `compare` and `sbom` — and silently returned unparsed text for the rest.
+_JSON_FORMATS = frozenset({"json", "sarif", "spdx", "gitlab", "sbom", "cyclonedx"})
+
+
 def _maybe_parse_json(text: str, format: str) -> dict | list | str | None:
-    """Parse `text` as JSON when `format=='json'`, otherwise return the raw text."""
-    if format != "json":
+    """Parse `text` as JSON when `format` names a JSON-emitting format, else return the raw text."""
+    if format not in _JSON_FORMATS:
         return text
     stripped = text.strip()
     if not stripped:
@@ -94,7 +101,7 @@ def scout_cves(
     only_fixed: bool = False,
     only_severity: list[str] | None = None,
     ignore_base: bool = False,
-    format: str = "json",
+    format: str = "sarif",
     platform: str | None = None,
     host: str | None = None,
 ) -> dict:
@@ -113,8 +120,10 @@ def scout_cves(
         only_fixed - Only report CVEs with a fixed version available
         only_severity - Filter to severities: "critical", "high", "medium", "low", "unspecified"
         ignore_base - Exclude CVEs introduced by the base image
-        format - Output format: "json" (default; parsed into the return dict),
-                      "sarif", "spdx", "list", "markdown", or "text"
+        format - Output format. JSON documents, parsed into `result`: "sarif" (default, the
+            standard vulnerability-report schema), "spdx", "gitlab", "sbom". Plain text, returned
+            verbatim: "packages" (Scout's own default, grouped by package), "markdown". Note there
+            is no plain "json" for this subcommand
         platform - Platform of the image to analyze, e.g. "linux/amd64"
     returns: dict - {"format": <format>, "result": <parsed-json-or-raw-text>,
                      "raw": <CliResult dict>}
@@ -134,28 +143,29 @@ def scout_cves(
 
 
 @tool()
-def scout_quickview(image: str, format: str = "json", platform: str | None = None, host: str | None = None) -> dict:
+def scout_quickview(image: str, platform: str | None = None, host: str | None = None) -> dict:
     """
     Render a compact summary of an image's CVE posture.
 
     The fastest triage step — counts per severity plus base-image status. Drill into individual
-    findings with `scout_cves`; get upgrade suggestions with `scout_recommendations`.
+    findings with `scout_cves`, which unlike this tool can emit machine-readable JSON; get upgrade
+    suggestions with `scout_recommendations`.
+    Output is plain text only: `docker scout quickview` has no output-format option, so `result`
+    is always the rendered text rather than a parsed document.
     Does not raise on a non-zero CLI exit (a missing scout plugin still raises) — inspect
     `raw.stderr`.
 
     args:
         image - Image reference
-        format - Output format: "json" (default) or "text"
         platform - Platform of the image to analyze, e.g. "linux/amd64"
-    returns: dict - {"format": <format>, "result": <parsed-json-or-raw-text>,
-                     "raw": <CliResult dict>}
+    returns: dict - {"result": <rendered text>, "raw": <CliResult dict>}
     """
-    args: list[str] = ["quickview", "--format", format]
+    args: list[str] = ["quickview"]
     if platform is not None:
         args.extend(["--platform", platform])
     args.append(safe_positional(image, "image"))
     result = _run_scout(args, host=host)
-    return {"format": format, "result": _maybe_parse_json(result.stdout, format), "raw": result.to_dict()}
+    return {"result": result.stdout, "raw": result.to_dict()}
 
 
 @tool()
@@ -164,7 +174,6 @@ def scout_recommendations(
     only_refresh: bool = False,
     only_update: bool = False,
     tag: str | None = None,
-    format: str = "json",
     platform: str | None = None,
     host: str | None = None,
 ) -> dict:
@@ -175,6 +184,8 @@ def scout_recommendations(
     CLI (the target `ssh://` host itself when no local scout plugin is installed) to return useful
     results for private or rarely-scanned base images. The natural follow-up to `scout_cves` when the
     fix is a newer base image.
+    Output is plain text only: `docker scout recommendations` has no output-format option, so
+    `result` is always the rendered text rather than a parsed document.
     Does not raise on a non-zero CLI exit (a missing scout plugin still raises) — inspect
     `raw.stderr`.
 
@@ -183,12 +194,10 @@ def scout_recommendations(
         only_refresh - Only show "refresh" recommendations (same major/minor)
         only_update - Only show "update" recommendations (newer minor/major)
         tag - Restrict to suggestions matching this tag pattern
-        format - Output format: "json" (default) or "text"
         platform - Platform of the image to analyze
-    returns: dict - {"format": <format>, "result": <parsed-json-or-raw-text>,
-                     "raw": <CliResult dict>}
+    returns: dict - {"result": <rendered text>, "raw": <CliResult dict>}
     """
-    args: list[str] = ["recommendations", "--format", format]
+    args: list[str] = ["recommendations"]
     if only_refresh:
         args.append("--only-refresh")
     if only_update:
@@ -199,7 +208,7 @@ def scout_recommendations(
         args.extend(["--platform", platform])
     args.append(safe_positional(image, "image"))
     result = _run_scout(args, host=host)
-    return {"format": format, "result": _maybe_parse_json(result.stdout, format), "raw": result.to_dict()}
+    return {"result": result.stdout, "raw": result.to_dict()}
 
 
 @tool()
@@ -290,7 +299,6 @@ def scout_sbom(
         args.extend(["--platform", platform])
     args.append(safe_positional(image, "image"))
     result = _run_scout(args, host=host)
-    # SPDX and CycloneDX are both JSON; the cyclonedx-xml variant returns XML.
-    parse_as_json = format in {"spdx", "cyclonedx", "json"}
-    parsed = _maybe_parse_json(result.stdout, "json") if parse_as_json else result.stdout
-    return {"format": format, "result": parsed, "raw": result.to_dict()}
+    # "spdx", "cyclonedx" and "json" are all JSON documents and are parsed; "list" is plain text.
+    # `_JSON_FORMATS` is the single place that distinction lives, shared with the other scout tools.
+    return {"format": format, "result": _maybe_parse_json(result.stdout, format), "raw": result.to_dict()}
