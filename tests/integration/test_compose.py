@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from docker_mcp.tools._cli import has_plugin
+from tests.integration.conftest import fail_unless_environmental
 from docker_mcp.tools.compose import (
     compose_config,
     compose_down,
@@ -80,8 +81,12 @@ def _pull_or_skip(compose_project):
         # A slow registry makes the pull subprocess time out (run_docker raises rather than returning
         # non-zero), so catch it here and skip cleanly instead of failing the lifecycle test.
         pytest.skip("compose pull timed out (slow network/registry); skipping")
-    if result["returncode"] != 0:
-        pytest.skip(f"could not pull compose project images (network/registry?): {result['stderr'][:200]}")
+    fail_unless_environmental(
+        returncode=result["returncode"],
+        stderr=result["stderr"],
+        stdout=result["stdout"],
+        what="compose pull",
+    )
 
 
 def test_compose_lifecycle_up_ps_down(compose_project):

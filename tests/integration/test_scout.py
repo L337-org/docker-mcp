@@ -7,6 +7,7 @@ import pytest
 
 from docker_mcp.tools._cli import has_plugin
 from docker_mcp.tools.scout import scout_quickview
+from tests.integration.conftest import fail_unless_environmental
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -16,12 +17,17 @@ def _require_scout_plugin():
     yield
 
 
-def test_scout_quickview_alpine_returns_json_or_skip():
-    # Scout requires network access to its CDN. If the CDN is unreachable or the host
-    # is offline, skip rather than fail — this test exercises the wiring, not Scout itself.
+def test_scout_quickview_alpine_runs_with_default_arguments():
+    # Skips only for a named environmental cause (Scout's CDN unreachable, or no credentials).
+    # Any other non-zero exit fails: this test exists to catch exactly the kind of drift that had
+    # `quickview` passing a --format flag Scout does not define, which the old "skip on any
+    # non-zero exit" form reported as "offline or auth required" on a working machine.
     result = scout_quickview("alpine:3")
-    if result["raw"]["returncode"] != 0:
-        pytest.skip(f"scout quickview unreachable (offline or auth required?): {result['raw']['stderr'][:200]}")
-    assert result["format"] == "json"
-    # `result` should be a parsed dict or the raw text (if Scout returned non-JSON for some reason).
+    fail_unless_environmental(
+        returncode=result["raw"]["returncode"],
+        stderr=result["raw"]["stderr"],
+        stdout=result["raw"]["stdout"],
+        what="scout quickview",
+    )
     assert result["result"] is not None
+    assert "format" not in result  # quickview has no --format flag; see DM-21

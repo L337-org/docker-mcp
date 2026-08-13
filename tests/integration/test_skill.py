@@ -19,6 +19,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.integration.conftest import fail_unless_environmental
+
 _SKILL_DIR = Path(__file__).resolve().parent.parent.parent / "skills" / "l337-docker"
 _OBSERVABILITY_MD = _SKILL_DIR / "reference" / "observability.md"
 
@@ -65,8 +67,12 @@ def image() -> str:
     result = _docker("image", "inspect", _IMAGE, timeout=30)
     if result.returncode != 0:
         pulled = _docker("pull", _IMAGE, timeout=300)
-        if pulled.returncode != 0:
-            pytest.skip(f"cannot pull {_IMAGE}: {pulled.stderr.decode(errors='replace')[:200]}")
+        fail_unless_environmental(
+            returncode=pulled.returncode,
+            stderr=pulled.stderr.decode(errors="replace"),
+            stdout=pulled.stdout.decode(errors="replace"),
+            what=f"pulling {_IMAGE}",
+        )
     return _IMAGE
 
 
