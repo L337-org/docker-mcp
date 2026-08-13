@@ -89,10 +89,41 @@ def test_the_skill_has_frontmatter_naming_it_after_its_own_directory():
     assert match, "SKILL.md must open with a YAML frontmatter block"
     yaml = pytest.importorskip("yaml")
     meta = yaml.safe_load(match.group(1))
+    assert isinstance(meta, dict), f"frontmatter must be a YAML mapping, got {type(meta).__name__}"
     assert meta["name"] == _SKILL_DIR.name
     # The description is the whole trigger surface - a client matches on it and nothing else.
     assert len(meta["description"]) > 100, "description is too thin to trigger reliably"
     assert "docker" in meta["description"].lower()
+
+
+def test_the_skill_conforms_to_the_open_agent_skills_specification():
+    """The skill is portable, not Claude-specific, and MCP_VS_SKILLS.md says so.
+
+    Agent Skills is an open spec (https://agentskills.io/specification) with more than one
+    implementation: GitHub Copilot reads the same `SKILL.md` from `.github/skills`,
+    `.agents/skills` or the very `.claude/skills` directory Claude Code uses. The constraints below
+    are the spec's, so this fails if a future edit makes the skill load in Claude but not elsewhere.
+    """
+    yaml = pytest.importorskip("yaml")
+    match = re.match(r"^---\n(.*?)\n---\n", _SKILL_MD.read_text(encoding="utf-8"), re.S)
+    assert match
+    meta = yaml.safe_load(match.group(1))
+    assert isinstance(meta, dict), f"frontmatter must be a YAML mapping, got {type(meta).__name__}"
+
+    # Assert the type before the shape. YAML infers types, so `description: 123` reaches `len()` as
+    # an int and `description: [a, b]` is a two-element list that sails through the length check
+    # entirely. Without these, a malformed frontmatter either fails with an opaque TypeError or,
+    # worse, passes.
+    name = meta.get("name")
+    assert isinstance(name, str), f"`name` must be a string, got {type(name).__name__}"
+    assert re.fullmatch(r"[a-z0-9]+(-[a-z0-9]+)*", name), f"{name!r} must be lowercase and hyphenated"
+    assert len(name) <= 64, "spec caps `name` at 64 characters"
+    assert name == _SKILL_DIR.name, "the spec requires `name` to match the skill's directory"
+
+    description = meta.get("description")
+    assert isinstance(description, str), f"`description` must be a string, got {type(description).__name__}"
+    assert description.strip(), "`description` is required and cannot be blank"
+    assert len(description) <= 1024, f"spec caps `description` at 1024 characters, got {len(description)}"
 
 
 def test_no_tool_permission_frontmatter_preapproves_destructive_commands():
