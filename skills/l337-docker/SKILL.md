@@ -1,5 +1,6 @@
 ---
 name: l337-docker
+license: MIT
 description: Drive Docker through the docker CLI - containers, images, networks, volumes, Compose, Swarm services/stacks/nodes/secrets, buildx, Scout, OCI registries, plugins, contexts and remote daemons. Covers inspection, deployment, debugging, security auditing, build/publish and cleanup, with bounded output and a confirmation gate on anything destructive. Use whenever the user wants to run, build, inspect, deploy, debug, monitor or clean up Docker resources, or mentions docker, a container, an image, compose, swarm, a stack, buildx, scout, a registry, a volume or a Dockerfile.
 ---
 

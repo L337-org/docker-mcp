@@ -95,6 +95,29 @@ def test_the_skill_has_frontmatter_naming_it_after_its_own_directory():
     assert "docker" in meta["description"].lower()
 
 
+def test_the_skill_conforms_to_the_open_agent_skills_specification():
+    """The skill is portable, not Claude-specific, and MCP_VS_SKILLS.md says so.
+
+    Agent Skills is an open spec (https://agentskills.io/specification) with more than one
+    implementation: GitHub Copilot reads the same `SKILL.md` from `.github/skills`,
+    `.agents/skills` or the very `.claude/skills` directory Claude Code uses. The constraints below
+    are the spec's, so this fails if a future edit makes the skill load in Claude but not elsewhere.
+    """
+    yaml = pytest.importorskip("yaml")
+    match = re.match(r"^---\n(.*?)\n---\n", _SKILL_MD.read_text(encoding="utf-8"), re.S)
+    assert match
+    meta = yaml.safe_load(match.group(1))
+
+    name = meta.get("name", "")
+    assert re.fullmatch(r"[a-z0-9]+(-[a-z0-9]+)*", name), f"{name!r} must be lowercase and hyphenated"
+    assert len(name) <= 64, "spec caps `name` at 64 characters"
+    assert name == _SKILL_DIR.name, "the spec requires `name` to match the skill's directory"
+
+    description = meta.get("description", "")
+    assert description, "`description` is required"
+    assert len(description) <= 1024, f"spec caps `description` at 1024 characters, got {len(description)}"
+
+
 def test_no_tool_permission_frontmatter_preapproves_destructive_commands():
     """A `tools: [Bash(docker:*)]` allow-list would pre-approve `docker rm -f`, defeating the skill's
     own confirmation rule - the host's permission prompts are the only gate that actually refuses.

@@ -33,7 +33,7 @@ We have no commercial interest in either. Both are MIT-licensed and free.
 | **Agent needs shell access** | **No** - calls typed tools; can run with no Bash tool at all | **Yes** - it is Bash all the way down |
 | **Needs a local `docker` binary** | No for SDK-backed domains (talks to the socket/TCP/SSH). Compose/buildx/scout need the CLI, or an `ssh://` host to run it on | **Yes**, always |
 | **Other prerequisites** | Python ≥3.14 + uv, or a container runtime | None |
-| **Works with** | Any MCP client - Claude Code, Claude Desktop, Cursor, Zed, ... | **Claude Code / claude.ai only** |
+| **Works with** | Any MCP client: Claude Code, Claude Desktop, Cursor, Zed, ... | Claude Code, claude.ai and GitHub Copilot; **not** Claude Desktop, Cursor or Zed |
 | **Ships executable code** | Yes - a Python package you run | **No** - markdown only |
 | **Choosing the right operation** | 159 names anchored to the CLI's own structure, and 99% of descriptions name a sibling to prefer or avoid | A router table points at one domain file, which carries prose discriminators and worked examples |
 | **Getting the arguments right** | Every argument typed, 79% with an explicit default, **validated before the call runs** | The model composes a shell string; wrong flags surface only when Docker rejects them, at execution |
@@ -59,9 +59,16 @@ the agent already has Bash - and an agent with Bash can do anything the user can
 With the MCP server the agent can be given Docker capability and *no shell whatsoever*. If you are
 building a constrained agent, that distinction is the whole ballgame.
 
-**Skills are Anthropic-only.** MCP is an open protocol with broad client support; skills load only
-in Claude Code and claude.ai. If you use Cursor, Zed, Continue, or Claude Desktop, the skill is
-simply not an option.
+**Skills reach less far than MCP, but they are not Claude-only.** Agent skills are an
+[open specification](https://agentskills.io/specification) with more than one implementation.
+GitHub Copilot reads them from `.github/skills`, `.agents/skills` or, notably, the very same
+`.claude/skills` directory Claude Code uses, with the same required `name` and `description`
+frontmatter. This skill is spec-compliant as it stands, so a Copilot user can drop it in and it
+works: nothing here is Claude-specific.
+
+MCP still reaches further. Claude Desktop, Cursor, Zed and Continue all speak it, and none of them
+load skills. So the honest framing is that skills are narrower *today* and the gap is closing,
+rather than that they are one vendor's format.
 
 ## Guiding the model to the right call
 
