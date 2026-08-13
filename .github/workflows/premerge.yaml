@@ -177,6 +177,76 @@ jobs:
           fi
           echo "Docs mirror OK (both changed: $c)"
 
+  tracker-reference-check:
+    # An issue key or a link to an external tracker means nothing to a reader of this repository, so
+    # neither belongs in the code, the commit messages or a pull request. Scans what
+    # a PR *adds*: diff lines, its own commit messages, and its title and body. Deliberately NOT a
+    # required check, matching mirror-check above -- a quoted external string could legitimately
+    # contain the pattern, so a red X here is a prompt to look, not a merge blocker. Fork-safe:
+    # read-only, no secrets. The title and body go through env rather than being interpolated into
+    # the script, so a PR description cannot inject shell.
+    runs-on: [ubuntu-latest]
+    name: Check for tracker references
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Check out source repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0  # need the merge-base with the PR base branch
+
+      - name: Scan added lines, commit messages, title and body
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          # The tracker's project key, and any link to a tracker or wiki host. The host half is
+          # deliberately unqualified: naming the specific site here would publish the very thing
+          # this check exists to keep out of the repo.
+          pattern='(\bDM-[0-9]+\b|atlassian\.net)'
+          base="$(git merge-base "origin/${GITHUB_BASE_REF}" HEAD)"
+          report=""
+
+          # NUL-delimited: a path containing a space would otherwise split into two non-existent
+          # paths, `git diff -- <nothing>` would match nothing, and a key in that file would go
+          # unreported -- a silent false negative in the guard itself. Process substitution rather
+          # than a pipe so `report` survives the loop instead of being set in a subshell.
+          while IFS= read -r -d '' file; do
+            # Added lines taken from inside the hunks. Everything before the first `@@` is header,
+            # which is how `+++ b/<path>` is excluded without also dropping an added line whose own
+            # content starts with `+++` (`grep -v '^+++'` cannot tell those apart, and dropped one).
+            added="$(git diff -U0 "$base" HEAD -- "$file" | awk '/^@@/ {inhunk = 1; next} inhunk && /^\+/')"
+            hits="$(grep -E "$pattern" <<<"$added" || true)"
+            if [ -n "$hits" ]; then
+              report="${report}"$'\n'"in ${file}:"$'\n'"${hits}"
+            fi
+          done < <(git diff --name-only -z "$base" HEAD)
+
+          messages="$(git log --format='%s%n%b' "$base..HEAD" | grep -E "$pattern" || true)"
+          if [ -n "$messages" ]; then
+            report="${report}"$'\n'"in a commit message:"$'\n'"${messages}"
+          fi
+
+          for field in TITLE BODY; do
+            hits="$(grep -E "$pattern" <<<"$(printenv "PR_$field" || true)" || true)"
+            if [ -n "$hits" ]; then
+              report="${report}"$'\n'"in the PR ${field,,}:"$'\n'"${hits}"
+            fi
+          done
+
+          if [ -n "$report" ]; then
+            # Everything in `report` is attacker-controlled on a fork PR -- both the matched lines
+            # and the paths -- and Actions interprets `::command::` lines on stdout. Print it inside
+            # a stop-commands block so a crafted line cannot inject a workflow command, and keep the
+            # annotation itself free of interpolated content.
+            token="tracker-scan-${RANDOM}${RANDOM}${RANDOM}"
+            echo "::stop-commands::${token}"
+            printf '%s\n' "$report"
+            echo "::${token}::"
+            echo "::error::An issue key or an external tracker/wiki link was added (see the log above for where). Neither means anything to a reader of this repository, so describe the work instead. Not required for merge, so ignore this if the match is a legitimate quoted string."
+            exit 1
+          fi
+          echo "No tracker references found in the diff, commit messages, title or body"
+
   integration-tests:
     # Runs the suite gated by `-m integration` against the Docker daemon that
     # ships pre-installed on ubuntu-latest runners. Skipped if the unit tests

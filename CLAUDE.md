@@ -55,7 +55,10 @@ committing. CI installs with `uv sync --locked`, which fails if `uv.lock` disagr
 Dependabot lock rewrite that raises a cap pyproject still pins) fails CI rather than landing. A
 non-required `Check docs mirror` job flags a PR that edits `CLAUDE.md` or
 `.github/copilot-instructions.md` without the other (see the MIRROR RULE above) — it's a prompt to
-double-check, not a merge blocker.
+double-check, not a merge blocker. A second non-required job, `Check for tracker references`, flags
+an added line, commit message, PR title or body that names an issue key or links an external
+tracker or wiki: neither means anything to a reader of this repository. Also a prompt rather than a
+blocker, since a quoted external string could legitimately match.
 
 An `mcp<2` cap existed briefly: mcp 2.0.0 removed `mcp.server.fastmcp`, which `server.py` imported
 `FastMCP` from, and an uncapped 2.2.0 shipped dead on arrival at import while every CI job stayed
