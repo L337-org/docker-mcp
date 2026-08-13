@@ -849,6 +849,8 @@ def test_pyright_still_checks_arguments_at_tool_call_sites(tmp_path):
     pyright = shutil.which("pyright")
     if pyright is None:
         pytest.skip("pyright is not installed; it is a dev dependency, so the CI gate always has it")
+    # One deliberate error per line, so each can be asserted independently. Keep the line numbers
+    # in `expected` below in step with this source.
     probe = tmp_path / "probe.py"
     probe.write_text(
         "from docker_mcp.tools.stack import stack_deploy\n"
@@ -863,10 +865,23 @@ def test_pyright_still_checks_arguments_at_tool_call_sites(tmp_path):
         cwd=Path(__file__).resolve().parents[1],
         timeout=300,
     )
-    diagnostics = " ".join(d["message"] for d in json.loads(result.stdout)["generalDiagnostics"])
-    assert "resolve_image" in diagnostics, f"a value outside a Literal's set went unreported:\n{diagnostics}"
-    assert '"name" of type "str"' in diagnostics, f"an int for a str parameter went unreported:\n{diagnostics}"
-    assert "no_such_kwarg" in diagnostics, f"an unknown keyword argument went unreported:\n{diagnostics}"
+    rules_by_line: dict[int, set[str]] = {}
+    for diagnostic in json.loads(result.stdout)["generalDiagnostics"]:
+        rules_by_line.setdefault(diagnostic["range"]["start"]["line"] + 1, set()).add(diagnostic.get("rule", ""))
+    # Keyed on line and rule id rather than message text: pyright's prose is human-readable output
+    # and can be reworded between versions, whereas the rule a diagnostic carries and the line it
+    # lands on are stable. Per-line also proves each error is caught individually, where matching
+    # substrings across the pooled output could let one diagnostic satisfy two assertions.
+    expected = {
+        2: ("reportArgumentType", "a value outside a Literal's set"),
+        3: ("reportArgumentType", "an int for a str parameter"),
+        4: ("reportCallIssue", "an unknown keyword argument"),
+    }
+    for line, (rule, what) in expected.items():
+        assert rule in rules_by_line.get(line, set()), (
+            f"{what} went unreported on line {line}: pyright is no longer checking arguments at tool "
+            f"call sites. Rules reported per line: {rules_by_line}"
+        )
 
 
 def test_no_registered_tool_schema_carries_title_annotations():
