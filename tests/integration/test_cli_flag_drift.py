@@ -65,10 +65,23 @@ def _leading_subcommand(fn: ast.FunctionDef, cli: str) -> list[str] | None:
     return None
 
 
-def _help_text(argv: list[str]) -> str:
-    docker = shutil.which("docker") or "docker"
-    result = subprocess.run([docker, *argv, "--help"], capture_output=True, text=True)  # noqa: S603
-    return result.stdout + result.stderr
+def _run_help(argv: list[str]) -> subprocess.CompletedProcess[str]:
+    """Run `docker <argv> --help`, skipping cleanly rather than crashing when it cannot run.
+
+    The return code is reported rather than inferred: deciding success from "did it print
+    anything" would treat an error message as help text, and then report every flag as missing.
+    An explicit timeout matches the project's own rule that every CLI call carries one, and stops a
+    wedged CLI stalling the whole integration suite.
+    """
+    docker = shutil.which("docker")
+    if docker is None:
+        pytest.skip("no docker binary on PATH")
+    try:
+        return subprocess.run(  # noqa: S603
+            [docker, *argv, "--help"], capture_output=True, text=True, timeout=30, check=False
+        )
+    except subprocess.TimeoutExpired:
+        pytest.skip(f"`docker {' '.join(argv)} --help` timed out after 30s")
 
 
 def _collect() -> list[tuple[str, str, list[str], list[str]]]:
@@ -107,11 +120,18 @@ def test_every_flag_passed_still_exists_in_the_installed_cli(qualname, cli, subs
     if plugin is not None and not has_plugin(plugin):
         pytest.skip(f"docker {plugin} plugin not installed on this host")
 
-    help_text = _help_text([cli, *subs])
+    completed = _run_help([cli, *subs])
     fail_unless_environmental(
-        returncode=0 if help_text.strip() else 1,
-        stdout=help_text,
+        returncode=completed.returncode,
+        stderr=completed.stderr,
+        stdout=completed.stdout,
         what=f"docker {cli} {' '.join(subs)} --help",
+    )
+    help_text = completed.stdout + completed.stderr
+    assert help_text.strip(), (
+        f"`docker {cli} {' '.join(subs)} --help` exited 0 but printed nothing, so there is no flag "
+        f"list to check against. Treating that as drift would be wrong; something is off with the "
+        f"CLI itself."
     )
 
     missing = [f for f in flags if re.search(rf"(^|\s){re.escape(f)}(\s|=|,|$)", help_text, re.M) is None]
