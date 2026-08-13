@@ -1621,7 +1621,7 @@ def test_fetch_path_refuses_when_the_intermediate_extraction_path_already_exists
     with _staging(host) as session:
         with pytest.raises(FileExistsError, match="already exists"):
             session.fetch_path(remote_path, local_dest)
-    assert (tmp_path / "fetch1" / "unrelated.txt").read_text() == "do not touch"
+    assert (tmp_path / "fetch1" / "unrelated.txt").read_text(encoding="utf-8") == "do not touch"
     assert not local_dest.exists()
     assert not host.ran("tar -cf")  # refused before any remote work
 
@@ -1631,11 +1631,11 @@ def test_fetch_path_refuses_an_existing_local_destination(tmp_path):
     remote_path = f"{ScriptedHost._STAGE_ROOT}/fetch1"
     host.sftp.remote_files[remote_path] = b"data"
     local_dest = tmp_path / "already-here.txt"
-    local_dest.write_text("existing")
+    local_dest.write_text("existing", encoding="utf-8")
     with _staging(host) as session:
         with pytest.raises(FileExistsError, match="already exists"):
             session.fetch_path(remote_path, local_dest)
-    assert local_dest.read_text() == "existing"  # untouched
+    assert local_dest.read_text(encoding="utf-8") == "existing"  # untouched
     assert not host.ran(f"test -d {remote_path}")  # refused before ever contacting the remote
 
 

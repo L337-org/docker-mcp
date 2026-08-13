@@ -215,7 +215,7 @@ def test_scout_runs_remotely_when_no_local_plugin_is_available():
     # runs there instead of raising. The plugin probe must not gate the remote path.
     with (
         patch("docker_mcp.tools.scout.should_remote_exec", return_value=True) as should,
-        patch("docker_mcp.tools.scout.remote_exec_cli", return_value=_ok('{"vulnerabilities": []}')) as remote,
+        patch("docker_mcp.tools.scout.remote_exec_cli", return_value=_ok('{"runs": []}')) as remote,
         patch("docker_mcp.tools.scout.run_docker") as run,
         patch("docker_mcp.tools.scout.require_plugin") as require,
     ):
@@ -225,7 +225,7 @@ def test_scout_runs_remotely_when_no_local_plugin_is_available():
     should.assert_called_once_with("prod", plugin="scout")
     assert remote.call_args.args == ("prod", ["scout", "cves", "--format", "sarif", "alpine:3.19"])
     assert remote.call_args.kwargs == {"timeout": 300.0}
-    assert result["result"] == {"vulnerabilities": []}  # identical parsing either way
+    assert result["result"] == {"runs": []}  # SARIF-shaped, matching the default; parsed identically either way
 
 
 def test_scout_uses_the_local_cli_when_it_can():

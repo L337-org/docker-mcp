@@ -42,7 +42,7 @@ def compose_project(tmp_path: Path):
     """Create a temp compose project with a unique name and tear it down after the test."""
     project = f"docker-mcp-it-{uuid.uuid4().hex[:8]}"
     compose_file = tmp_path / "docker-compose.yaml"
-    compose_file.write_text(_COMPOSE_YAML)
+    compose_file.write_text(_COMPOSE_YAML, encoding="utf-8")
     yield {"dir": str(tmp_path), "name": project, "file": str(compose_file)}
     # Best-effort teardown; ignore failures so a missing project doesn't mask the real assertion.
     compose_down(project_dir=str(tmp_path), project_name=project, volumes=True, remove_orphans=True)

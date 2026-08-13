@@ -77,7 +77,7 @@ def test_the_declared_docker_floor_supports_the_kwarg_the_code_passes():
         "system.py:_build_default_client passes — revisit that call site and the declared floor"
     )
 
-    dependencies = tomllib.loads(PYPROJECT.read_text())["project"]["dependencies"]
+    dependencies = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))["project"]["dependencies"]
     declared = [d for d in dependencies if Requirement(d).name == "docker"]
     assert declared, "no direct 'docker' dependency found in pyproject.toml"
     assert not _admits(declared[0], "7.1.0"), (
@@ -97,8 +97,8 @@ def test_manifest_version_matches_pyproject():
     pyproject.toml; the publish workflow restamps it from the tag, but drift in the repo
     still confuses local bundle builds (scripts/build-mcpb.sh only warns).
     """
-    pyproject_version = tomllib.loads(PYPROJECT.read_text())["project"]["version"]
-    manifest_version = json.loads(MANIFEST.read_text())["version"]
+    pyproject_version = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))["project"]["version"]
+    manifest_version = json.loads(MANIFEST.read_text(encoding="utf-8"))["version"]
     assert manifest_version == pyproject_version, (
         f"manifest.json version {manifest_version!r} != pyproject.toml version {pyproject_version!r} — "
         "bump them together"
@@ -110,8 +110,8 @@ def test_uv_lock_self_version_matches_pyproject():
     Catches "bumped pyproject.toml, forgot `uv lock`": the lockfile embeds this package's
     own version, and a stale entry ships a lockfile that disagrees with the metadata.
     """
-    pyproject_version = tomllib.loads(PYPROJECT.read_text())["project"]["version"]
-    packages = tomllib.loads(UV_LOCK.read_text())["package"]
+    pyproject_version = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))["project"]["version"]
+    packages = tomllib.loads(UV_LOCK.read_text(encoding="utf-8"))["package"]
     self_entries = [
         p for p in packages if p["name"] == "docker-mcp-server" and p.get("source", {}).get("editable") == "."
     ]

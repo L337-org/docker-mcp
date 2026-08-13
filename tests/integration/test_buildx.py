@@ -33,8 +33,8 @@ def _require_buildx_plugin():
 
 @pytest.fixture
 def build_context(tmp_path: Path) -> Path:
-    (tmp_path / "Dockerfile").write_text(_DOCKERFILE)
-    (tmp_path / "hello.txt").write_text("hello\n")
+    (tmp_path / "Dockerfile").write_text(_DOCKERFILE, encoding="utf-8")
+    (tmp_path / "hello.txt").write_text("hello\n", encoding="utf-8")
     return tmp_path
 
 

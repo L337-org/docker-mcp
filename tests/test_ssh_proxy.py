@@ -49,7 +49,8 @@ def test_parse_ssh_url_applies_ssh_config_overrides(tmp_path, monkeypatch):
         "    Port 2222\n"
         "    User deploy\n"
         "    IdentityFile ~/.ssh/id_deploy\n"
-        "    ProxyCommand ssh -W %h:%p bastion\n"
+        "    ProxyCommand ssh -W %h:%p bastion\n",
+        encoding="utf-8",
     )
     monkeypatch.setattr("os.path.expanduser", lambda p: str(config) if p == "~/.ssh/config" else p)
     target = parse_ssh_url("ssh://myhost")
@@ -65,7 +66,7 @@ def test_parse_ssh_url_resolves_tilde_in_identity_file(tmp_path, monkeypatch):
     # by the time parse_ssh_url sees the value it should already be a real, usable path with no
     # literal "~" left — this pins that end-to-end behavior against a fake home directory.
     config = tmp_path / "config"
-    config.write_text("Host myhost\n    IdentityFile ~/.ssh/id_deploy\n")
+    config.write_text("Host myhost\n    IdentityFile ~/.ssh/id_deploy\n", encoding="utf-8")
     real_expanduser = os.path.expanduser
 
     def fake_expanduser(p):
@@ -82,7 +83,7 @@ def test_parse_ssh_url_resolves_tilde_in_identity_file(tmp_path, monkeypatch):
 
 def test_parse_ssh_url_explicit_values_win_over_config(tmp_path, monkeypatch):
     config = tmp_path / "config"
-    config.write_text("Host myhost\n    User configuser\n    Port 9999\n")
+    config.write_text("Host myhost\n    User configuser\n    Port 9999\n", encoding="utf-8")
     monkeypatch.setattr("os.path.expanduser", lambda p: str(config) if p == "~/.ssh/config" else p)
     target = parse_ssh_url("ssh://explicituser@myhost:1234")
     # The URL already specifies user/port, so the config-file values must not override them.
@@ -130,7 +131,10 @@ def test_connect_ssh_client_omits_port_when_unresolved(monkeypatch):
 
 def test_connect_ssh_client_passes_key_filename_and_proxycommand(tmp_path, monkeypatch):
     config = tmp_path / "config"
-    config.write_text("Host myhost\n    IdentityFile ~/.ssh/id_deploy\n    ProxyCommand ssh -W %h:%p bastion\n")
+    config.write_text(
+        "Host myhost\n    IdentityFile ~/.ssh/id_deploy\n    ProxyCommand ssh -W %h:%p bastion\n",
+        encoding="utf-8",
+    )
     monkeypatch.setattr("os.path.expanduser", lambda p: str(config) if p == "~/.ssh/config" else p)
     fake_client = MagicMock()
     fake_proxy_command = MagicMock()

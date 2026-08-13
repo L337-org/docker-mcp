@@ -34,7 +34,7 @@ def deployed_stack(tmp_path):
     """Deploy a uniquely-named stack and tear it down afterwards."""
     name = f"dmcp-it-{uuid.uuid4().hex[:8]}"
     compose_file = tmp_path / "stack.yml"
-    compose_file.write_text(_STACK_YAML)
+    compose_file.write_text(_STACK_YAML, encoding="utf-8")
     result = stack_deploy(name, compose_files=[str(compose_file)])
     assert result["returncode"] == 0, result["stderr"]
     yield name
