@@ -347,6 +347,68 @@ jobs:
             "${{ steps.pack.outputs.file }}.sha256" \
             --clobber
 
+  skill:
+    # Packs the `skills/l337-docker` agent skill as a .tar.gz and attaches it - with its SHA-256 -
+    # to the release. Skills have no official packaging format (unlike .mcpb for MCP servers): a
+    # plain directory is the unit, so the archive is just that directory, rooted at `l337-docker/`
+    # to match the skill's frontmatter `name`. That root is load-bearing for the install UX - it
+    # makes `tar -xzf ... -C ~/.claude/skills` land the skill exactly where Claude Code looks, with
+    # no --strip-components and no rename.
+    #
+    # tar.gz only, deliberately: `tar` is present by default on macOS, Linux and Windows 10 1803+,
+    # whereas `unzip` is routinely absent from minimal Linux images - so a single tarball is the
+    # more universally extractable of the two for a terminal-based audience. Zip would only win for
+    # Windows GUI double-click, which is not the install path.
+    #
+    # A VERSION file is stamped in at pack time because a skill directory carries no version of its
+    # own (the frontmatter has no `version` field), so a downloaded copy would otherwise be
+    # untraceable to the release it came from.
+    #
+    # The archive is byte-reproducible: entries sorted, ownership zeroed, mtimes normalised, and
+    # `gzip -n` to drop the embedded timestamp. Repacking the same commit yields the same checksum,
+    # so the published SHA-256 is verifiable by anyone rebuilding from source.
+    name: Pack and attach the agent skill
+    runs-on: ubuntu-latest
+    needs: [preflight]
+    permissions:
+      contents: write  # upload the archives as release assets
+    steps:
+      - name: Check out the release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.preflight.outputs.tag }}
+
+      - name: Pack the skill
+        id: pack
+        env:
+          VERSION: ${{ needs.preflight.outputs.version }}
+        run: |
+          set -euo pipefail
+          test -f skills/l337-docker/SKILL.md || { echo "::error::skills/l337-docker/SKILL.md is missing"; exit 1; }
+          rm -rf dist _stage && mkdir -p dist _stage
+          cp -R skills/l337-docker _stage/l337-docker
+          printf '%s\n' "$VERSION" > _stage/l337-docker/VERSION
+          find _stage -exec touch -t 198001010000 {} +
+          base="l337-docker-skill-${VERSION}"
+          tar --sort=name --owner=0 --group=0 --numeric-owner --mtime="1980-01-01 00:00:00Z" \
+              -cf - -C _stage l337-docker | gzip -n > "dist/${base}.tar.gz"
+          # Record the bare filename in the .sha256 so `sha256sum -c` works for anyone who
+          # downloads both assets into one directory - including the verify job below.
+          (cd dist && sha256sum "${base}.tar.gz" | tee "${base}.tar.gz.sha256")
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+          echo "Packed \`dist/${base}.tar.gz\`" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
+          BASE: ${{ steps.pack.outputs.base }}
+        run: |
+          set -euo pipefail
+          gh release upload "$RELEASE_TAG" \
+            "dist/${BASE}.tar.gz" "dist/${BASE}.tar.gz.sha256" \
+            --clobber
+
   registry:
     # Publishes server.json to the official MCP Registry (registry.modelcontextprotocol.io). The
     # registry stores only metadata — it points at the artifacts the sibling jobs above publish —
@@ -467,7 +529,10 @@ jobs:
     # silently. Each check retries briefly (5 x 15s) to absorb CDN/index lag.
     name: Verify release convergence
     runs-on: ubuntu-latest
-    needs: [preflight, registry]
+    # `skill` is listed explicitly: it hangs off `preflight` alone and is not in `registry`'s
+    # needs (the registry entry does not reference the skill archives), so without it here verify
+    # could run while the skill job is still packing and report a missing asset.
+    needs: [preflight, registry, skill]
     env:
       TAG: ${{ needs.preflight.outputs.tag }}
       VERSION: ${{ needs.preflight.outputs.version }}
@@ -519,6 +584,34 @@ jobs:
           (cd _verify && sha256sum -c ./*.sha256)
           echo "Release asset OK: $(basename "${mcpb[0]}")"
 
+      - name: Verify the skill archive, its checksum and its layout
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p _skill
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
+            --pattern 'l337-docker-skill-*' --dir _skill
+          shopt -s nullglob
+          tars=(_skill/*.tar.gz); sums=(_skill/*.sha256)
+          if [ "${#tars[@]}" -ne 1 ] || [ "${#sums[@]}" -ne 1 ]; then
+            echo "::error::expected one .tar.gz and one .sha256 on $TAG, found ${#tars[@]} / ${#sums[@]}"
+            exit 1
+          fi
+          (cd _skill && sha256sum -c ./*.sha256)
+          # Extracting into a skills directory must land the skill at <dir>/l337-docker/SKILL.md
+          # with no renaming or --strip-components, and the stamped VERSION must match this release.
+          mkdir -p _skill/extract
+          tar -xzf "${tars[0]}" -C _skill/extract
+          test -f _skill/extract/l337-docker/SKILL.md \
+            || { echo "::error::archive does not contain l337-docker/SKILL.md"; exit 1; }
+          packed="$(cat _skill/extract/l337-docker/VERSION)"
+          if [ "$packed" != "$VERSION" ]; then
+            echo "::error::skill archive stamps VERSION '$packed' but this release is '$VERSION'"
+            exit 1
+          fi
+          echo "Skill archive OK: $(basename "${tars[0]}") (VERSION $packed)"
+
       - name: Verify the MCP Registry lists the version
         run: |
           set -euo pipefail
@@ -540,7 +633,7 @@ jobs:
     # anything in the needs chain failed. Silent on cancellation.
     name: File failure issue
     runs-on: ubuntu-latest
-    needs: [preflight, pypi, images, dockerhub-description, mcpb, registry, verify]
+    needs: [preflight, pypi, images, dockerhub-description, mcpb, skill, registry, verify]
     if: failure()
     permissions:
       contents: read   # checkout, to use the local composite action

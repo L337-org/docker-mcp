@@ -1,18 +1,18 @@
 # docker-mcp-server
 
-More than just a fully featured [MCP](https://modelcontextprotocol.io) server that lets AI agents manage Docker — containers, images, networks, volumes, swarm services, secrets, configs, nodes, plugins, etc., it helps you create workflows to easily manage your Docker environments.
+More than just a fully featured [MCP](https://modelcontextprotocol.io) server that lets AI agents manage Docker - containers, images, networks, volumes, swarm services, secrets, configs, nodes, plugins, etc., it helps you create workflows to easily manage your Docker environments.
 
-It gives you much more control and flexibility than calling the Docker CLI directly: each operation is exposed as its own typed tool, marked read-only or not, with destructive actions separately flagged. This means a client can auto-approve reads while always confirming anything destructive, and the whole server can also be switched into a read-only or no-destructive mode as a blanket safeguard. Output is bounded rather than left to grow unboundedly — capped with a `truncated` flag instead of silently overflowing the agent's context.
+It gives you much more control and flexibility than calling the Docker CLI directly: each operation is exposed as its own typed tool, marked read-only or not, with destructive actions separately flagged. This means a client can auto-approve reads while always confirming anything destructive, and the whole server can also be switched into a read-only or no-destructive mode as a blanket safeguard. Output is bounded rather than left to grow unboundedly - capped with a `truncated` flag instead of silently overflowing the agent's context.
 
 It can manage multiple Docker daemons, e.g. both your local dev environment and also a remote production environment over TCP, TLS or SSH in a single session. It can also be configured to mark some daemons as read-only, so that you can monitor them without the risk of making accidental changes. It also exposes things like logs and stats as resources so that you can easily monitor and triage your environments with a few prompts.
 
-Documentation is built for the agent, not just the person configuring it: an MCP resource exposes the Docker SDK reference in-session (with a tool-callable fallback for clients that can't read resources), and a live tool-catalog resource reports exactly what's registered under the current configuration. Each tool's own description names its nearest siblings and when to prefer each, states preconditions and side effects in plain language, and is honest about when it can still fail — so an agent can pick the right tool on the first try among 150+ options, not guess.
+Documentation is built for the agent, not just the person configuring it: an MCP resource exposes the Docker SDK reference in-session (with a tool-callable fallback for clients that can't read resources), and a live tool-catalog resource reports exactly what's registered under the current configuration. Each tool's own description names its nearest siblings and when to prefer each, states preconditions and side effects in plain language, and is honest about when it can still fail - so an agent can pick the right tool on the first try among 150+ options, not guess.
 
-The server runs entirely on your machine and sends no telemetry. You are entirely in control — see the [Privacy Policy](https://github.com/L337-org/docker-mcp#privacy-policy).
+The server runs entirely on your machine and sends no telemetry. You are entirely in control - see the [Privacy Policy](https://github.com/L337-org/docker-mcp#privacy-policy).
 
 This image is the container distribution of the project. **Full documentation, configuration, and source are on GitHub: <https://github.com/L337-org/docker-mcp>.**
 
-> The same images are published to GHCR as [`ghcr.io/l337-org/docker-mcp-server`](https://github.com/L337-org/docker-mcp/pkgs/container/docker-mcp-server) — identical content, so use whichever registry you prefer.
+> The same images are published to GHCR as [`ghcr.io/l337-org/docker-mcp-server`](https://github.com/L337-org/docker-mcp/pkgs/container/docker-mcp-server) - identical content, so use whichever registry you prefer.
 
 ## Quick start
 
@@ -45,7 +45,7 @@ Two multi-arch (linux/amd64 + linux/arm64) variants are published, both built fr
 | `full` *(default)* | `:latest`, `:<version>` | ~510 MB | docker CLI + compose + buildx + **scout** |
 | `no-scout` | `:no-scout`, `:<version>-no-scout` | ~315 MB | docker CLI + compose + buildx |
 
-Scout's plugin binary accounts for the ~195 MB difference. The `no-scout` image also defaults `DOCKER_MCP_SERVER_DISABLE=scout`, so the scout *tools* aren't registered — the agent sees a smaller, fully-working tool list rather than scout tools that error on every call.
+Scout's plugin binary accounts for the ~195 MB difference. The `no-scout` image also defaults `DOCKER_MCP_SERVER_DISABLE=scout`, so the scout *tools* aren't registered - the agent sees a smaller, fully-working tool list rather than scout tools that error on every call.
 
 ## Reaching the daemon
 
@@ -53,12 +53,12 @@ The image defaults `DOCKER_HOST` to `unix:///var/run/docker.sock`, so mounting y
 
 - **Linux:** `-v /var/run/docker.sock:/var/run/docker.sock` (rootless: `-v $XDG_RUNTIME_DIR/docker.sock:/var/run/docker.sock`).
 - **macOS (Docker Desktop):** usually `-v $HOME/.docker/run/docker.sock:/var/run/docker.sock`.
-- **Windows (Docker Desktop / WSL2):** prefer `-e DOCKER_HOST=tcp://host.docker.internal:2375` (enable the TCP endpoint in Docker Desktop). That endpoint is **unauthenticated and unencrypted** — keep it bound to localhost, disable it when you're not using it, and use TLS or `DOCKER_HOST=ssh://...` for any remote daemon.
+- **Windows (Docker Desktop / WSL2):** prefer `-e DOCKER_HOST=tcp://host.docker.internal:2375` (enable the TCP endpoint in Docker Desktop). That endpoint is **unauthenticated and unencrypted** - keep it bound to localhost, disable it when you're not using it, and use TLS or `DOCKER_HOST=ssh://...` for any remote daemon.
 - **Remote / TLS / SSH daemon:** skip the socket mount and pass `-e DOCKER_HOST=...` (plus the TLS vars).
 
 ## Host filesystem access
 
-Inside a container, the file-path tools (`image_save` / `container_export` with `dest_path`, `image_load` / `container_archive_put` with `from_file`, `container_archive_get_to_file`, and compose `project_dir` / `files`) resolve paths *inside the container*. Bind-mount any directory you want to exchange files through — using the **same path inside and out** keeps host and container paths identical:
+Inside a container, the file-path tools (`image_save` / `container_export` with `dest_path`, `image_load` / `container_archive_put` with `from_file`, `container_archive_get_to_file`, and compose `project_dir` / `files`) resolve paths *inside the container*. Bind-mount any directory you want to exchange files through - using the **same path inside and out** keeps host and container paths identical:
 
 ```
 -v $HOME/docker-work:$HOME/docker-work
@@ -70,9 +70,9 @@ If you call one of these tools with a path that isn't on a bind mount, the serve
 
 Set these in the client's `env` block. Three switches restrict which tools are registered at startup (a disabled tool never appears in the client's tool list):
 
-- **`DOCKER_MCP_SERVER_READONLY`** — register only read-only tools.
-- **`DOCKER_MCP_SERVER_NO_DESTRUCTIVE`** — everything except destructive tools (`*_remove`, `*_prune`, `container_kill`, `compose_down`, …).
-- **`DOCKER_MCP_SERVER_DISABLE`** — comma-separated *domains* to drop wholesale (e.g. `swarm,services,nodes,configs,secrets` for a single-host server).
+- **`DOCKER_MCP_SERVER_READONLY`** - register only read-only tools.
+- **`DOCKER_MCP_SERVER_NO_DESTRUCTIVE`** - everything except destructive tools (`*_remove`, `*_prune`, `container_kill`, `compose_down`, ...).
+- **`DOCKER_MCP_SERVER_DISABLE`** - comma-separated *domains* to drop wholesale (e.g. `swarm,services,nodes,configs,secrets` for a single-host server).
 
 `DOCKER_HOST` / `DOCKER_TLS_VERIFY` / `DOCKER_CERT_PATH` retarget the daemon (e.g. `-e DOCKER_HOST=tcp://remote-host:2375`).
 
@@ -80,10 +80,10 @@ See the [full configuration reference](https://github.com/L337-org/docker-mcp#co
 
 ## Security
 
-Connecting this server to an AI agent grants it the same access as a local Docker CLI session against the configured daemon — the daemon's socket is effectively root-equivalent on its host. Prefer pointing it at a daemon dedicated to workloads the agent may touch (a dev VM, a remote sandbox, Docker Desktop, a rootless install) rather than your production socket. See the [Security considerations](https://github.com/L337-org/docker-mcp#security-considerations) on GitHub before enabling the server.
+Connecting this server to an AI agent grants it the same access as a local Docker CLI session against the configured daemon - the daemon's socket is effectively root-equivalent on its host. Prefer pointing it at a daemon dedicated to workloads the agent may touch (a dev VM, a remote sandbox, Docker Desktop, a rootless install) rather than your production socket. See the [Security considerations](https://github.com/L337-org/docker-mcp#security-considerations) on GitHub before enabling the server.
 
 ## Links
 
 - **Source, full docs & issues:** <https://github.com/L337-org/docker-mcp>
-- **Also on PyPI** (run without a container): `uvx docker-mcp-server` — see the [README](https://github.com/L337-org/docker-mcp#using-the-server).
+- **Also on PyPI** (run without a container): `uvx docker-mcp-server` - see the [README](https://github.com/L337-org/docker-mcp#using-the-server).
 - **License & contributing:** see the GitHub repository.
