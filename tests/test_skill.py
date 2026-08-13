@@ -89,6 +89,7 @@ def test_the_skill_has_frontmatter_naming_it_after_its_own_directory():
     assert match, "SKILL.md must open with a YAML frontmatter block"
     yaml = pytest.importorskip("yaml")
     meta = yaml.safe_load(match.group(1))
+    assert isinstance(meta, dict), f"frontmatter must be a YAML mapping, got {type(meta).__name__}"
     assert meta["name"] == _SKILL_DIR.name
     # The description is the whole trigger surface - a client matches on it and nothing else.
     assert len(meta["description"]) > 100, "description is too thin to trigger reliably"
@@ -107,6 +108,7 @@ def test_the_skill_conforms_to_the_open_agent_skills_specification():
     match = re.match(r"^---\n(.*?)\n---\n", _SKILL_MD.read_text(encoding="utf-8"), re.S)
     assert match
     meta = yaml.safe_load(match.group(1))
+    assert isinstance(meta, dict), f"frontmatter must be a YAML mapping, got {type(meta).__name__}"
 
     # Assert the type before the shape. YAML infers types, so `description: 123` reaches `len()` as
     # an int and `description: [a, b]` is a two-element list that sails through the length check
