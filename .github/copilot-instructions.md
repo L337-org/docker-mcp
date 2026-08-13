@@ -142,6 +142,15 @@ All publishing runs through one workflow on each **published GitHub Release**: `
   values for `isolation`), leave it a `str` and record why at the parameter, so a later pass does
   not re-propose it. `tests/test_server.py::test_closed_value_sets_are_advertised_as_enums` pins
   the current set.
+- **The `@tool()` decorator is generic (`def tool[F: Callable[..., Any]](...) -> Callable[[F], F]`)
+  so pyright checks arguments at every tool call site**, in tests and at internal callers alike.
+  Annotating it as a bare `Callable` erases the parameter list and silently disables that checking
+  everywhere: a wrong type, an unknown keyword and a value outside a `Literal` all passed the gate
+  until this was fixed. `tests/test_server.py::test_pyright_still_checks_arguments_at_tool_call_sites`
+  runs pyright over those three deliberate errors, so it also fails if only the return annotation is
+  loosened while the type parameter stays. A test that must pass a deliberately invalid value marks
+  that one call `# pyright: ignore[reportArgumentType]` with a reason, rather than being softened to
+  a legal one.
 - Line length limit: 120 characters.
 - **Bound any externally-sourced bytes before buffering/parsing them, and parse safely.** CLI output is capped in `run_docker` (`MAX_CLI_OUTPUT_BYTES`); registry HTTP bodies are streamed and capped at `_MAX_RESPONSE_BYTES` in `registry.py` (registries are agent-pointed/untrusted; the cap is on the *decoded* stream, so it also stops a decompression bomb). New code reading an untrusted file or network body must apply a similar bound. Always `json.loads` (never `eval`); if YAML is ever parsed in Python, `yaml.safe_load` only — today nothing parses YAML in Python (Compose YAML is read by the `docker` CLI). Flag a PR that buffers an untrusted body unbounded.
 - Do not add comments that describe what the code does — only add comments for non-obvious constraints or workarounds.

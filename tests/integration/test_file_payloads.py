@@ -27,6 +27,10 @@ def _require_alpine():
 def test_save_to_file_then_load_round_trip(tmp_path: Path):
     dest = tmp_path / "alpine.tar"
     result = image_save(_IMAGE, dest_path=str(dest))
+    # Both tools return `bytes | dict`: the tar in band, or this dict when dest_path is given.
+    # Asserting the branch is the point, not a type-checker formality -- nothing else pins the
+    # promise that passing dest_path gets you the file form rather than the bytes.
+    assert isinstance(result, dict)
     assert result["path"] == str(dest)
     assert result["bytes_written"] > 0
     # The stream-to-file write matches what landed on disk.
@@ -44,6 +48,7 @@ def test_container_export_to_dest_path(tmp_path: Path):
     try:
         dest = tmp_path / "ct.tar"
         result = container_export(name, dest_path=str(dest))
+        assert isinstance(result, dict)  # dest_path selects the file form -- see above
         assert result["bytes_written"] > 0
         assert dest.stat().st_size == result["bytes_written"]
     finally:

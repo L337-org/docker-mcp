@@ -74,8 +74,12 @@ def test_stack_deploy_requires_a_compose_file():
 
 
 def test_stack_deploy_rejects_invalid_resolve_image():
+    # The bad value is the point of the test, so the type error is suppressed at this one call
+    # rather than the test being softened to a legal value. `resolve_image` is a Literal, so a
+    # caller arriving through MCP is stopped by schema validation before the body runs; this
+    # asserts the runtime guard that still covers a direct Python call, which validation never sees.
     with pytest.raises(ValueError, match="resolve_image"):
-        stack_deploy("web", compose_files=["c.yml"], resolve_image="sometimes")
+        stack_deploy("web", compose_files=["c.yml"], resolve_image="sometimes")  # pyright: ignore[reportArgumentType]
 
 
 def test_stack_deploy_rejects_flag_like_stack_name():

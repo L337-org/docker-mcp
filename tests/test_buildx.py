@@ -1,5 +1,6 @@
 import contextlib
 import pathlib
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -780,11 +781,14 @@ def test_buildx_build_refusals_name_the_consequence_for_that_flag(tmp_path):
     context.mkdir()
     session = _FakeSession()
     messages = {}
-    for flag, kwargs in (
+    # dict[str, Any] because each iteration targets a different parameter, so there is no single
+    # precise type for the **kwargs -- the alternative is three near-identical copies of the body.
+    cases: tuple[tuple[str, dict[str, Any]], ...] = (
         ("output", {"output": ["type=local,dest=out"]}),
         ("cache_to", {"cache_to": ["type=local,dest=/tmp/c"]}),
         ("cache_from", {"cache_from": ["type=local,src=/tmp/c"]}),
-    ):
+    )
+    for flag, kwargs in cases:
         with contextlib.ExitStack() as stack:
             for patcher in _remote_build(session):
                 stack.enter_context(patcher)

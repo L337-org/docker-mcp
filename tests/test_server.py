@@ -1,6 +1,7 @@
 import ast
 import inspect
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -833,6 +834,39 @@ def test_closed_value_sets_are_advertised_as_enums():
             assert sorted(found) == sorted(expected), (
                 f"{tool_name}.{param} advertises enum {found!r}, expected {expected!r}"
             )
+
+
+def test_pyright_still_checks_arguments_at_tool_call_sites(tmp_path):
+    # The @tool() decorator used to be typed `Callable[[Callable], Callable]`. A bare `Callable`
+    # carries no parameter list, so pyright -- a required CI gate that covers `tests` as well as
+    # `docker_mcp` -- silently checked nothing about how any of the 159 tools were called, and
+    # these three deliberate errors all passed it.
+    #
+    # This asserts the property rather than the mechanism: a structural check (that the decorator
+    # is still generic) would keep passing if someone reannotated the return type while leaving
+    # the type parameter in place, which is exactly the regression worth catching. Costs about a
+    # second, because pyright reuses the project's own configuration and environment.
+    pyright = shutil.which("pyright")
+    if pyright is None:
+        pytest.skip("pyright is not installed; it is a dev dependency, so the CI gate always has it")
+    probe = tmp_path / "probe.py"
+    probe.write_text(
+        "from docker_mcp.tools.stack import stack_deploy\n"
+        'stack_deploy("web", compose_files=["c.yml"], resolve_image="sometimes")\n'
+        'stack_deploy(123, compose_files=["c.yml"])\n'
+        'stack_deploy("web", compose_files=["c.yml"], no_such_kwarg=True)\n'
+    )
+    result = subprocess.run(  # noqa: S603 — fixed argv, resolved binary, no shell; trusted test input
+        [pyright, "--outputjson", str(probe)],
+        capture_output=True,
+        text=True,
+        cwd=Path(__file__).resolve().parents[1],
+        timeout=300,
+    )
+    diagnostics = " ".join(d["message"] for d in json.loads(result.stdout)["generalDiagnostics"])
+    assert "resolve_image" in diagnostics, f"a value outside a Literal's set went unreported:\n{diagnostics}"
+    assert '"name" of type "str"' in diagnostics, f"an int for a str parameter went unreported:\n{diagnostics}"
+    assert "no_such_kwarg" in diagnostics, f"an unknown keyword argument went unreported:\n{diagnostics}"
 
 
 def test_no_registered_tool_schema_carries_title_annotations():
