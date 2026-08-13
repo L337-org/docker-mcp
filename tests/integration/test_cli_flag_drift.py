@@ -11,9 +11,11 @@ the source for the argv each CLI-backed tool builds, then asks the installed CLI
 flags exist. It is deliberately a *drift* check against whatever is installed rather than a pin to
 a known-good version, since the whole failure mode is upstream changing under us.
 
-Scope and limits, stated because a check that silently verifies nothing is worse than none:
-tools whose argv is assembled dynamically (notably `buildx_build`, which drives a staging session)
-have no static list to read and are not covered. `_MIN_FUNCTIONS_CHECKED` guards against the
+Scope and limits, stated because a check that silently verifies nothing is worse than none. Flags
+are read as literal text from each function's source, which covers a plain `"--flag"` and the
+leading part of a composite or f-string form such as `"--progress=plain"` or `f"--detach={...}"`.
+A flag whose *name* is computed at runtime cannot be seen at all. A function that never builds a
+literal subcommand list is skipped entirely, and `_MIN_FUNCTIONS_CHECKED` guards against the
 extractor silently matching nothing after a refactor.
 """
 
@@ -103,7 +105,10 @@ def _collect() -> list[tuple[str, str, list[str], list[str]]]:
             subs = _leading_subcommand(fn, cli)
             if not subs:
                 continue
-            flags = sorted(set(re.findall(r'"(--[a-z][a-z0-9-]*)"', segment)))
+            # Match the flag *name*, stopping at `=` or the closing quote, so composite and
+            # f-string forms are covered too: `"--progress=plain"` and `f"--detach={...}"` both
+            # yield the flag itself. Matching only `"--flag"` silently skipped five real flags.
+            flags = sorted({f"--{m}" for m in re.findall(r'"--([a-z][a-z0-9-]*)(?:=|")', segment)})
             if flags:
                 found.append((f"{module}.{fn.name}", cli, subs, flags))
     return found
