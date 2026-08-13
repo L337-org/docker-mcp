@@ -35,6 +35,15 @@ _TIMEOUT_SCOUT = 300.0
 # `docker scout cves --help` ("Filter by severity, comma separated (default [], accepts:
 # critical, high, medium, low, unspecified])"). Constraining it as a Literal makes an invalid
 # value a schema-validation failure rather than a CLI error the agent has to interpret.
+#
+# Lowercase only, and deliberately not case-insensitive. Scout matches severity case-sensitively
+# and a non-matching value filters every finding out, so `--only-severity CRITICAL` exits 0 and
+# reports "No vulnerable packages detected" on an image with three critical CVEs; `--exit-code`
+# does not help, since it counts what survived the filter. Accepting any case would mean typing
+# this `str` and lowercasing in the body, because validation runs before the body and a Literal
+# never reaches normalising code. That trade is bad: it fixes the casing case and lets every other
+# unrecognised value (a typo, an invented severity) through to the same silent false-clean. The
+# rejection names the legal values, so a caller sending "CRITICAL" is told exactly what to send.
 Severity = Literal["critical", "high", "medium", "low", "unspecified"]
 
 
