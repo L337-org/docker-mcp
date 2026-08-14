@@ -114,6 +114,50 @@ def test_context_create_skip_tls_verify():
     assert "skip-tls-verify=true" in args[4]
 
 
+def test_context_create_refuses_to_smuggle_skip_tls_verify_through_docker_host():
+    """
+    The insecure switch must only be reachable through its own parameter.
+
+    The `--docker` spec is one comma-separated argument, so a comma in `docker_host` appends a key
+    rather than corrupting the value - turning TLS verification off while `skip_tls_verify` still
+    reads False, which is exactly the visibility the explicit parameter exists to provide.
+    """
+    with patch("docker_mcp.tools.context.run_docker", return_value=_ok()) as run:
+        with pytest.raises(ValueError, match="contains ','"):
+            context_create("remote", docker_host="tcp://10.0.0.5:2376,skip-tls-verify=true")
+    run.assert_not_called()  # refused before the CLI ran at all
+
+
+_COMMA_PATH = "/etc/docker/ca.pem,skip-tls-verify=true"
+_HOST = "tcp://10.0.0.5:2376"
+
+
+# Parametrized over calls rather than a field name and **kwargs: pyright cannot narrow a dynamic
+# key back to the right parameter, so the kwargs form reports a spurious type error on
+# skip_tls_verify. Explicit calls keep the checking that the generic @tool() decorator provides.
+@pytest.mark.parametrize(
+    "call",
+    [
+        lambda: context_create("remote", docker_host=_HOST, tls_ca=_COMMA_PATH),
+        lambda: context_create("remote", docker_host=_HOST, tls_cert=_COMMA_PATH),
+        lambda: context_create("remote", docker_host=_HOST, tls_key=_COMMA_PATH),
+    ],
+    ids=["tls_ca", "tls_cert", "tls_key"],
+)
+def test_context_create_refuses_a_comma_in_a_tls_path(call):
+    with patch("docker_mcp.tools.context.run_docker", return_value=_ok()) as run:
+        with pytest.raises(ValueError, match="contains ','"):
+            call()
+    run.assert_not_called()
+
+
+def test_context_create_still_allows_an_equals_sign_in_a_value():
+    """`=` cannot create a new key, and a real path may contain one, so it must not be rejected."""
+    with patch("docker_mcp.tools.context.run_docker", return_value=_ok()) as run:
+        context_create("remote", docker_host="tcp://10.0.0.5:2376", tls_ca="/etc/docker/ca=1.pem")
+    assert "ca=/etc/docker/ca=1.pem" in run.call_args.args[0][4]
+
+
 def test_context_create_returns_stderr_on_failure_without_raising():
     # Mutating ops return the CliResult dict so the agent can read stderr.
     with patch("docker_mcp.tools.context.run_docker", return_value=_fail("context already exists")):

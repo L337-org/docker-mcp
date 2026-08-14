@@ -276,6 +276,37 @@ def stream_to_file(chunks: Iterable[bytes], dest_path: str, *, overwrite: bool =
     return path, written
 
 
+def as_byte_chunks(chunks: Iterable | bytes | bytearray | str) -> Iterable[bytes]:
+    """
+    Normalize a docker log/stream payload to bytes chunks, ready for `join_bounded`.
+
+    Accepts either a stream of chunks or a whole payload. A whole `bytes`/`bytearray` is yielded as a
+    single chunk rather than iterated, because iterating one yields ints that would stringify to
+    decimal text and silently corrupt the result. `bytearray` is handled alongside `bytes` for the
+    same reason at chunk level: it is not a subclass of `bytes`, so `str()` on one produces the
+    literal text "bytearray(b'...')". Anything else is encoded.
+
+    Closes the source in a `finally`. This generator sits between the caller's stream and
+    `join_bounded`, and `join_bounded` can only close what it is handed - this wrapper - so without
+    this the underlying docker stream's socket leaks whenever the byte cap aborts iteration, which
+    is exactly the guarantee `join_bounded`'s own docstring makes.
+    """
+    if isinstance(chunks, (bytes, bytearray)):
+        yield bytes(chunks)
+        return
+    if isinstance(chunks, str):
+        yield chunks.encode("utf-8", errors="replace")
+        return
+    try:
+        for chunk in chunks:
+            if isinstance(chunk, (bytes, bytearray)):
+                yield bytes(chunk)
+            else:
+                yield str(chunk).encode("utf-8", errors="replace")
+    finally:
+        close_stream_quietly(chunks)
+
+
 def join_bounded(chunks: Iterable[bytes], max_bytes: int, what: str) -> bytes:
     """
     Concatenate bytes chunks, aborting with ValueError if the running total would exceed max_bytes.

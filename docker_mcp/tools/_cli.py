@@ -710,6 +710,32 @@ def safe_positional(value: str, what: str = "value") -> str:
     return value
 
 
+def safe_spec_value(value: str, what: str = "value") -> str:
+    """
+    Validate a string interpolated into a comma-separated `key=value` docker CLI spec.
+
+    The sibling of `safe_positional` for a different injection shape. Flags like
+    `docker context create --docker` take one argument holding several keys separated by commas, so
+    a comma inside an interpolated value does not corrupt the argument, it adds a *key* the caller
+    never asked for. The concrete case: a `docker_host` of
+    `"tcp://host:2376,skip-tls-verify=true"` turns TLS verification off while the tool's own
+    `skip_tls_verify` parameter still reads False, defeating the point of having that parameter be
+    explicit and visible.
+
+    Only ',' is rejected. An '=' inside a value is harmless, because the spec is split on commas
+    first and then on the first '=' of each part, so `host=tcp://a=b` parses as one key with the
+    value `tcp://a=b`. Rejecting '=' as well would refuse legitimate filesystem paths containing
+    one, so it is deliberately allowed - do not "harden" this to include it.
+    """
+    if "," in value:
+        raise ValueError(
+            f"Refusing to pass {what}={value!r} into a docker spec argument: it contains ',', which "
+            f"separates keys in the spec, so the value would inject additional settings (such as "
+            f"skip-tls-verify) that were not requested. Remove the comma."
+        )
+    return value
+
+
 def filter_args(filters: dict | None) -> list[str]:
     """
     Translate an SDK-shaped filters dict into repeated `--filter key=value` CLI arguments.
