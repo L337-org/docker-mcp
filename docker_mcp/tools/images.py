@@ -43,8 +43,15 @@ def image_build(
     Use this for simple single-platform builds from a local context. For multi-platform
     builds, BuildKit cache export/import, or advanced build features prefer `buildx_build`.
     `path` must be a directory accessible on the host running this server (it is the build
-    context sent to the daemon). `dockerfile` is relative to `path`; omit to use the
+    context sent to the daemon). `dockerfile` is normally relative to `path`; omit to use the
     default `Dockerfile`.
+
+    `dockerfile` is not confined to the context, despite the usual relative form: docker-py detects
+    an absolute path, or a relative one escaping via `..`, reads that file from the **server host's**
+    filesystem and injects its contents into the build. So it can read any file the server user can,
+    like the other host-filesystem parameters (`dest_path`, `from_file`), and unlike them it is easy
+    to mistake for a context-relative name. `buildx_build`'s `--file` resolves differently again
+    (against the CLI's working directory) - see its docstring.
 
     args:
         path - Build context directory path on the server host
@@ -54,7 +61,8 @@ def image_build(
         rm - Remove intermediate containers on success (default True)
         pull - Always pull a newer version of each FROM base image before building
         forcerm - Remove intermediate containers even on build failure
-        dockerfile - Dockerfile filename relative to path (default: "Dockerfile")
+        dockerfile - Dockerfile filename relative to path (default: "Dockerfile"); an absolute path
+            or one containing ".." reads that file from the server host instead of the context
         buildargs - Build-time variables passed as `--build-arg`; dict of str→str
         container_limits - Resource limits for the build container, e.g. {"memory": 134217728}
         shmsize - Size of /dev/shm in bytes for build steps that need shared memory
