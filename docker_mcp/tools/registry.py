@@ -379,7 +379,24 @@ def _registry_get(
         return resp
 
 
-def _validate_hub_next(next_url: str) -> str:
+_DEFAULT_PORTS = {"https": 443, "http": 80}
+
+
+def _origin_of(url: str) -> tuple[str, str, int | None]:
+    """
+    Return a URL's (scheme, host, effective port), with an omitted port filled in from the scheme.
+
+    Comparing `urlparse(...).port` directly would treat `https://host/` and `https://host:443/` as
+    different origins, since the first parses to None - so an explicit default port would be refused
+    as foreign. The scheme stays in the tuple, so an `http://host:80` downgrade is still not equal to
+    an `https://host` origin.
+    """
+    parsed = urlparse(url)
+    scheme = parsed.scheme
+    return (scheme, parsed.hostname or "", parsed.port or _DEFAULT_PORTS.get(scheme))
+
+
+def _validate_hub_next(next_url: object) -> str:
     """
     Require a Hub pagination `next` URL to stay on the Hub API's own scheme, host and port.
 
@@ -390,14 +407,20 @@ def _validate_hub_next(next_url: str) -> str:
     already refuses to leave its registry (`registry_tags` keeps only the path from a `Link` header);
     this brings Hub into line rather than leaving the two pagination paths inconsistent.
 
-    Raises RuntimeError on a foreign origin, matching `hub_tags`' parsed-query error style.
+    Raises RuntimeError on a foreign origin or on a non-string value, matching `hub_tags`'
+    parsed-query error style: the body is untrusted, so a malformed `next` must produce the same
+    actionable error as a malicious one rather than an AttributeError out of urlparse.
     """
-    base = urlparse(_HUB_API_BASE)
-    parsed = urlparse(next_url)
-    if (parsed.scheme, parsed.hostname, parsed.port) != (base.scheme, base.hostname, base.port):
+    if not isinstance(next_url, str):
+        raise RuntimeError(
+            f"Docker Hub returned a non-string pagination `next` value ({next_url!r}); refusing to "
+            f"follow it. Expected a URL string on {_HUB_API_BASE}."
+        )
+    base_scheme, base_host, base_port = _origin_of(_HUB_API_BASE)
+    if _origin_of(next_url) != (base_scheme, base_host, base_port):
         raise RuntimeError(
             f"Docker Hub returned a pagination `next` URL on a different origin ({next_url!r}); "
-            f"refusing to follow it. Expected {base.scheme}://{base.hostname}. A response body "
+            f"refusing to follow it. Expected {base_scheme}://{base_host}. A response body "
             f"cannot redirect this server at an arbitrary host."
         )
     return next_url

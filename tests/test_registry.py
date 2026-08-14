@@ -396,6 +396,7 @@ def test_hub_list_tags_refuses_a_next_url_on_another_host():
         "https://hub.docker.com.evil.example/v2/repositories/library/alpine/tags",  # suffix trick
         "https://hub.docker.com:8443/v2/repositories/library/alpine/tags",  # different port
         "https://127.0.0.1/v2/repositories/library/alpine/tags",  # loopback
+        "http://hub.docker.com:80/v2/repositories/library/alpine/tags",  # downgrade on http's default
     ],
 )
 def test_hub_list_tags_pins_scheme_host_and_port(bad_next):
@@ -404,6 +405,44 @@ def test_hub_list_tags_pins_scheme_host_and_port(bad_next):
 
     with _mock_client(handler):
         with pytest.raises(RuntimeError, match="different origin"):
+            hub_tags("alpine")
+
+
+def test_hub_list_tags_accepts_an_explicitly_default_port():
+    """
+    `https://host/` and `https://host:443/` are the same origin.
+
+    urlparse reports the first port as None, so comparing ports raw would refuse an explicit :443 as
+    foreign - a security-shaped error for a perfectly ordinary URL, and the kind of false positive
+    that gets a guard disabled wholesale.
+    """
+    page2 = "https://hub.docker.com:443/v2/repositories/library/alpine/tags?page=2"
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(str(request.url))
+        first = request.url.params.get("page") != "2"
+        return httpx.Response(
+            200,
+            json={"next": page2 if first else None, "results": [{"name": "3.18" if first else "3.19"}]},
+        )
+
+    with _mock_client(handler):
+        result = hub_tags("alpine")
+
+    assert [t["name"] for t in result["tags"]] == ["3.18", "3.19"]
+    assert len(seen) == 2
+
+
+@pytest.mark.parametrize("bad_value", [123, {"url": "https://hub.docker.com/v2/x"}, ["https://hub.docker.com"]])
+def test_hub_list_tags_rejects_a_non_string_next(bad_value):
+    """A malformed body must give the same actionable error as a hostile one, not an AttributeError."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"next": bad_value, "results": []})
+
+    with _mock_client(handler):
+        with pytest.raises(RuntimeError, match="non-string pagination"):
             hub_tags("alpine")
 
 
