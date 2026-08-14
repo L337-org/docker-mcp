@@ -46,7 +46,9 @@ resources are unaffected by the alias.
 - `resource_templates`  sum over `list_resource_templates()` of the wire form
 - `router`              the served `instructions` string
 - `eager_idle`          tools + router: the floor every eager client pays
-- `eager_idle_all`      that floor plus prompts, resources and resource_templates
+- `eager_idle_conditional`  the three components a client pays for only if it supports that call,
+                        reported apart from the floor: `prompts`, `resources`, `resource_templates`
+- `eager_idle_all`      that floor plus all three of the above
 - `lazy_idle`           router + tool_names
 
 WHY `eager_idle` IS ONLY TOOLS AND ROUTER.  There is no single eager cost, because a server

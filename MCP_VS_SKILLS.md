@@ -46,7 +46,7 @@ We have no commercial interest in either. Both are MIT-licensed and free.
 | **Runtime auditability** | `tool-catalog` resource reports exactly what is registered | None |
 | **Updates** | Version-pinned via `uvx`/image tag | Manual re-download; goes stale silently |
 | **Trim the surface to fit the job** | `DOCKER_MCP_SERVER_DISABLE` drops whole domains; read-only / no-destructive drop categories - **and the router and prompts shrink with them** | Not really - the router is one file, though you can delete reference files you'll never use |
-| **Token cost, eager client, idle** | **~46,800** at full surface; **~18,200** trimmed to a triage-shaped config. Add up to ~2,400 for a client that also loads prompts and resources | **~140** |
+| **Token cost, eager client, idle** | **~46,800** at full surface; **~18,200** trimmed to a triage-shaped config. Add up to ~2,400 for a client that also loads prompts, resources and resource templates | **~140** |
 | **Token cost, lazy client, idle** | ~1,200 full; ~520 trimmed | ~140 |
 | **Token cost, typical task** | **~1,500-2,700** (lazy) | ~5,500-7,800 |
 | **Failure mode** | Server can fail to start / resolve deps | Cannot fail to "start"; a wrong command just errors |
@@ -199,9 +199,9 @@ The range between the loosest and tightest usable configuration is wide:
 | Core only: `containers` + `system` | 37 | 10,920 | 391 |
 | Floor: core, read-only | 16 | 4,927 | 321 |
 
-The eager column is **tools plus the router**: what every eager client pays. Prompts and
-resources are counted separately, because only a client supporting those calls fetches them -
-see [Idle](#idle---loaded-but-not-used).
+The eager column is **tools plus the router**: what every eager client pays. Prompts, resources and
+resource templates are counted separately, because each is fetched by a separate call and only by a
+client that supports it - see [Idle](#idle---loaded-but-not-used).
 
 **On an eager client that spread is 4,927 to 46,819 tokens, roughly 9.5x**, which makes trimming
 the single biggest lever available to you. **On a lazy client the same spread is 321 to 1,198: the
