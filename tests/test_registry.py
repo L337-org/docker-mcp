@@ -461,6 +461,35 @@ def test_hub_list_tags_converts_an_unparseable_port_to_its_own_error(bad_next):
             hub_tags("alpine")
 
 
+@pytest.mark.parametrize("falsy", ["", 0, False])
+def test_hub_list_tags_rejects_a_falsy_but_present_next(falsy):
+    """
+    Only `null`/absent ends pagination; a falsy-but-present value is a malformed body.
+
+    Gating the guard on truthiness let these skip validation and end the loop quietly, returning a
+    partial tag list reported as complete - a failure indistinguishable from success.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"next": falsy, "results": [{"name": "3.18"}]})
+
+    with _mock_client(handler):
+        with pytest.raises(RuntimeError):
+            hub_tags("alpine")
+
+
+@pytest.mark.parametrize("body", [{"next": None, "results": []}, {"results": []}])
+def test_hub_list_tags_ends_cleanly_on_null_or_absent_next(body):
+    """The legitimate end-of-pagination signals must not be caught by the guard above."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=body)
+
+    with _mock_client(handler):
+        result = hub_tags("alpine")
+    assert result == {"name": "library/alpine", "tags": [], "truncated": False}
+
+
 @pytest.mark.parametrize("bad_value", [123, {"url": "https://hub.docker.com/v2/x"}, ["https://hub.docker.com"]])
 def test_hub_list_tags_rejects_a_non_string_next(bad_value):
     """A malformed body must give the same actionable error as a hostile one, not an AttributeError."""

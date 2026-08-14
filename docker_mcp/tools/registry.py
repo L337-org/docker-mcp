@@ -798,7 +798,12 @@ def hub_tags(repository: str, limit: int = 100) -> dict:
                 if len(tags) >= limit:
                     return {"name": repo, "tags": tags, "truncated": True}
             raw_next = body.get("next")
-            url = _validate_hub_next(raw_next) if raw_next else None
+            # `is not None`, not truthiness: Hub ends pagination with `next: null`, so only an absent
+            # or null value means "no more pages". Any other value - "", 0, False - is a malformed
+            # body, and skipping validation for those would end the loop quietly and return a partial
+            # tag list reported as complete (`truncated: False`), which is a failure disguised as a
+            # success. They go through the guard and raise instead.
+            url = _validate_hub_next(raw_next) if raw_next is not None else None
             pages += 1
     if pages >= _MAX_TAG_PAGES and url:
         truncated = True
