@@ -276,6 +276,21 @@ def stream_to_file(chunks: Iterable[bytes], dest_path: str, *, overwrite: bool =
     return path, written
 
 
+def as_byte_chunks(chunks: Iterable) -> Iterable[bytes]:
+    """
+    Normalize a docker log/stream iterable's chunks to bytes, ready for `join_bounded`.
+
+    `bytearray` is accepted as well as `bytes` because it is not a subclass of it: passing one to
+    `str()` would yield the literal text "bytearray(b'...')" and silently corrupt the payload rather
+    than failing. Anything else (a str chunk from a mock or a text-mode transport) is encoded.
+    """
+    for chunk in chunks:
+        if isinstance(chunk, (bytes, bytearray)):
+            yield bytes(chunk)
+        else:
+            yield str(chunk).encode("utf-8", errors="replace")
+
+
 def join_bounded(chunks: Iterable[bytes], max_bytes: int, what: str) -> bytes:
     """
     Concatenate bytes chunks, aborting with ValueError if the running total would exceed max_bytes.

@@ -7,6 +7,7 @@ from docker.errors import DockerException
 from docker_mcp.tools import _utils
 from docker_mcp.tools._utils import (
     MAX_PAYLOAD_BYTES,
+    as_byte_chunks,
     assert_host_writable,
     classify_host_kernel,
     close_stream_quietly,
@@ -77,6 +78,29 @@ def test_drop_none_with_no_kwargs_returns_empty_dict():
 
 def test_drop_none_with_all_none_returns_empty_dict():
     assert drop_none(a=None, b=None) == {}
+
+
+def test_as_byte_chunks_passes_bytes_through():
+    assert list(as_byte_chunks(iter([b"foo", b"bar"]))) == [b"foo", b"bar"]
+
+
+def test_as_byte_chunks_converts_bytearray_rather_than_stringifying_it():
+    """
+    bytearray is not a subclass of bytes, so a naive `isinstance(chunk, bytes)` check sends it down
+    the str() path and yields the literal text "bytearray(b'...')" - silent corruption of the log
+    rather than a visible failure. The exact wrong output is asserted so the regression is
+    unmistakable if the predicate is ever narrowed again.
+    """
+    assert list(as_byte_chunks(iter([bytearray(b"hello\n")]))) == [b"hello\n"]
+    assert b"bytearray" not in b"".join(as_byte_chunks(iter([bytearray(b"hello\n")])))
+
+
+def test_as_byte_chunks_encodes_str_chunks():
+    assert list(as_byte_chunks(iter(["already-text\n"]))) == [b"already-text\n"]
+
+
+def test_as_byte_chunks_handles_a_mixed_stream():
+    assert list(as_byte_chunks(iter([b"a", bytearray(b"b"), "c"]))) == [b"a", b"b", b"c"]
 
 
 def test_join_bounded_concatenates_chunks_under_cap():

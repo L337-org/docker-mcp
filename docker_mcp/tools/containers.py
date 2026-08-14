@@ -13,6 +13,7 @@ from docker_mcp.server import tool
 from docker_mcp.tools._labels import managed_filter, with_provenance
 from docker_mcp.tools._utils import (
     MAX_PAYLOAD_BYTES,
+    as_byte_chunks,
     close_stream_quietly,
     drop_none,
     host_read_path,
@@ -389,12 +390,6 @@ def container_remove(
     return True
 
 
-def _as_log_bytes(chunks: Iterable) -> Iterable[bytes]:
-    """Normalize a docker log stream's chunks to bytes for `join_bounded`."""
-    for chunk in chunks:
-        yield chunk if isinstance(chunk, bytes) else str(chunk).encode("utf-8", errors="replace")
-
-
 def _read_bounded_container_logs(container: Any, what: str, **log_kwargs: Any) -> str:
     """
     Read a container's logs incrementally and return them decoded, capped at MAX_PAYLOAD_BYTES.
@@ -410,7 +405,7 @@ def _read_bounded_container_logs(container: Any, what: str, **log_kwargs: Any) -
     # failing, so a whole-payload return is treated as one chunk. docker-py returns a stream for
     # stream=True today; this keeps a future change to that visibly correct instead of corrupt.
     chunks: Iterable = [output] if isinstance(output, (bytes, bytearray)) else cast(Iterable, output)
-    raw = join_bounded(_as_log_bytes(chunks), MAX_PAYLOAD_BYTES, what)
+    raw = join_bounded(as_byte_chunks(chunks), MAX_PAYLOAD_BYTES, what)
     return raw.decode("utf-8", errors="replace")
 
 

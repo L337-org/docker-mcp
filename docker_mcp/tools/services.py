@@ -6,7 +6,7 @@ from typing import Literal, cast
 
 from docker_mcp.server import tool
 from docker_mcp.tools._labels import managed_filter, with_provenance
-from docker_mcp.tools._utils import MAX_PAYLOAD_BYTES, drop_none, join_bounded
+from docker_mcp.tools._utils import MAX_PAYLOAD_BYTES, as_byte_chunks, drop_none, join_bounded
 from docker_mcp.tools.system import _get_client
 
 
@@ -21,11 +21,7 @@ def _read_service_log_tail(id_or_name: str, tail: int = 200, host: str | None = 
     service = _get_client(host).services.get(id_or_name)
     output = service.logs(stdout=True, stderr=True, follow=False, tail=tail)
 
-    def _as_bytes(chunks: Iterable) -> Iterable[bytes]:
-        for chunk in chunks:
-            yield chunk if isinstance(chunk, bytes) else str(chunk).encode("utf-8", errors="replace")
-
-    raw = join_bounded(_as_bytes(cast(Iterable, output)), MAX_PAYLOAD_BYTES, f"logs of service {id_or_name}")
+    raw = join_bounded(as_byte_chunks(cast(Iterable, output)), MAX_PAYLOAD_BYTES, f"logs of service {id_or_name}")
     return raw.decode("utf-8", errors="replace")
 
 
@@ -247,11 +243,7 @@ def service_logs(
         tail=tail,
     )
 
-    def _as_bytes(chunks: Iterable) -> Iterable[bytes]:
-        for chunk in chunks:
-            yield chunk if isinstance(chunk, bytes) else str(chunk).encode("utf-8", errors="replace")
-
-    raw = join_bounded(_as_bytes(cast(Iterable, output)), max_bytes, f"logs of service {id_or_name}")
+    raw = join_bounded(as_byte_chunks(cast(Iterable, output)), max_bytes, f"logs of service {id_or_name}")
     return raw.decode("utf-8", errors="replace")
 
 

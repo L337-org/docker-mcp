@@ -287,6 +287,23 @@ def test_container_logs_snapshot_cap_does_not_buffer_past_the_limit():
     assert pulled == (MAX_PAYLOAD_BYTES // len(chunk)) + 1
 
 
+def test_container_logs_snapshot_handles_bytearray_chunks():
+    """A bytearray chunk must not decode to the text "bytearray(b'...')"."""
+    container = MagicMock()
+    container.logs.return_value = iter([bytearray(b"line1\n"), b"line2\n"])
+    with _patch() as mock_client:
+        mock_client.return_value.containers.get.return_value = container
+        assert container_logs("web") == "line1\nline2\n"
+
+
+def test_container_logs_snapshot_handles_a_bytearray_whole_payload():
+    container = MagicMock()
+    container.logs.return_value = bytearray(b"whole\n")
+    with _patch() as mock_client:
+        mock_client.return_value.containers.get.return_value = container
+        assert container_logs("web") == "whole\n"
+
+
 def test_container_logs_snapshot_coerces_str_chunks():
     container = MagicMock()
     container.logs.return_value = iter(["already-text\n"])

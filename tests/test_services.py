@@ -119,6 +119,15 @@ def test_service_logs_aborts_when_exceeding_max_bytes():
             service_logs("svc1", max_bytes=10)
 
 
+def test_service_logs_handles_bytearray_chunks():
+    """Same latent corruption as container_logs had: bytearray is not a bytes subclass."""
+    service = MagicMock()
+    service.logs.return_value = iter([bytearray(b"line1\n"), b"line2\n"])
+    with _patch() as mock_client:
+        mock_client.return_value.services.get.return_value = service
+        assert service_logs("svc1") == "line1\nline2\n"
+
+
 def test_service_logs_coerces_str_chunks():
     service = MagicMock()
     service.logs.return_value = iter(["already-text\n"])
