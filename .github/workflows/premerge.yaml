@@ -20,6 +20,58 @@ concurrency:
 # Jobs
 jobs:
 
+  action-pins:
+    # Ported from L337-org/apt's job of the same name, which is the org's reference
+    # implementation, and kept identical in logic to it and to send-to-influx's copy - three
+    # repos carrying the same guard is only an advantage while they agree, and the
+    # uppercase-SHA defect this arrives with the fix for was found in one copy and had to be
+    # chased into the other two.
+    #
+    # Every ref here was already pinned when this job was added; it exists so that stays true
+    # without anyone having to remember.
+    runs-on: [ubuntu-latest]
+    name: Action pins are immutable
+    steps:
+      - name: Check out source repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Every `uses:` must name a 40-hex commit SHA
+        run: |
+          # A tag or branch ref can be repointed by the action's owner at any time, so
+          # `@v7` means CI runs whatever that owner last pushed to it. That matters most in
+          # publish.yaml, which mints an OIDC token for PyPI Trusted Publishing
+          # (`id-token: write`), pushes to GHCR (`packages: write`) and uploads release
+          # assets (`contents: write`) - a repointed tag would execute inside jobs holding
+          # the strongest credentials this project has, and Trusted Publishing needs no
+          # stored token for an attacker to steal in order to publish as this project.
+          # First-party actions/* are not exempt: the standard makes no exception for them,
+          # and the pin costs nothing to hold, because Dependabot bumps the SHA and rewrites
+          # the trailing "# vX.Y.Z" comment. Local actions (./...) are exempt - they are
+          # this repo's own code at this repo's own commit, so there is no third party to
+          # repoint them.
+          #
+          # Quoting is optional in YAML, so `uses: "owner/action@<sha>"` is exactly as
+          # pinned as the bare form, and hex is case-insensitive, so an uppercase SHA is
+          # equally pinned - GitHub resolves one (verified: both the commits and tarball
+          # API endpoints answer 200 for an upper-cased SHA). All are accepted: a guard
+          # that fails a legitimately pinned action is one someone eventually switches
+          # off wholesale, which costs more than it ever caught. In practice every pin
+          # here is lowercase, because that is what Dependabot writes.
+          #
+          # The trailing "# vX.Y.Z" comment is a convention, not something this guard
+          # enforces - the immutability of the ref is the security property, and the
+          # comment only tells a human which tag the SHA was.
+          bad=$(grep -rnE '^[[:space:]]*(-[[:space:]]+)?uses:' .github/workflows .github/actions 2>/dev/null \
+                | grep -vE "uses:[[:space:]]*[\"']?\./" \
+                | grep -vE "uses:[[:space:]]*[\"']?[^[:space:]\"']+@[0-9a-fA-F]{40}[\"']?([[:space:]]|\$)" \
+                || true)
+          if [ -n "$bad" ]; then
+            echo "::error::Every action must be pinned to a full 40-hex commit SHA." >&2
+            printf '%s\n' "$bad" >&2
+            exit 1
+          fi
+          echo "All action references are pinned to commit SHAs."
+
   fresh-resolve-import:
     # Answers a question `uv sync --locked` (used by every other job here) cannot: would a
     # CLEAN install of what we're about to ship actually import? `uv sync --locked` only ever
