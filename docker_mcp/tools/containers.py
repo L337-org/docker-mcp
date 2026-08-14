@@ -400,12 +400,10 @@ def _read_bounded_container_logs(container: Any, what: str, **log_kwargs: Any) -
     cap applied afterwards would measure memory that had already been committed. Raises ValueError
     when the cap is hit, matching `service_logs`.
     """
+    # as_byte_chunks handles both shapes: docker-py returns a stream for stream=True today, and a
+    # whole-payload return would be yielded as one chunk rather than iterated into digit soup.
     output = container.logs(stream=True, follow=False, **log_kwargs)
-    # Iterating a bytes object yields ints, which would silently decode to digit soup rather than
-    # failing, so a whole-payload return is treated as one chunk. docker-py returns a stream for
-    # stream=True today; this keeps a future change to that visibly correct instead of corrupt.
-    chunks: Iterable = [output] if isinstance(output, (bytes, bytearray)) else cast(Iterable, output)
-    raw = join_bounded(as_byte_chunks(chunks), MAX_PAYLOAD_BYTES, what)
+    raw = join_bounded(as_byte_chunks(output), MAX_PAYLOAD_BYTES, what)
     return raw.decode("utf-8", errors="replace")
 
 

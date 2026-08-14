@@ -1,7 +1,6 @@
 # library of mcp tools relating to swarm service management
 
 import time
-from collections.abc import Iterable
 from typing import Literal, cast
 
 from docker_mcp.server import tool
@@ -21,7 +20,7 @@ def _read_service_log_tail(id_or_name: str, tail: int = 200, host: str | None = 
     service = _get_client(host).services.get(id_or_name)
     output = service.logs(stdout=True, stderr=True, follow=False, tail=tail)
 
-    raw = join_bounded(as_byte_chunks(cast(Iterable, output)), MAX_PAYLOAD_BYTES, f"logs of service {id_or_name}")
+    raw = join_bounded(as_byte_chunks(output), MAX_PAYLOAD_BYTES, f"logs of service {id_or_name}")
     return raw.decode("utf-8", errors="replace")
 
 
@@ -243,7 +242,7 @@ def service_logs(
         tail=tail,
     )
 
-    raw = join_bounded(as_byte_chunks(cast(Iterable, output)), max_bytes, f"logs of service {id_or_name}")
+    raw = join_bounded(as_byte_chunks(output), max_bytes, f"logs of service {id_or_name}")
     return raw.decode("utf-8", errors="replace")
 
 
