@@ -121,6 +121,49 @@ def test_run_container_stamps_provenance_label():
     assert labels["team"] == "infra"  # caller label preserved
 
 
+def test_run_container_keeps_provenance_when_extra_kwargs_supplies_labels():
+    """
+    extra_kwargs must not be able to drop the managed set.
+
+    Stamping before `kwargs.update(extra_kwargs)` meant a caller-supplied `labels` replaced the
+    whole dict, so the container was created unstamped and went missing from
+    `container_list(managed_only=True)` and `prune_managed`.
+    """
+    container = MagicMock()
+    container.attrs = {"Id": "abc"}
+    with _patch() as mock_client:
+        mock_client.return_value.containers.run.return_value = container
+        container_run("nginx", extra_kwargs={"labels": {"app": "x"}})
+    labels = mock_client.return_value.containers.run.call_args.kwargs["labels"]
+    assert labels["docker-mcp-server.managed"] == "true"
+    assert labels["docker-mcp-server.tool"] == "container_run"
+    assert labels["app"] == "x"
+
+
+def test_run_container_extra_kwargs_labels_merge_with_the_labels_parameter():
+    container = MagicMock()
+    container.attrs = {"Id": "abc"}
+    with _patch() as mock_client:
+        mock_client.return_value.containers.run.return_value = container
+        container_run("nginx", labels={"team": "infra"}, extra_kwargs={"labels": {"app": "x"}})
+    labels = mock_client.return_value.containers.run.call_args.kwargs["labels"]
+    # extra_kwargs still wins the `labels` key outright, as dict.update implies - the point of the
+    # fix is that provenance survives it, not that the two caller sources are merged.
+    assert labels["app"] == "x"
+    assert labels["docker-mcp-server.managed"] == "true"
+
+
+def test_run_container_caller_label_still_wins_a_provenance_key_collision():
+    container = MagicMock()
+    container.attrs = {"Id": "abc"}
+    with _patch() as mock_client:
+        mock_client.return_value.containers.run.return_value = container
+        container_run("nginx", extra_kwargs={"labels": {"docker-mcp-server.tool": "mine"}})
+    labels = mock_client.return_value.containers.run.call_args.kwargs["labels"]
+    assert labels["docker-mcp-server.tool"] == "mine"  # documented in _labels.py
+    assert labels["docker-mcp-server.managed"] == "true"
+
+
 def test_create_container_stamps_provenance_label():
     container = MagicMock()
     container.attrs = {"Id": "abc"}

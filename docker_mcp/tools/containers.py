@@ -103,7 +103,7 @@ def container_run(
             working_dir=working_dir,
             entrypoint=entrypoint,
             restart_policy=restart_policy,
-            labels=with_provenance(labels, "container_run"),
+            labels=labels,
             mem_limit=mem_limit,
             cpu_count=cpu_count,
         ),
@@ -119,6 +119,13 @@ def container_run(
             kwargs[key] = value
     if extra_kwargs:
         kwargs.update(extra_kwargs)
+    # Stamped after extra_kwargs, matching container_create/service_create. Stamping before the
+    # update let extra_kwargs={"labels": ...} replace the whole dict and drop the managed labels,
+    # which silently hid the container from managed_only listings and prune_managed. A caller still
+    # wins on an individual key collision, which is the documented behaviour of with_provenance.
+    provenance = with_provenance(kwargs.get("labels"), "container_run")
+    if provenance is not None:
+        kwargs["labels"] = provenance
     result = _get_client(host).containers.run(image, **kwargs)
     if detach:
         return result.attrs
