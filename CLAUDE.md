@@ -44,6 +44,10 @@ uv run pyright
 
 # Install pre-commit hooks (one-time)
 uv run pre-commit install
+
+# Regenerate the measured figures MCP_VS_SKILLS.md quotes (reports only; add --json for the
+# structured form). Self-contained: pins its own tiktoken, installs the working tree editable.
+uv run scripts/measure-comparison-figures.py
 ```
 
 CI (`.github/workflows/premerge.yaml`) enforces `pytest`, `ruff check`, `ruff format --check`, and
@@ -217,7 +221,11 @@ A **Claude Code agent skill** that drives Docker entirely through the `docker` C
 
 **Distribution**: the `skill` job in `.github/workflows/publish.yaml` packs it (see "Release pipeline"). There is no official packaging format for a skill - unlike `.mcpb` for MCP servers, a plain directory is the unit - so the archives are just that directory. Native alternative not currently used: a Claude Code **plugin marketplace** (`.claude-plugin/marketplace.json` + `/plugin marketplace add`), which would give `/plugin install` and auto-updates.
 
-**When changing the skill's structure, its provenance label, or the server's tool/prompt surface, update this section and `MCP_VS_SKILLS.md` together.**
+**The comparison document's measured figures are regenerated, never hand-counted.** `scripts/measure-comparison-figures.py` emits every figure `MCP_VS_SKILLS.md` quotes - token costs for all five configurations it names (full, read-only, triage, core, floor), the description/parameter statistics, the skill's per-file costs, and the per-task comparisons - as a table or, with `--json`, structured output. Run it with `uv run scripts/measure-comparison-figures.py`; a PEP 723 header pins its own `tiktoken` and installs the working tree editable, so it needs nothing in the dev group and always measures the checked-out code. It is **developer-only and report-only** (the same footing as `scripts/build-mcpb.sh`): it never edits the document, so correcting a figure stays a reviewed edit. **It is deliberately not a CI gate** - token figures move a few tokens on any docstring edit, so asserting them would fail constantly and signal nothing; drift is watched instead by the weekly "MCP vs skills figure drift" routine in `L337-org/claude-routines`, which judges whether a movement is worth republishing and opens a PR when it is. Please do not propose promoting it to a merge gate. Three things about it *are* asserted in `tests/test_skill.py`, because they are binary and silent when they break: every configuration the script measures is still a row in the document, the triage `DOCKER_MCP_SERVER_DISABLE` line the document publishes is the one the triage figures were measured with, and every per-task composition names registered tools and existing skill files.
+
+The **method** is recorded in the script's docstring rather than being rediscovered each time (it had to be reverse-engineered once already): `tiktoken` `cl100k_base` over each item in the wire form a client receives it in - `model_dump_json(by_alias=True, exclude_none=True)`, which matters because a client is sent `inputSchema`, never the `input_schema` spelling of the Python attribute. Two figures are judgement, not measurement, and are labelled as such in the output: the per-task compositions (which tools an agent fetches, which skill files load) are chosen and named in the script, and the two prose counts over the skill are heuristics. One known gap in the document's own definitions: its eager-idle total omits resource templates, which a client also receives, so the script reports `eager_idle` both ways rather than silently picking one.
+
+**When changing the skill's structure, its provenance label, or the server's tool/prompt surface, update this section and `MCP_VS_SKILLS.md` together** - and where a change moves the figures, regenerate them with the script rather than editing a number by hand.
 
 ### Release pipeline (`.github/workflows/publish.yaml`)
 
