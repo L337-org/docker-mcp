@@ -26,7 +26,11 @@ class DockerMcpServer < Formula
   # This is only a candidate workaround for the headerpad failure that paused this channel, and
   # an unverified one: skip_clean affects the cleanup phase only. It does not disable the separate
   # keg-relocation step that rewrites dylib IDs via install_name_tool, which is where that failure
-  # actually occurs. See CLAUDE.md's "Homebrew tap" section.
+  # actually occurs.
+  #
+  # This file is rendered into L337-org/homebrew-tap, so read it from there: this tap's own README
+  # covers the pause, and the full record is in the "Homebrew tap" section of CLAUDE.md in
+  # https://github.com/L337-org/docker-mcp.
   skip_clean "libexec"
 
   def install
