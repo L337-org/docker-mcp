@@ -23,6 +23,18 @@ _HUB_API_BASE = "https://hub.docker.com/v2"
 _DEFAULT_REGISTRY = "registry-1.docker.io"
 _MAX_TAG_PAGES = 50  # cap on registry/Hub pagination follow-through
 
+# Every client here sets follow_redirects=True, and cross-host redirects are deliberately allowed:
+# do NOT "harden" this to same-host only. Registries redirect blob fetches to a CDN on another host
+# as normal operation - Docker Hub answers a config-blob GET with 307 to
+# production.cloudfront.docker.com (verified), so registry_image_config would break against the most
+# common registry. It also would not buy much: httpx strips the Authorization header on any
+# cross-origin redirect (see its _redirect_headers), so a redirect cannot carry credentials to
+# another host, and the caller can already name any registry host it likes in `repository` - a
+# redirect reaches no destination that a tool argument could not reach directly.
+#
+# What is NOT the caller's choice is a URL taken from a response *body* and then fetched, which is
+# why `_validate_hub_next` pins Hub pagination to Hub's own origin.
+
 
 def _env_credentials(username: str | None, password: str | None) -> tuple[str | None, str | None]:
     """
@@ -365,6 +377,72 @@ def _registry_get(
             resp = _get_with_retry_policy(client, url, headers=headers)
         resp.raise_for_status()
         return resp
+
+
+_DEFAULT_PORTS = {"https": 443, "http": 80}
+
+
+def _origin_of(url: str) -> tuple[str, str, int | None]:
+    """
+    Return a URL's (scheme, host, effective port), with an *omitted* port filled in from the scheme.
+
+    Comparing `urlparse(...).port` directly would treat `https://host/` and `https://host:443/` as
+    different origins, since the first parses to None - so an explicit default port would be refused
+    as foreign. The scheme stays in the tuple, so an `http://host:80` downgrade is still not equal to
+    an `https://host` origin.
+
+    Only a *missing* port is defaulted, tested with `is None` rather than falsiness: `:0` parses to
+    the integer 0, so `port or default` would quietly rewrite `https://host:0/` into the scheme
+    default and let it compare equal to an origin it is not.
+
+    Raises ValueError on an unparseable or out-of-range port (`:99999`, `:abc`). `urlparse` itself
+    returns cleanly for those - it leaves the port in `netloc` - and the error comes from reading the
+    `ParseResult.port` property here. Callers handling untrusted input must convert it: see
+    `_validate_hub_next`.
+    """
+    parsed = urlparse(url)
+    scheme = parsed.scheme
+    port = parsed.port
+    return (scheme, parsed.hostname or "", port if port is not None else _DEFAULT_PORTS.get(scheme))
+
+
+def _validate_hub_next(next_url: object) -> str:
+    """
+    Require a Hub pagination `next` URL to stay on the Hub API's own scheme, host and port.
+
+    `next` is a URL taken from a *response body* and then fetched, so unlike the registry host in a
+    tool argument it is not a destination the caller chose. Without this check, a `next` of
+    `https://internal.example/` would make this process issue that request from wherever the server
+    runs, and return up to `_MAX_RESPONSE_BYTES` of the reply to the agent. The OCI tag-list path
+    already refuses to leave its registry (`registry_tags` keeps only the path from a `Link` header);
+    this brings Hub into line rather than leaving the two pagination paths inconsistent.
+
+    Raises RuntimeError on a foreign origin or on a non-string value, matching `hub_tags`'
+    parsed-query error style: the body is untrusted, so a malformed `next` must produce the same
+    actionable error as a malicious one rather than an AttributeError out of urlparse.
+    """
+    if not isinstance(next_url, str):
+        raise RuntimeError(
+            f"Docker Hub returned a non-string pagination `next` value ({next_url!r}); refusing to "
+            f"follow it. Expected a URL string on {_HUB_API_BASE}."
+        )
+    base_scheme, base_host, base_port = _origin_of(_HUB_API_BASE)
+    try:
+        origin = _origin_of(next_url)
+    except ValueError as exc:
+        # _origin_of raises this when reading ParseResult.port for an unparseable or out-of-range
+        # port (":99999", ":abc"); urlparse itself accepts those. The value came from an untrusted
+        # body, so it must not pick the exception type the caller sees.
+        raise RuntimeError(
+            f"Docker Hub returned an unparseable pagination `next` URL ({next_url!r}): {exc}. Refusing to follow it."
+        ) from exc
+    if origin != (base_scheme, base_host, base_port):
+        raise RuntimeError(
+            f"Docker Hub returned a pagination `next` URL on a different origin ({next_url!r}); "
+            f"refusing to follow it. Expected {base_scheme}://{base_host}. A response body "
+            f"cannot redirect this server at an arbitrary host."
+        )
+    return next_url
 
 
 def _next_link(link_header: str | None) -> str | None:
@@ -722,7 +800,13 @@ def hub_tags(repository: str, limit: int = 100) -> dict:
                 )
                 if len(tags) >= limit:
                     return {"name": repo, "tags": tags, "truncated": True}
-            url = body.get("next")
+            raw_next = body.get("next")
+            # `is not None`, not truthiness: Hub ends pagination with `next: null`, so only an absent
+            # or null value means "no more pages". Any other value - "", 0, False - is a malformed
+            # body, and skipping validation for those would end the loop quietly and return a partial
+            # tag list reported as complete (`truncated: False`), which is a failure disguised as a
+            # success. They go through the guard and raise instead.
+            url = _validate_hub_next(raw_next) if raw_next is not None else None
             pages += 1
     if pages >= _MAX_TAG_PAGES and url:
         truncated = True
