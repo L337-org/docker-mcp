@@ -45,13 +45,24 @@ resources are unaffected by the alias.
 - `resources`           sum over `list_resources()` of the wire form
 - `resource_templates`  sum over `list_resource_templates()` of the wire form
 - `router`              the served `instructions` string
-- `eager_idle`          tools + prompts + resources + router
+- `eager_idle`          tools + router: the floor every eager client pays
+- `eager_idle_all`      that floor plus prompts, resources and resource_templates
 - `lazy_idle`           router + tool_names
 
-`eager_idle` follows the document's own definition, which omits `resource_templates`.  A client that
-loads eagerly does receive that list too, so `eager_idle_with_templates` is reported alongside it;
-the two differ by whatever the templates cost.  Which of them the document should quote is a
-question for a human, not something this script decides by picking one.
+WHY `eager_idle` IS ONLY TOOLS AND ROUTER.  There is no single eager cost, because a server
+advertises across four calls and a client pays only for the ones it supports: `tools/list` (every
+eager client), `prompts/list`, `resources/list` and `resources/templates/list`.  The spread between
+a tools-only client and a fully-featured one is around 2,400 tokens - 5% of the full surface, but
+36% of the `floor` configuration, where it is a bigger lever than some of the config switches.  So
+`eager_idle` is the floor, the three conditional components are reported separately, and
+`eager_idle_all` is the ceiling.  Quoting one blended number would state a figure for a client
+nobody has identified.
+
+And the grey area under the grey area, worth keeping in view: it is NOT established that a client
+which supports resources puts the listings into the model's *context* rather than into its own
+picker UI.  The conditional components are what the protocol advertises, which is an upper bound on
+what the model is charged for.  Settling that needs an instrumented client session, not more
+arithmetic.
 
 MEASURED VERSUS CHOSEN
 ======================
@@ -200,11 +211,18 @@ def _measure_current_surface() -> dict[str, Any]:
                 "resources": resources_tokens,
                 "resource_templates": templates_tokens,
                 "router": router_tokens,
-                "eager_idle": tools_tokens + prompts_tokens + resources_tokens + router_tokens,
-                "eager_idle_with_templates": (
-                    tools_tokens + prompts_tokens + resources_tokens + templates_tokens + router_tokens
-                ),
+                # The floor: what an eager client pays whatever else it supports.
+                "eager_idle": tools_tokens + router_tokens,
+                # The ceiling: every advertisement surface loaded.
+                "eager_idle_all": (tools_tokens + router_tokens + prompts_tokens + resources_tokens + templates_tokens),
                 "lazy_idle": router_tokens + names_tokens,
+            },
+            # Each is paid only by a client that supports that part of the protocol, so they are
+            # reported apart from the floor rather than blended into it.
+            "eager_idle_conditional": {
+                "prompts": prompts_tokens,
+                "resources": resources_tokens,
+                "resource_templates": templates_tokens,
             },
             "tool_definition_tokens": {
                 "median": statistics.median(per_tool.values()) if per_tool else 0,
@@ -464,7 +482,11 @@ def _build_report() -> dict[str, Any]:
         "method": {
             "tokenizer": f"tiktoken {tiktoken.__version__} ({_ENCODING})",
             "serialisation": "model_dump_json(by_alias=True, exclude_none=True) - the wire form a client receives",
-            "eager_idle": "tools + prompts + resources + router (the document's definition, omitting templates)",
+            "eager_idle": "tools + router - the floor every eager client pays, whatever else it supports",
+            "eager_idle_conditional": "prompts / resources / resource_templates, each paid only by a client "
+            "supporting that call; an upper bound, since a supporting client may keep a listing in its own "
+            "UI rather than the model's context",
+            "eager_idle_all": "the floor plus all three conditional components",
             "lazy_idle": "router + tool names",
             "caveat": "cl100k_base is not Claude's tokenizer: absolute values +/-10-15%, ratios are the finding",
             "task_compositions": "chosen, not measured - see the script's docstring",
@@ -483,28 +505,29 @@ def _render(report: dict[str, Any]) -> str:
         out.append(f"  {key:<18} {value}")
 
     out.append("")
-    out.append(f"{'Configuration':<34} {'Tools':>6} {'Eager idle':>11} {'Lazy idle':>10} {'Router':>7} {'Names':>6}")
+    out.append(
+        f"{'Configuration':<34} {'Tools':>6} {'Eager floor':>12} {'Eager all':>10} {'Lazy idle':>10} {'Router':>7}"
+    )
     for config in report["server"].values():
         tokens = config["tokens"]
         out.append(
-            f"{config['doc_row'][:33]:<34} {config['counts']['tools']:>6} {tokens['eager_idle']:>11,} "
-            f"{tokens['lazy_idle']:>10,} {tokens['router']:>7,} {tokens['tool_names']:>6,}"
+            f"{config['doc_row'][:33]:<34} {config['counts']['tools']:>6} {tokens['eager_idle']:>12,} "
+            f"{tokens['eager_idle_all']:>10,} {tokens['lazy_idle']:>10,} {tokens['router']:>7,}"
         )
 
-    full = report["server"]["full"]["tokens"]
-    counts = report["server"]["full"]["counts"]
     out.append("")
-    out.append("Full surface, eager idle breakdown")
-    out.append(f"  {full['tools']:>7,}  tools ({counts['tools']})")
-    out.append(f"  {full['prompts']:>7,}  prompts ({counts['prompts']})")
-    out.append(f"  {full['resources']:>7,}  resources ({counts['resources']})")
-    out.append(f"  {full['router']:>7,}  router")
-    out.append(f"  {full['eager_idle']:>7,}  TOTAL as the document defines it")
-    out.append(
-        f"  {full['resource_templates']:>7,}  resource templates ({counts['resource_templates']}), which the"
-        " document's total omits"
-    )
-    out.append(f"  {full['eager_idle_with_templates']:>7,}  TOTAL including them")
+    out.append("Eager idle: the floor, then what each client capability adds")
+    header = f"  {'config':<10} {'tools+router':>13}"
+    for part in ("prompts", "resources", "resource_templates"):
+        header += f" {part[:11]:>12}"
+    out.append(header + f" {'all':>10} {'spread':>8}")
+    for name, config in report["server"].items():
+        tokens = config["tokens"]
+        row = f"  {name:<10} {tokens['eager_idle']:>13,}"
+        for part in ("prompts", "resources", "resource_templates"):
+            row += f" {config['eager_idle_conditional'][part]:>12,}"
+        spread = tokens["eager_idle_all"] - tokens["eager_idle"]
+        out.append(row + f" {tokens['eager_idle_all']:>10,} {spread:>7,} (+{100 * spread / tokens['eager_idle']:.0f}%)")
 
     definition = report["server"]["full"]["tool_definition_tokens"]
     params = report["server"]["full"]["parameters"]
