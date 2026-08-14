@@ -324,3 +324,88 @@ def test_every_tool_domain_is_routed_somewhere_in_the_skill():
         if domain == "uncategorised":
             continue
         assert domain in combined, f"domain {domain!r} is never mentioned in the skill"
+
+
+# --------------------------------------------------------------------------------------------
+# The figure-measurement script agrees with the document it regenerates
+# --------------------------------------------------------------------------------------------
+#
+# Deliberately NOT asserting any token figure: those move on every docstring edit, so a test over
+# them would fail constantly and mean nothing (drift is watched on a schedule instead - see the
+# script's own docstring).  What is worth asserting is that the script and the document still
+# describe the same thing, because that is binary and silent when it breaks: a renamed table row or
+# an edited config line leaves the script measuring a configuration the document no longer quotes,
+# and every number it emits then answers the wrong question.
+
+
+@pytest.fixture(scope="module")
+def figures_script():
+    """The measurement script, imported by path (its filename is not a Python identifier)."""
+    import importlib.util
+
+    path = _REPO_ROOT / "scripts" / "measure-comparison-figures.py"
+    assert path.is_file(), f"{path} is missing - MCP_VS_SKILLS.md's figures are no longer regenerable"
+    spec = importlib.util.spec_from_file_location("measure_comparison_figures", path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_every_measured_configuration_is_still_named_in_the_document(figures_script):
+    """A config the script measures but the document no longer quotes is a figure nobody reads."""
+    parity = _COMPARISON_MD.read_text(encoding="utf-8")
+    for name, config in figures_script._CONFIGS.items():
+        assert config["doc_row"] in parity, (
+            f"config {name!r} measures a row the document no longer contains: {config['doc_row']!r}"
+        )
+
+
+def test_the_triage_config_matches_the_disable_line_the_document_publishes(figures_script):
+    """The document tells a reader to paste one `DOCKER_MCP_SERVER_DISABLE` line; it must be the
+    line the triage figures were actually measured with, or every trimmed number is fiction."""
+    published = re.search(r"DOCKER_MCP_SERVER_DISABLE=([a-z,]+)", _COMPARISON_MD.read_text(encoding="utf-8"))
+    assert published, "MCP_VS_SKILLS.md no longer publishes a DOCKER_MCP_SERVER_DISABLE line"
+    domains = {d for d in _catalog_domain_counts() if d != "uncategorised"}
+    derived = figures_script._disable_value(domains, figures_script._CONFIGS["triage"]["keep"])
+    assert derived is not None
+    assert set(published.group(1).split(",")) == set(derived.split(",")), (
+        "the triage config in the script and the disable line in the document have diverged"
+    )
+
+
+def test_the_measurement_is_insulated_from_the_ambient_environment(figures_script, monkeypatch):
+    """A figure that depends on whose shell measured it is not a reproducible figure.
+
+    `DOCKER_MCP_SERVER_HOSTS` is the case that proves the rule: `_hosts.load()` reads it at import
+    time, before any tool registers, so an ambient two-host value adds a `host` parameter to every
+    daemon-targeting tool's schema, registers host-qualified resources and a 31st prompt, and moves
+    the eager idle figure by ~9% - silently. Asserting the whole namespace is stripped, rather than
+    the three switches originally enumerated, is what stops the next tunable doing it again.
+    """
+    monkeypatch.setenv("DOCKER_MCP_SERVER_HOSTS", "local=local,prod=ssh://ops@example.invalid")
+    monkeypatch.setenv("DOCKER_MCP_SERVER_READONLY", "1")
+    monkeypatch.setenv("DOCKER_MCP_SERVER_DISABLE", "scout,compose")
+    monkeypatch.setenv("DOCKER_MCP_SERVER_SOMETHING_ADDED_LATER", "1")
+    monkeypatch.setenv("DOCKER_HOST", "ssh://nobody@example.invalid")
+
+    env = figures_script._child_env({})
+    leaked = [key for key in env if key.startswith("DOCKER_MCP_SERVER_") and key != "DOCKER_MCP_SERVER_HOSTS"]
+    assert not leaked, f"ambient server tunables reach the measurement: {leaked}"
+    assert env["DOCKER_MCP_SERVER_HOSTS"] == "local", "the host registry must be pinned, not inherited"
+    assert "DOCKER_HOST" not in env
+
+    # A switch the script sets deliberately still has to reach the child, or every configuration
+    # below the full surface would measure the full surface.
+    configured = figures_script._child_env({"DOCKER_MCP_SERVER_DISABLE": "swarm"})
+    assert configured["DOCKER_MCP_SERVER_DISABLE"] == "swarm"
+
+
+def test_every_task_composition_names_real_tools_and_files(figures_script):
+    """The per-task figures are chosen compositions, so a rename silently changes what they mean."""
+    registered = {tool["name"] for tool in tool_catalog()["tools"]}
+    for label, composition in figures_script._TASKS.items():
+        missing = [t for t in composition["tools"] if t not in registered]
+        assert not missing, f"task {label!r} names tools that are not registered: {missing}"
+        for relative in composition["skill_files"]:
+            assert (_SKILL_DIR / relative).is_file(), f"task {label!r} names a missing skill file: {relative}"
