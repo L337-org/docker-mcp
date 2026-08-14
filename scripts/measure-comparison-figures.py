@@ -57,7 +57,7 @@ MEASURED VERSUS CHOSEN
 ======================
 Everything above is measured.  The per-task figures are measured arithmetic over a *chosen* input:
 which tools an agent fetches for a task, and which skill files it loads, are judgement calls, not
-properties of the code.  They are named explicitly in `TASKS` below so a reader can disagree with
+properties of the code.  They are named explicitly in `_TASKS` below so a reader can disagree with
 the composition rather than reverse-engineer it from a total.  Two prose counts over the skill
 (`prefer_passages`, `command_lines`) are heuristics, flagged as such in the output: treat a movement
 in them as a prompt to look, never as a fact.
