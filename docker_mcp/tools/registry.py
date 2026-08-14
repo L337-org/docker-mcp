@@ -384,16 +384,24 @@ _DEFAULT_PORTS = {"https": 443, "http": 80}
 
 def _origin_of(url: str) -> tuple[str, str, int | None]:
     """
-    Return a URL's (scheme, host, effective port), with an omitted port filled in from the scheme.
+    Return a URL's (scheme, host, effective port), with an *omitted* port filled in from the scheme.
 
     Comparing `urlparse(...).port` directly would treat `https://host/` and `https://host:443/` as
     different origins, since the first parses to None - so an explicit default port would be refused
     as foreign. The scheme stays in the tuple, so an `http://host:80` downgrade is still not equal to
     an `https://host` origin.
+
+    Only a *missing* port is defaulted, tested with `is None` rather than falsiness: `:0` parses to
+    the integer 0, so `port or default` would quietly rewrite `https://host:0/` into the scheme
+    default and let it compare equal to an origin it is not.
+
+    Raises ValueError from `urlparse` on an unparseable or out-of-range port (`:99999`, `:abc`).
+    Callers handling untrusted input must convert that - see `_validate_hub_next`.
     """
     parsed = urlparse(url)
     scheme = parsed.scheme
-    return (scheme, parsed.hostname or "", parsed.port or _DEFAULT_PORTS.get(scheme))
+    port = parsed.port
+    return (scheme, parsed.hostname or "", port if port is not None else _DEFAULT_PORTS.get(scheme))
 
 
 def _validate_hub_next(next_url: object) -> str:
@@ -417,7 +425,15 @@ def _validate_hub_next(next_url: object) -> str:
             f"follow it. Expected a URL string on {_HUB_API_BASE}."
         )
     base_scheme, base_host, base_port = _origin_of(_HUB_API_BASE)
-    if _origin_of(next_url) != (base_scheme, base_host, base_port):
+    try:
+        origin = _origin_of(next_url)
+    except ValueError as exc:
+        # urlparse raises on an unparseable or out-of-range port (":99999", ":abc"). The value came
+        # from an untrusted body, so it must not pick the exception type the caller sees.
+        raise RuntimeError(
+            f"Docker Hub returned an unparseable pagination `next` URL ({next_url!r}): {exc}. Refusing to follow it."
+        ) from exc
+    if origin != (base_scheme, base_host, base_port):
         raise RuntimeError(
             f"Docker Hub returned a pagination `next` URL on a different origin ({next_url!r}); "
             f"refusing to follow it. Expected {base_scheme}://{base_host}. A response body "

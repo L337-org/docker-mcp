@@ -397,6 +397,9 @@ def test_hub_list_tags_refuses_a_next_url_on_another_host():
         "https://hub.docker.com:8443/v2/repositories/library/alpine/tags",  # different port
         "https://127.0.0.1/v2/repositories/library/alpine/tags",  # loopback
         "http://hub.docker.com:80/v2/repositories/library/alpine/tags",  # downgrade on http's default
+        # `:0` parses to the integer 0, so defaulting on falsiness rather than `is None` would have
+        # rewritten this to 443 and let it pass as the same origin.
+        "https://hub.docker.com:0/v2/repositories/library/alpine/tags",
     ],
 )
 def test_hub_list_tags_pins_scheme_host_and_port(bad_next):
@@ -432,6 +435,30 @@ def test_hub_list_tags_accepts_an_explicitly_default_port():
 
     assert [t["name"] for t in result["tags"]] == ["3.18", "3.19"]
     assert len(seen) == 2
+
+
+@pytest.mark.parametrize(
+    "bad_next",
+    [
+        "https://hub.docker.com:99999/v2/x",  # out of range
+        "https://hub.docker.com:abc/v2/x",  # not an integer
+        "https://hub.docker.com:-1/v2/x",  # negative
+    ],
+)
+def test_hub_list_tags_converts_an_unparseable_port_to_its_own_error(bad_next):
+    """
+    urlparse raises ValueError on these, and the value came from an untrusted body.
+
+    The function documents RuntimeError for a malformed or hostile `next`, so a response must not be
+    able to choose which exception type reaches the caller.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"next": bad_next, "results": []})
+
+    with _mock_client(handler):
+        with pytest.raises(RuntimeError, match="unparseable pagination"):
+            hub_tags("alpine")
 
 
 @pytest.mark.parametrize("bad_value", [123, {"url": "https://hub.docker.com/v2/x"}, ["https://hub.docker.com"]])
