@@ -10,6 +10,7 @@ _ROOT = Path(__file__).resolve().parent.parent
 PYPROJECT = _ROOT / "pyproject.toml"
 MANIFEST = _ROOT / "manifest.json"
 UV_LOCK = _ROOT / "uv.lock"
+SERVER_JSON = _ROOT / "server.json"
 
 
 def _admits(requirement: str, version: str) -> bool:
@@ -87,8 +88,8 @@ def test_the_declared_docker_floor_supports_the_kwarg_the_code_passes():
 
 
 # The release pipeline's preflight job re-asserts these against the release tag; the tests
-# below catch the drift earlier, at PR time. server.json is intentionally NOT checked — its
-# committed version is stale by design and stamped from the tag at release time.
+# below catch the drift earlier, at PR time. server.json is checked here too — see
+# test_server_json_versions_match_pyproject for why, given the release job restamps it anyway.
 
 
 def test_manifest_version_matches_pyproject():
@@ -103,6 +104,37 @@ def test_manifest_version_matches_pyproject():
         f"manifest.json version {manifest_version!r} != pyproject.toml version {pyproject_version!r} — "
         "bump them together"
     )
+
+
+def test_server_json_versions_match_pyproject():
+    """
+    Every version string in server.json agrees with pyproject.toml.
+
+    The `registry` job restamps all of them from the release tag, so a stale committed value cannot
+    reach the MCP Registry and this test is not protecting the published listing. It exists because
+    the stale value was not free: server.json sat at 1.9.0 against a tree at 2.2.4, and a scheduled
+    standards audit had to reason its way to "not drift, just stamped at release" and then flag that
+    it would look like a finding on every future inspection. A recurring false positive costs more
+    than a line in the version-bump checklist, and "deliberately inconsistent, see this comment" is
+    weaker than being consistent.
+
+    Scanning for version-shaped tokens rather than checking named fields is deliberate: the version
+    appears in `version`, the pypi package's `version`, and inside both the oci and mcpb
+    `identifier` strings, and a new package type would add more. The `$schema` date is hyphenated,
+    so it does not match. The `fileSha256` placeholder is left alone - it can only be known after
+    the artifact exists.
+    """
+    pyproject_version = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))["project"]["version"]
+    text = SERVER_JSON.read_text(encoding="utf-8")
+    found = sorted(set(re.findall(r"\d+\.\d+\.\d+", text)))
+    assert found == [pyproject_version], (
+        f"server.json carries version-shaped tokens {found} but pyproject.toml is "
+        f"{pyproject_version!r} — bump server.json (its `version`, the pypi package `version`, and "
+        "the oci/mcpb identifiers) alongside pyproject.toml and manifest.json"
+    )
+    # The top-level field specifically, so a file that mentioned the right version only inside an
+    # identifier could not satisfy the scan above.
+    assert json.loads(text)["version"] == pyproject_version
 
 
 def test_uv_lock_self_version_matches_pyproject():
