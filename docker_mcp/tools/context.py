@@ -7,7 +7,13 @@
 import json
 
 from docker_mcp.server import tool
-from docker_mcp.tools._cli import parse_ndjson, raise_on_cli_failure, run_docker, safe_positional
+from docker_mcp.tools._cli import (
+    parse_ndjson,
+    raise_on_cli_failure,
+    run_docker,
+    safe_positional,
+    safe_spec_value,
+)
 
 
 @tool()
@@ -66,25 +72,31 @@ def context_create(
 
     Registers a named endpoint for the CLI; switch with `context_use`, enumerate with
     `context_list`. It does not retarget this server's docker-py client (pinned at startup).
-    Does not raise on a non-zero CLI exit — inspect `returncode`/`stderr` in the result.
+    Does not raise on a non-zero CLI exit — inspect `returncode`/`stderr` in the result. It does
+    raise ValueError before running anything if `docker_host` or a TLS path contains a comma, which
+    would inject extra keys (including `skip-tls-verify`) into the endpoint spec.
 
     args:
         name - Name for the new context (must not already exist)
-        docker_host - Daemon URL, e.g. "tcp://10.0.0.5:2376" or "unix:///var/run/docker.sock"
+        docker_host - Daemon URL, e.g. "tcp://10.0.0.5:2376" or "unix:///var/run/docker.sock"; no commas
         description - Optional human description shown in `context ls`
-        tls_ca - Path on the local host to the CA cert (for TLS daemons)
-        tls_cert - Path on the local host to the client cert
-        tls_key - Path on the local host to the client key
-        skip_tls_verify - Disable TLS verification (insecure; for testing only)
+        tls_ca - Path on the local host to the CA cert (for TLS daemons); no commas
+        tls_cert - Path on the local host to the client cert; no commas
+        tls_key - Path on the local host to the client key; no commas
+        skip_tls_verify - Disable TLS verification (insecure; for testing only). The only way to set
+            it: it cannot be smuggled through `docker_host`
     returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
     """
-    docker_spec_parts = [f"host={docker_host}"]
+    # Every interpolated value is comma-checked: the `--docker` spec separates keys by comma, so a
+    # comma in any of these would append a key the caller never passed — `skip-tls-verify=true`
+    # being the one that matters, since it would silently contradict `skip_tls_verify=False`.
+    docker_spec_parts = [f"host={safe_spec_value(docker_host, 'docker_host')}"]
     if tls_ca:
-        docker_spec_parts.append(f"ca={tls_ca}")
+        docker_spec_parts.append(f"ca={safe_spec_value(tls_ca, 'tls_ca')}")
     if tls_cert:
-        docker_spec_parts.append(f"cert={tls_cert}")
+        docker_spec_parts.append(f"cert={safe_spec_value(tls_cert, 'tls_cert')}")
     if tls_key:
-        docker_spec_parts.append(f"key={tls_key}")
+        docker_spec_parts.append(f"key={safe_spec_value(tls_key, 'tls_key')}")
     if skip_tls_verify:
         docker_spec_parts.append("skip-tls-verify=true")
     args = ["context", "create", safe_positional(name, "context name"), "--docker", ",".join(docker_spec_parts)]
