@@ -447,7 +447,8 @@ def test_hub_list_tags_accepts_an_explicitly_default_port():
 )
 def test_hub_list_tags_converts_an_unparseable_port_to_its_own_error(bad_next):
     """
-    urlparse raises ValueError on these, and the value came from an untrusted body.
+    Reading `ParseResult.port` raises ValueError on these, and the value came from an untrusted body.
+    (`urlparse` itself accepts them, leaving the bad port in `netloc`.)
 
     The function documents RuntimeError for a malformed or hostile `next`, so a response must not be
     able to choose which exception type reaches the caller.

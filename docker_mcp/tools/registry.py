@@ -395,8 +395,10 @@ def _origin_of(url: str) -> tuple[str, str, int | None]:
     the integer 0, so `port or default` would quietly rewrite `https://host:0/` into the scheme
     default and let it compare equal to an origin it is not.
 
-    Raises ValueError from `urlparse` on an unparseable or out-of-range port (`:99999`, `:abc`).
-    Callers handling untrusted input must convert that - see `_validate_hub_next`.
+    Raises ValueError on an unparseable or out-of-range port (`:99999`, `:abc`). `urlparse` itself
+    returns cleanly for those - it leaves the port in `netloc` - and the error comes from reading the
+    `ParseResult.port` property here. Callers handling untrusted input must convert it: see
+    `_validate_hub_next`.
     """
     parsed = urlparse(url)
     scheme = parsed.scheme
@@ -428,8 +430,9 @@ def _validate_hub_next(next_url: object) -> str:
     try:
         origin = _origin_of(next_url)
     except ValueError as exc:
-        # urlparse raises on an unparseable or out-of-range port (":99999", ":abc"). The value came
-        # from an untrusted body, so it must not pick the exception type the caller sees.
+        # _origin_of raises this when reading ParseResult.port for an unparseable or out-of-range
+        # port (":99999", ":abc"); urlparse itself accepts those. The value came from an untrusted
+        # body, so it must not pick the exception type the caller sees.
         raise RuntimeError(
             f"Docker Hub returned an unparseable pagination `next` URL ({next_url!r}): {exc}. Refusing to follow it."
         ) from exc
