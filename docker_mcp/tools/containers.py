@@ -5,7 +5,7 @@ import re
 import threading
 import time
 from collections.abc import Iterable
-from typing import Literal, TypedDict, cast
+from typing import Any, Literal, TypedDict, cast
 
 import requests.exceptions
 
@@ -382,6 +382,31 @@ def container_remove(
     return True
 
 
+def _as_log_bytes(chunks: Iterable) -> Iterable[bytes]:
+    """Normalize a docker log stream's chunks to bytes for `join_bounded`."""
+    for chunk in chunks:
+        yield chunk if isinstance(chunk, bytes) else str(chunk).encode("utf-8", errors="replace")
+
+
+def _read_bounded_container_logs(container: Any, what: str, **log_kwargs: Any) -> str:
+    """
+    Read a container's logs incrementally and return them decoded, capped at MAX_PAYLOAD_BYTES.
+
+    `stream=True` with `follow=False` is what makes the cap effective: docker-py returns a
+    generator that terminates at EOF, so `join_bounded` can abort part-way through. Passing
+    `stream=False` instead would have docker-py buffer the whole payload before returning, so any
+    cap applied afterwards would measure memory that had already been committed. Raises ValueError
+    when the cap is hit, matching `service_logs`.
+    """
+    output = container.logs(stream=True, follow=False, **log_kwargs)
+    # Iterating a bytes object yields ints, which would silently decode to digit soup rather than
+    # failing, so a whole-payload return is treated as one chunk. docker-py returns a stream for
+    # stream=True today; this keeps a future change to that visibly correct instead of corrupt.
+    chunks: Iterable = [output] if isinstance(output, bytes | bytearray) else cast(Iterable, output)
+    raw = join_bounded(_as_log_bytes(chunks), MAX_PAYLOAD_BYTES, what)
+    return raw.decode("utf-8", errors="replace")
+
+
 @tool()
 def container_logs(
     id_or_name: str,
@@ -403,6 +428,12 @@ def container_logs(
     container exits, whichever comes first — so the agent can watch live output without blocking
     forever. `limit_lines`/`timeout_seconds` apply only in follow mode; `until` only in snapshot mode.
 
+    Snapshot mode is capped at 32 MiB and raises ValueError past it, so a noisy container can't
+    exhaust the server's memory; `service_logs` caps the same way and lets the caller raise it.
+    Prefer an integer `tail`, or `since`, over `tail="all"` on a long-running container: "all" is
+    safe but will abort on the cap rather than returning a partial answer, and a large result can
+    still exceed the agent's context.
+
     Caveat for `ssh://` daemons: docker-py can't cancel an SSH stream, so in follow mode the
     `timeout_seconds` watchdog can't interrupt a fully silent container — use the snapshot mode
     there if you need a hard time bound.
@@ -418,22 +449,21 @@ def container_logs(
         follow - Follow the live log stream instead of returning a snapshot
         limit_lines - Follow mode: max lines to collect before returning (default 200)
         timeout_seconds - Follow mode: max wall-clock seconds before returning what was collected (default 30)
-    returns: str - Decoded log output (up to `limit_lines` lines in follow mode)
+    returns: str - Decoded log output (up to `limit_lines` lines in follow mode). Raises ValueError
+                   in snapshot mode if the logs exceed 32 MiB.
     """
     container = _get_client(host).containers.get(id_or_name)
     if not follow:
-        output = container.logs(
+        return _read_bounded_container_logs(
+            container,
+            f"logs of container {id_or_name}",
             stdout=stdout,
             stderr=stderr,
-            stream=False,
             timestamps=timestamps,
             tail=tail,
             since=since,
             until=until,
         )
-        if isinstance(output, bytes):
-            return output.decode("utf-8", errors="replace")
-        return str(output)
     stream = container.logs(
         stdout=stdout,
         stderr=stderr,
@@ -486,12 +516,16 @@ _LOG_TAIL_LINES = 200
 
 
 def _read_log_tail(id_or_name: str, tail: int = _LOG_TAIL_LINES, host: str | None = None) -> str:
-    """Return a bounded, non-streaming tail of a container's combined stdout/stderr logs."""
+    """
+    Return a bounded tail of a container's combined stdout/stderr logs.
+
+    `tail` bounds the line count, but a single pathological line is unbounded on its own, so the
+    read also goes through the same MAX_PAYLOAD_BYTES cap as `container_logs`.
+    """
     container = _get_client(host).containers.get(id_or_name)
-    output = container.logs(stdout=True, stderr=True, stream=False, timestamps=False, tail=tail)
-    if isinstance(output, bytes):
-        return output.decode("utf-8", errors="replace")
-    return str(output)
+    return _read_bounded_container_logs(
+        container, f"logs of container {id_or_name}", stdout=True, stderr=True, timestamps=False, tail=tail
+    )
 
 
 def _div_mb(value: float) -> float:

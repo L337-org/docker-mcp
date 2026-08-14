@@ -6,6 +6,7 @@ import pytest
 import requests.exceptions
 from docker.errors import DockerException
 
+from docker_mcp.tools._utils import MAX_PAYLOAD_BYTES
 from docker_mcp.tools.containers import (
     _read_log_tail,
     _read_stats_summary,
@@ -195,6 +196,70 @@ def test_container_logs_decodes_bytes():
     with _patch() as mock_client:
         mock_client.return_value.containers.get.return_value = container
         assert container_logs("web") == "line1\nline2\n"
+
+
+def test_container_logs_snapshot_streams_without_following():
+    """The cap can only abort part-way through if docker-py hands back a generator, not one blob."""
+    container = MagicMock()
+    container.logs.return_value = iter([b"line1\n", b"line2\n"])
+    with _patch() as mock_client:
+        mock_client.return_value.containers.get.return_value = container
+        assert container_logs("web") == "line1\nline2\n"
+    kwargs = container.logs.call_args.kwargs
+    assert kwargs["stream"] is True
+    assert kwargs["follow"] is False
+
+
+def test_container_logs_snapshot_aborts_when_exceeding_the_cap():
+    container = MagicMock()
+    oversized = MAX_PAYLOAD_BYTES + 1
+    container.logs.return_value = iter([b"x" * oversized])
+    with _patch() as mock_client:
+        mock_client.return_value.containers.get.return_value = container
+        with pytest.raises(ValueError, match="exceeded max_bytes"):
+            container_logs("web")
+
+
+def test_container_logs_snapshot_cap_does_not_buffer_past_the_limit():
+    """
+    The abort must happen while consuming, not after: a generator that would yield far more than
+    the cap is only pulled from until the limit is passed.
+    """
+    chunk = b"x" * (1024 * 1024)
+    pulled = 0
+
+    def endless():
+        nonlocal pulled
+        while True:
+            pulled += 1
+            yield chunk
+
+    container = MagicMock()
+    container.logs.return_value = endless()
+    with _patch() as mock_client:
+        mock_client.return_value.containers.get.return_value = container
+        with pytest.raises(ValueError, match="exceeded max_bytes"):
+            container_logs("web")
+    # 32 MiB cap, 1 MiB chunks: stops on the chunk that would breach it, not after draining forever.
+    assert pulled == (MAX_PAYLOAD_BYTES // len(chunk)) + 1
+
+
+def test_container_logs_snapshot_coerces_str_chunks():
+    container = MagicMock()
+    container.logs.return_value = iter(["already-text\n"])
+    with _patch() as mock_client:
+        mock_client.return_value.containers.get.return_value = container
+        assert container_logs("web") == "already-text\n"
+
+
+def test_read_log_tail_is_capped_for_the_logs_resource():
+    """`tail` bounds lines, not bytes, so the resource backend needs the same byte cap."""
+    container = MagicMock()
+    container.logs.return_value = iter([b"y" * (MAX_PAYLOAD_BYTES + 1)])
+    with _patch() as mock_client:
+        mock_client.return_value.containers.get.return_value = container
+        with pytest.raises(ValueError, match="exceeded max_bytes"):
+            _read_log_tail("web")
 
 
 def test_container_logs_follow_stops_at_limit():
@@ -685,12 +750,15 @@ def test_container_wait_log_match_rejects_nonpositive_poll_interval():
 
 def test_read_log_tail_decodes_and_bounds_the_read():
     container = MagicMock()
-    container.logs.return_value = b"hello\nworld\n"
+    container.logs.return_value = iter([b"hello\n", b"world\n"])
     with _patch() as mock_client:
         mock_client.return_value.containers.get.return_value = container
         assert _read_log_tail("web") == "hello\nworld\n"
     kwargs = container.logs.call_args.kwargs
-    assert kwargs["stream"] is False
+    # Streamed without following, which is what lets the byte cap abort part-way through; the
+    # previous `stream is False` assertion pinned the unbounded read this test claimed to check.
+    assert kwargs["stream"] is True
+    assert kwargs["follow"] is False
     assert kwargs["tail"] == 200  # bounded by default so a resource read can't flood context
 
 
