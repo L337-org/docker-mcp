@@ -292,14 +292,36 @@ def _discriminator_stats(tools: list[Any]) -> dict[str, Any]:
 # --------------------------------------------------------------------------------------------
 
 
+def _child_env(env_overrides: dict[str, str]) -> dict[str, str]:
+    """The environment a worker runs in: this process's, minus anything that could move a figure.
+
+    The whole `DOCKER_MCP_SERVER_*` namespace is stripped rather than an enumerated few, because the
+    enumerated version already missed one.  `DOCKER_MCP_SERVER_HOSTS` is read by `_hosts.load()` at
+    import time, before any tool registers, and an ambient two-host value flips the server into
+    multi-host mode: a `host` parameter is added to every daemon-targeting tool's schema,
+    host-qualified resource variants register alongside the bare ones, `survey_hosts` registers as a
+    31st prompt, and the router gains a caveat.  Measured, that moved the eager idle figure by 9%
+    (48,671 to 53,089).  Nothing warns; the script simply prints different numbers.  A figure that
+    depends on whose shell it was measured in is not a reproducible figure, and stripping the
+    namespace wholesale means a tunable added later cannot reintroduce the same bug.
+
+    The registry is then pinned to one deterministic local host rather than left to `DOCKER_HOST` or
+    the active CLI context, since single-host is the mode the document's figures describe.  `local`
+    resolves by probing socket paths and falls back to None, contacting no daemon, so this stays
+    runnable on a machine with no Docker installed - which the rest of the measurement already is.
+    """
+    env = {k: v for k, v in os.environ.items() if not k.startswith("DOCKER_MCP_SERVER_")}
+    env["DOCKER_MCP_SERVER_HOSTS"] = "local"
+    # Dropped rather than left to be overridden: an ambient DOCKER_HOST alongside the pin above is
+    # ignored, but not silently - it prints a one-time notice onto the stderr a caller may be reading.
+    for key in ("DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_CERT_PATH", "DOCKER_TLS_VERIFY"):
+        env.pop(key, None)
+    return {**env, **env_overrides}
+
+
 def _run_worker(env_overrides: dict[str, str]) -> dict[str, Any]:
     """Measure one configuration in a fresh process, with the given switches in its environment."""
-    env = {**os.environ, **env_overrides}
-    # Keep the parent's own switches out of the child: an inherited DOCKER_MCP_SERVER_DISABLE would
-    # silently narrow every configuration measured here.
-    for key in ("DOCKER_MCP_SERVER_DISABLE", "DOCKER_MCP_SERVER_READONLY", "DOCKER_MCP_SERVER_NO_DESTRUCTIVE"):
-        if key not in env_overrides:
-            env.pop(key, None)
+    env = _child_env(env_overrides)
     proc = subprocess.run(  # noqa: S603  (fixed argv, no shell, interpreter resolved from sys.executable)
         [sys.executable, str(Path(__file__).resolve()), "--measure-current-surface"],
         capture_output=True,

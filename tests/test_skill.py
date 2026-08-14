@@ -374,6 +374,33 @@ def test_the_triage_config_matches_the_disable_line_the_document_publishes(figur
     )
 
 
+def test_the_measurement_is_insulated_from_the_ambient_environment(figures_script, monkeypatch):
+    """A figure that depends on whose shell measured it is not a reproducible figure.
+
+    `DOCKER_MCP_SERVER_HOSTS` is the case that proves the rule: `_hosts.load()` reads it at import
+    time, before any tool registers, so an ambient two-host value adds a `host` parameter to every
+    daemon-targeting tool's schema, registers host-qualified resources and a 31st prompt, and moves
+    the eager idle figure by ~9% - silently. Asserting the whole namespace is stripped, rather than
+    the three switches originally enumerated, is what stops the next tunable doing it again.
+    """
+    monkeypatch.setenv("DOCKER_MCP_SERVER_HOSTS", "local=local,prod=ssh://ops@example.invalid")
+    monkeypatch.setenv("DOCKER_MCP_SERVER_READONLY", "1")
+    monkeypatch.setenv("DOCKER_MCP_SERVER_DISABLE", "scout,compose")
+    monkeypatch.setenv("DOCKER_MCP_SERVER_SOMETHING_ADDED_LATER", "1")
+    monkeypatch.setenv("DOCKER_HOST", "ssh://nobody@example.invalid")
+
+    env = figures_script._child_env({})
+    leaked = [key for key in env if key.startswith("DOCKER_MCP_SERVER_") and key != "DOCKER_MCP_SERVER_HOSTS"]
+    assert not leaked, f"ambient server tunables reach the measurement: {leaked}"
+    assert env["DOCKER_MCP_SERVER_HOSTS"] == "local", "the host registry must be pinned, not inherited"
+    assert "DOCKER_HOST" not in env
+
+    # A switch the script sets deliberately still has to reach the child, or every configuration
+    # below the full surface would measure the full surface.
+    configured = figures_script._child_env({"DOCKER_MCP_SERVER_DISABLE": "swarm"})
+    assert configured["DOCKER_MCP_SERVER_DISABLE"] == "swarm"
+
+
 def test_every_task_composition_names_real_tools_and_files(figures_script):
     """The per-task figures are chosen compositions, so a rename silently changes what they mean."""
     registered = {tool["name"] for tool in tool_catalog()["tools"]}
