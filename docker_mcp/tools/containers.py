@@ -409,7 +409,7 @@ def _read_bounded_container_logs(container: Any, what: str, **log_kwargs: Any) -
     # Iterating a bytes object yields ints, which would silently decode to digit soup rather than
     # failing, so a whole-payload return is treated as one chunk. docker-py returns a stream for
     # stream=True today; this keeps a future change to that visibly correct instead of corrupt.
-    chunks: Iterable = [output] if isinstance(output, bytes | bytearray) else cast(Iterable, output)
+    chunks: Iterable = [output] if isinstance(output, (bytes, bytearray)) else cast(Iterable, output)
     raw = join_bounded(_as_log_bytes(chunks), MAX_PAYLOAD_BYTES, what)
     return raw.decode("utf-8", errors="replace")
 
