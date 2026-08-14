@@ -23,6 +23,18 @@ _HUB_API_BASE = "https://hub.docker.com/v2"
 _DEFAULT_REGISTRY = "registry-1.docker.io"
 _MAX_TAG_PAGES = 50  # cap on registry/Hub pagination follow-through
 
+# Every client here sets follow_redirects=True, and cross-host redirects are deliberately allowed:
+# do NOT "harden" this to same-host only. Registries redirect blob fetches to a CDN on another host
+# as normal operation - Docker Hub answers a config-blob GET with 307 to
+# production.cloudfront.docker.com (verified), so registry_image_config would break against the most
+# common registry. It also would not buy much: httpx strips the Authorization header on any
+# cross-origin redirect (see its _redirect_headers), so a redirect cannot carry credentials to
+# another host, and the caller can already name any registry host it likes in `repository` - a
+# redirect reaches no destination that a tool argument could not reach directly.
+#
+# What is NOT the caller's choice is a URL taken from a response *body* and then fetched, which is
+# why `_validate_hub_next` pins Hub pagination to Hub's own origin.
+
 
 def _env_credentials(username: str | None, password: str | None) -> tuple[str | None, str | None]:
     """
@@ -365,6 +377,30 @@ def _registry_get(
             resp = _get_with_retry_policy(client, url, headers=headers)
         resp.raise_for_status()
         return resp
+
+
+def _validate_hub_next(next_url: str) -> str:
+    """
+    Require a Hub pagination `next` URL to stay on the Hub API's own scheme, host and port.
+
+    `next` is a URL taken from a *response body* and then fetched, so unlike the registry host in a
+    tool argument it is not a destination the caller chose. Without this check, a `next` of
+    `https://internal.example/` would make this process issue that request from wherever the server
+    runs, and return up to `_MAX_RESPONSE_BYTES` of the reply to the agent. The OCI tag-list path
+    already refuses to leave its registry (`registry_tags` keeps only the path from a `Link` header);
+    this brings Hub into line rather than leaving the two pagination paths inconsistent.
+
+    Raises RuntimeError on a foreign origin, matching `hub_tags`' parsed-query error style.
+    """
+    base = urlparse(_HUB_API_BASE)
+    parsed = urlparse(next_url)
+    if (parsed.scheme, parsed.hostname, parsed.port) != (base.scheme, base.hostname, base.port):
+        raise RuntimeError(
+            f"Docker Hub returned a pagination `next` URL on a different origin ({next_url!r}); "
+            f"refusing to follow it. Expected {base.scheme}://{base.hostname}. A response body "
+            f"cannot redirect this server at an arbitrary host."
+        )
+    return next_url
 
 
 def _next_link(link_header: str | None) -> str | None:
@@ -722,7 +758,8 @@ def hub_tags(repository: str, limit: int = 100) -> dict:
                 )
                 if len(tags) >= limit:
                     return {"name": repo, "tags": tags, "truncated": True}
-            url = body.get("next")
+            raw_next = body.get("next")
+            url = _validate_hub_next(raw_next) if raw_next else None
             pages += 1
     if pages >= _MAX_TAG_PAGES and url:
         truncated = True

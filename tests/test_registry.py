@@ -367,6 +367,46 @@ def test_hub_list_tags_normalizes_official_image_and_paginates():
     assert result["truncated"] is False
 
 
+def test_hub_list_tags_refuses_a_next_url_on_another_host():
+    """
+    A URL from a response body is not a destination the caller chose.
+
+    Without this the server would fetch whatever host Hub's `next` named and hand up to 16 MiB of the
+    reply back to the agent - a request originating from wherever the server runs, which may reach
+    services the agent cannot.
+    """
+    requested: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested.append(str(request.url))
+        return httpx.Response(200, json={"next": "https://169.254.169.254/latest/meta-data/", "results": []})
+
+    with _mock_client(handler):
+        with pytest.raises(RuntimeError, match="different origin"):
+            hub_tags("alpine")
+    # The foreign URL was never requested; only the first, self-constructed page was.
+    assert len(requested) == 1
+    assert requested[0].startswith("https://hub.docker.com/v2/")
+
+
+@pytest.mark.parametrize(
+    "bad_next",
+    [
+        "http://hub.docker.com/v2/repositories/library/alpine/tags?page=2",  # scheme downgrade
+        "https://hub.docker.com.evil.example/v2/repositories/library/alpine/tags",  # suffix trick
+        "https://hub.docker.com:8443/v2/repositories/library/alpine/tags",  # different port
+        "https://127.0.0.1/v2/repositories/library/alpine/tags",  # loopback
+    ],
+)
+def test_hub_list_tags_pins_scheme_host_and_port(bad_next):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"next": bad_next, "results": []})
+
+    with _mock_client(handler):
+        with pytest.raises(RuntimeError, match="different origin"):
+            hub_tags("alpine")
+
+
 def test_hub_list_tags_respects_limit():
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
