@@ -46,9 +46,9 @@ We have no commercial interest in either. Both are MIT-licensed and free.
 | **Runtime auditability** | `tool-catalog` resource reports exactly what is registered | None |
 | **Updates** | Version-pinned via `uvx`/image tag | Manual re-download; goes stale silently |
 | **Trim the surface to fit the job** | `DOCKER_MCP_SERVER_DISABLE` drops whole domains; read-only / no-destructive drop categories - **and the router and prompts shrink with them** | Not really - the router is one file, though you can delete reference files you'll never use |
-| **Token cost, eager client, idle** | **~48,800** at full surface; **~19,600** trimmed to a triage-shaped config | **~140** |
+| **Token cost, eager client, idle** | **~48,700** at full surface; **~19,500** trimmed to a triage-shaped config | **~140** |
 | **Token cost, lazy client, idle** | ~1,200 full; ~520 trimmed | ~140 |
-| **Token cost, typical task** | **~1,500-3,000** (lazy) | ~5,600-7,900 |
+| **Token cost, typical task** | **~1,500-2,700** (lazy) | ~5,500-7,800 |
 | **Failure mode** | Server can fail to start / resolve deps | Cannot fail to "start"; a wrong command just errors |
 
 Two rows deserve emphasis because they cut in opposite directions and are easy to skim past.
@@ -94,7 +94,7 @@ roughly level, with the server ahead on unusual or easily-confused operations an
 the common ones.
 
 **Getting the arguments right is where the server is properly ahead**, and this is the substantial
-half. Across 591 parameters, every one carries a declared type, 79% carry an explicit default and
+half. Across 594 parameters, every one carries a declared type, 79% carry an explicit default and
 123 are marked required. That schema is enforced by the client before the call reaches the server,
 so a wrong argument name or type is rejected as a validation error with nothing executed. The skill
 composes a shell string, and a wrong flag is caught by Docker itself at execution, which may be
@@ -107,7 +107,7 @@ macOS, `status` fatal as a variable name in zsh, `jq -s` applied to something th
 array. A JSON Schema makes that entire class of mistake unrepresentable. Nothing in the skill can,
 because the CLI has no machine-readable description of its own flags.
 
-One honest qualification: only 12 of those 591 parameters carry an `enum`. The other 98% have their
+One honest qualification: only 13 of those 594 parameters carry an `enum`. The other 98% have their
 legal values documented in prose on both sides, so the server's advantage is mostly over argument
 names, types and requiredness rather than over the set of legal values.
 
@@ -193,13 +193,13 @@ The range between the loosest and tightest usable configuration is wide:
 
 | Config | Tools | Eager idle | Lazy idle |
 |---|---|---|---|
-| Full whack: everything enabled | 160 | 48,782 | 1,198 |
-| Read-only, all domains | 73 | 21,340 | 905 |
-| **Triage config** (below) | **63** | **19,561** | **523** |
-| Core only: `containers` + `system` | 37 | 12,114 | 391 |
-| Floor: core, read-only | 16 | 6,100 | 321 |
+| Full whack: everything enabled | 160 | 48,671 | 1,198 |
+| Read-only, all domains | 73 | 21,316 | 905 |
+| **Triage config** (below) | **63** | **19,547** | **523** |
+| Core only: `containers` + `system` | 37 | 12,126 | 391 |
+| Floor: core, read-only | 16 | 6,133 | 321 |
 
-**On an eager client that spread is 6,100 to 48,782 tokens, roughly 8x**, which makes trimming
+**On an eager client that spread is 6,133 to 48,671 tokens, roughly 8x**, which makes trimming
 the single biggest lever available to you. **On a lazy client the same spread is 321 to 1,198: the
 whole saving is under 900 tokens**, so there is little to gain from trimming for footprint alone.
 On a lazy client, configure the surface for safety or clarity and treat any context saving as
@@ -226,20 +226,20 @@ config and restart, whereas the skill always has every recipe available at no id
 | | MCP (eager, full) | MCP (eager, triage config) | MCP (lazy, full) | Skill |
 |---|---|---|---|---|
 | Always in context | all 160 tool defs | 63 tool defs | router + tool names | name + description |
-| | 46,290 (tools) | 17,911 (tools) | 640 (router) | 136 |
+| | 46,179 (tools) | 17,897 (tools) | 640 (router) | 136 |
 | | 1,113 (30 prompts) | 596 (16 prompts) | 558 (names) | |
 | | 739 (resources) | 739 (resources) | | |
 | | 640 (router) | 315 (router) | | |
-| **Total** | **~48,800 tok** | **~19,600 tok** | **~1,200 tok** | **~140 tok** |
+| **Total** | **~48,700 tok** | **~19,500 tok** | **~1,200 tok** | **~140 tok** |
 
 "Triage config" here and below means the `DOCKER_MCP_SERVER_DISABLE` line in
 [Configuring the server down](#the-triage-config): `containers`, `images`, `networks`, `volumes`
 and `system` kept, the other twelve domains dropped.
 
 This is still the skill's strongest result. On a client that eagerly loads every tool, the server
-at full surface costs roughly **48,800 tokens of every conversation** whether or not Docker comes
+at full surface costs roughly **48,700 tokens of every conversation** whether or not Docker comes
 up - around a third of a 128k window before you have said anything. Trimming to the triage config
-cuts that to ~19,600 - a large and genuine saving, though still around 140 times what the skill
+cuts that to ~19,500 - a large and genuine saving, though still around 140 times what the skill
 costs to sit installed.
 
 On a lazy client the server's idle cost drops ~40x to ~1,200 (or ~520 trimmed), and the gap
@@ -249,21 +249,21 @@ narrows to something most people would not notice either way.
 
 | Task | MCP (lazy, full) | MCP (lazy, triage cfg) | MCP (eager, full) | MCP (eager, triage cfg) | Skill |
 |---|---|---|---|---|---|
-| List containers (one-off) | 1,544 | **869** | 48,782 | 19,561 | 5,599 |
-| Triage a crashed container | 2,832 | **2,157** | 48,782 | 19,561 | 7,862 |
-| Bring up a Compose project | 2,990 | n/a¹ | 48,782 | n/a¹ | 6,628 |
+| List containers (one-off) | 1,546 | **871** | 48,671 | 19,547 | 5,549 |
+| Triage a crashed container | 2,584 | **1,909** | 48,671 | 19,547 | 7,812 |
+| Bring up a Compose project | 2,641 | n/a¹ | 48,671 | n/a¹ | 6,489 |
 
 ¹ Compose is disabled in the triage config (`containers`, `images`, `networks`, `volumes`,
 `system` only), which is the point: a trimmed surface is trimmed for a purpose, and a task outside
 it needs a different one.
 
 **Here the result reverses, and the MCP server wins on a lazy client.** A tool definition is small
-- median 253 tokens, range 120-1,257 - so fetching the five tools a triage needs costs ~1,600 on
-top of the ~1,200 baseline (or ~520 trimmed). The skill has to load its router (3,010) plus a
+- median 254 tokens, range 117-1,245 - so fetching the five tools a triage needs costs ~1,400 on
+top of the ~1,200 baseline (or ~520 trimmed). The skill has to load its router (3,009) plus a
 domain reference (~1,900) plus often a workflow (~2,300), because prose cannot be fetched a
 paragraph at a time.
 
-Note the eager+trimmed column never beats the skill on these tasks - 19,561 against 5,599-7,862 -
+Note the eager+trimmed column never beats the skill on these tasks - 19,547 against 5,549-7,812 -
 but it is the difference between "too expensive to leave installed" and "fine". If you are on an
 eager client and want the server, disabling the domains you do not use is the single highest-value
 change available.
@@ -271,8 +271,8 @@ change available.
 So the honest summary is:
 
 - **Eager-loading client** → the skill is dramatically cheaper: ~6-9x on a real task at full
-  surface, ~2.4-3.4x even against a trimmed server, and ~140-350x at idle.
-- **Lazy-loading client** → the server is cheaper in use, by ~2-3x at full surface and ~3.6-6.4x
+  surface, ~2.5-3.5x even against a trimmed server, and ~140-360x at idle.
+- **Lazy-loading client** → the server is cheaper in use, by ~2.5-3.5x at full surface and ~4-6.4x
   when trimmed, and both are cheap at idle.
 - **Docker rarely comes up in your work** → the skill, decisively; it costs ~140 tokens to have
   installed and you may never pay more.
@@ -283,7 +283,7 @@ So the honest summary is:
 - **Eager client and you want everything available** → the skill, unless you need something only
   the server enforces.
 
-Worst case for the skill is ~32,000 tokens if a single task somehow needed every reference and
+Worst case for the skill is ~32,400 tokens if a single task somehow needed every reference and
 workflow file at once; in practice a task touches one or two.
 
 ## Where each one genuinely wins
@@ -314,8 +314,8 @@ workflow file at once; in practice a task touches one or two.
   what "production" means mid-session.
 - Cheaper per task on a lazy client.
 - **The surface is configurable.** Disable the domains you do not use and the tools, prompts *and*
-  router shrink together - a triage-shaped config is 63 tools and ~19,600 eager tokens instead of
-  160 and ~48,800. The skill has no equivalent lever beyond deleting reference files by hand.
+  router shrink together - a triage-shaped config is 63 tools and ~19,500 eager tokens instead of
+  160 and ~48,700. The skill has no equivalent lever beyond deleting reference files by hand.
 - Auditable at runtime - one resource reports exactly which tools are registered under the current
   configuration, so you can confirm what a given config actually exposes rather than inferring it.
 
@@ -337,7 +337,7 @@ Three situations where the answer is clear, and they are mostly about the client
 Docker work:
 
 - **Occasional Docker use from an eager-loading client, Claude Desktop being the common case.**
-  Use the skill. Paying ~48,800 tokens of every conversation for a capability you reach for once a
+  Use the skill. Paying ~48,700 tokens of every conversation for a capability you reach for once a
   fortnight is a bad trade, and ~140 is not. This is the skill's strongest case by a distance, and
   it is worth being clear that **it is a case created by the client, not by the skill being
   better**. If and when Claude Desktop moves to lazy loading, the idle cost drops to ~1,200 and
@@ -357,7 +357,7 @@ Docker work:
 # Detailed mapping
 
 **Everything from here on is written from the skill's point of view.** It takes the MCP server's
-surface as the reference: 159 tools, 31 prompts and the resource endpoints, in the server's own
+surface as the reference: 160 tools, 31 prompts and the resource endpoints, in the server's own
 categories, and for each one records what the skill does instead. It is a coverage record for the
 skill, not a description of the server, so a row saying "no CLI equivalent" is a statement about
 the skill's limits and never about the server's.
