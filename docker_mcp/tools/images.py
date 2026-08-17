@@ -370,8 +370,11 @@ def image_import(
         from_url - URL the daemon fetches the tarball from; exactly one source
         from_image - Name of an existing image to import from, like a Dockerfile `FROM`; exactly one
             source
-        changes - Dockerfile instructions applied to the new image, e.g. ["CMD /bin/sh"]; only
-            CMD, ENTRYPOINT, ENV, EXPOSE, ONBUILD, USER, VOLUME and WORKDIR are supported
+        changes - Dockerfile instructions applied to the new image, e.g. ['CMD ["/bin/sh"]']; only
+            CMD, ENTRYPOINT, ENV, EXPOSE, ONBUILD, USER, VOLUME and WORKDIR are supported. Parsed
+            as real Dockerfile syntax, so shell form is wrapped exactly as a Dockerfile would wrap
+            it (`CMD /bin/sh` is stored as `["/bin/sh","-c","/bin/sh"]`) — use the exec form
+            `CMD ["/bin/sh"]` to store a bare argv
     returns: str - The daemon's raw newline-delimited JSON progress records; the final record carries
         the new image id as its `status`
     """

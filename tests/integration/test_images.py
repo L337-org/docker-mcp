@@ -52,6 +52,10 @@ def test_image_import_creates_an_image_from_a_rootfs_tarball():
         assert attrs["Id"] == image_id
         # A `changes` entry must actually reach the image config -- that is the only way to give an
         # imported rootfs a runnable command, since import produces an otherwise empty config.
-        assert attrs["Config"]["Cmd"] == ["/bin/sh"]
+        # `CMD /bin/sh` is Dockerfile *shell* form, so the daemon wraps it exactly as a Dockerfile
+        # would rather than storing it verbatim; the exec form `CMD ["/bin/sh"]` is what stores a
+        # bare argv. Asserting the wrapped value pins that `changes` really is parsed as Dockerfile
+        # syntax and not passed through as a string.
+        assert attrs["Config"]["Cmd"] == ["/bin/sh", "-c", "/bin/sh"]
     finally:
         image_remove(f"{_REPOSITORY}:{_TAG}", force=True)
