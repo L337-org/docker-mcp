@@ -7,6 +7,7 @@ from docker_mcp.tools.images import (
     image_inspect,
     image_registry_data,
     image_history,
+    image_import,
     image_list,
     image_load,
     image_prune,
@@ -130,6 +131,63 @@ def test_image_load():
     with _patch() as mock_client:
         mock_client.return_value.images.load.return_value = [image]
         assert image_load(b"tarbytes") == [{"Id": "img1"}]
+
+
+def test_image_import_from_data_forwards_repository_tag_and_changes():
+    with _patch() as mock_client:
+        api = mock_client.return_value.api
+        api.import_image_from_data.return_value = '{"status":"sha256:abc"}'
+        result = image_import(data=b"rootfs", repository="myorg/rootfs", tag="v1", changes=["CMD /bin/sh"])
+    assert result == '{"status":"sha256:abc"}'
+    api.import_image_from_data.assert_called_once_with(
+        b"rootfs", repository="myorg/rootfs", tag="v1", changes=["CMD /bin/sh"]
+    )
+
+
+def test_image_import_omits_unset_optionals_so_the_sdk_defaults_apply():
+    with _patch() as mock_client:
+        api = mock_client.return_value.api
+        api.import_image_from_url.return_value = ""
+        image_import(from_url="https://example.invalid/rootfs.tar")
+    api.import_image_from_url.assert_called_once_with("https://example.invalid/rootfs.tar")
+
+
+def test_image_import_from_image_uses_the_from_image_call():
+    with _patch() as mock_client:
+        api = mock_client.return_value.api
+        api.import_image_from_image.return_value = '{"status":"sha256:def"}'
+        image_import(from_image="scratch", repository="myorg/base")
+    api.import_image_from_image.assert_called_once_with("scratch", repository="myorg/base")
+
+
+def test_image_import_from_file_resolves_the_path_and_never_falls_back_to_a_url(tmp_path):
+    tarball = tmp_path / "rootfs.tar"
+    tarball.write_bytes(b"rootfs")
+    with _patch() as mock_client:
+        api = mock_client.return_value.api
+        api.import_image_from_data.return_value = ""
+        api.import_image_from_url.return_value = ""
+        api.import_image_from_file.return_value = '{"status":"sha256:ghi"}'
+        result = image_import(from_file=str(tarball), repository="myorg/rootfs")
+    assert result == '{"status":"sha256:ghi"}'
+    api.import_image_from_file.assert_called_once_with(str(tarball), repository="myorg/rootfs")
+    # A local path must never be re-tried as an outbound fetch (what `import_image(src=...)` does).
+    api.import_image_from_url.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {},
+        {"data": b"rootfs", "from_url": "https://example.invalid/rootfs.tar"},
+        {"from_file": "/tmp/rootfs.tar", "from_image": "scratch"},
+    ],
+)
+def test_image_import_requires_exactly_one_source(kwargs):
+    with _patch() as mock_client:
+        with pytest.raises(ValueError, match="exactly one"):
+            image_import(**kwargs)
+    mock_client.return_value.api.import_image_from_data.assert_not_called()
 
 
 def test_image_save():

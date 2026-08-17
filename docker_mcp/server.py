@@ -83,6 +83,7 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "image_prune": ToolCategory.DESTRUCTIVE,
     "image_prune_builds": ToolCategory.DESTRUCTIVE,
     "image_load": ToolCategory.MUTATING,
+    "image_import": ToolCategory.MUTATING,
     "image_save": ToolCategory.MUTATING,  # can write a file on the server host (dest_path)
     "image_tag": ToolCategory.MUTATING,
     "image_history": ToolCategory.READ_ONLY,
@@ -140,6 +141,7 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "plugin_create": ToolCategory.MUTATING,
     "plugin_inspect": ToolCategory.READ_ONLY,
     "plugin_install": ToolCategory.MUTATING,
+    "plugin_privileges": ToolCategory.READ_ONLY,
     "plugin_push": ToolCategory.MUTATING,
     "plugin_list": ToolCategory.READ_ONLY,
     "plugin_configure": ToolCategory.MUTATING,

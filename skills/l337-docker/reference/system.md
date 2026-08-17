@@ -168,6 +168,10 @@ docker plugin create <user>/<plugin>:<tag> ./plugin-dir   # needs config.json + 
 - Installing a plugin **grants it privileges on the host** (mounts, network, devices, capabilities).
   Show the permission list and get confirmation; `--grant-all-permissions` skips exactly the prompt
   a human should be reading.
+- There is **no read-only CLI command that prints those privileges**: the only way to see them is to
+  start `docker plugin install` without `--grant-all-permissions` and read the prompt, then decline.
+  So show the prompt to the user rather than answering it. (The MCP server exposes this as
+  `plugin_privileges`, which reads them from the registry without installing anything.)
 - Ordering is strict: `disable` → `set`/`upgrade` → `enable`. Doing it out of order gives errors
   that read like the plugin is broken.
 - `disable` fails while a volume or network still uses the plugin - find and remove those first.

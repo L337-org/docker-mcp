@@ -11,6 +11,7 @@ from docker_mcp.tools.plugins import (
     plugin_inspect,
     plugin_install,
     plugin_list,
+    plugin_privileges,
     plugin_push,
     plugin_remove,
     plugin_upgrade,
@@ -160,6 +161,25 @@ def test_plugin_install():
         result = plugin_install("vieux/sshfs", local_name="sshfs")
     assert result == {"Id": "p1"}
     mock_client.return_value.plugins.install.assert_called_once_with("vieux/sshfs", local_name="sshfs")
+
+
+def test_plugin_privileges_returns_the_requested_privileges():
+    privileges = [
+        {"Name": "network", "Description": "", "Value": ["host"]},
+        {"Name": "capabilities", "Description": "", "Value": ["CAP_SYS_ADMIN"]},
+    ]
+    with _patch() as mock_client:
+        mock_client.return_value.api.plugin_privileges.return_value = privileges
+        assert plugin_privileges("vieux/sshfs:latest") == privileges
+    mock_client.return_value.api.plugin_privileges.assert_called_once_with("vieux/sshfs:latest")
+
+
+def test_plugin_privileges_installs_nothing():
+    with _patch() as mock_client:
+        mock_client.return_value.api.plugin_privileges.return_value = []
+        assert plugin_privileges("vieux/sshfs") == []
+    mock_client.return_value.plugins.install.assert_not_called()
+    mock_client.return_value.api.pull_plugin.assert_not_called()
 
 
 def test_plugin_list():

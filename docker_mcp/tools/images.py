@@ -315,7 +315,8 @@ def image_load(data: bytes | None = None, from_file: str | None = None, host: st
     Load an image from a tarball produced by `image_save`, from in-band bytes or a file on the server host.
 
     Counterpart of `image_save`; when the image lives in a registry, `image_pull` is the normal
-    route. Pass exactly one of `data` (tarball bytes in band) or `from_file` (a path on the server host,
+    route, and for a flat rootfs archive that is not a `docker save` bundle use `image_import`.
+    Pass exactly one of `data` (tarball bytes in band) or `from_file` (a path on the server host,
     streamed straight to the daemon — preferred for anything but small images, since in-band bytes are
     base64-encoded by MCP). `from_file` is read by the server's user; `~` is expanded.
 
@@ -331,6 +332,70 @@ def image_load(data: bytes | None = None, from_file: str | None = None, host: st
     path = host_read_path(cast(str, from_file))
     with path.open("rb") as handle:
         return [i.attrs for i in _get_client(host).images.load(handle)]
+
+
+@tool()
+def image_import(
+    repository: str | None = None,
+    tag: str | None = None,
+    from_file: str | None = None,
+    data: bytes | None = None,
+    from_url: str | None = None,
+    from_image: str | None = None,
+    changes: list | None = None,
+    host: str | None = None,
+) -> str:
+    """
+    Create an image from a flat root-filesystem tarball, like `docker import`.
+
+    Imports a *filesystem* archive as a new single-layer image with no build history — not the same
+    thing as `image_load`, which restores a `docker save` archive complete with its layers, tags and
+    history, so prefer `image_load` for anything `image_save` produced. Use this for a rootfs that
+    came from somewhere else: a `container_export` archive, a distro base tarball, a VM image dump.
+    The result has an empty config — no `CMD`/`ENTRYPOINT`/`ENV` — unless you supply `changes`, so an
+    imported image is usually not runnable until you set at least a command. Pass exactly one source
+    (`from_file`, `data`, `from_url` or `from_image`); ValueError otherwise. `from_url` and
+    `from_image` are fetched by the *daemon*, `from_file`/`data` are read here and uploaded. Unlike
+    the other image-creating tools this stamps no provenance labels: the Engine's import call accepts
+    no labels field, and `changes` does not cover `LABEL`.
+
+    args:
+        repository - Repository name to give the new image, e.g. "myorg/rootfs"; may include a tag.
+            Omit to import untagged, addressable only by the id in the returned progress
+        tag - Tag to apply, e.g. "v1"; ignored if `repository` already carries one
+        from_file - Path to a rootfs tarball on the server host (`~` expanded), read by the server's
+            user; exactly one source
+        data - Rootfs tarball contents in band (base64-encoded by MCP, so prefer `from_file` for
+            anything but small archives); exactly one source
+        from_url - URL the daemon fetches the tarball from; exactly one source
+        from_image - Name of an existing image to import from, like a Dockerfile `FROM`; exactly one
+            source
+        changes - Dockerfile instructions applied to the new image, e.g. ["CMD /bin/sh"]; only
+            CMD, ENTRYPOINT, ENV, EXPOSE, ONBUILD, USER, VOLUME and WORKDIR are supported
+    returns: str - The daemon's raw newline-delimited JSON progress records; the final record carries
+        the new image id as its `status`
+    """
+    sources = {"from_file": from_file, "data": data, "from_url": from_url, "from_image": from_image}
+    supplied = [name for name, value in sources.items() if value is not None]
+    if len(supplied) != 1:
+        raise ValueError(
+            "Pass exactly one of `from_file`, `data`, `from_url` or `from_image` "
+            f"(got {', '.join(supplied) if supplied else 'none'})."
+        )
+
+    # The high-level ImageCollection has no import; these four are the documented low-level calls.
+    # Using the explicit per-source methods rather than `import_image(src=...)` on purpose: that one
+    # treats a string `src` as a path *and silently falls back to treating it as a URL* if the file
+    # can't be read, which would turn a typo'd local path into an outbound fetch.
+    api = _get_client(host).api
+    common = drop_none(repository=repository, tag=tag, changes=changes)
+    if from_file is not None:
+        return api.import_image_from_file(str(host_read_path(from_file)), **common)
+    if data is not None:
+        return api.import_image_from_data(data, **common)
+    if from_url is not None:
+        return api.import_image_from_url(from_url, **common)
+    return api.import_image_from_image(cast(str, from_image), **common)
 
 
 @tool()

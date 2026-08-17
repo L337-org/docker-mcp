@@ -7,22 +7,22 @@
     "url": "https://github.com/L337-org/docker-mcp",
     "source": "github"
   },
-  "version": "2.2.4",
+  "version": "2.2.5",
   "packages": [
     {
       "registryType": "pypi",
       "identifier": "docker-mcp-server",
-      "version": "2.2.4",
+      "version": "2.2.5",
       "transport": { "type": "stdio" }
     },
     {
       "registryType": "oci",
-      "identifier": "ghcr.io/l337-org/docker-mcp-server:2.2.4",
+      "identifier": "ghcr.io/l337-org/docker-mcp-server:2.2.5",
       "transport": { "type": "stdio" }
     },
     {
       "registryType": "mcpb",
-      "identifier": "https://github.com/L337-org/docker-mcp/releases/download/v2.2.4/docker-mcp-server-2.2.4.mcpb",
+      "identifier": "https://github.com/L337-org/docker-mcp/releases/download/v2.2.5/docker-mcp-server-2.2.5.mcpb",
       "fileSha256": "0000000000000000000000000000000000000000000000000000000000000000",
       "transport": { "type": "stdio" }
     }

@@ -419,7 +419,7 @@ Legend: **✓** direct CLI equivalent; **≈** covered by a documented recipe (l
 | container_wait (exit) ✓ | `docker wait` |
 | container_wait (healthy) ≈ | `wait_healthy` loop, `reference/observability.md` |
 
-### images (14) - `reference/images.md`
+### images (15) - `reference/images.md`
 
 | Tool | CLI |
 |---|---|
@@ -431,6 +431,7 @@ Legend: **✓** direct CLI equivalent; **≈** covered by a documented recipe (l
 | image_history ✓ | `docker history` |
 | image_inspect ✓ | `docker image inspect` |
 | image_save / load ✓ | `docker save -o` / `load -i` |
+| image_import ✓ | `docker import` |
 | image_prune ✓ | `docker image prune` |
 | image_prune_builds ✓ | `docker builder prune` (`--reserved-space`, ex-`--keep-storage`) |
 | image_search ✓ | `docker search` (Hub only) |
@@ -477,10 +478,13 @@ All ✓: `docker scout cves/quickview/compare/recommendations/sbom`.
 
 All ✓: `docker context create/ls/inspect/rm/use`.
 
-### plugins (10) - `reference/system.md`
+### plugins (11) - `reference/system.md`
 
 All ✓: `docker plugin install/ls/inspect/enable/disable/set/upgrade/rm/push/create`.
 `plugin_configure` → `docker plugin set`.
+`plugin_privileges` ≈ the privileges `docker plugin install` prints in its interactive grant prompt -
+**no read-only CLI equivalent**, so the skill can only show them by starting an install and declining
+it; the tool reads them without installing anything.
 
 ### registry (7) - `reference/registry.md`
 

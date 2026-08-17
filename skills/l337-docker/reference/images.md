@@ -103,6 +103,23 @@ Always use `-o`/`-i`. A bare `docker save` writes a multi-hundred-megabyte tar t
 `export`/`import` (see `reference/containers.md`) flatten and lose all of it; they are not
 interchangeable.
 
+## Importing a flat rootfs
+
+```bash
+docker import rootfs.tar myorg/rootfs:v1                  # tar of a filesystem -> 1-layer image
+docker import --change 'CMD /bin/sh' rootfs.tar myorg/rootfs:v1
+docker import https://example.com/rootfs.tar myorg/rootfs:v1
+```
+
+- `import` takes a **filesystem** tar, `load` takes a `docker save` bundle. Feeding a save bundle to
+  `import` "works" and produces a useless image whose root is the bundle's own metadata files.
+- An imported image has an empty config - no `CMD`, `ENTRYPOINT` or `ENV` - so it will not run until
+  you set one. `--change` accepts only `CMD`, `ENTRYPOINT`, `ENV`, `EXPOSE`, `ONBUILD`, `USER`,
+  `VOLUME` and `WORKDIR`; `LABEL` is not among them, so an imported image cannot be
+  provenance-labelled at import time.
+- The URL form is fetched by the **daemon**, not by the shell - so it resolves in the daemon's
+  network namespace, which matters against a remote host.
+
 ## Removing and pruning
 
 ```bash
