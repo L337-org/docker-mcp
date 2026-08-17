@@ -360,9 +360,14 @@ def image_import(
     no labels field, and `changes` does not cover `LABEL`.
 
     args:
-        repository - Repository name to give the new image, e.g. "myorg/rootfs"; may include a tag.
-            Omit to import untagged, addressable only by the id in the returned progress
-        tag - Tag to apply, e.g. "v1"; ignored if `repository` already carries one
+        repository - Repository name to give the new image, e.g. "myorg/rootfs"; may include a tag
+            (`myorg/rootfs:v1`), and defaults to `:latest` when it does not. Omit to import untagged,
+            addressable only by the id in the returned progress. A digest reference is refused by the
+            daemon. Required if `tag` is given
+        tag - Tag to apply, e.g. "v1". **Overrides** a tag already in `repository` rather than being
+            ignored, so passing `repository="myorg/rootfs:v1"` with `tag="v2"` yields `:v2`. Requires
+            `repository` (ValueError without it — the daemon would otherwise silently drop the tag
+            and import untagged)
         from_file - Path to a rootfs tarball on the server host (`~` expanded), read by the server's
             user; exactly one source
         data - Rootfs tarball contents in band (base64-encoded by MCP, so prefer `from_file` for
@@ -384,6 +389,13 @@ def image_import(
         raise ValueError(
             "Pass exactly one of `from_file`, `data`, `from_url` or `from_image` "
             f"(got {', '.join(supplied) if supplied else 'none'})."
+        )
+    # A bare `tag` is refused rather than forwarded: the Engine returns early when `repo` is empty
+    # (moby's httputils.RepoTagReference), so the tag is silently dropped and the image lands
+    # untagged -- a caller asking for `:v1` would get no error and no tag.
+    if tag is not None and repository is None:
+        raise ValueError(
+            "`tag` needs a `repository` to attach to; pass `repository`, or omit `tag` to import untagged."
         )
 
     # The high-level ImageCollection has no import; these four are the documented low-level calls.

@@ -190,6 +190,34 @@ def test_image_import_requires_exactly_one_source(kwargs):
     mock_client.return_value.api.import_image_from_data.assert_not_called()
 
 
+def test_image_import_refuses_a_tag_without_a_repository():
+    # The Engine returns early when `repo` is empty, so a bare tag is silently dropped and the image
+    # lands untagged. Refuse instead of importing something the caller did not ask for.
+    with _patch() as mock_client:
+        with pytest.raises(ValueError, match="needs a `repository`"):
+            image_import(data=b"rootfs", tag="v1")
+    mock_client.return_value.api.import_image_from_data.assert_not_called()
+
+
+def test_image_import_allows_a_repository_without_a_tag():
+    with _patch() as mock_client:
+        api = mock_client.return_value.api
+        api.import_image_from_data.return_value = ""
+        image_import(data=b"rootfs", repository="myorg/rootfs")
+    api.import_image_from_data.assert_called_once_with(b"rootfs", repository="myorg/rootfs")
+
+
+def test_image_import_forwards_repository_and_tag_separately_without_reconciling_them():
+    # `tag` overrides a tag already in `repository` -- the daemon rebuilds the reference from the
+    # repository's domain+path and applies `tag` (reference.WithTag), so both are forwarded as given
+    # rather than parsed here. Pins that we do not silently rewrite either value.
+    with _patch() as mock_client:
+        api = mock_client.return_value.api
+        api.import_image_from_data.return_value = ""
+        image_import(data=b"rootfs", repository="myorg/rootfs:v1", tag="v2")
+    api.import_image_from_data.assert_called_once_with(b"rootfs", repository="myorg/rootfs:v1", tag="v2")
+
+
 def test_image_save():
     image = MagicMock()
     image.save.return_value = iter([b"chunk1", b"chunk2"])
