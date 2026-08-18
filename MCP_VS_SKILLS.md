@@ -448,7 +448,7 @@ All ✓ - each maps to the identically-named `docker compose <sub>`: `up`, `down
 `logs`, `build`, `pull`, `config`, `cp`, `exec`, `run`, `start`, `stop`, `restart`, `kill`,
 `pause`, `unpause`, `port`, `top`, `images`, `wait`. (`compose_list` → `docker compose ls`.)
 
-### swarm (8) / services (10) / nodes (5) / secrets (4) / configs (4) / stack (5) - `reference/swarm.md`
+### swarm (8) / services (12) / nodes (5) / secrets (4) / configs (4) / stack (5) - `reference/swarm.md`
 
 | Tool | CLI |
 |---|---|
@@ -460,6 +460,8 @@ All ✓ - each maps to the identically-named `docker compose <sub>`: `up`, `down
 | service_scale ✓ | `docker service scale` |
 | service_rollback ✓ | `docker service rollback` |
 | service_wait ≈ | `wait_service` loop, `reference/observability.md` |
+| swarm_task_list ≈ | `docker service ps $(docker service ls -q)`, `reference/swarm.md` - no CLI command lists the cluster's tasks in one shot |
+| swarm_task_inspect ✓ | `docker inspect --type task` |
 | node_list / inspect / update / remove ✓ | `docker node <sub>` |
 | node_wait ≈ | `wait_node` loop |
 | secret_* / config_* ✓ | `docker secret <sub>` / `docker config <sub>` |
