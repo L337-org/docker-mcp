@@ -137,8 +137,6 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "swarm_unlock": ToolCategory.MUTATING,
     "swarm_unlock_key": ToolCategory.READ_ONLY,
     "swarm_join_tokens": ToolCategory.READ_ONLY,
-    # Cluster-wide task queries. Named `swarm_*` for their scope but registered from services.py,
-    # so they share the `services` domain gate -- see the note above them in that module.
     "swarm_task_list": ToolCategory.READ_ONLY,
     "swarm_task_inspect": ToolCategory.READ_ONLY,
     # plugins
@@ -492,10 +490,8 @@ _DOMAIN_BLURBS: dict[str, str] = {
     "volumes": "create/list/inspect/remove",
     "compose": "Docker Compose v2 (up/down/ps/logs/build/run/exec/...); CLI-backed",
     "stack": "Compose-on-Swarm (deploy/ls/ps/rm/services); CLI-backed",
-    "swarm": "swarm init/join/leave/unlock, join-tokens; manager node only",
-    "services": "Swarm services (create/scale/update/rollback/logs/tasks), plus cluster-wide task "
-    "queries (`swarm_task_list`/`swarm_task_inspect`, named for their scope but gated here); "
-    "manager node only",
+    "swarm": "swarm init/join/leave/unlock, join-tokens, cluster-wide task list/inspect; manager node only",
+    "services": "Swarm services (create/scale/update/rollback/logs/tasks); manager node only",
     "nodes": "Swarm nodes (list/inspect/update/remove); manager node only",
     "secrets": "Swarm secrets; manager node only",
     "configs": "Swarm configs; manager node only",

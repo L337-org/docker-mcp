@@ -263,16 +263,6 @@ All publishing runs through one workflow on each **published GitHub Release** (n
   resources: volumes, contexts, plugins, stacks, builders), `repository` (remote repo refs); durations are
   `timeout_seconds`. `tests/test_naming.py` enforces all of this (approved prefixes, banned short forms and
   1.x spellings, canonical shared-param descriptions) — a violating tool fails CI.
-- **A tool's prefix names its scope, its module names its gate, and the two may differ.** The prefix
-  is chosen for what the tool acts on; the module it lives in decides its `DOCKER_MCP_SERVER_DISABLE`
-  domain. Usually they coincide, but where they don't, pick each on its own merits and say so in a
-  comment at the definition. Two live cases: `host_list` is prefixed `host_` and lives in `system.py`;
-  `swarm_task_list` / `swarm_task_inspect` are prefixed `swarm_` because their scope is the cluster
-  (`service_task_list` would read as a second spelling of `service_ps`) but live in `services.py`, so
-  that `DISABLE=services` takes them with it — a task's `Spec` carries the full `ContainerSpec`, so a
-  cluster-wide task query left in the `swarm` domain would leak a disabled domain's data through
-  another domain's gate. When the two differ, the router blurb for the *gating* domain names the
-  tools, or a keyword search for the prefix lands in a domain that never registered them.
 - New Docker functionality goes in the matching `docker_mcp/tools/<domain>.py` file, not in a new file.
 - Every new `docker_mcp/tools/` file must be imported in `docker_mcp/tools/__init__.py` (private `_*.py` helpers excluded).
 - Every new `docker_mcp/tools/<module>.py` must have a matching `tests/test_<module>.py`.

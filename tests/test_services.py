@@ -15,8 +15,6 @@ from docker_mcp.tools.services import (
     service_ps,
     service_update,
     service_wait,
-    swarm_task_inspect,
-    swarm_task_list,
 )
 
 
@@ -100,31 +98,6 @@ def test_service_ps():
         mock_client.return_value.services.get.return_value = service
         assert service_ps("svc1") == [{"ID": "t1"}]
     service.tasks.assert_called_once_with(filters=None)
-
-
-def test_swarm_task_list_asks_the_daemon_for_every_task():
-    with _patch() as mock_client:
-        mock_client.return_value.api.tasks.return_value = [{"ID": "t1"}, {"ID": "t2"}]
-        assert swarm_task_list() == [{"ID": "t1"}, {"ID": "t2"}]
-    # No service lookup: the whole point is the cluster-wide read `service_ps` cannot do.
-    mock_client.return_value.services.get.assert_not_called()
-    mock_client.return_value.api.tasks.assert_called_once_with(filters=None)
-
-
-def test_swarm_task_list_forwards_filters():
-    with _patch() as mock_client:
-        mock_client.return_value.api.tasks.return_value = []
-        assert swarm_task_list(filters={"node": "node1", "desired-state": "running"}) == []
-    mock_client.return_value.api.tasks.assert_called_once_with(filters={"node": "node1", "desired-state": "running"})
-
-
-def test_swarm_task_inspect_forwards_the_reference_unmodified():
-    # The daemon resolves full id -> full name -> id prefix itself (moby's getTask), so a name or a
-    # prefix must reach it as given rather than being parsed or expanded here.
-    with _patch() as mock_client:
-        mock_client.return_value.api.inspect_task.return_value = {"ID": "t1"}
-        assert swarm_task_inspect("web.1.abc123") == {"ID": "t1"}
-    mock_client.return_value.api.inspect_task.assert_called_once_with("web.1.abc123")
 
 
 def test_service_logs_decodes_chunks():

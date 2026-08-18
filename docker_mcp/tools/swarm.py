@@ -217,3 +217,64 @@ def swarm_join_tokens(host: str | None = None) -> dict:
     swarm = _get_client(host).swarm
     swarm.reload()
     return _read_join_tokens(swarm)
+
+
+# --- cluster-wide task queries ---
+#
+# Tasks are swarm objects, so these live here and share the `swarm` domain gate: a user who sets
+# DOCKER_MCP_SERVER_DISABLE=swarm expects everything named `swarm_*` to go with it. They are the
+# one part of this module that is not cluster lifecycle, and they read what `services.py` writes --
+# `service_ps` is the per-service view of the same task documents.
+#
+# Both stay on the low-level `client.api`: docker-py has no task collection at all (there is no
+# `client.tasks`), so these documented `APIClient` methods are the only public path.
+
+
+@tool()
+def swarm_task_list(filters: dict | None = None, host: str | None = None) -> list:
+    """
+    List tasks across the whole swarm, like `docker service ps` with no service to scope it.
+
+    The cluster-wide view of what is actually scheduled. `service_ps` covers one service and
+    `stack_ps` one stack, so answering "what is failing anywhere" or "what is running on this node"
+    through those means looping over every service; this is one call. Filter by `node` for a node's
+    workload (the CLI's `docker node ps`), `desired-state` to separate what should be running from
+    what is shutting down, or `service` for a single service -- for which `service_ps` is the
+    simpler call. Each task carries its full `Spec`, including the `ContainerSpec` (image, command,
+    env), so this returns much more per task than the `service-tasks://{id_or_name}` resource's
+    computed rollout summary. Read-only. Requires a swarm manager: any other node raises
+    `docker.errors.APIError`.
+
+    args:
+        filters - Filter dict; keys: id, name, service, node, label, desired-state
+            (running|shutdown|accepted); omit for every task in the cluster
+    returns: list - One full task document per task (ID, ServiceID, NodeID, Slot, Spec, Status,
+        DesiredState), the same shape `service_ps` returns
+    """
+    return _get_client(host).api.tasks(filters=filters)
+
+
+@tool()
+def swarm_task_inspect(id_or_name: str, host: str | None = None) -> dict:
+    """
+    Inspect a single swarm task, like `docker inspect --type task`.
+
+    For when you already hold a task reference -- from a `swarm_task_list` or `service_ps` row, a
+    service event, or an error message -- and want just that task. `swarm_task_list` returns the
+    same document for every task, so prefer it when scanning; this is the single-object fetch.
+    To reach the container behind a running task, read `Status.ContainerStatus.ContainerID` and pass
+    it to `container_inspect` / `container_logs` -- but note the container may be on another node,
+    where those tools cannot see it, and `service_logs` aggregates across tasks instead. Read-only.
+    Requires a swarm manager; raises `docker.errors.APIError` if the task does not exist, if a
+    prefix matches more than one task, or if this node is not a manager.
+
+    args:
+        id_or_name - The task id, an unambiguous id prefix, or the task's full name -- which is the
+            container-name form `<service>.<slot>.<taskid>` (`<service>.<nodeid>.<taskid>` for a
+            global service), NOT the shorter `<service>.<slot>` that `docker service ps` prints in
+            its NAME column, which does not resolve. The daemon tries full id, then full name, then
+            prefix, and rejects an ambiguous prefix rather than picking a match
+    returns: dict - Full task inspect payload, as `docker inspect --type task`. Carries no name
+        field of its own; compose one from `ServiceID`/`Slot` if you need it
+    """
+    return _get_client(host).api.inspect_task(id_or_name)
