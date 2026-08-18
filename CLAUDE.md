@@ -516,6 +516,10 @@ say why. **Anything deliberately not wrapped, or wrapped in an unobvious way, be
   permanently. The high-level `Service`/`ServiceCollection` expose no `rollback`.
 - **`system_logout`'s `api._auth_configs`** — stays low-level permanently. There is no `logout`
   anywhere in the SDK and no server-side session to end, so there is nothing to migrate to.
+- **`swarm_task_list` / `swarm_task_inspect`'s `api.tasks()` / `api.inspect_task()`** — stay
+  low-level permanently. docker-py has no task collection at all (there is no `client.tasks`, and
+  `docker/models/` has no `tasks.py`), so these documented `APIClient` methods are the only public
+  path. Nothing to migrate to; do not propose one.
 
 The audit must also **check the latest published docker-py, not the pinned one**: `uv.lock` is
 routinely behind what `pyproject.toml`'s floor lets a fresh `uvx`/`pip install` resolve, so auditing

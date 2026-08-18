@@ -6,7 +6,12 @@ import uuid
 
 import pytest
 
-from docker_mcp.tools.services import service_create, service_remove, service_scale, service_wait
+from docker_mcp.tools.services import (
+    service_create,
+    service_remove,
+    service_scale,
+    service_wait,
+)
 from docker_mcp.tools.resources import get_service_tasks_resource, list_service_resources
 
 pytestmark = pytest.mark.usefixtures("skip_if_no_swarm")

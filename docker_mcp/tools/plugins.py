@@ -63,7 +63,8 @@ def plugin_install(remote: str, local_name: str | None = None, host: str | None 
     Install a plugin from Docker Hub.
 
     `remote` is a Docker Hub reference in `author/name:tag` form, e.g.
-    `vieux/sshfs:latest`. The daemon handles permission grants non-interactively.
+    `vieux/sshfs:latest`. The daemon handles permission grants non-interactively — call
+    `plugin_privileges` first to see what host access the plugin is asking for.
     After installation use `plugin_inspect` to confirm the plugin's enabled state, then call
     `plugin_enable` to activate it if needed, and optionally `plugin_configure` first if
     it requires settings. Use `plugin_list` to list all plugins, or `plugin_remove` to
@@ -75,6 +76,30 @@ def plugin_install(remote: str, local_name: str | None = None, host: str | None 
     returns: dict - The installed plugin's attrs ({"Id", "Name", "Enabled", "Settings", "Config"})
     """
     return _get_client(host).plugins.install(remote, local_name=local_name).attrs
+
+
+@tool()
+def plugin_privileges(remote: str, host: str | None = None) -> list:
+    """
+    Ask the registry which host privileges a not-yet-installed plugin demands.
+
+    The review step before `plugin_install`, which grants these privileges non-interactively (the
+    daemon never prompts) — so this is the only chance to see what a plugin wants before it has it.
+    Worth checking for anything not already trusted: plugins routinely request host mounts, devices,
+    and elevated capabilities, and a granted privilege is host-level access, not container-scoped.
+    Reads the *remote* plugin from its registry and installs nothing; for the privileges of a plugin
+    already installed, read `Config` from `plugin_inspect` instead. Credentials come from
+    `system_login`, or from `~/.docker/config.json` if the host ran `docker login`. Raises if the
+    reference cannot be resolved in the registry.
+
+    args: remote - Registry plugin reference, `author/name:tag`; the `:latest` tag is optional and
+        is the default if omitted
+    returns: list - One dict per requested privilege ({"Name", "Description", "Value"}), e.g. Name
+        "mount" with Value ["/data"], or "capabilities" with Value ["CAP_SYS_ADMIN"]; empty if the
+        plugin requests none
+    """
+    # The high-level PluginCollection exposes no privileges call; this is the documented low-level one.
+    return _get_client(host).api.plugin_privileges(remote)
 
 
 @tool()

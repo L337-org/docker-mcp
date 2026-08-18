@@ -7,6 +7,7 @@ from docker_mcp.tools.images import (
     image_inspect,
     image_registry_data,
     image_history,
+    image_import,
     image_list,
     image_load,
     image_prune,
@@ -130,6 +131,130 @@ def test_image_load():
     with _patch() as mock_client:
         mock_client.return_value.images.load.return_value = [image]
         assert image_load(b"tarbytes") == [{"Id": "img1"}]
+
+
+def test_image_import_from_data_forwards_repository_tag_and_changes():
+    with _patch() as mock_client:
+        api = mock_client.return_value.api
+        api.import_image_from_data.return_value = '{"status":"sha256:abc"}'
+        result = image_import(data=b"rootfs", repository="myorg/rootfs", tag="v1", changes=["CMD /bin/sh"])
+    assert result == '{"status":"sha256:abc"}'
+    api.import_image_from_data.assert_called_once_with(
+        b"rootfs", repository="myorg/rootfs", tag="v1", changes=["CMD /bin/sh"]
+    )
+
+
+def test_image_import_omits_unset_optionals_so_the_sdk_defaults_apply():
+    with _patch() as mock_client:
+        api = mock_client.return_value.api
+        api.import_image_from_url.return_value = ""
+        image_import(from_url="https://example.invalid/rootfs.tar")
+    api.import_image_from_url.assert_called_once_with("https://example.invalid/rootfs.tar")
+
+
+def test_image_import_from_image_uses_the_from_image_call():
+    with _patch() as mock_client:
+        api = mock_client.return_value.api
+        api.import_image_from_image.return_value = '{"status":"sha256:def"}'
+        image_import(from_image="scratch", repository="myorg/base")
+    api.import_image_from_image.assert_called_once_with("scratch", repository="myorg/base")
+
+
+def test_image_import_from_file_forwards_the_expanded_path(tmp_path):
+    tarball = tmp_path / "rootfs.tar"
+    tarball.write_bytes(b"rootfs")
+    with _patch() as mock_client:
+        api = mock_client.return_value.api
+        api.import_image_from_file.return_value = '{"status":"sha256:ghi"}'
+        result = image_import(from_file=str(tarball), repository="myorg/rootfs")
+    assert result == '{"status":"sha256:ghi"}'
+    api.import_image_from_file.assert_called_once_with(str(tarball), repository="myorg/rootfs")
+
+
+@pytest.mark.parametrize("missing", ["rootfs.tar", "a-directory"])
+def test_image_import_refuses_a_from_file_path_that_is_not_a_readable_file(tmp_path, missing):
+    # The guard exists because `import_image_from_file` delegates to `import_image(src=...)`, which
+    # sends the path as `fromSrc` whenever `is_file(src)` is false -- turning a typo, or a directory,
+    # into a daemon-side HTTP fetch of that string rather than an error. Asserting that no SDK call
+    # is reached is the only assertion that can catch a regression here: a test that merely checks
+    # `import_image_from_url` was not called passes even when the fallback is live, because the
+    # fallback happens *inside* `import_image_from_file`.
+    if missing == "a-directory":
+        (tmp_path / missing).mkdir()
+    with _patch() as mock_client:
+        api = mock_client.return_value.api
+        with pytest.raises(FileNotFoundError, match="No such rootfs tarball"):
+            image_import(from_file=str(tmp_path / missing), repository="myorg/rootfs")
+    api.import_image_from_file.assert_not_called()
+    api.import_image_from_url.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {},
+        {"data": b"rootfs", "from_url": "https://example.invalid/rootfs.tar"},
+        {"from_file": "/tmp/rootfs.tar", "from_image": "scratch"},
+    ],
+)
+def test_image_import_requires_exactly_one_source(kwargs):
+    with _patch() as mock_client:
+        with pytest.raises(ValueError, match="exactly one"):
+            image_import(**kwargs)
+    mock_client.return_value.api.import_image_from_data.assert_not_called()
+
+
+def test_image_import_refuses_a_tag_without_a_repository():
+    # The Engine returns early when `repo` is empty, so a bare tag is silently dropped and the image
+    # lands untagged. Refuse instead of importing something the caller did not ask for.
+    with _patch() as mock_client:
+        with pytest.raises(ValueError, match="needs a `repository`"):
+            image_import(data=b"rootfs", tag="v1")
+    mock_client.return_value.api.import_image_from_data.assert_not_called()
+
+
+@pytest.mark.parametrize("blank", ["", "   "])
+def test_image_import_refuses_a_blank_repository(blank):
+    # Verified against a live daemon: repository="" with a tag imports with RepoTags [] -- the
+    # Engine's empty-repo early return drops the tag exactly as it does when repository is omitted,
+    # so the None-only guard left the silent failure reachable through an empty string.
+    with _patch() as mock_client:
+        with pytest.raises(ValueError, match="cannot be blank"):
+            image_import(data=b"rootfs", repository=blank, tag="v1")
+        with pytest.raises(ValueError, match="cannot be blank"):
+            image_import(data=b"rootfs", repository=blank)
+    mock_client.return_value.api.import_image_from_data.assert_not_called()
+
+
+@pytest.mark.parametrize("blank", ["", "   "])
+def test_image_import_refuses_a_blank_tag(blank):
+    # The sibling of the blank-repository hole, one step further along the same function: the Engine's
+    # RepoTagReference tests `tag != ""`, so a blank tag skips the WithTag path and falls through to
+    # TagNameOnly, which substitutes `latest`. The caller asked for one tag and would silently get a
+    # different one, so it is refused rather than forwarded.
+    with _patch() as mock_client:
+        with pytest.raises(ValueError, match="cannot be blank"):
+            image_import(data=b"rootfs", repository="myorg/rootfs", tag=blank)
+    mock_client.return_value.api.import_image_from_data.assert_not_called()
+
+
+def test_image_import_allows_a_repository_without_a_tag():
+    with _patch() as mock_client:
+        api = mock_client.return_value.api
+        api.import_image_from_data.return_value = ""
+        image_import(data=b"rootfs", repository="myorg/rootfs")
+    api.import_image_from_data.assert_called_once_with(b"rootfs", repository="myorg/rootfs")
+
+
+def test_image_import_forwards_repository_and_tag_separately_without_reconciling_them():
+    # `tag` overrides a tag already in `repository` -- the daemon rebuilds the reference from the
+    # repository's domain+path and applies `tag` (reference.WithTag), so both are forwarded as given
+    # rather than parsed here. Pins that we do not silently rewrite either value.
+    with _patch() as mock_client:
+        api = mock_client.return_value.api
+        api.import_image_from_data.return_value = ""
+        image_import(data=b"rootfs", repository="myorg/rootfs:v1", tag="v2")
+    api.import_image_from_data.assert_called_once_with(b"rootfs", repository="myorg/rootfs:v1", tag="v2")
 
 
 def test_image_save():

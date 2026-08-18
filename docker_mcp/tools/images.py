@@ -315,7 +315,8 @@ def image_load(data: bytes | None = None, from_file: str | None = None, host: st
     Load an image from a tarball produced by `image_save`, from in-band bytes or a file on the server host.
 
     Counterpart of `image_save`; when the image lives in a registry, `image_pull` is the normal
-    route. Pass exactly one of `data` (tarball bytes in band) or `from_file` (a path on the server host,
+    route, and for a flat rootfs archive that is not a `docker save` bundle use `image_import`.
+    Pass exactly one of `data` (tarball bytes in band) or `from_file` (a path on the server host,
     streamed straight to the daemon — preferred for anything but small images, since in-band bytes are
     base64-encoded by MCP). `from_file` is read by the server's user; `~` is expanded.
 
@@ -331,6 +332,109 @@ def image_load(data: bytes | None = None, from_file: str | None = None, host: st
     path = host_read_path(cast(str, from_file))
     with path.open("rb") as handle:
         return [i.attrs for i in _get_client(host).images.load(handle)]
+
+
+@tool()
+def image_import(
+    repository: str | None = None,
+    tag: str | None = None,
+    from_file: str | None = None,
+    data: bytes | None = None,
+    from_url: str | None = None,
+    from_image: str | None = None,
+    changes: list | None = None,
+    host: str | None = None,
+) -> str:
+    """
+    Create an image from a flat root-filesystem tarball, like `docker import`.
+
+    Imports a *filesystem* archive as a new single-layer image with no build history — not the same
+    thing as `image_load`, which restores a `docker save` archive complete with its layers, tags and
+    history, so prefer `image_load` for anything `image_save` produced. Use this for a rootfs that
+    came from somewhere else: a `container_export` archive, a distro base tarball, a VM image dump.
+    The result has an empty config — no `CMD`/`ENTRYPOINT`/`ENV` — unless you supply `changes`, so an
+    imported image is usually not runnable until you set at least a command. Pass exactly one source
+    (`from_file`, `data`, `from_url` or `from_image`); ValueError otherwise. `from_url` and
+    `from_image` are fetched by the *daemon*, `from_file`/`data` are read here and uploaded; a
+    `from_file` path that is not a readable file raises rather than being retried as a URL. Unlike
+    the other image-creating tools this stamps no provenance labels: the Engine's import call accepts
+    no labels field, and `changes` does not cover `LABEL`.
+
+    args:
+        repository - Repository name to give the new image, e.g. "myorg/rootfs"; may include a tag
+            (`myorg/rootfs:v1`), and defaults to `:latest` when it does not. Omit to import untagged,
+            addressable only by the id in the returned progress (omit it entirely -- a blank string
+            is a ValueError, not a shorthand for untagged). A digest reference is refused by the
+            daemon. Required if `tag` is given
+        tag - Tag to apply, e.g. "v1". **Overrides** a tag already in `repository` rather than being
+            ignored, so passing `repository="myorg/rootfs:v1"` with `tag="v2"` yields `:v2`. Requires
+            `repository` (ValueError without it — the daemon would otherwise silently drop the tag
+            and import untagged). Blank is also a ValueError, not a shorthand for the default: the
+            daemon would substitute `latest` without saying so
+        from_file - Path to a rootfs tarball on the server host (`~` expanded), read by the server's
+            user; FileNotFoundError if it is not an existing regular file; exactly one source
+        data - Rootfs tarball contents in band (base64-encoded by MCP, so prefer `from_file` for
+            anything but small archives); exactly one source
+        from_url - URL the daemon fetches the tarball from; exactly one source
+        from_image - Name of an existing image to import from, like a Dockerfile `FROM`; exactly one
+            source
+        changes - Dockerfile instructions applied to the new image, e.g. ['CMD ["/bin/sh"]']; only
+            CMD, ENTRYPOINT, ENV, EXPOSE, ONBUILD, USER, VOLUME and WORKDIR are supported. Parsed
+            as real Dockerfile syntax, so shell form is wrapped exactly as a Dockerfile would wrap
+            it (`CMD /bin/sh` is stored as `["/bin/sh","-c","/bin/sh"]`) — use the exec form
+            `CMD ["/bin/sh"]` to store a bare argv
+    returns: str - The daemon's raw newline-delimited JSON progress records; the final record carries
+        the new image id as its `status`
+    """
+    sources = {"from_file": from_file, "data": data, "from_url": from_url, "from_image": from_image}
+    supplied = [name for name, value in sources.items() if value is not None]
+    if len(supplied) != 1:
+        raise ValueError(
+            "Pass exactly one of `from_file`, `data`, `from_url` or `from_image` "
+            f"(got {', '.join(supplied) if supplied else 'none'})."
+        )
+    # A bare `tag` is refused rather than forwarded: the Engine returns early when `repo` is empty
+    # (moby's httputils.RepoTagReference), so the tag is silently dropped and the image lands
+    # untagged -- a caller asking for `:v1` would get no error and no tag. A blank `repository`
+    # reaches that same early return, verified against a live daemon (repository="", tag=... imports
+    # with RepoTags []), so it is refused rather than read as "no repository": passing one is never
+    # meaningful, and treating it as absent would reopen the silent drop through the back door.
+    if repository is not None and not repository.strip():
+        raise ValueError("`repository` cannot be blank; omit it entirely to import untagged.")
+    # A blank `tag` is the same silent substitution one step further on: `RepoTagReference` tests
+    # `tag != ""`, so an empty tag skips the WithTag path and falls through to `TagNameOnly`, which
+    # supplies `:latest`. The caller asked for one tag and would get a different one, with no error --
+    # so it is refused alongside a blank `repository` rather than left as the asymmetric case.
+    if tag is not None and not tag.strip():
+        raise ValueError("`tag` cannot be blank; omit it to accept the daemon's default of `latest`.")
+    if tag is not None and repository is None:
+        raise ValueError(
+            "`tag` needs a `repository` to attach to; pass `repository`, or omit `tag` to import untagged."
+        )
+
+    # The high-level ImageCollection has no import; these four are the documented low-level calls.
+    api = _get_client(host).api
+    common = drop_none(repository=repository, tag=tag, changes=changes)
+    if from_file is not None:
+        # `import_image_from_file` is a one-line delegation to `import_image(src=...)`, which sends
+        # the path as `fromSrc` whenever `docker.utils.is_file(src)` is false -- so a missing path
+        # (or a directory) is not an error but an instruction to the *daemon* to fetch that string
+        # over HTTP, in the daemon's network namespace. Verified against a live daemon:
+        # `from_file="127.0.0.1:9/rootfs.tar"` produced `Get "http://127.0.0.1:9/rootfs.tar"`.
+        # `docker import` itself opens the file and reports ENOENT, so this guard restores CLI
+        # parity and keeps `from_url` the only source that leaves the host.
+        path = host_read_path(from_file)
+        if not path.is_file():
+            raise FileNotFoundError(
+                f"No such rootfs tarball: {path}. Pass `from_url` to have the daemon fetch a URL, "
+                "or `data` to send the archive in band."
+            )
+        return api.import_image_from_file(str(path), **common)
+    if data is not None:
+        return api.import_image_from_data(data, **common)
+    if from_url is not None:
+        return api.import_image_from_url(from_url, **common)
+    return api.import_image_from_image(cast(str, from_image), **common)
 
 
 @tool()

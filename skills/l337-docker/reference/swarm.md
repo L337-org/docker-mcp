@@ -82,6 +82,25 @@ docker service ps <svc> --no-trunc --format json | jq -rs \
 `--no-trunc` matters here - the `Error` column is where the real reason lives and it is truncated
 by default.
 
+### Tasks across the whole cluster
+
+There is no CLI command that lists every task in the swarm; `docker service ps` always needs a
+service. Fan out over the service list instead:
+
+```bash
+for svc in $(docker service ls -q); do
+  docker service ps "$svc" --no-trunc --format json
+done | jq -rs '.[] | select(.CurrentState | startswith("Running") | not)
+                   | [.Name, .Node, .CurrentState, .Error] | @tsv'
+docker node ps <node> --no-trunc            # the other axis: every task on one node
+docker inspect --type task <task-id>        # one task, full document
+```
+
+`docker service ps` prints `NAME` as `<service>.<slot>`, but `docker inspect --type task` will not
+resolve that form - pass the task `ID` from the same row instead. (The MCP server exposes the
+cluster-wide read directly as `swarm_task_list`, with `node`, `service` and `desired-state`
+filters.)
+
 ### Creating and updating
 
 ```bash
