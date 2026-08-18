@@ -486,7 +486,9 @@ All ✓: `docker plugin install/ls/inspect/enable/disable/set/upgrade/rm/push/cr
 `plugin_configure` → `docker plugin set`.
 `plugin_privileges` ≈ no `docker plugin` subcommand prints them, and `docker plugin inspect` needs
 the plugin installed first; the skill reads the plugin's registry config blob over `curl` instead
-(`reference/system.md`), which returns the same four privilege classes without installing anything.
+(`reference/system.md`), reproducing the install prompt's privilege list without installing
+anything. The recipe mirrors the daemon's own `computePrivileges`, so it reports whichever of the
+seven privilege kinds a given plugin declares rather than a fixed subset.
 
 ### registry (7) - `reference/registry.md`
 

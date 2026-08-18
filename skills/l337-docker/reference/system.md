@@ -186,30 +186,58 @@ prompt would ask you to grant are readable over plain HTTPS. Same token dance as
 per-platform index to walk first:
 
 ```bash
-PLUGIN=vieux/sshfs
-TOKEN=$(curl -s "https://auth.docker.io/token?service=registry.docker.io&scope=repository:$PLUGIN:pull" | jq -r .token)
+PLUGIN=vieux/sshfs          # repository only; the tag is separate, see below
+TAG=latest
+TOKEN=$(curl -s "https://auth.docker.io/token?service=registry.docker.io&scope=repository:$PLUGIN:pull" | jq -er .token)
 
 CDIGEST=$(curl -s -H "Authorization: Bearer $TOKEN" \
   -H "Accept: application/vnd.docker.distribution.manifest.v2+json" \
-  "https://registry-1.docker.io/v2/$PLUGIN/manifests/latest" | jq -r '.config.digest')
+  "https://registry-1.docker.io/v2/$PLUGIN/manifests/$TAG" | jq -er '.config.digest')
 
 curl -sL -H "Authorization: Bearer $TOKEN" \
   "https://registry-1.docker.io/v2/$PLUGIN/blobs/$CDIGEST" \
-  | jq '{network: .Network.Type, mounts: [.Mounts[]?.Source],
-         devices: [.Linux.Devices[]?.Path], capabilities: .Linux.Capabilities}'
+  | jq -e '[
+      (select((.Network.Type // "") as $t | $t != "" and $t != "null" and $t != "bridge")
+         | {name: "network", value: [.Network.Type]}),
+      (select(.IpcHost) | {name: "host ipc namespace", value: ["true"]}),
+      (select(.PidHost) | {name: "host pid namespace", value: ["true"]}),
+      (.Mounts[]?        | select(.Source != null) | {name: "mount",  value: [.Source]}),
+      (.Linux.Devices[]? | select(.Path   != null) | {name: "device", value: [.Path]}),
+      (select(.Linux.AllowAllDevices) | {name: "allow-all-devices", value: ["true"]}),
+      (select((.Linux.Capabilities // []) | length > 0)
+         | {name: "capabilities", value: .Linux.Capabilities})
+    ]'
 ```
 
-For `vieux/sshfs` that reports host networking, a bind mount of `/var/lib/docker/plugins/`,
-`/dev/fuse`, and `CAP_SYS_ADMIN` - the same four privilege classes, with the same values, that the
-install prompt lists. Notes:
+For `vieux/sshfs` that reports host networking, a bind mount of `/var/lib/docker/plugins/`, a second
+mount with an empty source, `/dev/fuse` and `CAP_SYS_ADMIN` - the same list, in the same order, that
+the install prompt shows.
+
+**The filter deliberately mirrors the daemon's own `computePrivileges`, and all seven cases matter.**
+It is tempting to pull out only network, mounts, devices and capabilities, because that is what a
+typical plugin declares. Doing so silently drops `host ipc namespace`, `host pid namespace` and
+`allow-all-devices` - and `allow-all-devices` grants `rwm` on every device on the host, which is the
+single most important thing this check exists to surface. A privilege review that omits the worst
+privilege is worse than none, because it reads as a clean bill of health. Keep all seven.
+
+Other traps, each of which fails quietly:
 
 - The config keys are **capitalised** (`Mounts`, `Linux`, `Network`), unlike an image config's
-  lower-case `config` block. Reading `.mounts` silently gives `null`, which looks like "asks for
-  nothing" rather than an error.
-- `-L` matters - blob fetches redirect to a CDN.
-- An empty `""` in `mounts` is a *settable* mount: the plugin declares the mount point but leaves
-  the host source for the operator to supply at install time. It is not a missing value.
-- Tag defaults to `latest` on the CLI but not here; name it explicitly in the manifest URL.
+  lower-case `config` block. Reading `.mounts` gives `null`, which looks like "asks for nothing"
+  rather than an error.
+- `jq -e` on the first two steps, so a missing `.token` or `.config.digest` fails there rather than
+  substituting `null` into the next URL and failing somewhere confusing. The final `-e` is harmless:
+  an empty privilege list is `[]`, which is truthy, so a plugin that genuinely asks for nothing
+  still exits 0.
+- `-L` on the blob fetch - it redirects to a CDN.
+- **Repository and tag are separate variables.** The tag defaults to `latest` on the CLI but not in
+  a manifest URL, and folding it into `$PLUGIN` would also corrupt the token scope
+  (`repository:vieux/sshfs:latest:pull`), which fails as an auth error rather than as a bad tag.
+- A mount whose `Source` is `null` is not a privilege and is skipped, matching the daemon. An
+  **empty** source is: the plugin declares the mount point and leaves the host path for the operator
+  to supply at install time.
+- Network type `bridge`, `null` or absent is not a privilege either, so a plugin using the default
+  network correctly reports nothing for it.
 - This reads the **remote** plugin. For one already installed, `docker plugin inspect <plugin>`
   gives the same fields from local state.
 
