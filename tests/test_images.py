@@ -213,6 +213,19 @@ def test_image_import_refuses_a_tag_without_a_repository():
     mock_client.return_value.api.import_image_from_data.assert_not_called()
 
 
+@pytest.mark.parametrize("blank", ["", "   "])
+def test_image_import_refuses_a_blank_repository(blank):
+    # Verified against a live daemon: repository="" with a tag imports with RepoTags [] -- the
+    # Engine's empty-repo early return drops the tag exactly as it does when repository is omitted,
+    # so the None-only guard left the silent failure reachable through an empty string.
+    with _patch() as mock_client:
+        with pytest.raises(ValueError, match="cannot be blank"):
+            image_import(data=b"rootfs", repository=blank, tag="v1")
+        with pytest.raises(ValueError, match="cannot be blank"):
+            image_import(data=b"rootfs", repository=blank)
+    mock_client.return_value.api.import_image_from_data.assert_not_called()
+
+
 def test_image_import_allows_a_repository_without_a_tag():
     with _patch() as mock_client:
         api = mock_client.return_value.api
