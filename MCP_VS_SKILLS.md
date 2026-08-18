@@ -484,9 +484,9 @@ All ✓: `docker context create/ls/inspect/rm/use`.
 
 All ✓: `docker plugin install/ls/inspect/enable/disable/set/upgrade/rm/push/create`.
 `plugin_configure` → `docker plugin set`.
-`plugin_privileges` ≈ the privileges `docker plugin install` prints in its interactive grant prompt -
-**no read-only CLI equivalent**, so the skill can only show them by starting an install and declining
-it; the tool reads them without installing anything.
+`plugin_privileges` ≈ no `docker plugin` subcommand prints them, and `docker plugin inspect` needs
+the plugin installed first; the skill reads the plugin's registry config blob over `curl` instead
+(`reference/system.md`), which returns the same four privilege classes without installing anything.
 
 ### registry (7) - `reference/registry.md`
 

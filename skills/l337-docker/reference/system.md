@@ -168,16 +168,50 @@ docker plugin create <user>/<plugin>:<tag> ./plugin-dir   # needs config.json + 
 - Installing a plugin **grants it privileges on the host** (mounts, network, devices, capabilities).
   Show the permission list and get confirmation; `--grant-all-permissions` skips exactly the prompt
   a human should be reading.
-- There is **no read-only CLI command that prints those privileges**: the only way to see them is to
-  start `docker plugin install` without `--grant-all-permissions` and read the prompt, then decline.
-  So show the prompt to the user rather than answering it. (The MCP server exposes this as
-  `plugin_privileges`, which reads them from the registry without installing anything.)
+- There is **no read-only `docker plugin` subcommand that prints those privileges**, and
+  `docker plugin inspect` only works once the plugin is installed, which is too late. Read them
+  straight out of the registry instead, before installing anything - see below.
 - Ordering is strict: `disable` → `set`/`upgrade` → `enable`. Doing it out of order gives errors
   that read like the plugin is broken.
 - `disable` fails while a volume or network still uses the plugin - find and remove those first.
 - `docker plugin push` works normally here. (The docker-py SDK's plugin push is broken upstream -
   it POSTs to the pull URL - so on the CLI path this is one of the operations that is *easier*, not
   harder.)
+
+### Reading a plugin's privileges before installing it
+
+A plugin is an OCI artifact whose config blob *is* its plugin config, so the privileges the install
+prompt would ask you to grant are readable over plain HTTPS. Same token dance as
+`reference/registry.md`, one hop shorter - a plugin manifest names a single config blob, with no
+per-platform index to walk first:
+
+```bash
+PLUGIN=vieux/sshfs
+TOKEN=$(curl -s "https://auth.docker.io/token?service=registry.docker.io&scope=repository:$PLUGIN:pull" | jq -r .token)
+
+CDIGEST=$(curl -s -H "Authorization: Bearer $TOKEN" \
+  -H "Accept: application/vnd.docker.distribution.manifest.v2+json" \
+  "https://registry-1.docker.io/v2/$PLUGIN/manifests/latest" | jq -r '.config.digest')
+
+curl -sL -H "Authorization: Bearer $TOKEN" \
+  "https://registry-1.docker.io/v2/$PLUGIN/blobs/$CDIGEST" \
+  | jq '{network: .Network.Type, mounts: [.Mounts[]?.Source],
+         devices: [.Linux.Devices[]?.Path], capabilities: .Linux.Capabilities}'
+```
+
+For `vieux/sshfs` that reports host networking, a bind mount of `/var/lib/docker/plugins/`,
+`/dev/fuse`, and `CAP_SYS_ADMIN` - the same four privilege classes, with the same values, that the
+install prompt lists. Notes:
+
+- The config keys are **capitalised** (`Mounts`, `Linux`, `Network`), unlike an image config's
+  lower-case `config` block. Reading `.mounts` silently gives `null`, which looks like "asks for
+  nothing" rather than an error.
+- `-L` matters - blob fetches redirect to a CDN.
+- An empty `""` in `mounts` is a *settable* mount: the plugin declares the mount point but leaves
+  the host source for the operator to supply at install time. It is not a missing value.
+- Tag defaults to `latest` on the CLI but not here; name it explicitly in the manifest URL.
+- This reads the **remote** plugin. For one already installed, `docker plugin inspect <plugin>`
+  gives the same fields from local state.
 
 ## No equivalent needed: connection management
 
