@@ -355,7 +355,8 @@ def image_import(
     The result has an empty config — no `CMD`/`ENTRYPOINT`/`ENV` — unless you supply `changes`, so an
     imported image is usually not runnable until you set at least a command. Pass exactly one source
     (`from_file`, `data`, `from_url` or `from_image`); ValueError otherwise. `from_url` and
-    `from_image` are fetched by the *daemon*, `from_file`/`data` are read here and uploaded. Unlike
+    `from_image` are fetched by the *daemon*, `from_file`/`data` are read here and uploaded; a
+    `from_file` path that is not a readable file raises rather than being retried as a URL. Unlike
     the other image-creating tools this stamps no provenance labels: the Engine's import call accepts
     no labels field, and `changes` does not cover `LABEL`.
 
@@ -369,7 +370,7 @@ def image_import(
             `repository` (ValueError without it — the daemon would otherwise silently drop the tag
             and import untagged)
         from_file - Path to a rootfs tarball on the server host (`~` expanded), read by the server's
-            user; exactly one source
+            user; FileNotFoundError if it is not an existing regular file; exactly one source
         data - Rootfs tarball contents in band (base64-encoded by MCP, so prefer `from_file` for
             anything but small archives); exactly one source
         from_url - URL the daemon fetches the tarball from; exactly one source
@@ -399,13 +400,23 @@ def image_import(
         )
 
     # The high-level ImageCollection has no import; these four are the documented low-level calls.
-    # Using the explicit per-source methods rather than `import_image(src=...)` on purpose: that one
-    # treats a string `src` as a path *and silently falls back to treating it as a URL* if the file
-    # can't be read, which would turn a typo'd local path into an outbound fetch.
     api = _get_client(host).api
     common = drop_none(repository=repository, tag=tag, changes=changes)
     if from_file is not None:
-        return api.import_image_from_file(str(host_read_path(from_file)), **common)
+        # `import_image_from_file` is a one-line delegation to `import_image(src=...)`, which sends
+        # the path as `fromSrc` whenever `docker.utils.is_file(src)` is false -- so a missing path
+        # (or a directory) is not an error but an instruction to the *daemon* to fetch that string
+        # over HTTP, in the daemon's network namespace. Verified against a live daemon:
+        # `from_file="127.0.0.1:9/rootfs.tar"` produced `Get "http://127.0.0.1:9/rootfs.tar"`.
+        # `docker import` itself opens the file and reports ENOENT, so this guard restores CLI
+        # parity and keeps `from_url` the only source that leaves the host.
+        path = host_read_path(from_file)
+        if not path.is_file():
+            raise FileNotFoundError(
+                f"No such rootfs tarball: {path}. Pass `from_url` to have the daemon fetch a URL, "
+                "or `data` to send the archive in band."
+            )
+        return api.import_image_from_file(str(path), **common)
     if data is not None:
         return api.import_image_from_data(data, **common)
     if from_url is not None:

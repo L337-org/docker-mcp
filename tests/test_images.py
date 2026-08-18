@@ -160,18 +160,32 @@ def test_image_import_from_image_uses_the_from_image_call():
     api.import_image_from_image.assert_called_once_with("scratch", repository="myorg/base")
 
 
-def test_image_import_from_file_resolves_the_path_and_never_falls_back_to_a_url(tmp_path):
+def test_image_import_from_file_forwards_the_expanded_path(tmp_path):
     tarball = tmp_path / "rootfs.tar"
     tarball.write_bytes(b"rootfs")
     with _patch() as mock_client:
         api = mock_client.return_value.api
-        api.import_image_from_data.return_value = ""
-        api.import_image_from_url.return_value = ""
         api.import_image_from_file.return_value = '{"status":"sha256:ghi"}'
         result = image_import(from_file=str(tarball), repository="myorg/rootfs")
     assert result == '{"status":"sha256:ghi"}'
     api.import_image_from_file.assert_called_once_with(str(tarball), repository="myorg/rootfs")
-    # A local path must never be re-tried as an outbound fetch (what `import_image(src=...)` does).
+
+
+@pytest.mark.parametrize("missing", ["rootfs.tar", "a-directory"])
+def test_image_import_refuses_a_from_file_path_that_is_not_a_readable_file(tmp_path, missing):
+    # The guard exists because `import_image_from_file` delegates to `import_image(src=...)`, which
+    # sends the path as `fromSrc` whenever `is_file(src)` is false -- turning a typo, or a directory,
+    # into a daemon-side HTTP fetch of that string rather than an error. Asserting that no SDK call
+    # is reached is the only assertion that can catch a regression here: a test that merely checks
+    # `import_image_from_url` was not called passes even when the fallback is live, because the
+    # fallback happens *inside* `import_image_from_file`.
+    if missing == "a-directory":
+        (tmp_path / missing).mkdir()
+    with _patch() as mock_client:
+        api = mock_client.return_value.api
+        with pytest.raises(FileNotFoundError, match="No such rootfs tarball"):
+            image_import(from_file=str(tmp_path / missing), repository="myorg/rootfs")
+    api.import_image_from_file.assert_not_called()
     api.import_image_from_url.assert_not_called()
 
 
