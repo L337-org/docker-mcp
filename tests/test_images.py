@@ -226,6 +226,18 @@ def test_image_import_refuses_a_blank_repository(blank):
     mock_client.return_value.api.import_image_from_data.assert_not_called()
 
 
+@pytest.mark.parametrize("blank", ["", "   "])
+def test_image_import_refuses_a_blank_tag(blank):
+    # The sibling of the blank-repository hole, one step further along the same function: the Engine's
+    # RepoTagReference tests `tag != ""`, so a blank tag skips the WithTag path and falls through to
+    # TagNameOnly, which substitutes `latest`. The caller asked for one tag and would silently get a
+    # different one, so it is refused rather than forwarded.
+    with _patch() as mock_client:
+        with pytest.raises(ValueError, match="cannot be blank"):
+            image_import(data=b"rootfs", repository="myorg/rootfs", tag=blank)
+    mock_client.return_value.api.import_image_from_data.assert_not_called()
+
+
 def test_image_import_allows_a_repository_without_a_tag():
     with _patch() as mock_client:
         api = mock_client.return_value.api

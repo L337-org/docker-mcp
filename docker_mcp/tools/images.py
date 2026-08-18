@@ -369,7 +369,8 @@ def image_import(
         tag - Tag to apply, e.g. "v1". **Overrides** a tag already in `repository` rather than being
             ignored, so passing `repository="myorg/rootfs:v1"` with `tag="v2"` yields `:v2`. Requires
             `repository` (ValueError without it — the daemon would otherwise silently drop the tag
-            and import untagged)
+            and import untagged). Blank is also a ValueError, not a shorthand for the default: the
+            daemon would substitute `latest` without saying so
         from_file - Path to a rootfs tarball on the server host (`~` expanded), read by the server's
             user; FileNotFoundError if it is not an existing regular file; exactly one source
         data - Rootfs tarball contents in band (base64-encoded by MCP, so prefer `from_file` for
@@ -400,6 +401,12 @@ def image_import(
     # meaningful, and treating it as absent would reopen the silent drop through the back door.
     if repository is not None and not repository.strip():
         raise ValueError("`repository` cannot be blank; omit it entirely to import untagged.")
+    # A blank `tag` is the same silent substitution one step further on: `RepoTagReference` tests
+    # `tag != ""`, so an empty tag skips the WithTag path and falls through to `TagNameOnly`, which
+    # supplies `:latest`. The caller asked for one tag and would get a different one, with no error --
+    # so it is refused alongside a blank `repository` rather than left as the asymmetric case.
+    if tag is not None and not tag.strip():
+        raise ValueError("`tag` cannot be blank; omit it to accept the daemon's default of `latest`.")
     if tag is not None and repository is None:
         raise ValueError(
             "`tag` needs a `repository` to attach to; pass `repository`, or omit `tag` to import untagged."
