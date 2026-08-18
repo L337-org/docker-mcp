@@ -168,16 +168,78 @@ docker plugin create <user>/<plugin>:<tag> ./plugin-dir   # needs config.json + 
 - Installing a plugin **grants it privileges on the host** (mounts, network, devices, capabilities).
   Show the permission list and get confirmation; `--grant-all-permissions` skips exactly the prompt
   a human should be reading.
-- There is **no read-only CLI command that prints those privileges**: the only way to see them is to
-  start `docker plugin install` without `--grant-all-permissions` and read the prompt, then decline.
-  So show the prompt to the user rather than answering it. (The MCP server exposes this as
-  `plugin_privileges`, which reads them from the registry without installing anything.)
+- There is **no read-only `docker plugin` subcommand that prints those privileges**, and
+  `docker plugin inspect` only works once the plugin is installed, which is too late. Read them
+  straight out of the registry instead, before installing anything - see below.
 - Ordering is strict: `disable` → `set`/`upgrade` → `enable`. Doing it out of order gives errors
   that read like the plugin is broken.
 - `disable` fails while a volume or network still uses the plugin - find and remove those first.
 - `docker plugin push` works normally here. (The docker-py SDK's plugin push is broken upstream -
   it POSTs to the pull URL - so on the CLI path this is one of the operations that is *easier*, not
   harder.)
+
+### Reading a plugin's privileges before installing it
+
+A plugin is an OCI artifact whose config blob *is* its plugin config, so the privileges the install
+prompt would ask you to grant are readable over plain HTTPS. Same token dance as
+`reference/registry.md`, one hop shorter - a plugin manifest names a single config blob, with no
+per-platform index to walk first:
+
+```bash
+PLUGIN=vieux/sshfs          # repository only; the tag is separate, see below
+TAG=latest
+TOKEN=$(curl -s "https://auth.docker.io/token?service=registry.docker.io&scope=repository:$PLUGIN:pull" | jq -er .token)
+
+CDIGEST=$(curl -s -H "Authorization: Bearer $TOKEN" \
+  -H "Accept: application/vnd.docker.distribution.manifest.v2+json" \
+  "https://registry-1.docker.io/v2/$PLUGIN/manifests/$TAG" | jq -er '.config.digest')
+
+curl -sL -H "Authorization: Bearer $TOKEN" \
+  "https://registry-1.docker.io/v2/$PLUGIN/blobs/$CDIGEST" \
+  | jq -e '[
+      (select((.Network.Type // "") as $t | $t != "" and $t != "null" and $t != "bridge")
+         | {name: "network", value: [.Network.Type]}),
+      (select(.IpcHost) | {name: "host ipc namespace", value: ["true"]}),
+      (select(.PidHost) | {name: "host pid namespace", value: ["true"]}),
+      (.Mounts[]?        | select(.Source != null) | {name: "mount",  value: [.Source]}),
+      (.Linux.Devices[]? | select(.Path   != null) | {name: "device", value: [.Path]}),
+      (select(.Linux.AllowAllDevices) | {name: "allow-all-devices", value: ["true"]}),
+      (select((.Linux.Capabilities // []) | length > 0)
+         | {name: "capabilities", value: .Linux.Capabilities})
+    ]'
+```
+
+For `vieux/sshfs` that reports host networking, a bind mount of `/var/lib/docker/plugins/`, a second
+mount with an empty source, `/dev/fuse` and `CAP_SYS_ADMIN` - the same list, in the same order, that
+the install prompt shows.
+
+**The filter deliberately mirrors the daemon's own `computePrivileges`, and all seven cases matter.**
+It is tempting to pull out only network, mounts, devices and capabilities, because that is what a
+typical plugin declares. Doing so silently drops `host ipc namespace`, `host pid namespace` and
+`allow-all-devices` - and `allow-all-devices` grants `rwm` on every device on the host, which is the
+single most important thing this check exists to surface. A privilege review that omits the worst
+privilege is worse than none, because it reads as a clean bill of health. Keep all seven.
+
+Other traps, each of which fails quietly:
+
+- The config keys are **capitalised** (`Mounts`, `Linux`, `Network`), unlike an image config's
+  lower-case `config` block. Reading `.mounts` gives `null`, which looks like "asks for nothing"
+  rather than an error.
+- `jq -e` on the first two steps, so a missing `.token` or `.config.digest` fails there rather than
+  substituting `null` into the next URL and failing somewhere confusing. The final `-e` is harmless:
+  an empty privilege list is `[]`, which is truthy, so a plugin that genuinely asks for nothing
+  still exits 0.
+- `-L` on the blob fetch - it redirects to a CDN.
+- **Repository and tag are separate variables.** The tag defaults to `latest` on the CLI but not in
+  a manifest URL, and folding it into `$PLUGIN` would also corrupt the token scope
+  (`repository:vieux/sshfs:latest:pull`), which fails as an auth error rather than as a bad tag.
+- A mount whose `Source` is `null` is not a privilege and is skipped, matching the daemon. An
+  **empty** source is: the plugin declares the mount point and leaves the host path for the operator
+  to supply at install time.
+- Network type `bridge`, `null` or absent is not a privilege either, so a plugin using the default
+  network correctly reports nothing for it.
+- This reads the **remote** plugin. For one already installed, `docker plugin inspect <plugin>`
+  gives the same fields from local state.
 
 ## No equivalent needed: connection management
 
