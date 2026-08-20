@@ -53,9 +53,12 @@ resources are unaffected by the alias.
 
 WHY `eager_idle` IS ONLY TOOLS AND ROUTER.  There is no single eager cost, because a server
 advertises across four calls and a client pays only for the ones it supports: `tools/list` (every
-eager client), `prompts/list`, `resources/list` and `resources/templates/list`.  The spread between
-a tools-only client and a fully-featured one is around 2,400 tokens - 5% of the full surface, but
-36% of the `floor` configuration, where it is a bigger lever than some of the config switches.  So
+eager client), `prompts/list`, `resources/list` and `resources/templates/list`.  What a fully-featured
+client pays over a tools-only one is around 2,400 tokens at full surface, which is 5% of that
+configuration's floor.  It does not scale with the tools, though: only prompts shrink when you
+trim, while resources and resource templates are byte-identical in every configuration.  So in the
+tightest configuration measured here, `floor`, the same three components are around 1,760 tokens
+against a 5,046-token floor - 35%, a bigger lever there than some of the config switches.  Hence
 `eager_idle` is the floor, the three conditional components are reported separately, and
 `eager_idle_all` is the ceiling.  Quoting one blended number would state a figure for a client
 nobody has identified.
