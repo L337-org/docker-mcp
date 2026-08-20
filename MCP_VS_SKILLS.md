@@ -378,10 +378,12 @@ Docker work:
 # Detailed mapping
 
 **Everything from here on is written from the skill's point of view.** It takes the MCP server's
-surface as the reference: 164 tools, 31 prompts and the resource endpoints, in the server's own
-categories, and for each one records what the skill does instead. It is a coverage record for the
-skill, not a description of the server, so a row saying "no CLI equivalent" is a statement about
-the skill's limits and never about the server's.
+surface as the reference: 164 tools, 31 prompts (30 of them registered on a single-host server, as
+[Prompts](#prompts-31-defined-30-registered-on-a-single-host-server) explains, which is why the
+measured figures above say 30) and the resource endpoints, in the server's own categories, and for
+each one records what the skill does instead. It is a coverage record for the skill, not a
+description of the server, so a row saying "no CLI equivalent" is a statement about the skill's
+limits and never about the server's.
 
 Read it to answer "is X covered?" or "how would the skill do X?". It is not needed to choose
 between the two, which is what everything above is for.
