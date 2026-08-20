@@ -246,11 +246,14 @@ and `system` kept, the other twelve domains dropped.
 **Why a floor and a ceiling rather than one number.** A server advertises itself across four
 calls - `tools/list`, `prompts/list`, `resources/list` and `resources/templates/list` - and a
 client pays only for the ones it implements. Every eager client fetches tools, so that plus the
-router is the floor; the other three are conditional, and between them they span ~2,400 tokens.
-That is 5% at full surface but **35% of the `floor` configuration**, where your client's feature
-support matters more than some of the config switches. Quoting a single blended total would
-state a figure for a client we have not identified, so both ends are given and the figures
-elsewhere in this document use the floor.
+router is the floor; the other three are conditional. At full surface they come to ~2,400 tokens,
+5% of that configuration's 49,200-token floor. They do not shrink the way the tools do when you
+trim, though - resources and resource templates do not shrink at all - so in the tightest
+configuration in the table above (*Floor: core, read-only*) they are ~1,760 tokens against a
+5,046-token floor, or **35%**. That is why, on a trimmed server, your client's feature support
+matters more than some of the config switches. Quoting a single blended total would state a figure
+for a client we have not identified, so both ends are given and the figures elsewhere in this
+document use the floor.
 
 One honest limit on the ceiling: we have confirmed what the protocol advertises, not that a
 client which supports resources puts those listings into the model's *context* rather than into
