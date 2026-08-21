@@ -63,15 +63,15 @@ def image_build(
         forcerm - Remove intermediate containers even on build failure
         dockerfile - Dockerfile filename relative to path (default: "Dockerfile"); an absolute path
             or one containing ".." reads that file from the server host instead of the context
-        buildargs - Build-time variables passed as `--build-arg`; dict of str→str
+        buildargs - Build-time variables passed as `--build-arg`; dict of str to str
         container_limits - Resource limits for the build container, e.g. {"memory": 134217728}
         shmsize - Size of /dev/shm in bytes for build steps that need shared memory
-        labels - Labels to set on the resulting image (dict of str→str)
+        labels - Labels to set on the resulting image (dict of str to str)
         cache_from - List of image references to use as layer cache sources
         target - Stop at this named build stage (multi-stage Dockerfiles)
         network_mode - Network mode for RUN instructions during build (e.g. "host", "none")
         squash - Squash all new layers into one (experimental; requires daemon flag)
-        extra_hosts - Additional /etc/hosts entries during build; dict of hostname→ip
+        extra_hosts - Additional /etc/hosts entries during build; dict of hostname to IP
         platform - Target platform, e.g. "linux/amd64" (single platform only; use buildx for multi)
         isolation - Isolation technology, passed to the daemon as given; platform-dependent, so not
                       validated here (Windows documents "default", "process", "hyperv")
@@ -114,7 +114,7 @@ def image_inspect(id_or_name: str, host: str | None = None) -> dict:
     Includes config (env, entrypoint, exposed ports), size, layer digests (`RootFS.Layers`),
     and all tags/digests referencing it (`RepoTags`/`RepoDigests`). For a quick overview of
     many images use `image_list` instead. For the per-layer build history (which command
-    produced each layer) use `image_history`. Only inspects images already present locally —
+    produced each layer) use `image_history`. Only inspects images already present locally -
     for a remote image's manifest without pulling it use `image_registry_data` or
     `registry_manifest`.
 
@@ -139,7 +139,7 @@ def image_registry_data(repository: str, auth_config: dict | None = None, host: 
     args:
         repository - Image reference
         auth_config - Optional registry authentication config
-    returns: dict - {"Descriptor", "Platforms"} — the OCI descriptor and the platforms available
+    returns: dict - {"Descriptor", "Platforms"} - the OCI descriptor and the platforms available
         for the reference
     """
     return _get_client(host).images.get_registry_data(repository, auth_config=auth_config).attrs
@@ -152,7 +152,7 @@ def image_list(
     """
     List images in the daemon's local store.
 
-    Local only — for a registry's contents use `registry_tags` / `hub_tags`, and `image_search`
+    Local only - for a registry's contents use `registry_tags` / `hub_tags`, and `image_search`
     to find images on Docker Hub. Dangling (untagged) build leftovers show with
     filters={"dangling": True}.
 
@@ -177,7 +177,7 @@ def image_pull(
     """
     Pull an image from a registry to the daemon's local store.
 
-    Private repositories need credentials — `system_login` (or `docker login` on the host) first.
+    Private repositories need credentials - `system_login` (or `docker login` on the host) first.
     Use `image_load` for tarballs, and `registry_manifest` / `image_registry_data` to inspect a
     remote image without pulling it.
 
@@ -201,7 +201,7 @@ def image_push(
     """
     Push an image or repository to a registry.
 
-    The local image must already bear the target name — `image_tag` it with the
+    The local image must already bear the target name - `image_tag` it with the
     registry-qualified `repository[:tag]` first; a bare name pushes to Docker Hub. Private
     registries need credentials (`system_login`, or `docker login` on the host).
 
@@ -247,7 +247,7 @@ def image_search(term: str, limit: int | None = None, host: str | None = None) -
     """
     Search Docker Hub for public images matching a term.
 
-    Searches Docker Hub only — not GHCR, ECR, or other registries. For listing tags on a
+    Searches Docker Hub only - not GHCR, ECR, or other registries. For listing tags on a
     specific image from any OCI registry use `registry_tags` instead.
 
     args:
@@ -265,7 +265,7 @@ def image_prune(filters: dict | None = None, host: str | None = None) -> dict:
     """
     Remove unused local images to reclaim disk space.
 
-    Without filters removes only "dangling" images — untagged layers not referenced by any
+    Without filters removes only "dangling" images - untagged layers not referenced by any
     tag or container. To remove all images not used by any container (including tagged ones)
     pass `filters={"dangling": False}`. Valid filter keys: `dangling` (bool as string
     "true"/"false"), `until` (RFC3339 timestamp or duration like "24h"), `label`
@@ -287,14 +287,14 @@ def image_prune_builds(
     """
     Delete the daemon's build cache to reclaim disk space.
 
-    Prunes the *build cache* — a separate Engine resource from the images `image_prune` removes,
+    Prunes the *build cache* - a separate Engine resource from the images `image_prune` removes,
     so run both to reclaim everything a build leaves behind. Prefer `buildx_prune` when the build
     ran on a non-default buildx builder (that builder keeps its own cache, invisible here) or when
     you need buildx's disk-ceiling flags; this tool needs no CLI plugin and works over any
     transport, including a daemon with no local `docker` binary. Inventory first with `system_df`
     (its `BuildCache` entry) or `buildx_du`. Destructive and immediate: later builds must re-run
     the steps whose cache was removed. Needs Docker API v1.31+; passing any of `filters`,
-    `keep_storage`, or `all` needs v1.39+ and raises `InvalidVersion` on an older daemon — omit all
+    `keep_storage`, or `all` needs v1.39+ and raises `InvalidVersion` on an older daemon - omit all
     three to prune with the daemon's own defaults.
 
     args:
@@ -318,7 +318,7 @@ def image_load(data: bytes | None = None, from_file: str | None = None, host: st
     Counterpart of `image_save`; when the image lives in a registry, `image_pull` is the normal
     route, and for a flat rootfs archive that is not a `docker save` bundle use `image_import`.
     Pass exactly one of `data` (tarball bytes in band) or `from_file` (a path on the server host,
-    streamed straight to the daemon — preferred for anything but small images, since in-band bytes are
+    streamed straight to the daemon - preferred for anything but small images, since in-band bytes are
     base64-encoded by MCP). `from_file` is read by the server's user; `~` is expanded.
 
     args:
@@ -349,11 +349,11 @@ def image_import(
     """
     Create an image from a flat root-filesystem tarball, like `docker import`.
 
-    Imports a *filesystem* archive as a new single-layer image with no build history — not the same
+    Imports a *filesystem* archive as a new single-layer image with no build history - not the same
     thing as `image_load`, which restores a `docker save` archive complete with its layers, tags and
     history, so prefer `image_load` for anything `image_save` produced. Use this for a rootfs that
     came from somewhere else: a `container_export` archive, a distro base tarball, a VM image dump.
-    The result has an empty config — no `CMD`/`ENTRYPOINT`/`ENV` — unless you supply `changes`, so an
+    The result has an empty config - no `CMD`/`ENTRYPOINT`/`ENV` - unless you supply `changes`, so an
     imported image is usually not runnable until you set at least a command. Pass exactly one source
     (`from_file`, `data`, `from_url` or `from_image`); ValueError otherwise. `from_url` and
     `from_image` are fetched by the *daemon*, `from_file`/`data` are read here and uploaded; a
@@ -369,7 +369,7 @@ def image_import(
             daemon. Required if `tag` is given
         tag - Tag to apply, e.g. "v1". **Overrides** a tag already in `repository` rather than being
             ignored, so passing `repository="myorg/rootfs:v1"` with `tag="v2"` yields `:v2`. Requires
-            `repository` (ValueError without it — the daemon would otherwise silently drop the tag
+            `repository` (ValueError without it - the daemon would otherwise silently drop the tag
             and import untagged). Blank is also a ValueError, not a shorthand for the default: the
             daemon would substitute `latest` without saying so
         from_file - Path to a rootfs tarball on the server host (`~` expanded), read by the server's
@@ -382,7 +382,7 @@ def image_import(
         changes - Dockerfile instructions applied to the new image, e.g. ['CMD ["/bin/sh"]']; only
             CMD, ENTRYPOINT, ENV, EXPOSE, ONBUILD, USER, VOLUME and WORKDIR are supported. Parsed
             as real Dockerfile syntax, so shell form is wrapped exactly as a Dockerfile would wrap
-            it (`CMD /bin/sh` is stored as `["/bin/sh","-c","/bin/sh"]`) — use the exec form
+            it (`CMD /bin/sh` is stored as `["/bin/sh","-c","/bin/sh"]`) - use the exec form
             `CMD ["/bin/sh"]` to store a bare argv
     returns: str - The daemon's raw newline-delimited JSON progress records; the final record carries
         the new image id as its `status`
@@ -450,12 +450,12 @@ def image_save(
     """
     Save an image as a tar archive: to a file on the server host, or in band.
 
-    The archive keeps layers, tags, and metadata so `image_load` can restore it — different from
+    The archive keeps layers, tags, and metadata so `image_load` can restore it - different from
     `container_export`, which flattens one container's filesystem. With `dest_path` the archive
-    streams straight to disk (no byte cap), so it handles large images — the file is written by
+    streams straight to disk (no byte cap), so it handles large images - the file is written by
     the server's user, `~` is expanded, and an existing file is refused unless
     `overwrite=True`. Without `dest_path` the tar bytes are returned in band, capped at `max_bytes`
-    (default 32 MiB) because MCP base64-encodes them — a fallback for when no writable host path
+    (default 32 MiB) because MCP base64-encodes them - a fallback for when no writable host path
     exists (e.g. a containerized server without a bind mount).
 
     args:
@@ -480,7 +480,7 @@ def image_tag(
     """
     Tag an image into a repository (add a name to an existing local image).
 
-    The image id stays the same and no data is copied — a tag is an alias. Typical flow: tag with
+    The image id stays the same and no data is copied - a tag is an alias. Typical flow: tag with
     the registry-qualified name, then `image_push`. `image_remove` on a tag merely untags while
     other names remain.
 

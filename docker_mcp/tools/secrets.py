@@ -14,7 +14,7 @@ def secret_create(
     Create a swarm secret; requires a swarm manager.
 
     Write-once: the payload can never be read back through the API (`secret_inspect` returns
-    metadata only) and cannot be changed later — to rotate, create a new secret and update the
+    metadata only) and cannot be changed later - to rotate, create a new secret and update the
     consuming services, keeping your own copy of the value. For non-sensitive data that should
     stay readable, use `config_create` instead. Created secrets are stamped with provenance
     labels.
@@ -39,7 +39,7 @@ def secret_inspect(id_or_name: str, host: str | None = None) -> dict:
     """
     Get a swarm secret's metadata by id or name; requires a swarm manager.
 
-    The returned attrs never include the secret's actual data (`Spec.Data` is write-only —
+    The returned attrs never include the secret's actual data (`Spec.Data` is write-only -
     the daemon accepts it on `secret_create` but never returns it back, by design). Use this
     to check a secret's `CreatedAt`, `Labels`, or which driver created it, not to read its
     contents. To see which services reference it, inspect each service's spec via
@@ -71,7 +71,7 @@ def secret_remove(id_or_name: str, host: str | None = None) -> bool:
     """
     Remove a Swarm secret; requires a swarm manager.
 
-    Removing a secret does not immediately affect running service tasks — tasks that already
+    Removing a secret does not immediately affect running service tasks - tasks that already
     have the secret mounted retain access until they are restarted or the service is updated.
     Use `service_list` and inspect each service's spec via `service_inspect` to identify
     services that mount the secret before removing it (service filters do not support

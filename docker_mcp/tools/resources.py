@@ -553,8 +553,8 @@ def docs_lookup(section: str | None = None) -> str:
 
     A tool-callable mirror of the docker-docs:// resources, for clients that can't read MCP
     resources (e.g. Claude Desktop, Cursor). Always registered regardless of
-    DOCKER_MCP_SERVER_DISABLE — looking something up costs nothing and isn't tied to any single
-    Docker feature area — but an individual section still refuses if the domain it documents is
+    DOCKER_MCP_SERVER_DISABLE - looking something up costs nothing and isn't tied to any single
+    Docker feature area - but an individual section still refuses if the domain it documents is
     disabled, matching the equivalent `docker-docs://{section}` resource exactly.
 
     Omit `section` to list every available section with its source URL (same as
@@ -586,9 +586,9 @@ def tool_list(
     express: which tools are destructive, which accept a `host`, what this server actually
     registered. Use it to brief on an unfamiliar area (`domain="buildx"` returns one line per tool
     rather than ~13 full definitions), to check blast radius (`category="destructive"`), or to
-    establish that nothing matches — `matched: 0` is a definitive negative, which a client's fuzzy
+    establish that nothing matches - `matched: 0` is a definitive negative, which a client's fuzzy
     search cannot give. Covers this server's own surface; `docs_lookup` covers external Docker
-    reference documentation. Rows are summaries, not definitions — fetch a tool's own definition for
+    reference documentation. Rows are summaries, not definitions - fetch a tool's own definition for
     its parameters. Read-only, never raises on a query matching nothing, and always registered even
     when DOCKER_MCP_SERVER_DISABLE drops every domain. A tool dropped by a switch or a disabled
     domain is absent rather than flagged; `hidden_by_configuration` reports how many each domain

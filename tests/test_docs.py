@@ -7,12 +7,14 @@ domain tuples rather than a copy of them, so adding a CLI-backed domain fails he
 enumeration in the docs names it.
 """
 
+import asyncio
 import re
 from pathlib import Path
 
 import pytest
 
-from docker_mcp.server import _CLI_DOMAINS, _REMOTE_EXEC_DOMAINS
+import docker_mcp.tools  # noqa: F401  - importing registers every tool on the server singleton
+from docker_mcp.server import _CLI_DOMAINS, _REMOTE_EXEC_DOMAINS, mcp
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _DOC_FILES = ("README.md", "CLAUDE.md", "SECURITY.md", ".github/copilot-instructions.md")
@@ -107,3 +109,54 @@ def test_doc_enumerations_of_cli_backed_domains_are_complete():
 def test_the_enumeration_check_itself_flags_what_it_should(line, expected):
     """The guard is only worth having if it catches the real cases and leaves ordinary prose alone."""
     assert _incomplete_enumeration(line) == expected
+
+
+# A tool docstring is not an internal comment: the server advertises it verbatim as the tool's
+# `description`, so it is product prose that a model reads when choosing between 164 tools. 163 em
+# dashes had accumulated in these docstrings before anyone noticed, so the rule is pinned here rather
+# than left to be remembered.
+#
+# This is ASCII-only, not merely ASCII *punctuation*, and that is deliberate: the house style lets a
+# symbol carrying meaning survive elsewhere in shipped prose, but an allow-list is a thing to argue
+# over and none of the 164 descriptions has needed one. The three arrows and one ellipsis found during
+# the sweep all read better as words (`dict of str to str`). If a description ever genuinely needs a
+# symbol, widen this check deliberately rather than working around it - and update the rule in
+# CLAUDE.md and its mirror in the same change, since they promise exactly what this enforces.
+#
+# The assertion runs against what `list_tools()` actually advertises rather than against the source,
+# because the advertised text is the thing that ships and the two could drift.
+#
+# Scope is deliberately only tool descriptions. Comments, tests and workflow files still hold em
+# dashes; none of them ship, and sweeping them is a separate decision rather than a gap here.
+def test_advertised_tool_descriptions_are_plain_ascii():
+    offenders = [
+        f"{t.name}: {char!r} (U+{ord(char):04X})"
+        for t in asyncio.run(mcp.list_tools())
+        for char in sorted({c for c in (t.description or "") if ord(c) > 127})
+    ]
+    assert not offenders, "non-ASCII in advertised tool descriptions:\n" + "\n".join(offenders)
+
+
+def test_the_ascii_check_reads_distinct_real_descriptions():
+    # Guards the check above rather than the code it checks. A first attempt at this measurement
+    # walked `_tool_registry`, which maps to the `@tool()` wrapper, so every tool reported the
+    # decorator's own 95-character docstring: 164 tools, one string, and the check would have passed
+    # no matter what the tools actually said. Distinctness is what makes that failure visible.
+    descriptions = [t.description or "" for t in asyncio.run(mcp.list_tools())]
+    assert len(descriptions) > 100
+    assert len(set(descriptions)) > 100
+
+
+def test_the_instruction_files_name_a_check_that_exists():
+    # `CLAUDE.md` and its mirror name this module's checks by full node id, so that the rule points at
+    # its own enforcement. A rename would leave the docs promising a check that no longer runs, which is
+    # the same failure this file exists to catch in the domain enumerations - documentation that reads
+    # as authoritative while being quietly wrong.
+    referenced: set[str] = set()
+    for name in ("CLAUDE.md", ".github/copilot-instructions.md"):
+        text = (_REPO_ROOT / name).read_text(encoding="utf-8")
+        referenced |= set(re.findall(r"tests/test_docs\.py::(test_\w+)", text))
+    assert referenced, "the instruction files no longer name any check in this module"
+    defined = set(re.findall(r"^def (test_\w+)", Path(__file__).read_text(encoding="utf-8"), re.M))
+    missing = sorted(referenced - defined)
+    assert not missing, f"named in the instruction files but not defined here: {missing}"

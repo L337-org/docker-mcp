@@ -468,7 +468,7 @@ def registry_tags(
 
     Works against Docker Hub, GHCR, ECR, GAR, and any OCI-compliant registry; anonymous if no
     credentials are passed. Talks directly to the registry over HTTPS and does NOT read
-    `~/.docker/config.json` — for private registries prefer the DOCKER_MCP_SERVER_REGISTRY_USERNAME /
+    `~/.docker/config.json` - for private registries prefer the DOCKER_MCP_SERVER_REGISTRY_USERNAME /
     DOCKER_MCP_SERVER_REGISTRY_PASSWORD env vars (keeps secrets out of tool args, which clients
     often log). Fetch one tag's manifest with `registry_manifest`; `hub_tags` adds Hub-specific
     tag metadata (sizes, push dates).
@@ -526,10 +526,10 @@ def registry_tag_wait(
     """
     Block until a specific tag appears in a repository (e.g. waiting for a CI push to land).
 
-    Never raises on timeout — the result always carries `met` and `timed_out`. Polls `registry_tags`
+    Never raises on timeout - the result always carries `met` and `timed_out`. Polls `registry_tags`
     every `poll_interval`s and checks whether `tag` is in its result. Works against Docker Hub too
     (`registry_tags`' own scope covers it), so there is no separate Hub variant. Unlike every other
-    wait tool, this has no `host` argument — registry tools talk HTTPS directly to the registry, not
+    wait tool, this has no `host` argument - registry tools talk HTTPS directly to the registry, not
     a Docker daemon.
 
     Caveat: `registry_tags` paginates up to 50 pages (or `limit` tags, whichever comes first); if
@@ -587,12 +587,12 @@ def registry_manifest(
     Fetch a repository's manifest without pulling.
 
     May return a single-platform image manifest or a multi-platform manifest list / OCI image
-    index, depending on what the registry serves for that tag. Talks HTTPS directly — no daemon
+    index, depending on what the registry serves for that tag. Talks HTTPS directly - no daemon
     or CLI needed. Alternatives for the same question: `buildx_imagetools_inspect` (uses the
     docker CLI and its credential store) and `image_registry_data` (asks the daemon).
 
     args:
-        repository - Image/repository ref, e.g. "ghcr.io/org/repo"; `:tag`/`@digest` is stripped — pass via `reference`
+        repository - Image/repository ref, e.g. "ghcr.io/org/repo"; `:tag`/`@digest` is stripped - pass via `reference`
         reference - Tag or digest (default "latest")
         username - Optional registry username (overrides DOCKER_MCP_SERVER_REGISTRY_USERNAME; no config.json)
         password - Optional registry password/token (overrides DOCKER_MCP_SERVER_REGISTRY_PASSWORD)
@@ -629,13 +629,13 @@ def registry_image_config(
     """
     Fetch and parse an image's config blob from a registry without pulling.
 
-    Answers "what's inside this image?" — env vars, entrypoint/cmd, workdir, exposed ports, user,
+    Answers "what's inside this image?" - env vars, entrypoint/cmd, workdir, exposed ports, user,
     labels, layer history (what `registry_manifest` only points at via `config.digest`).
     Resolves in up to three hops: manifest -> (if multi-platform) the `platform` entry's manifest
     -> the config blob.
 
     args:
-        repository - Image/repository ref, e.g. "ghcr.io/org/repo"; `:tag`/`@digest` is stripped — pass via `reference`
+        repository - Image/repository ref, e.g. "ghcr.io/org/repo"; `:tag`/`@digest` is stripped - pass via `reference`
         reference - Tag or digest (default "latest")
         platform - Platform to select from a multi-platform image, "os/arch[/variant]"
                         (default "linux/amd64"); ignored for single-platform images
@@ -765,7 +765,7 @@ def hub_tags(repository: str, limit: int = 100) -> dict:
     """
     List tags on a Docker Hub repository with Hub-specific metadata.
 
-    Hits the Hub UI API (hub.docker.com) for richer per-tag data than `registry_tags` —
+    Hits the Hub UI API (hub.docker.com) for richer per-tag data than `registry_tags` -
     last pushed date, per-platform sizes, digest. Public repos only: sends no auth and does NOT
     read `~/.docker/config.json`; private repos return 404/401 (use `registry_tags` against
     registry-1.docker.io with credentials).
@@ -819,7 +819,7 @@ def hub_repo_info(repository: str) -> dict:
     Fetch Docker Hub metadata for a repository.
 
     Public repos only: sends no auth and does NOT read the local Docker credential store;
-    private repos return 404/401. Hub-only metadata (stars, pulls, description) — use
+    private repos return 404/401. Hub-only metadata (stars, pulls, description) - use
     `registry_tags` for tag lists on any OCI registry and `hub_tags` for Hub tag details.
 
     args: repository - Hub repository, e.g. "library/alpine" or "myorg/myimage"
@@ -849,7 +849,7 @@ def hub_rate_limit(username: str | None = None, password: str | None = None) -> 
     before a large `compose_pull` / `image_pull` to avoid hitting the cap mid-deploy. Credentials
     raise the limit and switch metering from per-IP to per-account; falls back to
     DOCKER_MCP_SERVER_REGISTRY_USERNAME / DOCKER_MCP_SERVER_REGISTRY_PASSWORD, does NOT read `~/.docker/config.json`.
-    Plans with no limit return no headers — reported as `"unlimited": true`.
+    Plans with no limit return no headers - reported as `"unlimited": true`.
 
     args:
         username - Optional Hub username (overrides DOCKER_MCP_SERVER_REGISTRY_USERNAME)

@@ -158,6 +158,22 @@ All publishing runs through one workflow on each **published GitHub Release**: `
   that one call `# pyright: ignore[reportArgumentType]` with a reason, rather than being softened to
   a legal one.
 - Line length limit: 120 characters.
+- **Prose that ships is British English in plain ASCII punctuation.** A tool docstring ships: the server
+  advertises it verbatim as the tool's `description`, which is what a model reads when choosing between
+  164 tools. So do the README, the agent skill, prompts and resources, comments, commit messages and PR
+  descriptions — the test is whether it ships, not who reads it. **Never `—` or `–`**: use `-`, or `:`
+  where what follows explains what came before. Likewise `...` not `…`, `x` not `×`, straight quotes, and
+  `10-15%` for ranges.
+- **Tool descriptions are strict ASCII, with no symbol exception**, and CI enforces exactly that:
+  `tests/test_docs.py::test_advertised_tool_descriptions_are_plain_ascii` asserts it against what
+  `list_tools()` advertises, so a violating tool fails. There is no allow-list because none of the 164 has
+  needed one - the three arrows and one ellipsis found during the sweep all read better as words. Elsewhere
+  in shipped prose a symbol carrying meaning (`≥`, or `→` inside a table) is still fine; that is the one
+  place the general rule and this check deliberately differ.
+- **Scope stops at tool descriptions.** Comments, tests and workflow files still hold em dashes; none of
+  them ship, and sweeping them is a separate decision.
+- **`CLAUDE.md` and `.github/copilot-instructions.md` are both exempt** — working instructions that never
+  ship — which is why they still use em dashes freely.
 - **Bound any externally-sourced bytes before buffering/parsing them, and parse safely.** CLI output is capped in `run_docker` (`MAX_CLI_OUTPUT_BYTES`); registry HTTP bodies are streamed and capped at `_MAX_RESPONSE_BYTES` in `registry.py` (registries are agent-pointed/untrusted; the cap is on the *decoded* stream, so it also stops a decompression bomb). New code reading an untrusted file or network body must apply a similar bound. Always `json.loads` (never `eval`); if YAML is ever parsed in Python, `yaml.safe_load` only — today nothing parses YAML in Python (Compose YAML is read by the `docker` CLI). Flag a PR that buffers an untrusted body unbounded.
 - **A URL taken from a response body is pinned to the origin it came from; a URL the caller named is not.** Who chose the destination is the distinction. A registry host in a tool argument is the caller's choice and the point of the `registry_*`/`hub_*` tools, so it is not restricted. A `next`/`Link` URL is the *response's* choice: `_validate_hub_next` requires Hub pagination to stay on `_HUB_API_BASE`'s scheme/host/port, and the OCI tag-list path keeps only the path from a `Link` header and re-applies the registry already being queried. A new paginating or link-following tool must do the same. **Do not flag `follow_redirects=True`, and do not suggest restricting redirects to the same host** - registries answer blob fetches with a redirect to a CDN on another host as normal operation (Docker Hub answers a config-blob GET with `307` to `production.cloudfront.docker.com`), so refusing cross-host redirects breaks `registry_image_config`; httpx strips `Authorization` on any cross-origin redirect, so a redirect cannot carry credentials, and it reaches nothing a tool argument could not reach directly. The read-only/no-destructive switches are **not** egress controls (the registry tools are read-only); `DOCKER_MCP_SERVER_DISABLE=registry` is.
 - Do not add comments that describe what the code does — only add comments for non-obvious constraints or workarounds.

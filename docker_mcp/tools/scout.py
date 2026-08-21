@@ -116,10 +116,10 @@ def scout_cves(
     List vulnerabilities (CVEs) in an image via Docker Scout.
 
     Anonymous scans work for public images; Hub policy enforcement and richer recommendations need
-    `docker login` on the host that runs the CLI — this server's host, or the target `ssh://` host
+    `docker login` on the host that runs the CLI - this server's host, or the target `ssh://` host
     itself when no local scout plugin is installed. Start with `scout_quickview` for a
     per-severity summary; `scout_sbom` inventories packages without vulnerability matching.
-    Does not raise on a non-zero CLI exit (a missing scout plugin still raises) — inspect
+    Does not raise on a non-zero CLI exit (a missing scout plugin still raises) - inspect
     `raw.stderr`.
 
     args:
@@ -153,12 +153,12 @@ def scout_quickview(image: str, platform: str | None = None, host: str | None = 
     """
     Render a compact summary of an image's CVE posture.
 
-    The fastest triage step — counts per severity plus base-image status. Drill into individual
+    The fastest triage step - counts per severity plus base-image status. Drill into individual
     findings with `scout_cves`, which unlike this tool can emit machine-readable JSON; get upgrade
     suggestions with `scout_recommendations`.
     Output is plain text only: `docker scout quickview` has no output-format option, so `result`
     is always the rendered text rather than a parsed document.
-    Does not raise on a non-zero CLI exit (a missing scout plugin still raises) — inspect
+    Does not raise on a non-zero CLI exit (a missing scout plugin still raises) - inspect
     `raw.stderr`.
 
     args:
@@ -192,7 +192,7 @@ def scout_recommendations(
     fix is a newer base image.
     Output is plain text only: `docker scout recommendations` has no output-format option, so
     `result` is always the rendered text rather than a parsed document.
-    Does not raise on a non-zero CLI exit (a missing scout plugin still raises) — inspect
+    Does not raise on a non-zero CLI exit (a missing scout plugin still raises) - inspect
     `raw.stderr`.
 
     args:
@@ -235,7 +235,7 @@ def scout_compare(
     Exactly one of `to`, `to_env`, or `to_latest=True` must be supplied to identify the comparison
     target. Use it after a rebuild to check the new image against the old (`scout_cves` scans a
     single image).
-    Does not raise on a non-zero CLI exit (a missing scout plugin still raises) — inspect
+    Does not raise on a non-zero CLI exit (a missing scout plugin still raises) - inspect
     `raw.stderr`. Raises ValueError if `to` names a local directory/archive while the call has to run
     on a remote `ssh://` host (no local scout plugin): the file is not staged, so it would resolve
     against that host's filesystem instead.
@@ -243,7 +243,7 @@ def scout_compare(
     args:
         image - The new / candidate image reference
         to - Compare against this image reference, directory, or archive (a local directory/archive
-                      only when the CLI runs on this host — see above)
+                      only when the CLI runs on this host - see above)
         to_env - Compare against an image associated with this Scout environment
         to_latest - Compare against the latest scan of `image`
         only_severity - Filter to these severities (omit for all)
@@ -284,11 +284,11 @@ def scout_sbom(
     """
     Generate a Software Bill of Materials (SBOM) for an image.
 
-    Package inventory only — `scout_cves` adds vulnerability matching on top. SBOMs can be large;
+    Package inventory only - `scout_cves` adds vulnerability matching on top. SBOMs can be large;
     captured stdout is subject to MAX_CLI_OUTPUT_BYTES and may be truncated for big images. If
-    that's a concern, run `docker scout sbom -o file.json …` on the host and load the file
+    that's a concern, run `docker scout sbom -o file.json ...` on the host and load the file
     separately.
-    Does not raise on a non-zero CLI exit (a missing scout plugin still raises) — inspect
+    Does not raise on a non-zero CLI exit (a missing scout plugin still raises) - inspect
     `raw.stderr`.
 
     args:

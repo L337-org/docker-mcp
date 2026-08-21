@@ -23,11 +23,11 @@ def plugin_create(name: str, plugin_data_dir: str, gzip: bool = False, host: str
     use this only for a plugin rootfs you built yourself, and `plugin_install` for anything on a
     registry. `plugin_data_dir` is read on the machine running this server (not on the daemon
     host), must already contain a `config.json` manifest and a `rootfs` directory, and is tarred
-    client-side and posted to the daemon — in a container it must be a bind mount or the path
+    client-side and posted to the daemon - in a container it must be a bind mount or the path
     resolves to nothing. The new plugin is created **disabled**: call `plugin_configure` for any
     settings it declares, then `plugin_enable` to activate it. Raises if the directory is missing
     or lacks `config.json`/`rootfs`, or if `name` is already installed (remove it first with
-    `plugin_remove`). Unlike the other create tools, this stamps no provenance labels — the Engine
+    `plugin_remove`). Unlike the other create tools, this stamps no provenance labels - the Engine
     API's plugin-create call accepts none.
 
     args:
@@ -63,7 +63,7 @@ def plugin_install(remote: str, local_name: str | None = None, host: str | None 
     Install a plugin from Docker Hub.
 
     `remote` is a Docker Hub reference in `author/name:tag` form, e.g.
-    `vieux/sshfs:latest`. The daemon handles permission grants non-interactively — call
+    `vieux/sshfs:latest`. The daemon handles permission grants non-interactively - call
     `plugin_privileges` first to see what host access the plugin is asking for.
     After installation use `plugin_inspect` to confirm the plugin's enabled state, then call
     `plugin_enable` to activate it if needed, and optionally `plugin_configure` first if
@@ -84,7 +84,7 @@ def plugin_privileges(remote: str, host: str | None = None) -> list:
     Ask the registry which host privileges a not-yet-installed plugin demands.
 
     The review step before `plugin_install`, which grants these privileges non-interactively (the
-    daemon never prompts) — so this is the only chance to see what a plugin wants before it has it.
+    daemon never prompts) - so this is the only chance to see what a plugin wants before it has it.
     Worth checking for anything not already trusted: plugins routinely request host mounts, devices,
     and elevated capabilities, and a granted privilege is host-level access, not container-scoped.
     Reads the *remote* plugin from its registry and installs nothing; for the privileges of a plugin
@@ -109,7 +109,7 @@ def plugin_push(name: str, timeout_seconds: float = 300.0, host: str | None = No
 
     The write-side counterpart to `plugin_install` (which pulls) and the publish step after
     `plugin_create` builds a plugin locally: `name` must already be the registry-qualified name the
-    plugin is installed under, since — unlike `image_push` — there is no plugin equivalent of
+    plugin is installed under, since - unlike `image_push` - there is no plugin equivalent of
     `image_tag` to rename it first, so create it under the target name. The plugin does not need to
     be enabled. Credentials come from `system_login`, or from `~/.docker/config.json` if the host
     ran `docker login`. Does NOT raise when the registry rejects the push: an authentication or
@@ -125,7 +125,7 @@ def plugin_push(name: str, timeout_seconds: float = 300.0, host: str | None = No
     `api._auth_configs` reach-in, and fails loudly if those internals change shape.
 
     Caveat for `ssh://` daemons: docker-py can't cancel an SSH stream, so the `timeout_seconds`
-    watchdog can't interrupt a push that stalls with the connection still open — the same limitation
+    watchdog can't interrupt a push that stalls with the connection still open - the same limitation
     `container_logs` carries in follow mode. The call still returns normally once the registry
     answers or the stream ends.
 
@@ -135,7 +135,7 @@ def plugin_push(name: str, timeout_seconds: float = 300.0, host: str | None = No
         timeout_seconds - Max wall-clock seconds to wait on the push stream before returning what
             was collected (default 300); raise it for a large plugin over a slow link
     returns: dict - {"name", "progress": [<decoded status dicts>], "truncated": bool, "error": str
-        or None} — `error` is non-None only when the registry reported a failure
+        or None} - `error` is non-None only when the registry reported a failure
     """
     api = _get_client(host).api
     # docker-py exposes no working public path here (see docstring), so we drive its private request
@@ -204,7 +204,7 @@ def plugin_list(host: str | None = None) -> list:
     List installed engine plugins with their full attrs.
 
     Covers managed engine plugins (volume/network/logging drivers installed via `plugin_install`)
-    — not docker CLI plugins such as compose, buildx, or scout. Use it to find exact plugin names
+    - not docker CLI plugins such as compose, buildx, or scout. Use it to find exact plugin names
     for `plugin_inspect`/`plugin_enable`/`plugin_disable`/`plugin_remove`; the `Enabled` key shows
     each plugin's state.
 
@@ -220,7 +220,7 @@ def plugin_configure(name: str, options: dict, host: str | None = None) -> bool:
 
     Use `plugin_inspect` first to see which keys the plugin exposes under `Settings.Env`; pass
     those same keys as a plain dict, e.g. `{"DEBUG": "1", "SOCKET": "/run/x.sock"}`. The
-    plugin must be disabled before reconfiguring — call `plugin_disable` first if it is
+    plugin must be disabled before reconfiguring - call `plugin_disable` first if it is
     currently active, then `plugin_enable` afterwards to apply the new settings.
 
     args:
@@ -239,7 +239,7 @@ def plugin_disable(name: str, force: bool = False, host: str | None = None) -> b
 
     A disabled plugin cannot be used by new containers but existing containers that already
     have it attached are unaffected. Use `force=True` to disable even if active containers
-    are still using it — this may cause those containers to lose access to plugin-provided
+    are still using it - this may cause those containers to lose access to plugin-provided
     resources (e.g. a volume driver). Re-enable with `plugin_enable`.
 
     args:
@@ -256,7 +256,7 @@ def plugin_enable(name: str, timeout_seconds: int = 0, host: str | None = None) 
     """
     Activate an installed plugin so Docker routes relevant API calls through it.
 
-    Activates a plugin that is currently disabled — either freshly installed or previously
+    Activates a plugin that is currently disabled - either freshly installed or previously
     disabled via `plugin_disable`. If the plugin exposes configuration (check via
     `plugin_inspect`), call `plugin_configure` while it is still disabled before enabling it.
     `timeout_seconds` controls how long Docker waits for the plugin process to become healthy;
@@ -276,7 +276,7 @@ def plugin_remove(name: str, force: bool = False, host: str | None = None) -> bo
     """
     Uninstall an engine plugin from the daemon.
 
-    Permanent removal — to deactivate but keep a plugin installed use `plugin_disable` instead. An
+    Permanent removal - to deactivate but keep a plugin installed use `plugin_disable` instead. An
     enabled plugin must be disabled first unless `force=True`. Plugin names come from
     `plugin_list`.
 
@@ -294,7 +294,7 @@ def plugin_upgrade(name: str, remote: str | None = None, host: str | None = None
     """
     Upgrade an installed plugin to a newer version.
 
-    The plugin must be disabled first — call `plugin_disable` before this, then
+    The plugin must be disabled first - call `plugin_disable` before this, then
     `plugin_enable` afterwards to bring it back up. `remote` lets you upgrade to a
     different reference (e.g. a newer tag) than the plugin's current name; omit it to
     re-pull the same reference. Existing settings and volumes created by the plugin

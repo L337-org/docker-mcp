@@ -72,7 +72,7 @@ def context_create(
 
     Registers a named endpoint for the CLI; switch with `context_use`, enumerate with
     `context_list`. It does not retarget this server's docker-py client (pinned at startup).
-    Does not raise on a non-zero CLI exit — inspect `returncode`/`stderr` in the result. It does
+    Does not raise on a non-zero CLI exit - inspect `returncode`/`stderr` in the result. It does
     raise ValueError before running anything if `docker_host` or a TLS path contains a comma, which
     would inject extra keys (including `skip-tls-verify`) into the endpoint spec.
 
@@ -110,7 +110,7 @@ def context_use(name: str) -> dict:
     """
     Set the active Docker context for the CLI on the host running this MCP server.
 
-    Note: this does not retarget the long-lived docker-py client — SDK-backed tools keep using the
+    Note: this does not retarget the long-lived docker-py client - SDK-backed tools keep using the
     endpoint they connected to at startup. To retarget those, restart the server with a different
     DOCKER_HOST / DOCKER_CONTEXT. Create contexts with `context_create`; list them with
     `context_list`.
@@ -126,9 +126,9 @@ def context_remove(name: str, force: bool = False) -> dict:
     """
     Remove a Docker CLI context.
 
-    Deletes only the CLI's connection metadata — the daemon it pointed at is untouched. The
+    Deletes only the CLI's connection metadata - the daemon it pointed at is untouched. The
     current context needs force=True (or `context_use` another first).
-    Does not raise on a non-zero CLI exit — inspect `returncode`/`stderr` in the result.
+    Does not raise on a non-zero CLI exit - inspect `returncode`/`stderr` in the result.
 
     args:
         name - Context name to remove

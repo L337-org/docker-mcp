@@ -144,7 +144,7 @@ def container_create(
 
     Use this when you need to configure a container (with `extra_kwargs`) before its first
     start, or want creation and start as separate observable steps. For the common case of
-    create-then-start-immediately use `container_run` instead — it does both in one call.
+    create-then-start-immediately use `container_run` instead - it does both in one call.
     Start the created container with `container_start`. Common `extra_kwargs` keys: `name`
     (str), `environment` (list of "KEY=VAL" or dict), `ports` (dict, e.g.
     `{"80/tcp": 8080}`), `volumes` (dict, e.g. `{"/host/path": {"bind": "/container/path",
@@ -170,7 +170,7 @@ def container_inspect(id_or_name: str, host: str | None = None) -> dict:
     """
     Return the full inspect detail for a single container.
 
-    Use this when you need complete information about one container — config, state,
+    Use this when you need complete information about one container - config, state,
     network settings, mounts, environment variables, and resource limits. To enumerate many
     containers use `container_list` instead (same payload per container by default; abridged
     with sparse=True). For just logs or stats use `container_logs` / `container_stats`.
@@ -229,9 +229,9 @@ def container_prune(filters: dict | None = None, host: str | None = None) -> dic
     """
     Remove all stopped containers to reclaim disk space.
 
-    Only removes containers that are not running — running containers are never affected.
+    Only removes containers that are not running - running containers are never affected.
     Use `container_list(all=True)` to preview what would be removed before calling this.
-    Valid filter keys: `until` (RFC3339 timestamp or duration like "24h" — removes containers
+    Valid filter keys: `until` (RFC3339 timestamp or duration like "24h" - removes containers
     stopped before that point), `label` (key or key=value). For a broader cleanup of
     containers plus unused images, networks, and volumes see the `prune_managed` prompt.
 
@@ -308,7 +308,7 @@ def container_restart(id_or_name: str, stop_timeout_seconds: int = 10, host: str
 @tool()
 def container_kill(id_or_name: str, signal: str | None = None, host: str | None = None) -> dict:
     """
-    Send a signal to a running container (default SIGKILL — immediate, no graceful shutdown).
+    Send a signal to a running container (default SIGKILL - immediate, no graceful shutdown).
 
     Use it to force-kill a container that ignores `container_stop`, or with `signal` to poke a
     process without stopping it (e.g. SIGHUP for a config reload). For a normal shutdown prefer
@@ -335,7 +335,7 @@ def container_pause(id_or_name: str, host: str | None = None) -> dict:
 
     Unlike sending SIGSTOP, the freezer cgroup suspends processes without their being able
     to observe or intercept the suspension. A paused container keeps its resources (memory,
-    open file descriptors) but consumes no CPU. Resume with `container_unpause` —
+    open file descriptors) but consumes no CPU. Resume with `container_unpause` -
     `container_exec` fails against a paused container until it is unpaused.
 
     args: id_or_name - The container id or name
@@ -353,7 +353,7 @@ def container_unpause(id_or_name: str, host: str | None = None) -> dict:
     """
     Resume all processes in a paused container (the reverse of `container_pause`).
 
-    Only valid on a paused container — it fails if the container is merely stopped; use
+    Only valid on a paused container - it fails if the container is merely stopped; use
     `container_start` for stopped containers. Processes continue from where they were frozen.
 
     args: id_or_name - The container id or name
@@ -372,7 +372,7 @@ def container_remove(
     """
     Remove a container, deleting its writable layer.
 
-    The image is untouched (`image_remove` deletes images); named volumes are never removed —
+    The image is untouched (`image_remove` deletes images); named volumes are never removed -
     volumes=True only covers anonymous ones. A running container is refused unless force=True,
     which kills it first. When the server runs containerized it refuses to remove its own
     container.
@@ -425,7 +425,7 @@ def container_logs(
     Get the logs of a container: a one-shot snapshot by default, or a bounded live tail with `follow=True`.
 
     Follow mode returns when `limit_lines` lines are collected, `timeout_seconds` elapses, or the
-    container exits, whichever comes first — so the agent can watch live output without blocking
+    container exits, whichever comes first - so the agent can watch live output without blocking
     forever. `limit_lines`/`timeout_seconds` apply only in follow mode; `until` only in snapshot mode.
 
     Snapshot mode is capped at 32 MiB and raises ValueError past it, so a noisy container can't
@@ -435,7 +435,7 @@ def container_logs(
     still exceed the agent's context.
 
     Caveat for `ssh://` daemons: docker-py can't cancel an SSH stream, so in follow mode the
-    `timeout_seconds` watchdog can't interrupt a fully silent container — use the snapshot mode
+    `timeout_seconds` watchdog can't interrupt a fully silent container - use the snapshot mode
     there if you need a hard time bound.
 
     args:
@@ -607,7 +607,7 @@ def container_top(id_or_name: str, ps_args: str | None = None, host: str | None 
     List the processes running inside a container (the daemon runs `ps` on the host).
 
     Works on any running container without executing anything in it, so it needs no shell or `ps`
-    binary in the image — unlike `container_exec` with `ps`. Use `container_stats` for resource
+    binary in the image - unlike `container_exec` with `ps`. Use `container_stats` for resource
     usage rather than process lists. Fails if the container is not running.
 
     args:
@@ -698,7 +698,7 @@ def container_commit(
     Useful for capturing a debugging state or saving manual changes made inside a container.
     For repeatable builds use `image_build` with a Dockerfile instead; publish the result with
     `image_tag` + `image_push`. The container is paused by default during
-    the snapshot to ensure filesystem consistency — set `pause=False` only if the container
+    the snapshot to ensure filesystem consistency - set `pause=False` only if the container
     cannot be paused. `changes` accepts Dockerfile instructions to apply on top of the
     snapshot, e.g. `["CMD [\"python\", \"app.py\"]", "ENV FOO=bar"]`.
 
@@ -732,7 +732,7 @@ def container_diff(id_or_name: str, host: str | None = None) -> list:
     List filesystem changes a container has made relative to its image.
 
     Use it to audit what a container wrote before `container_commit` or `container_archive_get`,
-    or to debug unexpected writes. Only the writable container layer is compared — files in
+    or to debug unexpected writes. Only the writable container layer is compared - files in
     volumes and bind mounts never show up.
 
     args: id_or_name - The container id or name
@@ -747,7 +747,7 @@ def container_rename(id_or_name: str, name: str, host: str | None = None) -> dic
     """
     Rename a container in place; its id, state, and configuration are unchanged.
 
-    Use it to free up or claim a container name (names are unique per daemon) — e.g. before
+    Use it to free up or claim a container name (names are unique per daemon) - e.g. before
     starting a replacement under the old name. Fails with a conflict error if the new name is
     already taken. Not related to `image_tag`, which names images.
 
@@ -832,7 +832,7 @@ def container_wait(
     """
     Block until a container reaches a condition: stopped, "healthy", or its logs contain a pattern.
 
-    One contract for every mode: never raises on timeout — the result always carries `met` (condition
+    One contract for every mode: never raises on timeout - the result always carries `met` (condition
     reached) and `timed_out`. The stop conditions ("not-running"/"next-exit"/"removed") use the
     daemon's blocking wait and fill `status_code`/`error` (the container's exit info); "healthy" polls
     the container's HEALTHCHECK every `poll_interval`s and fills `health`/`status`; "log-match" polls
@@ -840,16 +840,16 @@ def container_wait(
     project use `compose_wait`; for swarm services use `service_wait`.
 
     Health semantics: with no HEALTHCHECK defined, once the container is `running` the tool returns
-    promptly with `health: null` and `met: false` (false = "not confirmed healthy", not "unhealthy" —
+    promptly with `health: null` and `met: false` (false = "not confirmed healthy", not "unhealthy" -
     check `health` to tell them apart). A container that exits before becoming healthy returns its
     terminal `status` and `met: false`.
 
-    Log-match semantics: `pattern` is matched as a **plain substring** by default — safe against any
+    Log-match semantics: `pattern` is matched as a **plain substring** by default - safe against any
     input, including adversarial ones. Pass `regex=True` to match `pattern` as a regular expression
     (via `re.search`) instead; only do this with patterns you trust, since a regex with catastrophic
     backtracking run against attacker-influenced log content can exhaust CPU (ReDoS). Checks stdout
     and stderr, most recent lines first within each poll. If the container exits/dies before the
-    pattern ever appears, returns promptly with `met=false` (not `timed_out`) — no further logs can
+    pattern ever appears, returns promptly with `met=false` (not `timed_out`) - no further logs can
     arrive, so there's nothing to keep polling for.
 
     args:
@@ -949,12 +949,12 @@ def container_export(
     """
     Export a container's filesystem as a tar archive: to a file on the server host, or in band.
 
-    The tar is a flat filesystem snapshot with no image metadata or layers — use `image_save` for
+    The tar is a flat filesystem snapshot with no image metadata or layers - use `image_save` for
     an archive that `image_load` can restore, and `container_archive_get` for a single file or
     directory. With `dest_path` the archive streams straight to disk (no byte cap), so it handles large
-    containers — the file is written by the server's user, `~` is expanded, and an existing file is
+    containers - the file is written by the server's user, `~` is expanded, and an existing file is
     refused unless `overwrite=True`. Without `dest_path` the tar bytes are returned in band, capped
-    at `max_bytes` (default 32 MiB) because MCP base64-encodes them — a fallback for when no
+    at `max_bytes` (default 32 MiB) because MCP base64-encodes them - a fallback for when no
     writable host path exists (e.g. a containerized server without a bind mount).
 
     args:
@@ -999,7 +999,7 @@ def container_archive_get_to_file(
     """
     Retrieve a file or directory from a container as a tar archive written to a file on the server host.
 
-    File-writing variant of `container_archive_get` — prefer it for anything large, since in-band
+    File-writing variant of `container_archive_get` - prefer it for anything large, since in-band
     bytes are base64-encoded by MCP. For the whole filesystem use `container_export`. Streams
     straight to disk (no in-band byte cap). The file is written by the server's user; `~` is
     expanded and an existing file is refused unless `overwrite=True`.
@@ -1030,7 +1030,7 @@ def container_archive_put(
 
     Inverse of `container_archive_get`: the archive is extracted at `path` inside the container.
     Pass exactly one of `data` (tar bytes in band) or `from_file` (a path on the server host, streamed
-    straight to the daemon — preferred for large archives, since in-band bytes are base64-encoded by
+    straight to the daemon - preferred for large archives, since in-band bytes are base64-encoded by
     MCP). `from_file` is read by the server's user; `~` is expanded.
 
     args:

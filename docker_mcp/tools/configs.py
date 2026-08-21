@@ -15,7 +15,7 @@ def config_create(
 
     Configs store non-sensitive configuration files (nginx.conf, app.yaml, etc.) and mount
     them into service containers at a specified path. Unlike secrets, config data is not
-    encrypted at rest — use `secret_create` for credentials or keys. `data` is raw bytes;
+    encrypted at rest - use `secret_create` for credentials or keys. `data` is raw bytes;
     encode strings first (e.g. `"my config".encode()`). Once created, a config is immutable:
     to update it, create a new config with a new name and update the service to reference it,
     then remove the old config with `config_remove`.
@@ -70,7 +70,7 @@ def config_remove(id_or_name: str, host: str | None = None) -> bool:
     """
     Remove a swarm config.
 
-    Requires a swarm manager, and fails while any service still references the config — update or
+    Requires a swarm manager, and fails while any service still references the config - update or
     remove those services first. The last step of the rotation flow described in `config_create`.
 
     args: id_or_name - The config id or name

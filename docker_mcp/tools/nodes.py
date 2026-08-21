@@ -13,7 +13,7 @@ def node_inspect(id_or_name: str, host: str | None = None) -> dict:
     """
     Get a swarm node's full inspect payload by id or name.
 
-    Must run against a swarm manager. Shows role, availability, status, and manager reachability —
+    Must run against a swarm manager. Shows role, availability, status, and manager reachability -
     use `node_list` to enumerate nodes first, or the `docker://nodes` resource for a fleet
     summary; `service_ps(filters={"node": ...})` shows what a service runs on one node.
 
@@ -44,11 +44,11 @@ def node_update(id_or_name: str, spec: dict, host: str | None = None) -> bool:
 
     Replacement, not a merge: `spec` becomes the node's entire spec, and omitted keys are cleared.
     Fetch the current spec via `node_inspect` (its `Spec` key), modify it, and resubmit the whole
-    dict — e.g. sending just {"Availability": "drain"} would also wipe the node's role and labels.
+    dict - e.g. sending just {"Availability": "drain"} would also wipe the node's role and labels.
 
     args:
         id_or_name - The node id or name
-        spec - The complete new node spec (see description — omitted keys are cleared)
+        spec - The complete new node spec (see description - omitted keys are cleared)
     returns: bool - True after the update
     """
     node = _get_client(host).nodes.get(id_or_name)
@@ -106,10 +106,10 @@ def node_wait(
     """
     Block until a swarm node's Status.State reaches a target value.
 
-    Never raises on timeout — the result always carries `met` and `timed_out`. Polls
+    Never raises on timeout - the result always carries `met` and `timed_out`. Polls
     `Status.State` (one of "unknown"/"down"/"ready"/"disconnected") every `poll_interval`s.
     Common uses: `until="ready"` after a newly joined node, or `until="down"` while draining a
-    node before removal. Does not track task placement — for "has this drained node's workload
+    node before removal. Does not track task placement - for "has this drained node's workload
     fully moved off", inspect the relevant services' tasks directly; no single cheap call spans
     every service in the swarm, so that check isn't built into this tool. `service_wait` covers
     service convergence; `node_list` shows every node's state at once.
