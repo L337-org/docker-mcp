@@ -61,14 +61,14 @@ _RATE_LIMIT_RETRY_THRESHOLD_SECONDS = 10.0
 
 # Transient server-side statuses: the request was well-formed but the registry / auth
 # endpoint hiccuped (Docker Hub's auth.docker.io intermittently 502s under load). These
-# are worth a brief, bounded retry rather than failing the tool call outright — a single
+# are worth a brief, bounded retry rather than failing the tool call outright - a single
 # upstream blip should not surface as a hard error.
 _TRANSIENT_STATUS = frozenset({502, 503, 504})
 _TRANSIENT_MAX_RETRIES = 2
 _TRANSIENT_BACKOFF_SECONDS = 0.5
 
 # Errors emitted by email.utils.parsedate_to_datetime for non-date input. Bound to a
-# module-level tuple so ruff format leaves the `except` form alone — PEP 758 makes the
+# module-level tuple so ruff format leaves the `except` form alone - PEP 758 makes the
 # parentheses optional on Python 3.14, but we keep them for clarity to review bots.
 _RETRY_AFTER_PARSE_ERRORS: tuple[type[BaseException], ...] = (TypeError, ValueError)
 
@@ -88,7 +88,7 @@ def _strip_tag_and_digest(image: str) -> str:
     """
     Strip an optional `@sha256:...` digest and `:tag` from an image reference.
 
-    The colon in a registry hostname's port (e.g. `localhost:5000/foo`) is preserved —
+    The colon in a registry hostname's port (e.g. `localhost:5000/foo`) is preserved -
     we only strip a trailing `:tag` that appears *after* the last `/` in the reference,
     so `ghcr.io:443/org/repo:v1` correctly becomes `ghcr.io:443/org/repo`.
     """
@@ -105,7 +105,7 @@ def _parse_image_ref(image: str) -> tuple[str, str]:
     """
     Split an image reference into (registry_host, repository_path).
 
-    Any `:tag` or `@digest` suffix is stripped — pass tag/digest separately via the
+    Any `:tag` or `@digest` suffix is stripped - pass tag/digest separately via the
     `reference` parameter of `registry_manifest`.
 
     Docker Hub conventions:
@@ -167,11 +167,11 @@ def _validate_bearer_realm(realm: str, registry: str) -> None:
     """
     Reject a token realm that would leak credentials in plaintext or to an internal host.
 
-    The realm is attacker-controlled — it comes from the registry's `WWW-Authenticate` header — and
+    The realm is attacker-controlled - it comes from the registry's `WWW-Authenticate` header - and
     we are about to send (possibly authenticated) requests to it. We therefore require:
       - an http/https scheme (no file://, gopher://, etc.);
       - https whenever the realm host is not local (plaintext to a public host would leak creds);
-      - the realm host to be public, unless the registry we're talking to is itself local — this
+      - the realm host to be public, unless the registry we're talking to is itself local - this
         stops a public registry from redirecting credentialed requests at an internal service (SSRF),
         while still allowing a genuinely local dev registry (e.g. localhost:5000) to use a local realm.
     """
@@ -254,7 +254,7 @@ def _parse_retry_after(value: str | None) -> float | None:
 
 
 # Hosts where Docker Hub's documented anonymous-pull cap applies. Used to tailor the
-# 429 error message — every other registry (GHCR, ECR, GAR, Quay, self-hosted, …)
+# 429 error message - every other registry (GHCR, ECR, GAR, Quay, self-hosted, ...)
 # enforces its own limits with different remedies, so a Hub-specific hint there is
 # more misleading than helpful.
 _DOCKER_HUB_HOSTS = frozenset({"registry-1.docker.io", "index.docker.io", "hub.docker.com"})
@@ -266,7 +266,7 @@ def _raise_rate_limited(resp: httpx.Response, url: str) -> NoReturn:
     parsed_host = httpx.URL(url).host
     if parsed_host in _DOCKER_HUB_HOSTS:
         guidance = (
-            " Docker Hub caps anonymous pulls at ~100 requests / 6h per IP — "
+            " Docker Hub caps anonymous pulls at ~100 requests / 6h per IP - "
             "authenticate with `system_login` (for SDK-backed tools) or pass "
             "`username`/`password` to `registry_tags` to raise the limit."
         )
@@ -279,10 +279,10 @@ def _raise_rate_limited(resp: httpx.Response, url: str) -> NoReturn:
 
 
 # Cap on the (decoded) bytes we'll buffer from a single registry HTTP response. Registries are
-# agent-pointed and untrusted — a malicious or compromised one could stream a multi-GB body (there is
+# agent-pointed and untrusted - a malicious or compromised one could stream a multi-GB body (there is
 # no built-in response-size limit in httpx) and OOM the server. Manifests and tag pages are KBs to a
 # few MB, so this is generous. We cap `iter_bytes()` (the *decoded* stream), so this also stops a
-# decompression bomb — a tiny gzip that inflates to gigabytes.
+# decompression bomb - a tiny gzip that inflates to gigabytes.
 _MAX_RESPONSE_BYTES = 16 * 1024 * 1024  # 16 MiB
 
 
@@ -321,7 +321,7 @@ def _get_with_retry_policy(
 
     - On a transient 5xx (502/503/504): retry up to `_TRANSIENT_MAX_RETRIES` times with a short
       backoff (honoring `Retry-After` when present, capped at the threshold). If it still fails,
-      the last response is returned for the caller's `raise_for_status` to surface — a sustained
+      the last response is returned for the caller's `raise_for_status` to surface - a sustained
       outage is not swallowed, only a blip is absorbed.
     - On HTTP 429 with `Retry-After <= 10s`: sleep + retry once.
     - On HTTP 429 with no Retry-After, or a longer delay, or a second 429: raise.
@@ -346,7 +346,7 @@ def _get_with_retry_policy(
                 retried_429 = True
                 delay = retry_after
             else:
-                # Final response — read the body bounded (after the stream context closes it).
+                # Final response - read the body bounded (after the stream context closes it).
                 return _read_capped_response(resp, url)
         time.sleep(delay)
 
@@ -704,7 +704,7 @@ def _select_platform_digest(index: dict, platform: str) -> tuple[str, str]:
     """
     Pick the sub-manifest matching `platform` from a manifest list / OCI image index.
 
-    `platform` is "os/arch[/variant]". An omitted variant matches any variant of that os/arch — so
+    `platform` is "os/arch[/variant]". An omitted variant matches any variant of that os/arch - so
     "linux/arm64" still selects a "linux/arm64/v8" entry, following Docker's default-variant
     convention rather than forcing callers to know the variant. The returned platform string always
     reflects the entry *actually* selected (including its variant), so the caller is never misled
@@ -869,7 +869,7 @@ def hub_rate_limit(username: str | None = None, password: str | None = None) -> 
             token = _get_bearer_token(client, challenge, username=username, password=password, registry=registry)
             headers["Authorization"] = f"Bearer {token}"
             resp = client.head(url, headers=headers)
-        # 429 means the limit is already spent — that's a valid answer (remaining 0), not an error to
+        # 429 means the limit is already spent - that's a valid answer (remaining 0), not an error to
         # raise; the RateLimit headers are still present. Only raise for genuinely unexpected statuses.
         if resp.status_code not in (200, 429):
             resp.raise_for_status()

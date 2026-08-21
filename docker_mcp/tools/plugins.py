@@ -139,7 +139,7 @@ def plugin_push(name: str, timeout_seconds: float = 300.0, host: str | None = No
     """
     api = _get_client(host).api
     # docker-py exposes no working public path here (see docstring), so we drive its private request
-    # helpers directly. Resolved via getattr — like system_logout's _auth_configs reach-in — so the
+    # helpers directly. Resolved via getattr - like system_logout's _auth_configs reach-in - so the
     # absence of any of them surfaces as the explicit message below rather than an AttributeError from
     # inside the call (and so a type checker isn't asked to vouch for a private attribute).
     build_url = getattr(api, "_url", None)
@@ -166,7 +166,7 @@ def plugin_push(name: str, timeout_seconds: float = 300.0, host: str | None = No
     header = auth.get_config_header(api, registry)
     headers = {"X-Registry-Auth": header} if header else {}
     # stream=True is required: _stream_helper reads the chunked body incrementally. (push_plugin omits
-    # it — a second latent bug there, harmless only because the wrong URL never returns a stream.)
+    # it - a second latent bug there, harmless only because the wrong URL never returns a stream.)
     response = post(build_url("/plugins/{0}/push", name), headers=headers, stream=True)
     raise_for_status(response)
     progress: list = []
@@ -175,10 +175,10 @@ def plugin_push(name: str, timeout_seconds: float = 300.0, host: str | None = No
     # calls) because closing the *response* does not bound anything: Response.close() sets
     # http.client's `fp` to None without interrupting a read already blocked on the socket, so the
     # call still hangs until the registry answers and then dies in `_close_conn` with an
-    # AttributeError on that None — losing the collected records. CancellableStream.close() shuts
+    # AttributeError on that None - losing the collected records. CancellableStream.close() shuts
     # the socket down, which does unblock the read, and turns the resulting ProtocolError/OSError
     # into StopIteration so the loop ends and the partial progress below is returned as documented.
-    # This is also how container_logs/system_events get their bound — docker-py wraps those for us.
+    # This is also how container_logs/system_events get their bound - docker-py wraps those for us.
     stream = CancellableStream(stream_helper(response, decode=True), response)
     timer = threading.Timer(timeout_seconds, lambda: close_stream_quietly(stream))
     timer.start()

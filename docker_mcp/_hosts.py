@@ -2,7 +2,7 @@
 #
 # We resolve the `auto`/`local`/`default` concepts to concrete daemon URLs ourselves (reading Docker
 # CLI context files and probing well-known sockets) and pin them at load() time, so the docker-py SDK
-# and the docker-CLI shell-out target the *same* daemon for a given label — every action is
+# and the docker-CLI shell-out target the *same* daemon for a given label - every action is
 # attributable to one host (auditing), and a mid-session `docker context use` cannot silently move a
 # label (restart to re-resolve).
 #
@@ -24,7 +24,7 @@ from docker_mcp._env import read_env, scrub_unresolved_env
 # Internal label for the single synthesized host built when DOCKER_MCP_SERVER_HOSTS is unset or a bare
 # single endpoint. It only exists in single-host mode, where labels are never surfaced (no `host`
 # param, no enum), so it is never offered as a selectable target. A multi-host list never synthesizes
-# it; a user MAY label one of their hosts "default" there, which is an ordinary label — conceptually
+# it; a user MAY label one of their hosts "default" there, which is an ordinary label - conceptually
 # separate from this internal fallback, and resolvable like any other (a deliberate design choice).
 _DEFAULT_LABEL = "default"
 
@@ -42,7 +42,7 @@ def is_ssh_url(url: str | None) -> bool:
     Whether a daemon URL uses the ssh:// transport.
 
     One shared spelling of a check several call sites need (the CLI shell-out's proxy rewrite, the
-    remote-exec fallback's eligibility test, connection help, self-host detection) — some of which
+    remote-exec fallback's eligibility test, connection help, self-host detection) - some of which
     hold a `Host` and some only a resolved DOCKER_HOST string, which is why this takes the string and
     `Host.is_ssh` wraps it rather than the other way round.
 
@@ -59,7 +59,7 @@ class Host:
 
     `url` is the resolved concrete daemon URL, or None to let docker-py's from_env() apply its own
     platform default (e.g. the Windows named pipe). `cert_dir` is a tcp+TLS cert directory (`ca.pem`
-    required — the daemon is always verified; `cert.pem`/`key.pem` optional for mutual TLS), or None.
+    required - the daemon is always verified; `cert.pem`/`key.pem` optional for mutual TLS), or None.
     """
 
     label: str
@@ -78,7 +78,7 @@ class Host:
 
 
 def _docker_config_dir() -> Path:
-    """The Docker CLI config directory ($DOCKER_CONFIG, else ~/.docker) — where contexts live."""
+    """The Docker CLI config directory ($DOCKER_CONFIG, else ~/.docker) - where contexts live."""
     return Path(os.environ.get("DOCKER_CONFIG") or Path.home() / ".docker")
 
 
@@ -108,10 +108,10 @@ def _context_host(name: str) -> str | None:
 
 def resolve_local() -> str | None:
     """
-    The platform-local daemon socket — first existing well-known location, Docker Desktop / rootless
+    The platform-local daemon socket - first existing well-known location, Docker Desktop / rootless
     first. Context-bypassing by design: `local` means the machine's own socket, never wherever a CLI
     context happens to point. Returns None to let from_env() apply its platform default (e.g. the
-    Windows named pipe, which has nothing to probe on disk) — which is context-free because that call
+    Windows named pipe, which has nothing to probe on disk) - which is context-free because that call
     goes through `system._from_env_no_context`.
     """
     if sys.platform == "win32":  # pyright: ignore[reportUnreachable]
@@ -163,7 +163,7 @@ def _fail(message: str) -> NoReturn:
 def _parse_markers(text: str, context: str) -> tuple[str, bool, bool, str | None]:
     """Strip trailing (ro)/(nd)/(tls=<dir>) markers (any order, case-insensitive) off an endpoint
     string, returning (endpoint, read_only, non_destructive, cert_dir). (ro) and (nd) may combine
-    with no error — (ro) is strictly stronger and wins at enforcement time (see server.py)."""
+    with no error - (ro) is strictly stronger and wins at enforcement time (see server.py)."""
     read_only = False
     non_destructive = False
     cert_dir: str | None = None
@@ -198,7 +198,7 @@ def _validate_cert_dir(label: str, cert_dir: str) -> None:
     Fail-fast on a malformed tcp+TLS cert dir (a misparsed TLS config must never silently leave a
     daemon connection unencrypted or misconfigured).
 
-    `ca.pem` is always required — the daemon is always verified against it (this is encryption + server
+    `ca.pem` is always required - the daemon is always verified against it (this is encryption + server
     authentication, never opportunistic encryption). The client cert is optional but paired: provide
     `cert.pem` AND `key.pem` for mutual TLS (a daemon that requires client auth), or neither to verify
     the daemon only (e.g. a self-signed daemon you pin via `ca.pem`).
@@ -208,11 +208,11 @@ def _validate_cert_dir(label: str, cert_dir: str) -> None:
         _fail(f"host {label!r}: TLS dir {cert_dir!r} is missing or cannot read ca.pem (required to verify the daemon)")
     cert, key = directory / "cert.pem", directory / "key.pem"
     # Pair on existence (matching how _tls_from_dir decides whether to send a client cert), then require
-    # any present file to be readable — an exists-but-unreadable cert/key would pass an existence-only
+    # any present file to be readable - an exists-but-unreadable cert/key would pass an existence-only
     # check yet break at connect time.
     if cert.exists() != key.exists():
         _fail(
-            f"host {label!r}: TLS dir {cert_dir!r} has exactly one of cert.pem/key.pem — provide both "
+            f"host {label!r}: TLS dir {cert_dir!r} has exactly one of cert.pem/key.pem - provide both "
             f"(mutual TLS) or neither (verify the daemon only)"
         )
     for client_file in (cert, key):
@@ -309,20 +309,20 @@ def load() -> None:
     import (the @tool() decorator and resources read the registry at registration time).
 
     Scrubs unresolved `${...}` placeholders first so an mcpb blank field resolves to the default host
-    rather than fail-fast. A malformed value prints one stderr line and exits non-zero — a misparsed
+    rather than fail-fast. A malformed value prints one stderr line and exits non-zero - a misparsed
     (ro)/(tls=) must never silently leave a host writable or unencrypted.
     """
     global _registry
     scrub_unresolved_env()
     raw = read_env("DOCKER_MCP_SERVER_HOSTS")
-    # Warn only when HOSTS actually takes effect — a whitespace-only value parses as unset (DOCKER_HOST
+    # Warn only when HOSTS actually takes effect - a whitespace-only value parses as unset (DOCKER_HOST
     # is then honored, not ignored), so it must not trigger the notice.
     if (raw or "").strip() and (os.environ.get("DOCKER_HOST") or "").strip():
         _notify_docker_host_ignored()
     try:
         _registry = parse_registry(raw)
     except HostConfigError as exc:
-        print(f"docker-mcp-server: invalid DOCKER_MCP_SERVER_HOSTS — {exc}", file=sys.stderr, flush=True)
+        print(f"docker-mcp-server: invalid DOCKER_MCP_SERVER_HOSTS - {exc}", file=sys.stderr, flush=True)
         raise SystemExit(1) from exc
 
 

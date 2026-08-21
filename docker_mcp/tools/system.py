@@ -30,7 +30,7 @@ from docker_mcp.tools._utils import classify_host_kernel, close_stream_quietly, 
 # One lazily-built docker-py client per configured host label (the pool). FastMCP runs sync tools
 # concurrently in a worker threadpool, so building in `_get_client`, teardown in `close`, and the swap
 # in `reconnect` must not race (e.g. two threads each building a client, or one using a client another
-# closed) — `_client_lock` guards every read/mutation of `_clients`.
+# closed) - `_client_lock` guards every read/mutation of `_clients`.
 _clients: dict[str, docker.DockerClient] = {}
 _client_lock = threading.Lock()
 
@@ -44,7 +44,7 @@ _CONNECT_ERRORS: tuple[type[BaseException], ...] = (DockerException, requests.ex
 # self-termination guard inert. Env var lets an operator who really means it bypass the guard.
 _self_container_id: str | None = None
 # Label of the host the server's own container runs on (the self host). The self-termination guard only
-# fires when a call targets this host — our own container can't exist on any other daemon.
+# fires when a call targets this host - our own container can't exist on any other daemon.
 _self_host_label: str | None = None
 _SELF_TERMINATE_OVERRIDE_ENV = "DOCKER_MCP_SERVER_ALLOW_SELF_TERMINATE"
 
@@ -54,7 +54,7 @@ def _detect_self_container_id(client: docker.DockerClient) -> str | None:
     Resolve the full id of the container this server runs in, or None if it can't be determined.
 
     Docker sets the container's short id as its hostname by default, so we look that up via the
-    daemon. Returns None if the hostname was overridden (`--hostname`) or the lookup fails — the
+    daemon. Returns None if the hostname was overridden (`--hostname`) or the lookup fails - the
     self-termination guard then stays inert rather than guessing.
     """
     hostname = (os.environ.get("HOSTNAME") or "").strip()
@@ -103,7 +103,7 @@ def guard_not_self(container: Container, host: str | None = None) -> None:
         return
     raise RuntimeError(
         f"Refusing to operate on the docker-mcp-server's own container ({container.short_id} "
-        f"{container.name}) — this would terminate the MCP session mid-call. Set "
+        f"{container.name}) - this would terminate the MCP session mid-call. Set "
         f"{_SELF_TERMINATE_OVERRIDE_ENV}=1 to override, or run the action from the host shell "
         f"(e.g. `docker rm -f`), which bypasses this server entirely."
     )
@@ -113,7 +113,7 @@ def _close_client_quietly(client: docker.DockerClient) -> None:
     """Best-effort close of a discarded client; a failed teardown must not block a reconnect."""
     try:
         client.close()
-    except Exception:  # noqa: S110, BLE001 — teardown of an already-discarded client is best-effort
+    except Exception:  # noqa: S110, BLE001 - teardown of an already-discarded client is best-effort
         # The usual reason to discard a client is that it's already broken; swallow whatever
         # its close() raises so the caller can proceed to build a fresh one.
         pass
@@ -124,7 +124,7 @@ def _ensure_ssh_port(url: str) -> str:
     Work around a docker-py bug for an `ssh://` URL with no explicit port: `docker.utils.parse_host()`
     hardcodes port 22 into the URL *before* `SSHHTTPAdapter._create_paramiko_client` ever runs, so that
     adapter's own `~/.ssh/config` `Port` fallback (which only fires while the port is still unset) never
-    triggers — a non-22 `Port` in `~/.ssh/config` is silently ignored. We splice in the configured port
+    triggers - a non-22 `Port` in `~/.ssh/config` is silently ignored. We splice in the configured port
     ourselves first, reusing the exact `~/.ssh/config` lookup `_ssh_proxy.parse_ssh_url` already does for
     the CLI-backed tools, so both tool families honor a non-default SSH port the same way.
 
@@ -137,14 +137,14 @@ def _ensure_ssh_port(url: str) -> str:
     try:
         has_port = parsed.port is not None
     except ValueError:
-        # A malformed port (e.g. "ssh://host:abc") — leave url untouched so docker-py's own
+        # A malformed port (e.g. "ssh://host:abc") - leave url untouched so docker-py's own
         # validation raises its clearer error instead of this helper failing first.
         return url
     if has_port:
         return url
     try:
         # parse_ssh_url raises ValueError on a missing hostname (e.g. "ssh://" or "ssh://@") or a
-        # non-integer `Port` in ~/.ssh/config — leave url untouched in either case rather than
+        # non-integer `Port` in ~/.ssh/config - leave url untouched in either case rather than
         # raising a bare ValueError here instead of the connection error docker-py would produce.
         target = parse_ssh_url(url)
     except ValueError:
@@ -159,22 +159,22 @@ def _ensure_reachable_family(url: str) -> str:
     Work around paramiko's narrow IPv4/IPv6 fallback for an `ssh://` docker-py connection.
 
     `paramiko.SSHClient.connect()` (used internally by docker-py's `SSHHTTPAdapter`) resolves both
-    address families but only retries the next one on `ECONNREFUSED`/`EHOSTUNREACH` — a timed-out or
+    address families but only retries the next one on `ECONNREFUSED`/`EHOSTUNREACH` - a timed-out or
     black-holed IPv6 route (`ETIMEDOUT`, what a broken IPv6 path actually produces) is never retried,
     so a host that's perfectly reachable over IPv4 fails outright. `tcp://` doesn't have this problem
-    (`urllib3.util.connection.create_connection` catches any `OSError` per attempt) — only `ssh://`
+    (`urllib3.util.connection.create_connection` catches any `OSError` per attempt) - only `ssh://`
     needs this. See `_ssh_proxy.connect_socket_with_family_fallback`'s docstring for the full story.
 
     Rather than reaching into docker-py's `SSHHTTPAdapter` internals (undocumented, and it always
     builds its own fresh `paramiko.SSHClient` with no hook to accept a pre-connected socket), this
     probes every resolved address itself with that same broad-fallback helper, then splices whichever
-    address actually answered into the URL as a literal IP — so docker-py's own (unmodified) connect
+    address actually answered into the URL as a literal IP - so docker-py's own (unmodified) connect
     resolves trivially to the one address already proven reachable, the same trick `_ensure_ssh_port`
     above already uses to work around a different docker-py quirk. One extra short-lived probe
     connection per client build; `_get_client`'s pool means that happens once per host, not per call.
 
     A URL that isn't `ssh://`, has no hostname, or is already a literal address (no family ambiguity
-    to resolve) is returned unchanged, as is one where every resolved address fails to connect — in
+    to resolve) is returned unchanged, as is one where every resolved address fails to connect - in
     that last case the normal (paramiko-native) connection attempt still runs and produces its own
     error, rather than this helper raising first.
 
@@ -213,7 +213,7 @@ def _from_env_no_context(**kwargs: Any) -> docker.DockerClient:
 
     **Every `from_env` call in this package must go through here** (a single choke point rather than a
     convention to remember). docker-py 7.2.0 made `from_env` resolve the active Docker CLI context
-    whenever the environment yields no `base_url` — which is *our* job, not its: `_hosts.resolve_auto`
+    whenever the environment yields no `base_url` - which is *our* job, not its: `_hosts.resolve_auto`
     already reads `DOCKER_CONTEXT` / config.json `currentContext`, and the answer is pinned at
     `load()` so a mid-session `docker context use` cannot silently move a label (restart to
     re-resolve). A second, independent resolution would reintroduce that drift and could disagree with
@@ -236,7 +236,7 @@ def _build_default_client() -> docker.DockerClient:
     auto/local resolution lives in docker_mcp._hosts now (the pure registry layer); resolve_auto() is
     the relocated _resolve_default_base_url().
 
-    Goes through `_from_env_no_context` on all three paths — see there for why. Two of them are safe
+    Goes through `_from_env_no_context` on all three paths - see there for why. Two of them are safe
     only incidentally (an env-derived `base_url` short-circuits docker-py's context lookup), so the
     guarantee deliberately doesn't rest on that.
     """
@@ -278,7 +278,7 @@ def _build_client(host: Host) -> docker.DockerClient:
 
     The legacy single host (DOCKER_MCP_SERVER_HOSTS unset) goes through _build_default_client so the
     existing DOCKER_HOST / from_env behavior (and its TLS env / API-version negotiation) is preserved
-    exactly — this is the ONLY path that reads DOCKER_HOST. An explicitly-configured host is built from
+    exactly - this is the ONLY path that reads DOCKER_HOST. An explicitly-configured host is built from
     its resolved URL with per-host TLS; one that resolved to the platform default (url=None, e.g. `local`
     on Windows) is built WITHOUT a base_url so it uses the platform socket/npipe and never re-reads the
     ambient DOCKER_HOST (which is ignored when DOCKER_MCP_SERVER_HOSTS is set).
@@ -580,17 +580,17 @@ def _connection_help(exc: BaseException, host: Host | None) -> str:
     lines = [f"docker-mcp-server: cannot reach the Docker daemon ({exc})."]
     url = host.url if host is not None else None
     if host is not None and url:
-        lines.append(f"  Default host {host.label!r} resolves to {url} — verify that endpoint is reachable.")
+        lines.append(f"  Default host {host.label!r} resolves to {url} - verify that endpoint is reachable.")
     if is_ssh_url(url):
         # ssh:// uses the pure-Python paramiko transport. Its failure modes are auth/host-key, not
         # the socket-mount issues the rest of this function covers, so give targeted hints and stop.
         lines.append(
             "  This is an ssh:// endpoint (paramiko transport). Common causes: the SSH key isn't "
             "loaded (run `ssh-add`, and forward SSH_AUTH_SOCK), or the host key isn't in "
-            "known_hosts — paramiko rejects unknown hosts. Add the host key only after verifying its "
+            "known_hosts - paramiko rejects unknown hosts. Add the host key only after verifying its "
             "fingerprint out of band: connect once with `ssh <host>` and confirm the prompt, or "
             "compare `ssh-keyscan <host> | ssh-keygen -lf -` against a trusted fingerprint before "
-            "trusting it (don't blind-append `ssh-keyscan` output — that trusts any key returned, "
+            "trusting it (don't blind-append `ssh-keyscan` output - that trusts any key returned, "
             "MITM included). In a container, mount your `~/.ssh` (key + known_hosts) read-only; no "
             "`ssh` binary is needed."
         )
@@ -602,13 +602,13 @@ def _connection_help(exc: BaseException, host: Host | None) -> str:
     kind = classify_host_kernel()
     if kind == "wsl2":
         lines.append(
-            "  Host looks like Windows/WSL2 — the engine listens on a named pipe, not a unix socket. "
+            "  Host looks like Windows/WSL2 - the engine listens on a named pipe, not a unix socket. "
             "Pass `-e DOCKER_HOST=tcp://host.docker.internal:2375` (enable the TCP endpoint in Docker "
             "Desktop) or mount the WSL-side socket."
         )
     elif kind == "docker-desktop":
         lines.append(
-            "  Host looks like Docker Desktop (macOS) — mount the Desktop socket: "
+            "  Host looks like Docker Desktop (macOS) - mount the Desktop socket: "
             "`-v $HOME/.docker/run/docker.sock:/var/run/docker.sock` (or enable 'Allow the default "
             "Docker socket' in Settings and mount `/var/run/docker.sock`)."
         )
@@ -653,7 +653,7 @@ def _connection_summary(client: docker.DockerClient, host: Host) -> str:
         )
     others = [_host_tag(h) for h in _host_registry().values() if h.label != host.label]
     roster = f" | other hosts (lazy): {', '.join(others)}" if others else ""
-    return f"docker-mcp-server: connected to default host {host.label!r} — {os_name}{suffix}{note}.{roster}"
+    return f"docker-mcp-server: connected to default host {host.label!r} - {os_name}{suffix}{note}.{roster}"
 
 
 def startup_preflight() -> None:
@@ -663,7 +663,7 @@ def startup_preflight() -> None:
     Pings the default host; on failure prints OS-aware connection guidance and returns without raising,
     so a client that only wants the tool list still starts (other hosts connect lazily). On success,
     pins this server's own container id + host for the self-termination guard (when containerized,
-    detected against the self host — the local one, which may differ from the default) and prints a
+    detected against the self host - the local one, which may differ from the default) and prints a
     one-line confirmation plus a roster of the other configured hosts. Never raises.
     """
     global _self_container_id, _self_host_label
@@ -672,7 +672,7 @@ def startup_preflight() -> None:
     try:
         client = _get_client()
         client.ping()
-    except Exception as exc:  # noqa: BLE001 — startup diagnostics must never abort the server
+    except Exception as exc:  # noqa: BLE001 - startup diagnostics must never abort the server
         print(_connection_help(exc, default), file=sys.stderr, flush=True)
         return
     if in_container():

@@ -2,7 +2,7 @@
 
 2.0 renames the entire tool surface to one convention, merges duplicate tools, removes two dead
 ones, standardizes parameter names, and drops the deprecated `DOCKER_MCP_*` env-var aliases. It is
-a **clean break**: no old name — tool, parameter, or env var — is honored. Nothing else changes:
+a **clean break**: no old name - tool, parameter, or env var - is honored. Nothing else changes:
 transports, safety classifications (beyond the two noted below), resources, prompts, and
 provenance labels all behave as in 1.x.
 
@@ -10,13 +10,13 @@ provenance labels all behave as in 1.x.
 
 Every tool is named `<management-command>_<verb>`, anchored to the docker CLI's own
 management-command structure (`docker container ls` → `container_list`), with long-form verbs
-(`list`/`remove`/`inspect` — never `ls`/`rm`/`get`). Names never encode the backing implementation
+(`list`/`remove`/`inspect` - never `ls`/`rm`/`get`). Names never encode the backing implementation
 (SDK vs CLI), so tools can move between backends without renaming. Read-only fetches may be
 noun-form (`container_logs`, `registry_tags`).
 
 ## Tool renames (old → new)
 
-**system** (domain renamed from `client` — update `DOCKER_MCP_SERVER_DISABLE=client` to `system`):
+**system** (domain renamed from `client` - update `DOCKER_MCP_SERVER_DISABLE=client` to `system`):
 
 | 1.x | 2.0 |
 |---|---|
@@ -118,7 +118,7 @@ noun-form (`container_logs`, `registry_tags`).
 | `reload_swarm` | `swarm_inspect` |
 | `get_swarm_unlock_key` | `swarm_unlock_key` |
 | `get_swarm_join_tokens` | `swarm_join_tokens` |
-| `rotate_swarm_join_token` | removed — use `swarm_update(rotate_worker_token=..., rotate_manager_token=...)` then `swarm_join_tokens` |
+| `rotate_swarm_join_token` | removed - use `swarm_update(rotate_worker_token=..., rotate_manager_token=...)` then `swarm_join_tokens` |
 
 **plugins:**
 
@@ -154,11 +154,11 @@ All other `compose_*`, `stack_*`, `context_*`, `buildx_*`, and `scout_*` names a
 | `registry_get_config` | `registry_image_config` |
 | `hub_list_tags` | `hub_tags` |
 
-## Merged tools — behavior notes
+## Merged tools - behavior notes
 
 - **`container_logs`**: `follow=True` replaces `follow_container_logs`; `limit_lines` and
   `timeout_seconds` apply only in follow mode, `until` only in snapshot mode.
-- **`container_wait`**: one contract for every mode — `until` is `"not-running"` (default) /
+- **`container_wait`**: one contract for every mode - `until` is `"not-running"` (default) /
   `"next-exit"` / `"removed"` / `"healthy"`, and **timeouts no longer raise**: every outcome
   returns `{container, until, met, timed_out, status_code, error, health, status,
   waited_seconds}`. The 1.x `timeout=None` wait-forever escape hatch is gone (`timeout_seconds`
@@ -183,16 +183,16 @@ All other `compose_*`, `stack_*`, `context_*`, `buildx_*`, and `scout_*` names a
   `image_registry_data`/`image_list`).
 - `timeout` → `timeout_seconds` everywhere (`plugin_enable`); in `container_stop` /
   `container_restart` the stop-grace period is `stop_timeout_seconds` (matching
-  `compose_stop`/`compose_restart` — `timeout_seconds` always means the call's own bound).
+  `compose_stop`/`compose_restart` - `timeout_seconds` always means the call's own bound).
 - `container_remove(v=...)` → `volumes`.
 - `buildx_imagetools_create(files=...)` → `descriptor_files`.
 - `plugin_install(remote_name=...)` → `remote` (matching `plugin_upgrade`).
-- `node_update(node_spec=...)` → `spec` (replacement semantics — omitted keys are cleared).
+- `node_update(node_spec=...)` → `spec` (replacement semantics - omitted keys are cleared).
 - `buildx_prune`: `filter` → `filters`; the deprecated `keep_storage` is removed (use
   `reserved_space`).
 - `stack_ps`/`stack_services` `filters` take the same dict shape as the SDK tools
   (`{"name": "web"}`, list values repeat the filter) instead of a `list[str]` of
-  `--filter` expressions — one `filters` contract across the surface.
+  `--filter` expressions - one `filters` contract across the surface.
 - Logs `tail` is `int | "all"` on all three logs tools and **defaults to a bounded 200**
   (1.x defaulted `container_logs`/`service_logs` to `"all"`; pass `tail="all"` for the old
   behavior). `compose_logs`'s `0`-means-all sentinel is gone.
@@ -209,7 +209,7 @@ The pre-rename `DOCKER_MCP_*` alias spellings are no longer honored. Use the can
 
 Resources created by 2.0 stamp the new tool names into the `docker-mcp-server.tool` label
 (`container_run`, `volume_create`, ...). Resources created by 1.x keep the old names in their
-labels — harmless: `managed_only` filtering keys off `docker-mcp-server.managed=true`, not the
+labels - harmless: `managed_only` filtering keys off `docker-mcp-server.managed=true`, not the
 tool name.
 
 ## Client permission allowlists

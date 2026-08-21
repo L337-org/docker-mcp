@@ -7,9 +7,9 @@
 # Remote-exec fallback (no local buildx plugin + an ssh:// target) splits this module three ways:
 # the query/lifecycle tools name nothing local and just run there; `buildx_bake` stages a working
 # directory like the compose tools; `buildx_create --config` and `buildx_imagetools_create --file`
-# stage only the files they name. `buildx_build` is bespoke — its context needs `.dockerignore`-aware
+# stage only the files they name. `buildx_build` is bespoke - its context needs `.dockerignore`-aware
 # tarring and its `--build-context`/`--secret` values carry paths *inside* composite `key=value`
-# tokens — and it refuses the flags whose effect would land on the wrong machine (see
+# tokens - and it refuses the flags whose effect would land on the wrong machine (see
 # `_refuse_flags_that_resolve_on_the_wrong_host`).
 
 from pathlib import Path
@@ -51,7 +51,7 @@ def _run_buildx(
     stage_cwd: bool = False,
 ) -> CliResult:
     """
-    Run `docker buildx <args...>`, locally or — with no local buildx plugin — on the ssh:// host.
+    Run `docker buildx <args...>`, locally or - with no local buildx plugin - on the ssh:// host.
 
     `stage_cwd` and `path_values` are passed explicitly by the two tools that read local files, rather
     than recovered by scanning the argv: `buildx_bake` appends caller-supplied target names, so a
@@ -167,7 +167,7 @@ def _refuse_flags_that_resolve_on_the_wrong_host(
             "dest",
             False,
             "the cache would be written to that host's disk rather than yours, where nothing later reads it. "
-            "Export to a registry (`type=registry,ref=…`) instead",
+            "Export to a registry (`type=registry,ref=...`) instead",
         ),
         (
             "cache_from",
@@ -175,8 +175,8 @@ def _refuse_flags_that_resolve_on_the_wrong_host(
             "src",
             False,
             "the cache would be read from that host, and a cache import that isn't there is *non-fatal* to "
-            "BuildKit — so the build would silently run uncached rather than fail. Import from a registry "
-            "(`type=registry,ref=…`) instead",
+            "BuildKit - so the build would silently run uncached rather than fail. Import from a registry "
+            "(`type=registry,ref=...`) instead",
         ),
     )
     for flag, specs, key, stdout_exempt, consequence in checks:
@@ -187,13 +187,13 @@ def _refuse_flags_that_resolve_on_the_wrong_host(
             raise RuntimeError(
                 f"buildx_build cannot honour {flag}={spec!r} against this host: this server has no local "
                 f"buildx plugin, so the build runs on the target host over SSH and {key}={value!r} would "
-                f"resolve on *that* machine — {consequence}, or run the build on a host with a local "
+                f"resolve on *that* machine - {consequence}, or run the build on a host with a local "
                 f"docker CLI."
             )
     if ssh:
         raise RuntimeError(
             f"buildx_build cannot honour ssh={ssh!r} against this host: this server has no local buildx plugin, "
-            f"so the build runs on the target host over SSH, where `--ssh` reads that host's $SSH_AUTH_SOCK — "
+            f"so the build runs on the target host over SSH, where `--ssh` reads that host's $SSH_AUTH_SOCK - "
             f"the remote user's agent, not yours (this server does not request agent forwarding). Bake the "
             f"credential in with `--secret` instead, or run the build on a host with a local docker CLI."
         )
@@ -207,14 +207,14 @@ def _local_dockerfile(file: str | None, *, context_is_local: bool) -> Path | Non
     remote path must resolve `--file` exactly as the local backend would or it stages the wrong file:
 
     - With a local-directory context, `--file` resolves against the **CLI's working directory**, not the
-      context — the opposite of what this tool's docstring used to claim. `-f Dockerfile.x ./ctx`
+      context - the opposite of what this tool's docstring used to claim. `-f Dockerfile.x ./ctx`
       reports "failed to read dockerfile: open Dockerfile.x: no such file" when the file exists only
       inside `./ctx`, while `-f ctx/Dockerfile.x ./ctx` reads it.
     - With a **URL** context, an **absolute** `--file` is still read from this filesystem: buildx
       transfers it as a separate dockerfile context (observed as `transferring dockerfile: 46B` plus a
       parse error from the local file's own contents).
     - With a URL context, a **relative** `--file` is resolved inside the *fetched* context, not here, so
-      it must be left alone — resolving it locally could stage a same-named file that happens to sit in
+      it must be left alone - resolving it locally could stage a same-named file that happens to sit in
       this server's working directory, silently building something else.
 
     args:
@@ -374,7 +374,7 @@ def buildx_build(
     if context == "-":
         raise ValueError(
             "buildx_build: context='-' (read a tarball from stdin) is not supported by this "
-            "tool because we don't forward stdin to the buildx subprocess — `-` would block "
+            "tool because we don't forward stdin to the buildx subprocess - `-` would block "
             "on the MCP server's own stdin. Use a filesystem path or an HTTP/Git URL instead, "
             "or pre-stage the context on disk."
         )
@@ -464,13 +464,13 @@ def _run_buildx_build_remotely(
     """
     Stage a build's local inputs on the ssh:// host and run the build there.
 
-    The context is staged only when it names an existing local directory — the inverse test to guessing
+    The context is staged only when it names an existing local directory - the inverse test to guessing
     which strings are URLs, which cannot be got right from syntax alone. A Git/HTTP context (or a path
     that does not exist here) is therefore passed through untouched, and the remote CLI fetches or
     reports it exactly as the local one would.
 
     The remote command gets **no working directory**, and every path rewritten here is absolute. Running
-    it inside the staged context instead would let a relative `--file` resolve *there* — and buildx
+    it inside the staged context instead would let a relative `--file` resolve *there* - and buildx
     resolves `--file` against the CLI's own working directory (see `_local_dockerfile`), so a path the
     local CLI could not find would be found remotely inside the copied context. An in-context Dockerfile
     therefore becomes an absolute path under the staged copy; one outside the context, or beside a URL
@@ -508,7 +508,7 @@ def _run_buildx_build_remotely(
         if relative_dockerfile is not None and staged_context is not None:
             # Absolute, not relative-plus-a-working-directory. Running in the staged context would make a
             # relative `--file` resolve *there*, so a path the local CLI could not find (it resolves
-            # `--file` against the CLI's own cwd) could be found remotely inside the copied context — the
+            # `--file` against the CLI's own cwd) could be found remotely inside the copied context - the
             # same build succeeding remotely and failing locally. Every path this backend rewrites is
             # absolute, and the command gets no working directory at all, so that cannot happen.
             _replace_flag_value(staged_args, "--file", session.join(staged_context, relative_dockerfile))
@@ -575,7 +575,7 @@ def buildx_bake(
     if targets:
         # `safe_positional` for the same reason every other positional gets it: a target beginning with
         # '-' would be parsed by the CLI as a flag. It also means a target can never be mistaken for one
-        # of bake's own flags — though `path_values` below is passed explicitly rather than relying on
+        # of bake's own flags - though `path_values` below is passed explicitly rather than relying on
         # that.
         args.extend(safe_positional(target, "bake target") for target in targets)
     return _run_buildx(
@@ -618,7 +618,7 @@ def buildx_imagetools_inspect(
     """
     if raw and format is not None:
         raise ValueError(
-            "buildx_imagetools_inspect: `raw` and `format` are mutually exclusive — `raw` "
+            "buildx_imagetools_inspect: `raw` and `format` are mutually exclusive - `raw` "
             "always emits the unmodified manifest JSON, while `format` runs a Go template "
             "against a rendered view. Pick one."
         )
@@ -973,7 +973,7 @@ def buildx_remove(
         raise ValueError("buildx_remove requires either `name` or `all_inactive=True`")
     if name and all_inactive:
         raise ValueError(
-            "buildx_remove: `name` and `all_inactive=True` are mutually exclusive — pass `name` to "
+            "buildx_remove: `name` and `all_inactive=True` are mutually exclusive - pass `name` to "
             "remove a specific builder, or `all_inactive=True` to sweep every inactive one."
         )
     args: list[str] = ["rm"]

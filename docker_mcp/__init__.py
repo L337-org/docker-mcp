@@ -3,7 +3,7 @@
 from docker_mcp.server import mcp, finalize_instructions
 from docker_mcp import _hosts
 
-# Parse DOCKER_MCP_SERVER_HOSTS and pin the host registry before any tool registers — the @tool()
+# Parse DOCKER_MCP_SERVER_HOSTS and pin the host registry before any tool registers - the @tool()
 # decorator and resources read the registry at registration time. A malformed value fail-fasts here
 # (one stderr line + non-zero exit).
 _hosts.load()
@@ -24,7 +24,7 @@ def main():
     # Exit-fast version report, so the published package can be smoke-tested (the weekly canary
     # workflow runs `uvx docker-mcp-server --version` on each platform) without starting a server
     # that never returns. Handled before startup_preflight: no daemon, no network. Printing to
-    # stdout is safe here — the stdio-channel constraint only applies once the server is serving.
+    # stdout is safe here - the stdio-channel constraint only applies once the server is serving.
     if "--version" in sys.argv[1:]:
         from importlib.metadata import version
 

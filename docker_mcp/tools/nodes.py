@@ -83,7 +83,7 @@ def _node_wait_result(
     state: str | None = None,
     availability: str | None = None,
 ) -> dict:
-    """Build the unified node_wait result snapshot — the same shape for every `until` mode."""
+    """Build the unified node_wait result snapshot - the same shape for every `until` mode."""
     return {
         "node": id_or_name,
         "until": until,

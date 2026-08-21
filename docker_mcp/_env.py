@@ -4,7 +4,7 @@
 # image name, docker-mcp-server). No alias is currently registered (the pre-rename DOCKER_MCP_*
 # spellings were dropped in 2.0), but the fallback mechanism stays: a future rename passes the old
 # spelling as an alias and existing configs keep working, with a one-time stderr notice (never
-# stdout — that is the stdio MCP transport) naming the canonical replacement.
+# stdout - that is the stdio MCP transport) naming the canonical replacement.
 #
 # Lives at the package root (not under tools/) so docker_mcp.server can use it without importing
 # docker_mcp.tools, which would be a circular import at tool-registration time.
@@ -62,7 +62,7 @@ def scrub_unresolved_env() -> None:
 
     Some MCP hosts substitute a placeholder into the server's environment for every declared config
     key but, when an optional field is left blank, pass the *literal* placeholder rather than omitting
-    the var — e.g. Claude Desktop loading a .mcpb desktop extension sets `DOCKER_HOST` (or
+    the var - e.g. Claude Desktop loading a .mcpb desktop extension sets `DOCKER_HOST` (or
     `DOCKER_MCP_SERVER_HOSTS`) to the string `${user_config.docker_host}`. Left in place that breaks
     both docker-py and the CLI shell-out path (which forwards DOCKER_HOST to `docker`), and a
     placeholder `DOCKER_MCP_SERVER_HOSTS` would fail-fast host parsing; clearing it lets default-host

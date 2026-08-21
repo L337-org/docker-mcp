@@ -22,7 +22,7 @@ mcp = MCPServer("docker-mcp-server")
 
 
 class ToolCategory(Enum):
-    """How a tool affects state — drives both ToolAnnotations and the read-only env switches."""
+    """How a tool affects state - drives both ToolAnnotations and the read-only env switches."""
 
     READ_ONLY = "read_only"  # no state change: queries, log/data reads, scans
     MUTATING = "mutating"  # changes state but does not destroy data
@@ -213,12 +213,12 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "hub_tags": ToolCategory.READ_ONLY,
     "hub_repo_info": ToolCategory.READ_ONLY,
     "hub_rate_limit": ToolCategory.READ_ONLY,
-    # docs and catalog (no domain — always registered, see _NO_DOMAIN_TOOLS)
+    # docs and catalog (no domain - always registered, see _NO_DOMAIN_TOOLS)
     "docs_lookup": ToolCategory.READ_ONLY,
     "tool_list": ToolCategory.READ_ONLY,
 }
 
-# Destructive tools whose effect is idempotent — re-running has no additional effect (the targets
+# Destructive tools whose effect is idempotent - re-running has no additional effect (the targets
 # are already gone). Surfaced via ToolAnnotations.idempotent_hint so clients can treat retries as safe.
 _IDEMPOTENT_TOOLS = frozenset(
     {"container_prune", "image_prune", "image_prune_builds", "network_prune", "volume_prune", "buildx_prune"}
@@ -235,8 +235,8 @@ _CONNECTION_CONTROL = frozenset({"system_close", "system_reconnect", "system_log
 
 
 # Read-only env switches, evaluated once at import (registration time):
-#   DOCKER_MCP_SERVER_READONLY       — register only READ_ONLY tools (a true read-only server).
-#   DOCKER_MCP_SERVER_NO_DESTRUCTIVE — register everything except DESTRUCTIVE tools (a "no data loss" mode).
+#   DOCKER_MCP_SERVER_READONLY       - register only READ_ONLY tools (a true read-only server).
+#   DOCKER_MCP_SERVER_NO_DESTRUCTIVE - register everything except DESTRUCTIVE tools (a "no data loss" mode).
 # READONLY is the stricter of the two and wins when both are set.
 READONLY = env_flag("DOCKER_MCP_SERVER_READONLY")
 NO_DESTRUCTIVE = env_flag("DOCKER_MCP_SERVER_NO_DESTRUCTIVE")
@@ -248,10 +248,10 @@ def _parse_domains(value: str | None) -> frozenset[str]:
 
 
 # Domain switch, orthogonal to the category switches above:
-#   DOCKER_MCP_SERVER_DISABLE=swarm,plugins — skip every tool whose domain is listed, regardless of category.
+#   DOCKER_MCP_SERVER_DISABLE=swarm,plugins - skip every tool whose domain is listed, regardless of category.
 # A tool's domain is its defining module under docker_mcp.tools (e.g. containers, compose, scout), so a
 # user who never touches swarm can drop the whole swarm/services/nodes/configs/secrets surface from the
-# tool list the client has to reason about. This filters *registration*, not classification — disabled
+# tool list the client has to reason about. This filters *registration*, not classification - disabled
 # tools still appear in the tool-catalog resource so the choice is auditable.
 DISABLED_DOMAINS = _parse_domains(read_env("DOCKER_MCP_SERVER_DISABLE"))
 
@@ -307,7 +307,7 @@ def is_domain_disabled(domain: str | None) -> bool:
     return domain is not None and domain in DISABLED_DOMAINS
 
 
-# Tools with no domain at all — never gated by DOCKER_MCP_SERVER_DISABLE, since their value doesn't
+# Tools with no domain at all - never gated by DOCKER_MCP_SERVER_DISABLE, since their value doesn't
 # correspond to a specific Docker feature area being enabled/disabled. Mirrors `@prompt(domain=None)`'s
 # identical "cross-cutting, always available" semantics for prompts (see `docs_lookup` in resources.py).
 _NO_DOMAIN_TOOLS: frozenset[str] = frozenset({"docs_lookup", "tool_list"})
@@ -437,9 +437,9 @@ def tool_catalog() -> dict[str, Any]:
     """
     Snapshot of the tool surface: which tools exist, their domain/category, and what the active env
     switches registered. Drives the `docker-mcp://tool-catalog` resource so a client can see the blast
-    radius of each tool — and which whole domains a server has disabled — before calling anything.
+    radius of each tool - and which whole domains a server has disabled - before calling anything.
     """
-    # `r.domain or ""` only affects sort order — the stored/reported domain stays None for the
+    # `r.domain or ""` only affects sort order - the stored/reported domain stays None for the
     # handful of `_NO_DOMAIN_TOOLS` (e.g. docs_lookup), sorting before every named domain.
     records = sorted(_tool_registry.values(), key=lambda r: (r.domain or "", r.name))
     domains = sorted({r.domain for r in records}, key=lambda d: d or "")
@@ -457,7 +457,7 @@ def tool_catalog() -> dict[str, Any]:
             "DOCKER_MCP_SERVER_NO_DESTRUCTIVE": NO_DESTRUCTIVE,
             "DOCKER_MCP_SERVER_DISABLE": sorted(DISABLED_DOMAINS),
         },
-        # Disabled domains that match no known tool — usually a typo in DOCKER_MCP_SERVER_DISABLE.
+        # Disabled domains that match no known tool - usually a typo in DOCKER_MCP_SERVER_DISABLE.
         "unknown_disabled_domains": sorted(DISABLED_DOMAINS - set(domains)),
         "domains": domain_summary,
         "tools": [
@@ -475,11 +475,11 @@ def tool_catalog() -> dict[str, Any]:
 
 
 # One-line router blurb per tool domain (the module leaf), keyed in display order. The server's
-# `instructions` string — pre-loaded into a client's context alongside the server name and tool names,
-# *before* any per-tool schema — is built from these. For a lazy-loading client (e.g. Claude Code) that
+# `instructions` string - pre-loaded into a client's context alongside the server name and tool names,
+# *before* any per-tool schema - is built from these. For a lazy-loading client (e.g. Claude Code) that
 # fetches tool schemas on demand, `instructions` is the main surface we control that's always in context,
 # so it acts as a router: it maps user vocabulary onto the domain keyword a tool search will hit. It does
-# not enumerate tools (that's the live `docker-mcp://tool-catalog` resource) — it's a map, not a manual.
+# not enumerate tools (that's the live `docker-mcp://tool-catalog` resource) - it's a map, not a manual.
 # A domain's line is emitted only when that domain has a *registered* tool, so DOCKER_MCP_SERVER_DISABLE
 # and the read-only switches never leave the router advertising a domain the client can't actually call.
 _DOMAIN_BLURBS: dict[str, str] = {
@@ -518,7 +518,7 @@ def build_instructions(registered_domains: set[str] | None = None) -> str:
 
     Pass `registered_domains` to render for an arbitrary set (tests); by default it reads the live
     `_tool_registry`, so the switches (DOCKER_MCP_SERVER_DISABLE / _READONLY / _NO_DESTRUCTIVE) are
-    reflected — a domain with no registered tool contributes no line, so the router never points the
+    reflected - a domain with no registered tool contributes no line, so the router never points the
     client at tools that aren't there.
     """
     present = (
@@ -528,13 +528,13 @@ def build_instructions(registered_domains: set[str] | None = None) -> str:
     )
 
     lines = [
-        "docker-mcp-server — manage Docker through the docker-py SDK and the docker CLI.",
+        "docker-mcp-server - manage Docker through the docker-py SDK and the docker CLI.",
         "",
         "Tools load on demand: search by a domain keyword below to pull a tool's full schema before calling it.",
         "",
         "Domains (and the words that find them):",
     ]
-    lines += [f"- {domain} — {blurb}" for domain, blurb in _DOMAIN_BLURBS.items() if domain in present]
+    lines += [f"- {domain} - {blurb}" for domain, blurb in _DOMAIN_BLURBS.items() if domain in present]
 
     caveats = []
     if present & {"containers", "images"}:
@@ -562,7 +562,7 @@ def build_instructions(registered_domains: set[str] | None = None) -> str:
             caveat = (
                 f"CLI-backed domains ({', '.join(cli_present)}) shell out to the docker CLI/plugins. With "
                 "the CLI or a required plugin missing locally, the call runs on the target host instead "
-                "when that host is reached over `ssh://` — its CLI, its registry credentials, and local "
+                "when that host is reached over `ssh://` - its CLI, its registry credentials, and local "
                 "files (a compose project dir, a build context) copied over, so keep them small; a usable "
                 f"local CLI always wins. Applies to {', '.join(fallback_present)}"
             )
@@ -594,7 +594,7 @@ def build_instructions(registered_domains: set[str] | None = None) -> str:
 
 def finalize_instructions() -> None:
     """
-    Set the server's `instructions` from the actually-registered surface — called once after every tool
+    Set the server's `instructions` from the actually-registered surface - called once after every tool
     module has imported (docker_mcp/__init__.py), so the switch-dependent registration is already known.
 
     MCPServer.instructions is a read-only property backed by the low-level server's `instructions`, which
@@ -617,7 +617,7 @@ _TITLE_ACRONYMS: dict[str, str] = {"Cves": "CVEs", "Sbom": "SBOM"}
 def _title_for(name: str) -> str:
     """Human-readable display title for a tool, mechanically derived from its snake_case name
     (e.g. "container_list" -> "Container List") so every tool has one without hand-authoring ~150
-    of them. Distinct from the schema `title` `_slim_schema` strips — this is the ToolAnnotations
+    of them. Distinct from the schema `title` `_slim_schema` strips - this is the ToolAnnotations
     field some directories (e.g. the Claude Connectors Directory) require independent of prose."""
     words = name.replace("_", " ").title().split(" ")
     return " ".join(_TITLE_ACRONYMS.get(word, word) for word in words)
@@ -633,7 +633,7 @@ def _annotations_for(name: str, category: ToolCategory) -> ToolAnnotations:
     )
 
 
-# JSON Schema keywords whose value is a {name: subschema-or-other} map — their keys are caller-supplied
+# JSON Schema keywords whose value is a {name: subschema-or-other} map - their keys are caller-supplied
 # names (a property literally named "title", a $def called "title"), NOT schema keywords, so we must
 # recurse into the values without ever treating those keys as a title annotation to drop. Covers the
 # full set across draft-07 / 2019-09 / 2020-12 so a future pydantic emitting any of them stays safe.
@@ -653,19 +653,19 @@ _SCHEMA_NAME_MAPS = frozenset(
 def _slim_schema(node: Any) -> None:
     """
     Recursively slim a JSON Schema in place, dropping annotations the client already has (or that
-    only restate a default). All three transforms are display-only — call-time validation runs off
-    the tool's separate `fn_metadata`, so none changes behavior — and were measured to be
+    only restate a default). All three transforms are display-only - call-time validation runs off
+    the tool's separate `fn_metadata`, so none changes behavior - and were measured to be
     information-free, together ~18% of the advertised schema tokens:
 
     - **`title`** (~10%): pydantic stamps one on every property/`$def` (the title-cased field name,
-      e.g. `cache_from` -> "Cache From") plus a top-level `<tool>Arguments` title — it duplicates the
+      e.g. `cache_from` -> "Cache From") plus a top-level `<tool>Arguments` title - it duplicates the
       property name.
     - **nullable `anyOf`** (~7%): an `X | None` param emits `anyOf: [<X>, {"type": "null"}]`; the null
       branch is redundant with the field's optionality (absence from `required` + its `default`), so
-      drop it — hoisting the sole remaining branch, or keeping a multi-branch `anyOf` minus the null.
+      drop it - hoisting the sole remaining branch, or keeping a multi-branch `anyOf` minus the null.
       Gated on a sibling `default` so a (hypothetical) required nullable with no default is never
       collapsed to look non-nullable.
-    - **`additionalProperties: true`** (~1%): the JSON Schema default — an explicit `true` says nothing
+    - **`additionalProperties: true`** (~1%): the JSON Schema default - an explicit `true` says nothing
       an omitted key wouldn't. A *schema-valued* `additionalProperties` (e.g. `dict[str, str]`) is
       meaningful and kept.
 
@@ -718,7 +718,7 @@ def _is_host_destructive(name: str, category: ToolCategory) -> bool:
 
 
 def _host_param_description(name: str, category: ToolCategory) -> str:
-    """The advertised `host` description in multi-host mode — the enum carries the valid labels."""
+    """The advertised `host` description in multi-host mode - the enum carries the valid labels."""
     if _is_host_write(name, category):
         return "Target host label (required when multiple hosts are configured)."
     return f"Target host label; omit to use the default ({_hosts.default().label!r})."
@@ -748,7 +748,7 @@ def _enforce_host_guard(name: str, category: ToolCategory, host: str | None) -> 
     multiple hosts (host selection + per-host (ro)/(nd) refusal) or a single host flagged (ro) or (nd).
     Raises when a write omits `host` in multi-host mode, when `host` is not a configured label, when a
     write targets an (ro) host, or when a destructive call targets an (nd) host. A host carrying both
-    markers is refused by the (ro) check first — (ro) is strictly stronger, so (nd) never fires for it.
+    markers is refused by the (ro) check first - (ro) is strictly stronger, so (nd) never fires for it.
     Read-only and connection-control tools may omit `host` (None -> default / all).
     """
     known = _hosts.labels()
@@ -779,7 +779,7 @@ def _apply_host_schema(parameters: Any, name: str, category: ToolCategory) -> No
 
     Single-host mode: drop `host` entirely so the schema is byte-for-byte today's (footprint-neutral).
     Multi-host mode: constrain `host` to an `enum` of the configured labels with a generated description,
-    and for writes mark it required (advisory — the guard is the teeth) by adding it to `required` and
+    and for writes mark it required (advisory - the guard is the teeth) by adding it to `required` and
     dropping its default.
     """
     if not isinstance(parameters, dict):
@@ -811,7 +811,7 @@ def _host_guard_needed() -> bool:
     """Whether daemon-targeting tools need the call-time host guard wrapped on. Two cases: multiple hosts
     (host selection + per-host (ro)/(nd) refusal), or a single host flagged (ro) or (nd) (refuse
     writes/destructive calls even though the schema carries no host param). A single unrestricted host
-    needs no guard — today's footprint-neutral path."""
+    needs no guard - today's footprint-neutral path."""
     return _hosts.is_multi() or _hosts.is_read_only() or _hosts.is_non_destructive()
 
 
@@ -820,7 +820,7 @@ def _host_guard_needed() -> bool:
 # parameter list, which silently disabled argument checking for every call to every decorated tool,
 # in the tests as well as at internal call sites.
 def _wrap_with_host_guard[F: Callable[..., Any]](func: F, name: str, category: ToolCategory) -> F:
-    """Wrap a daemon-targeting tool so the host guard runs before it (when `_host_guard_needed()` —
+    """Wrap a daemon-targeting tool so the host guard runs before it (when `_host_guard_needed()` -
     multi-host, or a single host flagged (ro) or (nd)). Preserves the signature so MCPServer builds
     the same schema/fn_metadata, and matches the func's sync/async-ness."""
     signature = inspect.signature(func)
@@ -857,7 +857,7 @@ def _wrap_with_host_guard[F: Callable[..., Any]](func: F, name: str, category: T
 
 def tool[F: Callable[..., Any]](**kwargs: Any) -> Callable[[F], F]:
     """
-    Register an @mcp.tool with central classification — the drop-in `@tool()` every tool module uses.
+    Register an @mcp.tool with central classification - the drop-in `@tool()` every tool module uses.
 
     The tool's category comes from TOOL_CATEGORIES (defaulting to MUTATING, the safe assumption, for
     anything unclassified) and its domain from the defining module. We skip registration when a
@@ -884,7 +884,7 @@ def tool[F: Callable[..., Any]](**kwargs: Any) -> Callable[[F], F]:
         if not registered:
             return func
         # Daemon-targeting tools (those declaring a `host` param) get a call-time host guard when there's
-        # something to enforce — multiple hosts, or a single host flagged (ro); wrap before registering so
+        # something to enforce - multiple hosts, or a single host flagged (ro); wrap before registering so
         # MCPServer builds the schema from the wrapper, whose signature mirrors the original. A single
         # writable host (and host-agnostic tools) register func unchanged.
         target = func
@@ -911,14 +911,14 @@ def tool[F: Callable[..., Any]](**kwargs: Any) -> Callable[[F], F]:
 
 def prompt(description: str, *, domain: str | None = None, multi_host: bool = False) -> Callable[[Callable], Callable]:
     """
-    Register an `@mcp.prompt`, honoring DOCKER_MCP_SERVER_DISABLE — the `@prompt()` every prompt module uses.
+    Register an `@mcp.prompt`, honoring DOCKER_MCP_SERVER_DISABLE - the `@prompt()` every prompt module uses.
 
     A prompt tied to a feature area (`domain`) is skipped when that domain is disabled, so a server that
     drops e.g. `scout` doesn't keep prompts that steer the agent toward tools that are no longer
     registered. `domain=None` is for general / cross-domain prompts (doc lookup, prune, disk usage) that
     always register. A `multi_host=True` prompt registers only when 2+ hosts are configured (via
     DOCKER_MCP_SERVER_HOSTS), so a multi-host workflow prompt stays hidden in the common single-host case
-    — the prompt-side parallel of the per-tool host param. Gating happens at import like `@tool()`, and
+    - the prompt-side parallel of the per-tool host param. Gating happens at import like `@tool()`, and
     the choice is recorded for tool_catalog().
     """
 

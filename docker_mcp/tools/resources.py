@@ -14,13 +14,13 @@ from docker_mcp.tools.services import _read_service_log_tail, _read_service_task
 
 DOCKER_DOCS_BASE_URL = "https://docker-py.readthedocs.io/en/stable"
 
-# Bounded wait for a docs fetch — a stalled readthedocs connection must not hang the resource read.
+# Bounded wait for a docs fetch - a stalled readthedocs connection must not hang the resource read.
 _DOCS_TIMEOUT = 30.0
 _USER_AGENT = f"docker-mcp-server/{package_version()}"
 
 # Cap on the (decoded) bytes we'll buffer from a single docs fetch. These are fixed, known-good
 # doc URLs (not agent-pointed like registry.py's targets), but a compromised/redesigned upstream
-# page could still serve something huge, and docs_lookup makes this path directly tool-callable —
+# page could still serve something huge, and docs_lookup makes this path directly tool-callable -
 # bound it the same way registry.py bounds registry responses (mirrors `_read_capped_response`).
 _MAX_DOCS_RESPONSE_BYTES = 16 * 1024 * 1024  # 16 MiB
 
@@ -89,7 +89,7 @@ EXTERNAL_SECTIONS: dict[str, str] = {
 
 # Maps each doc section to the tool domain it documents, so DOCKER_MCP_SERVER_DISABLE also hides the docs for
 # a disabled feature area (e.g. disabling `scout` hides the `scout` / `scout-cli` sections). Sections
-# with no entry here — general references like `index`, `client`, `dockerfile`, `engine-security` — are
+# with no entry here - general references like `index`, `client`, `dockerfile`, `engine-security` - are
 # always available. Registered with the server so tool_catalog() can report the hidden sections.
 _SECTION_DOMAINS: dict[str, str] = {
     "containers": "containers",
@@ -148,7 +148,7 @@ def list_docs_sections() -> str:
     """
     all_sections: list[str] = [*SDK_SECTIONS, *EXTERNAL_SECTIONS.keys()]
     # Hide sections whose domain is disabled via DOCKER_MCP_SERVER_DISABLE, mirroring how disabled tools and
-    # prompts drop out — the agent isn't pointed at docs for a feature area this server doesn't expose.
+    # prompts drop out - the agent isn't pointed at docs for a feature area this server doesn't expose.
     section_names = [s for s in all_sections if _section_enabled(s)]
     disabled_sections = [s for s in all_sections if not _section_enabled(s)]
     section_urls: dict[str, str] = {
@@ -183,7 +183,7 @@ def get_tool_catalog() -> str:
 
     Read this to see the blast radius of a tool before calling it (READ_ONLY / MUTATING /
     DESTRUCTIVE) and to confirm which whole domains the operator disabled via DOCKER_MCP_SERVER_DISABLE
-    (or the read-only switches) — a tool absent from the live tool list but present here as
+    (or the read-only switches) - a tool absent from the live tool list but present here as
     `registered: false` was filtered out by configuration, not missing by mistake.
 
     returns: str - JSON with `switches`, per-domain counts, and a per-tool list
@@ -194,7 +194,7 @@ def get_tool_catalog() -> str:
 @mcp.resource("docker-mcp://hosts", mime_type="application/json")
 def get_hosts_resource() -> str:
     """
-    The Docker hosts configured via DOCKER_MCP_SERVER_HOSTS — the same data as the `host_list` tool:
+    The Docker hosts configured via DOCKER_MCP_SERVER_HOSTS - the same data as the `host_list` tool:
     each host's name, resolved daemon URL, read_only / non_destructive / tls flags, and which one is
     the default used when a tool's `host` argument is omitted. The resolved default is observable
     here but is not itself a selectable label.
@@ -252,7 +252,7 @@ def list_container_resources() -> str:
     Index every container with the resource URIs for reading its logs and live stats.
 
     Lists all containers (running and stopped). Each entry carries a `logs` URI (readable in any
-    state — useful for diagnosing why a container exited) and, for running containers only, a `stats`
+    state - useful for diagnosing why a container exited) and, for running containers only, a `stats`
     URI (a stopped container has no live cgroup to sample). Exited containers include their
     `exit_code` as a triage signal.
 
@@ -329,8 +329,8 @@ def get_host_container_stats_resource(host: str, id_or_name: str) -> str:
     return json.dumps(_read_stats_summary(id_or_name, host=host), indent=2)
 
 
-# Single-host keeps today's bare URIs (back-compat); multi-host uses empty-authority (`docker:///…`) for
-# the default host plus host-qualified (`docker://{host}/…`) variants, disambiguated by path-segment
+# Single-host keeps today's bare URIs (back-compat); multi-host uses empty-authority (`docker:///...`) for
+# the default host plus host-qualified (`docker://{host}/...`) variants, disambiguated by path-segment
 # count. The default index emits child URIs matching its own scheme (see `_child_uri`).
 if _hosts.is_multi():
     mcp.resource("docker:///containers", mime_type="application/json")(list_container_resources)
@@ -429,7 +429,7 @@ def get_service_tasks_resource(id_or_name: str) -> str:
     Read a computed task/rollout status summary for a swarm service.
 
     Returns running vs. desired task counts, any failing tasks (id, node, error), and the current
-    rolling-update state if one is in progress — the "is this service OK right now" signal, since a
+    rolling-update state if one is in progress - the "is this service OK right now" signal, since a
     service has no cgroup-style stats of its own.
 
     args: id_or_name - The service id or name (from the service index)
@@ -504,7 +504,7 @@ def list_node_resources() -> str:
     """
     Index every swarm node with its state, availability, role, and (for managers) reachability.
 
-    Index only — no per-node child resource. Watch this to notice a node flapping between
+    Index only - no per-node child resource. Watch this to notice a node flapping between
     ready/down, or an unexpected availability/role change, without re-querying `node_list`.
 
     returns: str - JSON object {"nodes": [{id, hostname, state, availability, role, manager_reachability}, ...]}

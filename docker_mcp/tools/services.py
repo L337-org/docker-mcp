@@ -30,7 +30,7 @@ def _read_service_task_summary(id_or_name: str, host: str | None = None) -> dict
 
     Reproduces what the `audit_swarm_health` prompt already does by hand: counts tasks whose
     *desired* state is "running" by their actual `Status.State`, compares the count against the
-    service's desired replica count (Replicated mode) or the total returned tasks (Global mode —
+    service's desired replica count (Replicated mode) or the total returned tasks (Global mode -
     one task per eligible node, no fixed target), and surfaces any failing tasks' id/node/error.
     Also includes `UpdateStatus.State` from the same service read, so this one summary doubles as
     a rollout-progress view.
@@ -41,7 +41,7 @@ def _read_service_task_summary(id_or_name: str, host: str | None = None) -> dict
     tasks = service.tasks(filters={"desired-state": "running"})
     running = sum(1 for t in tasks if (t.get("Status") or {}).get("State") == "running")
     # `Replicas` is optional in the daemon's own schema (no documented default), so a Replicated
-    # service could in principle omit it — fall back to the observed task count in that case too,
+    # service could in principle omit it - fall back to the observed task count in that case too,
     # the same fallback already used for every non-Replicated mode.
     desired = mode.get("Replicated", {}).get("Replicas") if "Replicated" in mode else None
     if desired is None:
@@ -319,7 +319,7 @@ def _service_wait_result(
     failed_tasks: list | None = None,
     update_state: str | None = None,
 ) -> dict:
-    """Build the unified service_wait result snapshot — the same shape for every `until` mode."""
+    """Build the unified service_wait result snapshot - the same shape for every `until` mode."""
     return {
         "service": id_or_name,
         "until": until,

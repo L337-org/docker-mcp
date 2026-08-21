@@ -709,11 +709,11 @@ def test_unknown_disabled_domain_is_a_no_op_end_to_end():
 
 def test_instructions_emit_a_line_only_for_present_domains():
     text = build_instructions(registered_domains={"containers", "images"})
-    assert "- containers —" in text
-    assert "- images —" in text
+    assert "- containers -" in text
+    assert "- images -" in text
     # A domain that didn't register must not be advertised — the whole point of building it dynamically.
-    assert "- swarm —" not in text
-    assert "- compose —" not in text
+    assert "- swarm -" not in text
+    assert "- compose -" not in text
 
 
 def test_instructions_drop_cli_and_swarm_caveats_when_those_domains_are_absent():
@@ -730,7 +730,7 @@ def test_instructions_drop_cli_and_swarm_caveats_when_those_domains_are_absent()
 
 def test_instructions_mention_the_remote_exec_fallback_only_for_domains_that_have_it():
     """
-    The fallback changes which host a call runs on — its credentials, its filesystem — so it belongs in
+    The fallback changes which host a call runs on - its credentials, its filesystem - so it belongs in
     the always-in-context router. `context` is the one CLI-backed domain without it (its tools manage
     *this* host's context registry), so a surface of only `context` must not advertise it.
     """
@@ -758,8 +758,8 @@ def _calls_function(source: str, name: str) -> bool:
     """
     Whether `source` contains a real call to `name`, by AST rather than substring.
 
-    A substring search would count a mention in a docstring or comment — and modules legitimately
-    document helpers they do not call — so the scan below looks for actual `Call` nodes, matching both
+    A substring search would count a mention in a docstring or comment - and modules legitimately
+    document helpers they do not call - so the scan below looks for actual `Call` nodes, matching both
     the bare `name(...)` and the `module.name(...)` attribute form.
 
     args:
@@ -812,7 +812,7 @@ def test_the_call_scan_distinguishes_calls_from_mentions(source, expected):
 
 def test_remote_exec_domains_match_the_modules_that_implement_the_fallback():
     """
-    `_REMOTE_EXEC_DOMAINS` drives what the router advertises, and it is hand-maintained — so a domain
+    `_REMOTE_EXEC_DOMAINS` drives what the router advertises, and it is hand-maintained - so a domain
     that wires the fallback without being added here would run remotely while the router still promised
     a hard failure. Derived from the modules that actually call `should_remote_exec`, so the tuple cannot
     drift from the code either way.
@@ -822,7 +822,7 @@ def test_remote_exec_domains_match_the_modules_that_implement_the_fallback():
     implementing = _tool_modules_calling("should_remote_exec")
     assert implementing == set(_REMOTE_EXEC_DOMAINS), (
         f"modules calling should_remote_exec: {sorted(implementing)}; "
-        f"_REMOTE_EXEC_DOMAINS: {sorted(_REMOTE_EXEC_DOMAINS)} — the router advertises the latter"
+        f"_REMOTE_EXEC_DOMAINS: {sorted(_REMOTE_EXEC_DOMAINS)} - the router advertises the latter"
     )
 
 
@@ -832,7 +832,7 @@ def test_instructions_default_to_the_live_registered_surface():
     text = build_instructions()
     present = {rec.domain for rec in _tool_registry.values() if rec.registered and rec.domain is not None}
     for domain in present:
-        assert f"- {domain} —" in text
+        assert f"- {domain} -" in text
 
 
 def _live_instructions(env_vars: list[str]) -> str:
@@ -850,8 +850,8 @@ def _live_instructions(env_vars: list[str]) -> str:
 
 
 def _router_domain_lines(instructions: str) -> set[str]:
-    """The domains listed in the router's 'Domains' block. Scoped to that block so the caveat bullets —
-    which also start with '- ' and contain an em-dash (e.g. the `*_to_file` line) — aren't mistaken for
+    """The domains listed in the router's 'Domains' block. Scoped to that block so the caveat bullets -
+    which also start with '- ' and contain an em-dash (e.g. the `*_to_file` line) - aren't mistaken for
     domain lines."""
     lines = instructions.splitlines()
     start = lines.index("Domains (and the words that find them):") + 1
@@ -859,7 +859,7 @@ def _router_domain_lines(instructions: str) -> set[str]:
     for line in lines[start:]:
         if not line.strip():
             break
-        domains.add(line[2:].split(" — ", 1)[0])
+        domains.add(line[2:].split(" - ", 1)[0])
     return domains
 
 
@@ -867,10 +867,10 @@ def test_live_instructions_exclude_a_disabled_domain_end_to_end():
     # finalize_instructions() runs at package import, so a disabled domain must be gone from the string
     # the client actually receives — not just from the registered tool set.
     text = _live_instructions(["DOCKER_MCP_SERVER_DISABLE=swarm,services,nodes,secrets,configs"])
-    assert "- swarm —" not in text
-    assert "- services —" not in text
+    assert "- swarm -" not in text
+    assert "- services -" not in text
     assert "Swarm-family tools require" not in text
-    assert "- containers —" in text  # untouched domains survive
+    assert "- containers -" in text  # untouched domains survive
 
 
 def test_router_domain_lines_track_registered_domains_under_every_switch():
