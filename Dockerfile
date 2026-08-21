@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 #
-# Container image for the docker-mcp-server MCP server — an *additional* distribution channel alongside the
+# Container image for the docker-mcp-server MCP server - an *additional* distribution channel alongside the
 # uvx-from-git install (which is unchanged). The only host prerequisite to run this image is Docker
 # itself; no Python or uv needed. See README "Run as a container".
 #
@@ -11,7 +11,7 @@
 #
 # The CLI-backed tool domains (Compose/Stack/Buildx/Scout/Context) shell out to the `docker` CLI and
 # its plugins. `no-scout` not only omits the scout plugin but also sets DOCKER_MCP_SERVER_DISABLE=scout
-# so the scout *tools* never register — the agent isn't offered tools whose plugin is absent. `lite` omits the
+# so the scout *tools* never register - the agent isn't offered tools whose plugin is absent. `lite` omits the
 # CLI entirely; its CLI-backed tools report the plugin as unavailable (has_plugin / require_plugin in
 # tools/_cli.py) rather than failing hard.
 
@@ -47,7 +47,7 @@ ARG INSTALL_CLI=1
 ARG INSTALL_SCOUT=1
 ARG DEBIAN_RELEASE=bookworm
 # Domains to drop from the tool surface at startup (DOCKER_MCP_SERVER_DISABLE). The `no-scout` variant
-# passes `scout` so its absent-plugin tools never register; empty for `full` (a no-op — see _parse_domains).
+# passes `scout` so its absent-plugin tools never register; empty for `full` (a no-op - see _parse_domains).
 ARG DISABLE_DOMAINS=""
 # Scout has no apt package and its upstream install.sh refuses to run in a minimal image (its
 # docker-presence probe fails and it exits 0, silently installing nothing), so we drop the release
