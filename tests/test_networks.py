@@ -34,7 +34,7 @@ def test_network_create():
 def test_network_create_does_not_forward_the_removed_check_duplicate_field():
     # The Engine dropped `CheckDuplicate` from NetworkCreateRequest at API v1.44 and now always
     # rejects a duplicate name, but docker-py still puts the key in the request body unconditionally.
-    # Forwarding it advertised an opt-out no current daemon honors, so the parameter is gone —
+    # Forwarding it advertised an opt-out no current daemon honors, so the parameter is gone -
     # guard both that we stop sending it and that the tool no longer accepts it.
     network = MagicMock()
     network.attrs = {"Id": "net1"}

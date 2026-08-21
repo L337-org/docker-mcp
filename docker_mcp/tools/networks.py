@@ -29,7 +29,7 @@ def network_create(
     Creating a network attaches nothing — connect containers afterwards with `network_connect` or
     at start via `container_run(network=...)`. Created networks are stamped with provenance labels
     (find them later via `network_list(managed_only=True)`). A duplicate `name` is always rejected,
-    so creating is not idempotent — check `network_list` first when the network may already exist.
+    so creating is not idempotent - check `network_list` first when the network may already exist.
 
     args:
         name - The name of the network

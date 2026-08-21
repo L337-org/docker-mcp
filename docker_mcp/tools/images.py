@@ -254,7 +254,7 @@ def image_search(term: str, limit: int | None = None, host: str | None = None) -
         term - Search keyword, e.g. "nginx" or "python"
         limit - Maximum number of results to return (Docker Hub default is 25)
     returns: list - Result dicts: {"name", "description", "star_count", "is_official",
-        "is_automated"} — `is_automated` is deprecated in the Engine API and is always false, so
+        "is_automated"} - `is_automated` is deprecated in the Engine API and is always false, so
         rank on `star_count`/`is_official` instead
     """
     return _get_client(host).images.search(term=term, limit=limit)
