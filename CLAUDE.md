@@ -302,8 +302,8 @@ All publishing runs through one workflow on each **published GitHub Release** (n
   asserts it against what `list_tools()` actually advertises, so a violating tool fails CI. Scope is tool
   descriptions only — comments, tests and workflow files still hold em dashes, none of them ship, and
   sweeping those is a separate decision.
-- **This file and `.github/copilot-instructions.md` are exempt** — working instructions that never ship —
-  which is why they still use em dashes freely.
+- **`CLAUDE.md` and `.github/copilot-instructions.md` are both exempt** — working instructions that never
+  ship — which is why they still use em dashes freely.
 
 ## Provenance labels
 
