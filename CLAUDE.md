@@ -291,6 +291,19 @@ All publishing runs through one workflow on each **published GitHub Release** (n
   that one call `# pyright: ignore[reportArgumentType]` with a reason, rather than being softened to
   a legal one.
 - Line length limit: 120 characters (enforced by ruff and flake8).
+- **Prose that ships is British English in plain ASCII punctuation.** A tool docstring ships: the server
+  advertises it verbatim as the tool's `description`, and that is what a model reads when choosing between
+  164 tools. So do the README, the agent skill, prompts and resources, code comments, commit messages and
+  PR descriptions — the test is whether it ships, not who reads it. **Never `—` or `–`**: use `-`, or `:`
+  where what follows explains what came before. Likewise `...` not `…`, `x` not `×`, straight quotes, and
+  `10-15%` for ranges. A non-ASCII character survives only as a symbol carrying meaning (`≥`, or `→` inside
+  a table), never as punctuation.
+- **Enforced, not remembered.** `tests/test_docs.py::test_advertised_tool_descriptions_use_plain_ascii_punctuation`
+  asserts it against what `list_tools()` actually advertises, so a violating tool fails CI. Scope is tool
+  descriptions only — comments, tests and workflow files still hold em dashes, none of them ship, and
+  sweeping those is a separate decision.
+- **This file and `.github/copilot-instructions.md` are exempt** — working instructions that never ship —
+  which is why they still use em dashes freely.
 
 ## Provenance labels
 
