@@ -1,3 +1,4 @@
+import inspect
 from unittest.mock import MagicMock, patch
 
 from docker_mcp.tools.networks import (
@@ -28,6 +29,20 @@ def test_network_create():
     # caller label preserved alongside the provenance stamp (on by default)
     assert kwargs["labels"]["a"] == "b"
     assert kwargs["labels"]["docker-mcp-server.managed"] == "true"
+
+
+def test_network_create_does_not_forward_the_removed_check_duplicate_field():
+    # The Engine dropped `CheckDuplicate` from NetworkCreateRequest at API v1.44 and now always
+    # rejects a duplicate name, but docker-py still puts the key in the request body unconditionally.
+    # Forwarding it advertised an opt-out no current daemon honors, so the parameter is gone —
+    # guard both that we stop sending it and that the tool no longer accepts it.
+    network = MagicMock()
+    network.attrs = {"Id": "net1"}
+    with _patch() as mock_client:
+        mock_client.return_value.networks.create.return_value = network
+        network_create("mynet")
+    assert "check_duplicate" not in mock_client.return_value.networks.create.call_args.kwargs
+    assert "check_duplicate" not in inspect.signature(network_create).parameters
 
 
 def test_network_inspect():

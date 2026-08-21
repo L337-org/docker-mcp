@@ -14,7 +14,6 @@ def network_create(
     driver: str | None = None,
     options: dict | None = None,
     ipam: dict | None = None,
-    check_duplicate: bool | None = None,
     internal: bool = False,
     labels: dict | None = None,
     enable_ipv6: bool = False,
@@ -29,14 +28,14 @@ def network_create(
     The daemon default driver is `bridge` (single-host); use `overlay` for swarm-wide networks.
     Creating a network attaches nothing — connect containers afterwards with `network_connect` or
     at start via `container_run(network=...)`. Created networks are stamped with provenance labels
-    (find them later via `network_list(managed_only=True)`).
+    (find them later via `network_list(managed_only=True)`). A duplicate `name` is always rejected,
+    so creating is not idempotent — check `network_list` first when the network may already exist.
 
     args:
         name - The name of the network
         driver - Driver name (daemon default `bridge`; `overlay` for swarm scope)
         options - Driver-specific options dict
         ipam - IPAM configuration as a dict (engine shape: {"Driver", "Config": [{"Subnet", "Gateway", ...}]})
-        check_duplicate - Reject creation if a duplicate name exists (deprecated: recent daemons always check)
         internal - Restrict external access
         labels - Labels to set on the network
         enable_ipv6 - Enable IPv6 networking
@@ -45,6 +44,11 @@ def network_create(
         ingress - Make this an ingress network for swarm routing-mesh
     returns: dict - The created network's attrs (Id, Name, Driver, Scope, IPAM)
     """
+    # No `check_duplicate`: the Engine removed `CheckDuplicate` from NetworkCreateRequest at API
+    # v1.44 and now rejects a duplicate name unconditionally (moby's postNetworkCreate errors on a
+    # name hit before reaching the backend), so the field is dropped on unmarshal by every current
+    # daemon. docker-py still puts it in the request body unconditionally, so passing it through
+    # advertised an opt-out that no daemon honors. Do not re-add it.
     kwargs: dict = {
         "internal": internal,
         "enable_ipv6": enable_ipv6,
@@ -52,7 +56,6 @@ def network_create(
             driver=driver,
             options=options,
             ipam=ipam,
-            check_duplicate=check_duplicate,
             labels=with_provenance(labels, "network_create"),
             attachable=attachable,
             scope=scope,
