@@ -2,7 +2,7 @@
 #
 # `docker stack` deploys a Compose file to a swarm as a set of services. It is part of the core
 # docker CLI (not a plugin like Compose v2), so unlike compose.py there is no `require_plugin`
-# probe — but every subcommand requires the target daemon to be a swarm manager and will fail
+# probe - but every subcommand requires the target daemon to be a swarm manager and will fail
 # otherwise. These tools shell out via the cross-platform helper in `tools/_cli.py`.
 #
 # Error convention (see CLAUDE.md): action tools (`stack_deploy`, `stack_remove`) return the raw
@@ -58,7 +58,7 @@ def _run_stack(
     stage_cwd: bool = False,
 ) -> CliResult:
     """
-    Run `docker stack <args...>`, locally or — with no local `docker` binary — on the ssh:// host.
+    Run `docker stack <args...>`, locally or - with no local `docker` binary - on the ssh:// host.
 
     `stage_cwd` is explicit rather than inferred from `cwd`, because the two questions differ: only
     `stack_deploy` reads local files, and it needs the *server's* working directory staged when `cwd`
@@ -84,7 +84,7 @@ def _run_stack(
                 # Scanning the whole argv is safe *here*, unlike compose's `-f` (see
                 # `compose._global_file_values`, where an appended container command can contain one):
                 # `stack deploy` appends no user-supplied argv, and its only caller-controlled tokens
-                # are the stack name — which `safe_positional` refuses if it starts with '-' — and
+                # are the stack name - which `safe_positional` refuses if it starts with '-' - and
                 # `--filter key=value` pairs, which always contain '='. Nothing but a real flag can
                 # equal "-c".
                 path_values=flag_values(args, "-c"),

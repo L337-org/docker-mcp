@@ -8,7 +8,7 @@ This skill fetches and cross-references the Docker SDK for Python documentation 
 
 When invoked (with or without a specific topic argument), do the following steps IN ORDER. Do not skip steps.
 
-### Step 1 — Fetch the SDK documentation
+### Step 1 - Fetch the SDK documentation
 
 Fetch the top-level API reference to get the list of available modules:
 - https://docker-py.readthedocs.io/en/stable/index.html
@@ -26,7 +26,7 @@ Fetch the top-level API reference to get the list of available modules:
 
 If the user passed an argument (e.g., `/docker-sdk containers`), only fetch the page(s) relevant to that topic.
 
-### Step 2 — Inventory what this MCP server currently exposes
+### Step 2 - Inventory what this MCP server currently exposes
 
 The project structure maps SDK domains to tool files one-to-one:
 
@@ -48,7 +48,7 @@ The project structure maps SDK domains to tool files one-to-one:
 
 Read each `docker_mcp/tools/*.py` file and list every `@mcp.tool` decorated function and the `docker` module methods it calls.
 
-### Step 3 — Produce a gap analysis
+### Step 3 - Produce a gap analysis
 
 Compare the SDK surface area from Step 1 against the MCP tool inventory from Step 2 and output a structured report:
 
@@ -60,7 +60,7 @@ Compare the SDK surface area from Step 1 against the MCP tool inventory from Ste
 ...
 
 ### Not Yet Exposed (SDK features missing from MCP server)
-- <`docker` module method>() — <one-line description> → should go in docker_mcp/tools/<file>.py
+- <`docker` module method>() - <one-line description> → should go in docker_mcp/tools/<file>.py
 ...
 
 ### Verification Notes
@@ -68,7 +68,7 @@ For any specific functions the user asked about: confirmed they exist (or do not
 in the live documentation, with the exact signature.
 ```
 
-### Step 4 — Guard against hallucination
+### Step 4 - Guard against hallucination
 
 Before any code you write in this session uses a `docker` module method:
 - Confirm the exact method name, parameter names, and return type from the fetched docs
@@ -77,14 +77,14 @@ Before any code you write in this session uses a `docker` module method:
 
 ## Structural rules (enforce these when writing code)
 
-- All `@mcp.tool` functions import `mcp` from `server.py` — never import directly from `mcp`
+- All `@mcp.tool` functions import `mcp` from `server.py` - never import directly from `mcp`
 - New functionality goes in the existing `docker_mcp/tools/<domain>.py` file that matches the SDK domain
 - If a new `docker_mcp/tools/<file>.py` is ever created, it must be added to `docker_mcp/tools/__init__.py` and have a matching `tests/test_<file>.py`
 
 ## Usage examples
 
 ```
-/docker-sdk                  # Full gap analysis — all SDK pages
+/docker-sdk                  # Full gap analysis - all SDK pages
 /docker-sdk containers       # Only fetch containers docs, verify container methods
 /docker-sdk volumes networks # Only fetch volumes + networks docs
 ```

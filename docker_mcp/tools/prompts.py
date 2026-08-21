@@ -7,7 +7,7 @@ from docker_mcp.server import prompt
 def _host_targeting_note() -> str:
     """A trailing block (multi-host only) correcting the resource URIs and explaining host targeting.
 
-    The prompt bodies use the single-host `docker://containers` / `docker-…://{name}` forms, which are
+    The prompt bodies use the single-host `docker://containers` / `docker-...://{name}` forms, which are
     NOT registered in multi-host mode (the index becomes empty-authority/host-qualified), so this note
     redirects the agent to the right forms and to the URIs the index already carries per entry.
     """
@@ -113,7 +113,7 @@ def monitor_container_fleet(top: int = 5) -> str:
     Generate a read-only monitoring sweep across all containers, ranked by resource pressure.
 
     Unlike `troubleshoot_container` (which needs a named target), this starts from the whole fleet and
-    surfaces what is unhealthy or under load — the entry point when you don't yet know what's wrong.
+    surfaces what is unhealthy or under load - the entry point when you don't yet know what's wrong.
     It leans on the observability resources: `docker://containers` to enumerate, then `docker-stats://`
     and `docker-logs://` per container.
 
@@ -258,7 +258,7 @@ def prune_managed(include_volumes: bool = False) -> str:
     Scopes every step to the `docker-mcp-server.managed=true` label, so nothing the agent (or anyone
     else) created outside this server is touched.
 
-    args: include_volumes - Also remove managed volumes (data loss — defaults to False)
+    args: include_volumes - Also remove managed volumes (data loss - defaults to False)
     returns: str - A prompt instructing the agent to inventory and remove only managed resources
     """
     base = (
@@ -588,7 +588,7 @@ def inspect_multiarch_manifest(image: str) -> str:
     """
     Generate a plan for inspecting an image's manifest list.
 
-    Use this when reaching for `docker manifest inspect` — that command is in maintenance mode
+    Use this when reaching for `docker manifest inspect` - that command is in maintenance mode
     and lacks support for OCI image indexes and attestations. `buildx_imagetools_inspect` is
     the path forward.
 
@@ -616,7 +616,7 @@ def create_multiarch_manifest(target_tag: str, source_tags: str) -> str:
     """
     Generate a plan for stitching per-platform tags into a manifest list.
 
-    Use this when reaching for `docker manifest create` + `docker manifest push` —
+    Use this when reaching for `docker manifest create` + `docker manifest push` -
     `buildx_imagetools_create` does both in one step and handles OCI image indexes.
 
     args: target_tag - The new combined tag, e.g. "org/app:v1"

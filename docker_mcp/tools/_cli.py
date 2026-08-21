@@ -36,7 +36,7 @@ MAX_CLI_OUTPUT_BYTES = 4_194_304  # 4 MiB
 # allow-list is dropped so the subprocess gets a minimal, predictable environment.
 # SSH_* keys are kept for the best-effort fallback case where the CLI dials an ssh:// daemon
 # through a *context* rather than DOCKER_HOST directly (run_docker only rewrites DOCKER_HOST
-# itself to the local proxy below) — that path still shells out to the system ssh client.
+# itself to the local proxy below) - that path still shells out to the system ssh client.
 _BASE_ENV_KEYS = (
     "PATH",
     "HOME",
@@ -131,7 +131,7 @@ def _apply_host_env(env: dict[str, str], host: str | None) -> None:
     Inert for the legacy single host (DOCKER_MCP_SERVER_HOSTS unset), which keeps inheriting the ambient
     DOCKER_HOST / DOCKER_CONTEXT exactly as before. For an explicitly-configured host we pin DOCKER_HOST
     to its resolved URL (so the CLI and the docker-py SDK provably target the same daemon for a label),
-    drop DOCKER_CONTEXT, and apply the per-host cert dir — else fall through to the global
+    drop DOCKER_CONTEXT, and apply the per-host cert dir - else fall through to the global
     DOCKER_CERT_PATH/DOCKER_TLS_VERIFY, else plaintext. The ssh:// proxy rewrite below keys off the
     resulting DOCKER_HOST, so an ssh:// host is handled there.
     """
@@ -194,7 +194,7 @@ def run_docker(
     creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0
     with contextlib.ExitStack() as stack:
         if is_ssh_url(env.get("DOCKER_HOST")):
-            # Bound the paramiko connect/banner/auth phases to this call's own timeout — they run
+            # Bound the paramiko connect/banner/auth phases to this call's own timeout - they run
             # before subprocess.run(timeout=timeout) below, so without this an unreachable or
             # filtered ssh:// host could hang here indefinitely regardless of the caller's timeout.
             proxy = stack.enter_context(ssh_proxy_for_docker_host(env["DOCKER_HOST"], timeout=timeout))
@@ -204,7 +204,7 @@ def run_docker(
             # handshake against this plaintext loopback proxy, breaking every CLI call.
             env.pop("DOCKER_TLS_VERIFY", None)
             env.pop("DOCKER_CERT_PATH", None)
-        proc = subprocess.run(  # noqa: S603 — shell=False, argv is a list, binary is resolved via shutil.which
+        proc = subprocess.run(  # noqa: S603 - shell=False, argv is a list, binary is resolved via shutil.which
             cmd,
             shell=False,
             capture_output=True,
@@ -225,7 +225,7 @@ def run_docker(
     )
 
 
-# Errors that mean "we couldn't even probe the plugin" — never let them propagate
+# Errors that mean "we couldn't even probe the plugin" - never let them propagate
 # out of `has_plugin`. Assigning the tuple to a module-level constant also dodges
 # the PEP 758 parenthesis-free `except` form that older parsers (and PR review bots)
 # flag as a syntax error.
@@ -270,7 +270,7 @@ def require_plugin(name: str) -> None:
     Every caller reaches this only after `should_remote_exec` has already returned False for the
     target host, which means that host is not reached over ssh:// (an ssh:// host with no local
     plugin runs the call there instead of raising here). So alongside installing the plugin, pointing
-    this host at an ssh:// endpoint that already has it is always a live alternative — named in the
+    this host at an ssh:// endpoint that already has it is always a live alternative - named in the
     message for the three plugins that share this helper (compose, buildx, scout), all of which
     support that fallback.
     """
@@ -289,7 +289,7 @@ def require_plugin(name: str) -> None:
 # CLI-backed tools need a local `docker` binary; the docker-py-backed ones need nothing but the
 # daemon. So on a machine with SSH access to a real Docker host but no local Docker install, every
 # CLI-backed tool fails at `_resolve("docker")` above before any host logic runs. When the target
-# host is reached over ssh://, the command can instead run *on that host* — which, being a Docker
+# host is reached over ssh://, the command can instead run *on that host* - which, being a Docker
 # host, plausibly has the CLI and its plugins already.
 #
 # This is a pure fallback. With a usable local CLI nothing below is reached and behavior is
@@ -302,19 +302,19 @@ def should_remote_exec(host: str | None, *, plugin: str | None = None) -> bool:
     Whether a CLI call against `host` has to run on the remote host instead of locally.
 
     True only when the target is an ssh:// host *and* nothing local can serve the call, so a machine
-    with a working CLI keeps using it — the credentials, filesystem, and buildx state a call sees
+    with a working CLI keeps using it - the credentials, filesystem, and buildx state a call sees
     change only when there is no alternative. For a non-ssh host this returns False and the caller's
     existing `_resolve`/`require_plugin` errors stand, which is the honest outcome: we have no way to
     reach a unix://, tcp:// or npipe:// daemon's host to run anything on it.
 
-    A CLI-backed tool module calls this in exactly one place — its shared `_run_*` wrapper — rather
+    A CLI-backed tool module calls this in exactly one place - its shared `_run_*` wrapper - rather
     than probing per tool, so the decision, and the conditions under which behavior changes at all,
     live here.
 
     args:
         host - configured host label, or None for the default host
         plugin - the CLI plugin the call needs ("compose"/"buildx"/"scout"), or None for a core-CLI
-                 subcommand such as `docker stack …` (probes only the `docker` binary itself)
+                 subcommand such as `docker stack ...` (probes only the `docker` binary itself)
     returns: bool - True if the caller should route through `remote_exec_cli` instead of `run_docker`
     """
     if not _resolve_host(host).is_ssh:
@@ -335,8 +335,8 @@ def remote_exec_cli(
     """
     Run `docker <args...>` on the target ssh:// host, in `run_docker`'s own result shape.
 
-    A drop-in for `run_docker` on the calls `should_remote_exec` selects — same `CliResult`, same
-    `truncated` flag, same `subprocess.TimeoutExpired` on a timeout — so each tool keeps its existing
+    A drop-in for `run_docker` on the calls `should_remote_exec` selects - same `CliResult`, same
+    `truncated` flag, same `subprocess.TimeoutExpired` on a timeout - so each tool keeps its existing
     error convention (raw dict vs `raise_on_cli_failure`) with no remote-specific branch. Call it only
     behind `should_remote_exec`; it raises rather than falling back for a non-ssh host.
 
@@ -380,21 +380,21 @@ def remote_stage_and_exec(
     """
     Copy a working directory to the target ssh:// host, run `docker <args...>` in it, and clean up.
 
-    The counterpart to `remote_exec_cli` for a command that reads local files — Compose files, a bake
+    The counterpart to `remote_exec_cli` for a command that reads local files - Compose files, a bake
     file, a stack's `-c` files. Same `CliResult` contract, so a tool's error convention needs no remote
     branch, and the staged copy lives exactly as long as the command.
 
     **`cwd=None` means the server's own working directory, not "stage nothing".** That matches the
     local path, where `cwd=None` reaches `subprocess.run` as the server's cwd. Resolving it to nothing
     would leave the command running in the SSH login home directory, so `compose_up(files=[...])` would
-    quietly act on whatever project happened to live there — worse than any error.
+    quietly act on whatever project happened to live there - worse than any error.
 
     Tokens in `args` that name local paths (declared by `path_values`) are reconciled with the staged
     copy: a relative one already resolves against it and is left alone; an absolute one pointing inside
     it is rewritten relative, so it resolves remotely instead of naming a local path that does not
     exist there; one pointing outside it is staged separately and rewritten to the staged path. A path
     outside the tree that itself references relative paths (an override Compose file with its own
-    `build:` context, say) will not find them — the remote CLI reports that, since nothing can follow
+    `build:` context, say) will not find them - the remote CLI reports that, since nothing can follow
     those references without parsing the file.
 
     args:
@@ -424,15 +424,15 @@ def remote_stage_and_exec(
     _reject_unforwardable(stdin, extra_env)
     url = _ssh_url_for(host, args)
     if cwd is not None:
-        # Verbatim, deliberately: `subprocess.run(cwd=...)` does not expand `~` (verified — it raises
+        # Verbatim, deliberately: `subprocess.run(cwd=...)` does not expand `~` (verified - it raises
         # FileNotFoundError for '~/proj'), and the compose/stack docstrings promise paths are used as
         # given with no shell expansion. Expanding here would make the same call succeed remotely and
         # fail locally, which is the one divergence this whole backend exists to avoid.
         local_cwd = Path(cwd)
     elif not stage_cwd and all(not value or Path(value).is_absolute() for value in path_values):
         # Nothing is being copied from a working directory and every path named is already absolute, so
-        # this server's own directory plays no part — don't consult it, since a tool in this mode
-        # (`buildx_create --config /etc/…`) may not even expose a `cwd` for the caller to supply. The
+        # this server's own directory plays no part - don't consult it, since a tool in this mode
+        # (`buildx_create --config /etc/...`) may not even expose a `cwd` for the caller to supply. The
         # value is never read: `_reconcile_path_tokens` only resolves *relative* values against it.
         local_cwd = Path("/")
     else:
@@ -441,7 +441,7 @@ def remote_stage_and_exec(
         except OSError as exc:
             # `Path.cwd()` raises a bare "No such file or directory" if the server's own working
             # directory has been deleted underneath it, which says nothing about what to do. The local
-            # backend tolerates that (a process keeps its deleted cwd), so name the difference — and the
+            # backend tolerates that (a process keeps its deleted cwd), so name the difference - and the
             # remedy differs by mode, since a tool in the no-staging mode may have no `cwd` parameter.
             remedy = (
                 "that is what would be copied over. Pass one explicitly."
@@ -453,7 +453,7 @@ def remote_stage_and_exec(
                 f"directory is unavailable ({exc}), and with no explicit working directory {remedy}"
             ) from exc
     if stage_cwd and not local_cwd.is_dir():
-        # Two different mistakes reach here — a missing path and a file passed where a directory belongs —
+        # Two different mistakes reach here - a missing path and a file passed where a directory belongs -
         # and saying which one it is saves the caller a round trip. Only checked when the directory is
         # actually being copied: with `stage_cwd=False` it is just the base for relative path values, and
         # a missing one simply leaves them unresolved for the remote CLI to report.
@@ -463,11 +463,11 @@ def remote_stage_and_exec(
             f"working directory on this host ({detail}), and it is what would be copied over."
         )
     if not stage_cwd and not any(_local_target(value, base=local_cwd) for value in path_values):
-        # Nothing will be copied, so do not open SFTP for this call — and therefore do not apply the
+        # Nothing will be copied, so do not open SFTP for this call - and therefore do not apply the
         # staging-only filesystem guard. A host whose exec channel works while its SFTP subsystem does
         # not (a Windows sshd shelling into `wsl.exe`) has to keep serving calls that stage nothing;
         # scoping that guard to staging is pointless if merely *maybe* staging trips it. Reached when a
-        # declared path names something only the remote has, e.g. `buildx_create --config /etc/…`.
+        # declared path names something only the remote has, e.g. `buildx_create --config /etc/...`.
         return remote_exec_cli(host, args, timeout=timeout)
     with remote_staging_session(url, timeout=timeout) as session:
         staged_tree = session.stage_tree(local_cwd) if stage_cwd else None
@@ -487,9 +487,9 @@ def remote_cli_session(host: str | None, *, timeout: float) -> Iterator[RemoteSt
     Open a staging session for a tool whose inputs need bespoke handling, and run it yourself.
 
     `remote_stage_and_exec` covers the common shape: a working directory plus whole-token path
-    arguments. `buildx_build` fits neither half of that — its context needs `.dockerignore`-aware
+    arguments. `buildx_build` fits neither half of that - its context needs `.dockerignore`-aware
     tarring, and its `--build-context` / `--secret` values are composite `key=value` tokens whose path
-    lives inside them — so it drives a session directly and calls `run_in_session` when the rewriting
+    lives inside them - so it drives a session directly and calls `run_in_session` when the rewriting
     is done. Reach for this only when the generic backend genuinely cannot express the staging.
 
     args:
@@ -645,10 +645,10 @@ def _reconcile_path_tokens(
     A value naming nothing that exists locally is left alone in every one of those cases, including the
     in-tree one. There is nothing to reconcile it with, and rewriting it would make the remote CLI
     complain about `missing.yml` where the local backend would have named the absolute path the caller
-    actually passed — a worse error for no gain.
+    actually passed - a worse error for no gain.
 
     Replacement is by whole token, so a value coinciding with an unrelated argument (a service named
-    exactly like an out-of-tree file path) would be rewritten too — accepted, being both unlikely and
+    exactly like an out-of-tree file path) would be rewritten too - accepted, being both unlikely and
     visible in the resulting command.
 
     args:
@@ -741,8 +741,8 @@ def filter_args(filters: dict | None) -> list[str]:
     Translate an SDK-shaped filters dict into repeated `--filter key=value` CLI arguments.
 
     Lets CLI-backed tools accept the same `filters` shape as the docker-py-backed tools (one
-    `filters` contract across the surface). A list value emits one `--filter` per element —
-    docker-py's own convention for repeated filters (`{"label": ["a=1", "b=2"]}`) — and a bool
+    `filters` contract across the surface). A list value emits one `--filter` per element -
+    docker-py's own convention for repeated filters (`{"label": ["a=1", "b=2"]}`) - and a bool
     lowercases to the CLI's `true`/`false`.
     """
     args: list[str] = []

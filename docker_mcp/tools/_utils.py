@@ -13,7 +13,7 @@ from docker_mcp._env import env_flag, read_env  # noqa: F401
 
 # Default cap (32 MiB) for tools that buffer a daemon-side byte stream *in band* and return it
 # through the MCP protocol (where it is base64-encoded into the agent's context). Anything larger
-# is impractical in band — use the `*_to_file` / `*_from_file` tool variants, which stream to/from
+# is impractical in band - use the `*_to_file` / `*_from_file` tool variants, which stream to/from
 # a host path instead. The cap is per-call and overridable via each tool's `max_bytes` argument.
 MAX_PAYLOAD_BYTES = 33_554_432
 
@@ -25,7 +25,7 @@ IN_CONTAINER_ENV = "DOCKER_MCP_SERVER_IN_CONTAINER"
 # /proc/self/mountinfo fstypes that never represent a host bind mount: the container's own overlay
 # root and the assorted pseudo / in-memory filesystems. A path whose nearest mount is one of these
 # is NOT backed by the host, so a write there is lost when the container exits. Real bind mounts
-# (ext4, xfs, virtiofs, fuse.grpcfuse on Docker Desktop, …) fall outside this set.
+# (ext4, xfs, virtiofs, fuse.grpcfuse on Docker Desktop, ...) fall outside this set.
 _PSEUDO_FSTYPES = frozenset(
     {
         "overlay",
@@ -61,12 +61,12 @@ def package_version() -> str:
 
     The single version resolver for every externally-visible surface (User-Agent strings, provenance
     labels), so they always agree. Called at import time to build module-level User-Agent constants,
-    so it must never raise — any metadata-lookup failure (not just a missing package) falls back to
+    so it must never raise - any metadata-lookup failure (not just a missing package) falls back to
     'unknown' rather than crashing the importing module. Cached: the metadata lookup is done once.
     """
     try:
         return _pkg_version("docker-mcp-server")
-    except Exception:  # noqa: BLE001 — import-time helper must never raise; any failure -> safe fallback
+    except Exception:  # noqa: BLE001 - import-time helper must never raise; any failure -> safe fallback
         return "unknown"
 
 
@@ -189,7 +189,7 @@ def classify_host_kernel() -> str:
     Best-effort host-OS classification from the shared kernel string (containers share the host
     kernel), used to tailor socket-mount hints when the daemon is unreachable.
 
-    Returns 'wsl2' (Windows/WSL2), 'docker-desktop' (LinuxKit VM — usually macOS), 'linux' (a native
+    Returns 'wsl2' (Windows/WSL2), 'docker-desktop' (LinuxKit VM - usually macOS), 'linux' (a native
     Linux daemon), or 'unknown' when os.uname() is unavailable (non-POSIX).
     """
     try:
@@ -215,7 +215,7 @@ def close_stream_quietly(stream: Any) -> None:
     private socket internals, so beyond the expected `OSError` (already-shut-down socket) it can
     raise `AttributeError` on transports whose internals differ, and it *always* raises
     `DockerException` for an `ssh://` daemon (SSH streams aren't cancellable). This helper runs in a
-    watchdog-timer thread and in tool `finally` blocks, so none of those may escape — mirrors
+    watchdog-timer thread and in tool `finally` blocks, so none of those may escape - mirrors
     `client.py:_close_client_quietly`.
     """
     close = getattr(stream, "close", None)
@@ -223,7 +223,7 @@ def close_stream_quietly(stream: Any) -> None:
         return
     try:
         close()
-    except Exception:  # noqa: S110, BLE001 — best-effort close; see docstring for why it's broad
+    except Exception:  # noqa: S110, BLE001 - best-effort close; see docstring for why it's broad
         pass
 
 

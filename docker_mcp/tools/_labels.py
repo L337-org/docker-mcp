@@ -49,9 +49,9 @@ def with_provenance(labels: dict | list | None, created_by: str) -> dict[str, st
     """
     Merge caller-supplied labels with the provenance set.
 
-    Accepts the shapes the Docker SDK accepts for `labels` — a dict, a list of bare names (treated
+    Accepts the shapes the Docker SDK accepts for `labels` - a dict, a list of bare names (treated
     as empty values), or None. A caller dict wins on any key collision (the caller's value
-    overrides ours). A caller *list* only contributes names that aren't already provenance keys —
+    overrides ours). A caller *list* only contributes names that aren't already provenance keys -
     a bare name carries no value, so it can't meaningfully override a provenance label and the
     provenance value is kept. Returns a merged dict, or None when there is nothing to apply
     (stamping disabled *and* no caller labels) so the call site can `drop_none` it back out and

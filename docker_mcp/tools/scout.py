@@ -7,7 +7,7 @@
 #
 # Scout is the first consumer of the remote-exec fallback in `_cli.py`: when the target host is
 # reached over ssh:// and this machine has no scout plugin (or no `docker` binary at all), the
-# subcommand runs on that host instead of failing. Scout is the simplest shape for it — every
+# subcommand runs on that host instead of failing. Scout is the simplest shape for it - every
 # subcommand takes image references and reads nothing from the local filesystem, so there is nothing
 # to stage; the one exception (`scout_compare`'s `to`, which may name a local directory or archive)
 # is refused rather than resolved against the remote filesystem. Consequence to keep in mind: Hub
@@ -65,7 +65,7 @@ def _run_scout(
     local_path_args: dict[str, str | None] | None = None,
 ) -> CliResult:
     """
-    Run `docker scout <args...>`, locally or — with no usable local plugin — on the ssh:// host itself.
+    Run `docker scout <args...>`, locally or - with no usable local plugin - on the ssh:// host itself.
 
     args:
         args - the scout subcommand argv, without the leading `scout`
@@ -85,7 +85,7 @@ def _run_scout(
 # Scout format values that emit JSON, across every subcommand that takes `--format`. Scout names
 # these after the *schema* rather than the encoding ("sarif", "spdx", "cyclonedx", "gitlab", "sbom"
 # are all JSON documents), so keying the parse on the literal string "json" only ever worked for
-# `compare` and `sbom` — and silently returned unparsed text for the rest.
+# `compare` and `sbom` - and silently returned unparsed text for the rest.
 _JSON_FORMATS = frozenset({"json", "sarif", "spdx", "gitlab", "sbom", "cyclonedx"})
 
 

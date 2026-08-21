@@ -1,6 +1,6 @@
 # library of mcp tools for managing docker CLI contexts.
 #
-# Docker contexts are a CLI-only feature — the Docker Engine HTTP API (and
+# Docker contexts are a CLI-only feature - the Docker Engine HTTP API (and
 # therefore docker-py) is agnostic to which daemon a CLI invocation targets.
 # These tools wrap `docker context ...` via the cross-platform CLI helper.
 
@@ -88,7 +88,7 @@ def context_create(
     returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
     """
     # Every interpolated value is comma-checked: the `--docker` spec separates keys by comma, so a
-    # comma in any of these would append a key the caller never passed — `skip-tls-verify=true`
+    # comma in any of these would append a key the caller never passed - `skip-tls-verify=true`
     # being the one that matters, since it would silently contradict `skip_tls_verify=False`.
     docker_spec_parts = [f"host={safe_spec_value(docker_host, 'docker_host')}"]
     if tls_ca:

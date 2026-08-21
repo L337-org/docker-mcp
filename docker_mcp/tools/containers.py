@@ -585,7 +585,7 @@ def _read_stats_summary(id_or_name: str, host: str | None = None) -> dict:
     """
     Return a computed resource-usage summary for a running container.
 
-    Raises RuntimeError if the container isn't running — there is no live cgroup to sample on a
+    Raises RuntimeError if the container isn't running - there is no live cgroup to sample on a
     stopped container, so the `docker-stats://` resource surfaces a clean message instead of a raw
     daemon error.
     """
@@ -800,7 +800,7 @@ def _wait_result(
     status: str | None = None,
     matched_line: str | None = None,
 ) -> dict:
-    """Build the unified container_wait result snapshot — the same shape for every `until` mode."""
+    """Build the unified container_wait result snapshot - the same shape for every `until` mode."""
     return {
         "container": id_or_name,
         "until": until,
@@ -929,7 +929,7 @@ def container_wait(
         container.reload()
         status = (container.attrs.get("State", {}) or {}).get("Status")
         if status in ("exited", "dead"):
-            # Stopped without ever matching — no further logs will arrive, don't poll to the timeout.
+            # Stopped without ever matching - no further logs will arrive, don't poll to the timeout.
             return _wait_result(id_or_name, until, met=False, start=start, status=status)
         remaining = deadline - time.monotonic()
         if remaining <= 0:
