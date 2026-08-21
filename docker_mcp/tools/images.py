@@ -71,7 +71,7 @@ def image_build(
         target - Stop at this named build stage (multi-stage Dockerfiles)
         network_mode - Network mode for RUN instructions during build (e.g. "host", "none")
         squash - Squash all new layers into one (experimental; requires daemon flag)
-        extra_hosts - Additional /etc/hosts entries during build; dict of hostname to ip
+        extra_hosts - Additional /etc/hosts entries during build; dict of hostname to IP
         platform - Target platform, e.g. "linux/amd64" (single platform only; use buildx for multi)
         isolation - Isolation technology, passed to the daemon as given; platform-dependent, so not
                       validated here (Windows documents "default", "process", "hyperv")
