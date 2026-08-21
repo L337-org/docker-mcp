@@ -20,13 +20,13 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 dependencies = [
-    # [ssh] pulls paramiko so `ssh://` DOCKER_HOST works through the pure-Python transport — no
+    # [ssh] pulls paramiko so `ssh://` DOCKER_HOST works through the pure-Python transport - no
     # system `ssh` binary, so it works identically on the host and inside the container images.
     # Floor is 7.2.0 because system.py:_build_default_client passes `use_context=False` to
     # `docker.from_env()`, a kwarg 7.2.0 introduced: 7.2.0 also made from_env resolve the active
     # Docker CLI context itself, which would duplicate (and could contradict) the context resolution
     # _hosts.py already does and pins at startup. On 7.1.0 that kwarg is not popped and reaches
-    # kwargs_from_env as an unexpected argument, so this is a hard floor, not a preference —
+    # kwargs_from_env as an unexpected argument, so this is a hard floor, not a preference -
     # tests/test_pyproject_pins.py::test_the_declared_docker_floor_supports_the_kwarg_the_code_passes
     # fails the day an installed docker-py stops accepting it.
     "docker[ssh]>=7.2.0",
@@ -92,7 +92,7 @@ addopts = "-m 'not integration'"
 [dependency-groups]
 dev = [
     # Pulled in transitively by pytest, but tests/test_pyproject_pins.py parses PEP 508 requirement
-    # strings with it directly, so declare it — the same reasoning as `requests` above.
+    # strings with it directly, so declare it - the same reasoning as `requests` above.
     "packaging>=24.0",
     "pytest>=9.0.3",
     "pyright>=1.1.409",

@@ -1,7 +1,7 @@
 # Files excluded from the .mcpb bundle (uv-type: ships source + pyproject.toml, host resolves deps).
 # Keep: docker_mcp/, pyproject.toml, uv.lock, README.md, LICENSE, manifest.json, mcpb_run.py, assets/
 
-# A uv-type bundle must NOT carry a prebuilt env or vendored deps — the host resolves them.
+# A uv-type bundle must NOT carry a prebuilt env or vendored deps - the host resolves them.
 .venv/
 server/lib/
 server/venv/
@@ -10,7 +10,7 @@ server/venv/
 tests/
 scripts/
 # The agent skill is a separate artifact (its own release archives) and an *alternative* to this
-# server, not part of it — packing it here would ship ~140 KB of markdown the bundle never reads.
+# server, not part of it - packing it here would ship ~140 KB of markdown the bundle never reads.
 skills/
 .github/
 # Claude Code project config: the mirror-rule PostToolUse hook and the /docker-sdk command. Both are

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# build-mcpb.sh — pack a local Claude Desktop Extension (.mcpb) bundle for testing.
+# build-mcpb.sh - pack a local Claude Desktop Extension (.mcpb) bundle for testing.
 #
 # A developer convenience, NOT a CI tool. CI packs the official release bundle via the mcpb
 # job in .github/workflows/publish.yaml (which stamps the version from the release tag and
@@ -19,7 +19,7 @@
 #
 #   name   Optional output filename (a ".mcpb" extension is added if missing). Relative names
 #          land in dist/; an absolute or ./-prefixed path is used as-is. If omitted, defaults to
-#          dist/docker-mcp-server-<dev-version>.mcpb, falling back to -1, -2, … when that file
+#          dist/docker-mcp-server-<dev-version>.mcpb, falling back to -1, -2, ... when that file
 #          exists.
 #
 # Options:
@@ -105,11 +105,11 @@ pyproject="$repo_root/pyproject.toml"
 version="$(sed -n 's/^version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$pyproject" | head -n1)"
 [ -n "$version" ] || die "could not parse version from $pyproject"
 
-# Warn (don't fail) if manifest.json has drifted from pyproject — CI restamps it at release time,
+# Warn (don't fail) if manifest.json has drifted from pyproject - CI restamps it at release time,
 # so a local test bundle still packs fine, but a mismatch is worth surfacing. pyproject is the
 # source of truth (tests/test_pyproject_pins.py asserts the manifest matches it), so the dev stamp
 # below is derived from pyproject and overrides the drifted manifest value rather than inheriting
-# it — a local bundle should never carry a version the project does not claim.
+# it - a local bundle should never carry a version the project does not claim.
 manifest="$repo_root/manifest.json"
 if [ -f "$manifest" ]; then
 	manifest_version="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$manifest" | head -n1)"
@@ -199,7 +199,7 @@ if [ -f "$manifest" ]; then
 fi
 
 # --- pack ---------------------------------------------------------------------------------------
-printf 'Packing %s (version %s) …\n' "$out" "$build_version"
+printf 'Packing %s (version %s) ...\n' "$out" "$build_version"
 (cd "$repo_root" && "${mcpb_cmd[@]}" pack . "$out")
 
 # --- report -------------------------------------------------------------------------------------
@@ -212,7 +212,7 @@ fi
 
 size="$(du -h "$out" | cut -f1 | tr -d '[:space:]')"
 printf '\nBuilt %s (%s)\n' "$out" "$size"
-printf 'version %s  (dev build — not a release)\n' "$build_version"
+printf 'version %s  (dev build - not a release)\n' "$build_version"
 [ -f "$out.sha256" ] && printf 'sha256 %s\n' "$out.sha256"
 printf '\nTest it: open Claude Desktop and install the bundle, or inspect with:\n  %s info %s\n' \
 	"${mcpb_cmd[*]}" "$out"
