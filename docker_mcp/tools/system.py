@@ -103,7 +103,7 @@ def guard_not_self(container: Container, host: str | None = None) -> None:
         return
     raise RuntimeError(
         f"Refusing to operate on the docker-mcp-server's own container ({container.short_id} "
-        f"{container.name}) — this would terminate the MCP session mid-call. Set "
+        f"{container.name}) - this would terminate the MCP session mid-call. Set "
         f"{_SELF_TERMINATE_OVERRIDE_ENV}=1 to override, or run the action from the host shell "
         f"(e.g. `docker rm -f`), which bypasses this server entirely."
     )
@@ -580,17 +580,17 @@ def _connection_help(exc: BaseException, host: Host | None) -> str:
     lines = [f"docker-mcp-server: cannot reach the Docker daemon ({exc})."]
     url = host.url if host is not None else None
     if host is not None and url:
-        lines.append(f"  Default host {host.label!r} resolves to {url} — verify that endpoint is reachable.")
+        lines.append(f"  Default host {host.label!r} resolves to {url} - verify that endpoint is reachable.")
     if is_ssh_url(url):
         # ssh:// uses the pure-Python paramiko transport. Its failure modes are auth/host-key, not
         # the socket-mount issues the rest of this function covers, so give targeted hints and stop.
         lines.append(
             "  This is an ssh:// endpoint (paramiko transport). Common causes: the SSH key isn't "
             "loaded (run `ssh-add`, and forward SSH_AUTH_SOCK), or the host key isn't in "
-            "known_hosts — paramiko rejects unknown hosts. Add the host key only after verifying its "
+            "known_hosts - paramiko rejects unknown hosts. Add the host key only after verifying its "
             "fingerprint out of band: connect once with `ssh <host>` and confirm the prompt, or "
             "compare `ssh-keyscan <host> | ssh-keygen -lf -` against a trusted fingerprint before "
-            "trusting it (don't blind-append `ssh-keyscan` output — that trusts any key returned, "
+            "trusting it (don't blind-append `ssh-keyscan` output - that trusts any key returned, "
             "MITM included). In a container, mount your `~/.ssh` (key + known_hosts) read-only; no "
             "`ssh` binary is needed."
         )
@@ -602,13 +602,13 @@ def _connection_help(exc: BaseException, host: Host | None) -> str:
     kind = classify_host_kernel()
     if kind == "wsl2":
         lines.append(
-            "  Host looks like Windows/WSL2 — the engine listens on a named pipe, not a unix socket. "
+            "  Host looks like Windows/WSL2 - the engine listens on a named pipe, not a unix socket. "
             "Pass `-e DOCKER_HOST=tcp://host.docker.internal:2375` (enable the TCP endpoint in Docker "
             "Desktop) or mount the WSL-side socket."
         )
     elif kind == "docker-desktop":
         lines.append(
-            "  Host looks like Docker Desktop (macOS) — mount the Desktop socket: "
+            "  Host looks like Docker Desktop (macOS) - mount the Desktop socket: "
             "`-v $HOME/.docker/run/docker.sock:/var/run/docker.sock` (or enable 'Allow the default "
             "Docker socket' in Settings and mount `/var/run/docker.sock`)."
         )
@@ -653,7 +653,7 @@ def _connection_summary(client: docker.DockerClient, host: Host) -> str:
         )
     others = [_host_tag(h) for h in _host_registry().values() if h.label != host.label]
     roster = f" | other hosts (lazy): {', '.join(others)}" if others else ""
-    return f"docker-mcp-server: connected to default host {host.label!r} — {os_name}{suffix}{note}.{roster}"
+    return f"docker-mcp-server: connected to default host {host.label!r} - {os_name}{suffix}{note}.{roster}"
 
 
 def startup_preflight() -> None:

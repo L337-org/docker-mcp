@@ -375,7 +375,7 @@ def test_startup_preflight_success_on_host_pins_nothing(monkeypatch, capsys):
     monkeypatch.setattr(system_module, "_get_client", lambda *a, **k: mock_client)
     system_module.startup_preflight()
     assert system_module._self_container_id is None
-    assert "connected to default host 'default' — Ubuntu 22.04" in capsys.readouterr().err
+    assert "connected to default host 'default' - Ubuntu 22.04" in capsys.readouterr().err
 
 
 def test_startup_preflight_success_in_container_pins_self(monkeypatch, capsys):

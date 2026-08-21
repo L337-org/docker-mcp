@@ -239,7 +239,7 @@ def connect_ssh_client(docker_host: str, *, timeout: float | None = None) -> par
         raise RuntimeError(
             f"Could not establish the SSH connection to {docker_host!r} for the docker CLI: {exc}. "
             f"Check that your key is loaded (run `ssh-add`, and forward SSH_AUTH_SOCK), that the host "
-            f"key is in ~/.ssh/known_hosts (paramiko rejects unknown hosts — connect once with `ssh` "
+            f"key is in ~/.ssh/known_hosts (paramiko rejects unknown hosts - connect once with `ssh` "
             f"after verifying its fingerprint), and that the host is reachable."
         ) from exc
     return client
@@ -822,8 +822,8 @@ def get_dialect(kind: RemoteDialectKind) -> RemoteDialect:
         # kernel reaches this message too, and calling those Windows would be wrong.
         raise RuntimeError(
             "Remote-exec fallback: no supported POSIX shell was detected on this host, so the docker "
-            "CLI cannot be run on it. Any host presenting a POSIX shell is supported — including "
-            f"{', '.join(sorted(_POSIX_UNAME_VALUES))} — as is sshd running inside a WSL distro. Common "
+            "CLI cannot be run on it. Any host presenting a POSIX shell is supported - including "
+            f"{', '.join(sorted(_POSIX_UNAME_VALUES))} - as is sshd running inside a WSL distro. Common "
             "causes of this refusal: an sshd whose shell is Windows cmd/PowerShell (a Windows dialect "
             "is architected but not implemented yet); a `uname` from MSYS/MinGW/Cygwin; a restricted "
             "shell; a probe that never answered; or a kernel not on that list. Preceding log lines "
@@ -919,7 +919,7 @@ def detect_remote_dialect(
                 # this line is the only place recording *what the host actually reported* - without it
                 # the refusal is not diagnosable on first occurrence.
                 logger.warning(
-                    "remote-exec: host %s is not a supported POSIX remote — `uname -s` exited %d and "
+                    "remote-exec: host %s is not a supported POSIX remote - `uname -s` exited %d and "
                     "reported %r; remote-exec will be refused for this host",
                     cache_key,
                     status,
@@ -935,7 +935,7 @@ def detect_remote_dialect(
         # lot - an unreachable host, a dead transport, a shell that never answered - so leaving it at
         # debug would mean the refusal could not be explained without reproducing it.
         logger.warning(
-            "remote-exec: host %s is not a supported POSIX remote — the `uname -s` probe could not be "
+            "remote-exec: host %s is not a supported POSIX remote - the `uname -s` probe could not be "
             "completed; remote-exec will be refused for this host",
             cache_key,
             exc_info=True,
@@ -1628,7 +1628,7 @@ class RemoteStagingSession:
             raise FileExistsError(
                 f"Refusing to fetch {remote_path!r} to {str(local_dest)!r}: the destination already exists "
                 f"on this host. The remote-exec fallback only creates a new path, matching the state the "
-                f"remote command started from — remove the existing path first, or choose a different one."
+                f"remote command started from - remove the existing path first, or choose a different one."
             )
         if not local_dest.parent.is_dir():
             raise ValueError(
@@ -1731,7 +1731,7 @@ def _verify_shared_filesystem(sftp: paramiko.SFTPClient, root: str, docker_host:
         raise RuntimeError(
             f"Remote-exec cannot stage files to {docker_host}: the directory {root!r} created over the SSH "
             f"exec channel is not visible to that host's SFTP subsystem ({exc}), so the two are not looking "
-            f"at the same filesystem. The usual cause is a Windows sshd whose shell is `wsl.exe` — exec lands "
+            f"at the same filesystem. The usual cause is a Windows sshd whose shell is `wsl.exe` - exec lands "
             f"in the WSL distro while SFTP stays on the Windows side; a chrooted or jailed SFTP subsystem "
             f"does the same. Tools that only run a command remotely still work against this host; only "
             f"staging local files does not. Run sshd inside the WSL distro itself, or install the docker CLI "

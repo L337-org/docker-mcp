@@ -167,7 +167,7 @@ def _refuse_flags_that_resolve_on_the_wrong_host(
             "dest",
             False,
             "the cache would be written to that host's disk rather than yours, where nothing later reads it. "
-            "Export to a registry (`type=registry,ref=…`) instead",
+            "Export to a registry (`type=registry,ref=...`) instead",
         ),
         (
             "cache_from",
@@ -175,8 +175,8 @@ def _refuse_flags_that_resolve_on_the_wrong_host(
             "src",
             False,
             "the cache would be read from that host, and a cache import that isn't there is *non-fatal* to "
-            "BuildKit — so the build would silently run uncached rather than fail. Import from a registry "
-            "(`type=registry,ref=…`) instead",
+            "BuildKit - so the build would silently run uncached rather than fail. Import from a registry "
+            "(`type=registry,ref=...`) instead",
         ),
     )
     for flag, specs, key, stdout_exempt, consequence in checks:
@@ -187,13 +187,13 @@ def _refuse_flags_that_resolve_on_the_wrong_host(
             raise RuntimeError(
                 f"buildx_build cannot honour {flag}={spec!r} against this host: this server has no local "
                 f"buildx plugin, so the build runs on the target host over SSH and {key}={value!r} would "
-                f"resolve on *that* machine — {consequence}, or run the build on a host with a local "
+                f"resolve on *that* machine - {consequence}, or run the build on a host with a local "
                 f"docker CLI."
             )
     if ssh:
         raise RuntimeError(
             f"buildx_build cannot honour ssh={ssh!r} against this host: this server has no local buildx plugin, "
-            f"so the build runs on the target host over SSH, where `--ssh` reads that host's $SSH_AUTH_SOCK — "
+            f"so the build runs on the target host over SSH, where `--ssh` reads that host's $SSH_AUTH_SOCK - "
             f"the remote user's agent, not yours (this server does not request agent forwarding). Bake the "
             f"credential in with `--secret` instead, or run the build on a host with a local docker CLI."
         )
@@ -374,7 +374,7 @@ def buildx_build(
     if context == "-":
         raise ValueError(
             "buildx_build: context='-' (read a tarball from stdin) is not supported by this "
-            "tool because we don't forward stdin to the buildx subprocess — `-` would block "
+            "tool because we don't forward stdin to the buildx subprocess - `-` would block "
             "on the MCP server's own stdin. Use a filesystem path or an HTTP/Git URL instead, "
             "or pre-stage the context on disk."
         )
@@ -618,7 +618,7 @@ def buildx_imagetools_inspect(
     """
     if raw and format is not None:
         raise ValueError(
-            "buildx_imagetools_inspect: `raw` and `format` are mutually exclusive — `raw` "
+            "buildx_imagetools_inspect: `raw` and `format` are mutually exclusive - `raw` "
             "always emits the unmodified manifest JSON, while `format` runs a Go template "
             "against a rendered view. Pick one."
         )
@@ -973,7 +973,7 @@ def buildx_remove(
         raise ValueError("buildx_remove requires either `name` or `all_inactive=True`")
     if name and all_inactive:
         raise ValueError(
-            "buildx_remove: `name` and `all_inactive=True` are mutually exclusive — pass `name` to "
+            "buildx_remove: `name` and `all_inactive=True` are mutually exclusive - pass `name` to "
             "remove a specific builder, or `all_inactive=True` to sweep every inactive one."
         )
     args: list[str] = ["rm"]

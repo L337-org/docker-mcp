@@ -149,8 +149,8 @@ def _unmapped_path_message(path: Path, *, for_write: bool) -> str:
     return (
         f"Cannot {verb} {path}: {consequence}. This docker-mcp-server is running in a container, so "
         f"host paths must be bind-mounted in. Add a mount for the directory to the `docker run` args "
-        f"in your MCP client config — e.g. `-v {parent}:{parent}` (using the same path inside and out "
-        f"keeps host and container paths identical) — then retry. Small payloads can use the in-band "
+        f"in your MCP client config - e.g. `-v {parent}:{parent}` (using the same path inside and out "
+        f"keeps host and container paths identical) - then retry. Small payloads can use the in-band "
         f"byte tools instead, which need no mount."
     )
 

@@ -528,13 +528,13 @@ def build_instructions(registered_domains: set[str] | None = None) -> str:
     )
 
     lines = [
-        "docker-mcp-server — manage Docker through the docker-py SDK and the docker CLI.",
+        "docker-mcp-server - manage Docker through the docker-py SDK and the docker CLI.",
         "",
         "Tools load on demand: search by a domain keyword below to pull a tool's full schema before calling it.",
         "",
         "Domains (and the words that find them):",
     ]
-    lines += [f"- {domain} — {blurb}" for domain, blurb in _DOMAIN_BLURBS.items() if domain in present]
+    lines += [f"- {domain} - {blurb}" for domain, blurb in _DOMAIN_BLURBS.items() if domain in present]
 
     caveats = []
     if present & {"containers", "images"}:
@@ -562,7 +562,7 @@ def build_instructions(registered_domains: set[str] | None = None) -> str:
             caveat = (
                 f"CLI-backed domains ({', '.join(cli_present)}) shell out to the docker CLI/plugins. With "
                 "the CLI or a required plugin missing locally, the call runs on the target host instead "
-                "when that host is reached over `ssh://` — its CLI, its registry credentials, and local "
+                "when that host is reached over `ssh://` - its CLI, its registry credentials, and local "
                 "files (a compose project dir, a build context) copied over, so keep them small; a usable "
                 f"local CLI always wins. Applies to {', '.join(fallback_present)}"
             )

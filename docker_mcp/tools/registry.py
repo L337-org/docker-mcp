@@ -266,7 +266,7 @@ def _raise_rate_limited(resp: httpx.Response, url: str) -> NoReturn:
     parsed_host = httpx.URL(url).host
     if parsed_host in _DOCKER_HUB_HOSTS:
         guidance = (
-            " Docker Hub caps anonymous pulls at ~100 requests / 6h per IP — "
+            " Docker Hub caps anonymous pulls at ~100 requests / 6h per IP - "
             "authenticate with `system_login` (for SDK-backed tools) or pass "
             "`username`/`password` to `registry_tags` to raise the limit."
         )

@@ -832,7 +832,7 @@ def _remote_compose_cp(
             raise FileExistsError(
                 f"compose_cp: refusing to fetch {source!r} to {dest!r}: the destination already exists on "
                 f"this host. The remote-exec fallback only creates a new path there, matching the state the "
-                f"remote command starts from — remove the existing path first, or choose a different one."
+                f"remote command starts from - remove the existing path first, or choose a different one."
             )
 
     local_cwd = Path(project_dir).expanduser() if project_dir else Path.cwd()

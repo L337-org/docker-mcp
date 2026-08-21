@@ -278,7 +278,7 @@ def require_plugin(name: str) -> None:
         raise RuntimeError(
             f"Docker CLI plugin {name!r} is not installed or not available on PATH. Install it "
             f"(Docker Desktop ships it by default; on a plain Docker Engine install, use your "
-            f"distribution's docker-{name}-plugin package, or follow the upstream docs) — or point "
+            f"distribution's docker-{name}-plugin package, or follow the upstream docs) - or point "
             f"this host at an ssh:// endpoint that already has it, via DOCKER_MCP_SERVER_HOSTS: the "
             f"call then runs there automatically instead."
         )
@@ -559,7 +559,7 @@ def _ssh_url_for(host: str | None, args: list[str]) -> str:
         # should_remote_exec, which is False for a host we cannot reach over SSH.
         raise RuntimeError(
             f"remote-exec was requested for host {resolved.label!r} ({url or 'platform default'}), which is "
-            f"not reached over ssh:// — there is no remote shell to run `docker {args[0] if args else ''}` on."
+            f"not reached over ssh:// - there is no remote shell to run `docker {args[0] if args else ''}` on."
         )
     return url
 

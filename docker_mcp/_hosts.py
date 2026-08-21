@@ -212,7 +212,7 @@ def _validate_cert_dir(label: str, cert_dir: str) -> None:
     # check yet break at connect time.
     if cert.exists() != key.exists():
         _fail(
-            f"host {label!r}: TLS dir {cert_dir!r} has exactly one of cert.pem/key.pem — provide both "
+            f"host {label!r}: TLS dir {cert_dir!r} has exactly one of cert.pem/key.pem - provide both "
             f"(mutual TLS) or neither (verify the daemon only)"
         )
     for client_file in (cert, key):
@@ -322,7 +322,7 @@ def load() -> None:
     try:
         _registry = parse_registry(raw)
     except HostConfigError as exc:
-        print(f"docker-mcp-server: invalid DOCKER_MCP_SERVER_HOSTS — {exc}", file=sys.stderr, flush=True)
+        print(f"docker-mcp-server: invalid DOCKER_MCP_SERVER_HOSTS - {exc}", file=sys.stderr, flush=True)
         raise SystemExit(1) from exc
 
 
