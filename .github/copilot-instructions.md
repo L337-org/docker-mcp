@@ -159,16 +159,19 @@ All publishing runs through one workflow on each **published GitHub Release**: `
   a legal one.
 - Line length limit: 120 characters.
 - **Prose that ships is British English in plain ASCII punctuation.** A tool docstring ships: the server
-  advertises it verbatim as the tool's `description`, and that is what a model reads when choosing between
-  164 tools. So do the README, the agent skill, prompts and resources, code comments, commit messages and
-  PR descriptions — the test is whether it ships, not who reads it. **Never `—` or `–`**: use `-`, or `:`
+  advertises it verbatim as the tool's `description`, which is what a model reads when choosing between
+  164 tools. So do the README, the agent skill, prompts and resources, comments, commit messages and PR
+  descriptions — the test is whether it ships, not who reads it. **Never `—` or `–`**: use `-`, or `:`
   where what follows explains what came before. Likewise `...` not `…`, `x` not `×`, straight quotes, and
-  `10-15%` for ranges. A non-ASCII character survives only as a symbol carrying meaning (`≥`, or `→` inside
-  a table), never as punctuation.
-- **Enforced, not remembered.** `tests/test_docs.py::test_advertised_tool_descriptions_use_plain_ascii_punctuation`
-  asserts it against what `list_tools()` actually advertises, so a violating tool fails CI. Scope is tool
-  descriptions only — comments, tests and workflow files still hold em dashes, none of them ship, and
-  sweeping those is a separate decision.
+  `10-15%` for ranges.
+- **Tool descriptions are strict ASCII, with no symbol exception**, and CI enforces exactly that:
+  `tests/test_docs.py::test_advertised_tool_descriptions_are_plain_ascii` asserts it against what
+  `list_tools()` advertises, so a violating tool fails. There is no allow-list because none of the 164 has
+  needed one - the three arrows and one ellipsis found during the sweep all read better as words. Elsewhere
+  in shipped prose a symbol carrying meaning (`≥`, or `→` inside a table) is still fine; that is the one
+  place the general rule and this check deliberately differ.
+- **Scope stops at tool descriptions.** Comments, tests and workflow files still hold em dashes; none of
+  them ship, and sweeping them is a separate decision.
 - **`CLAUDE.md` and `.github/copilot-instructions.md` are both exempt** — working instructions that never
   ship — which is why they still use em dashes freely.
 - **Bound any externally-sourced bytes before buffering/parsing them, and parse safely.** CLI output is capped in `run_docker` (`MAX_CLI_OUTPUT_BYTES`); registry HTTP bodies are streamed and capped at `_MAX_RESPONSE_BYTES` in `registry.py` (registries are agent-pointed/untrusted; the cap is on the *decoded* stream, so it also stops a decompression bomb). New code reading an untrusted file or network body must apply a similar bound. Always `json.loads` (never `eval`); if YAML is ever parsed in Python, `yaml.safe_load` only — today nothing parses YAML in Python (Compose YAML is read by the `docker` CLI). Flag a PR that buffers an untrusted body unbounded.
