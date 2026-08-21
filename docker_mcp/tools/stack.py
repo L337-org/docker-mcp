@@ -123,7 +123,7 @@ def stack_deploy(
     convergence); set `detach=False` to wait for the rollout (give it a generous
     `timeout_seconds`). The swarm analogue of `compose_up`; watch the rollout with
     `stack_services` / `stack_ps`.
-    Does not raise on a non-zero CLI exit — inspect `returncode`/`stderr` in the result.
+    Does not raise on a non-zero CLI exit - inspect `returncode`/`stderr` in the result.
 
     args:
         name - Name of the stack to create or update
@@ -225,10 +225,10 @@ def stack_remove(
     """
     Remove one or more stacks from the swarm (tears down their services, networks, and secrets).
 
-    Destructive: this stops and deletes every service in the named stack(s) — the reverse of
+    Destructive: this stops and deletes every service in the named stack(s) - the reverse of
     `stack_deploy` and the swarm analogue of `compose_down`. Defaults to `detach=True` so the call
     returns once removal is requested rather than waiting for teardown.
-    Does not raise on a non-zero CLI exit — inspect `returncode`/`stderr` in the result.
+    Does not raise on a non-zero CLI exit - inspect `returncode`/`stderr` in the result.
 
     args:
         names - One or more stack names to remove. At least one is required.

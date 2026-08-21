@@ -317,7 +317,7 @@ def system_ping(host: str | None = None) -> bool:
     Check that the Docker server is responsive.
 
     The cheapest daemon health check. A failure here usually means connection config rather than
-    daemon load — `system_reconnect` rebuilds a wedged client, `host_list` shows the configured
+    daemon load - `system_reconnect` rebuilds a wedged client, `host_list` shows the configured
     endpoints. For daemon details use `system_version` / `system_info`.
 
     returns: bool - True if the daemon responded successfully
@@ -330,7 +330,7 @@ def system_version(host: str | None = None) -> dict:
     """
     Return Docker server version information.
 
-    Engine version, API level, and per-component versions — the first thing to check for feature
+    Engine version, API level, and per-component versions - the first thing to check for feature
     availability. `system_info` reports runtime state (counts, drivers, swarm role) instead.
 
     returns: dict - {"Version", "ApiVersion", "MinAPIVersion", "Os", "Arch", "Components", ...}
@@ -481,16 +481,16 @@ def system_events(
     Stream real-time events from the Docker server, bounded by `limit` events or `timeout_seconds`.
 
     Returns when `limit` events are collected or `timeout_seconds` elapses, whichever comes first
-    (`limit` caps memory; `timeout_seconds` caps how long the call blocks — without it a quiet daemon
+    (`limit` caps memory; `timeout_seconds` caps how long the call blocks - without it a quiet daemon
     would block indefinitely, since the stream only yields on an actual event).
 
     Caveat for `ssh://` daemons: docker-py can't cancel an SSH stream, so the `timeout_seconds`
-    watchdog can't interrupt a fully idle stream — bound with `until`/`limit` (or a non-SSH endpoint).
+    watchdog can't interrupt a fully idle stream - bound with `until`/`limit` (or a non-SSH endpoint).
 
     "Wait for the next matching event" idiom: pass `limit=1` with `filters` narrowed to what you
     care about (e.g. `{"type": "container", "event": "health_status"}`) and a generous
     `timeout_seconds`. This blocks until that one event arrives (or the timeout elapses, returning an
-    empty list) instead of re-polling a snapshot on a timer — there's no separate wait tool for this
+    empty list) instead of re-polling a snapshot on a timer - there's no separate wait tool for this
     since the filtering this call already does covers it.
 
     args:
@@ -547,7 +547,7 @@ def system_reconnect(host: str | None = None) -> dict:
 
     Validates the rebuilt client before swapping in (and only then closes the old one), so a failed
     rebuild leaves the working client in place. Rebuilds the default host's client when `host` is
-    omitted. It CANNOT retarget to a different daemon — to add or change a daemon, edit
+    omitted. It CANNOT retarget to a different daemon - to add or change a daemon, edit
     DOCKER_MCP_SERVER_HOSTS and restart. `system_close` closes pooled clients without rebuilding;
     `host_list` shows the configured endpoints.
 

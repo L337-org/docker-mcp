@@ -333,18 +333,18 @@ def buildx_build(
     With no local buildx plugin and an `ssh://` target, the build runs on that host: a local `context`
     directory is copied there honouring `.dockerignore`, as are `file`, `build_contexts` and `secret`
     paths. Raises RuntimeError in that case for `output`/`cache_to` with a filesystem `dest=`,
-    `cache_from` with a local `src=`, or any `ssh=` — each would resolve on the remote machine, losing
+    `cache_from` with a local `src=`, or any `ssh=` - each would resolve on the remote machine, losing
     the output or silently changing the build.
 
     args:
         context - Build context: a filesystem path or Git/HTTP URL (verbatim; no `~`/glob expansion).
-                       The `-` stdin-tarball form is NOT supported (stdin isn't forwarded — it'd block
+                       The `-` stdin-tarball form is NOT supported (stdin isn't forwarded - it'd block
                        on the server's own stdin); serve a pre-packed tarball over HTTP instead. Copied
                        to the target host when it names a local directory and there is no local plugin.
         tags - Image references to apply (`-t`, repeatable)
         platforms - Target platforms, e.g. ["linux/amd64", "linux/arm64"]
         file - Dockerfile path. A relative path resolves against this server's working directory
-                      (buildx's own rule), NOT against `context` — pass e.g. "ctx/Dockerfile" for a
+                      (buildx's own rule), NOT against `context` - pass e.g. "ctx/Dockerfile" for a
                       Dockerfile inside the context directory "ctx".
         build_args - Build-time variables (each becomes `--build-arg KEY=VALUE`)
         build_contexts - Additional named build contexts (e.g. {"deps": "./vendor"})
@@ -365,7 +365,7 @@ def buildx_build(
         provenance - Shorthand for `--attest=type=provenance`; pass "true", "false", or a config string
         attest - Custom attestation specs (repeatable)
         secret - Secret specs (e.g. ["id=npmrc,src=/home/user/.npmrc"] or ["id=npmrc,env=NPM_TOKEN"]).
-                            `~` in `src=` is NOT expanded (by this tool or the CLI) — use an absolute path.
+                            `~` in `src=` is NOT expanded (by this tool or the CLI) - use an absolute path.
         ssh - SSH agent socket/key specs (e.g. ["default"], using $SSH_AUTH_SOCK). Refused when
                             the build has to run on a remote host: the socket read would be that host's.
         timeout_seconds - Subprocess timeout (default 1800s)
@@ -541,7 +541,7 @@ def buildx_bake(
 
     Use it for multi-target builds declared in `docker-bake.hcl`/compose files; for a single
     Dockerfile target use `buildx_build`.
-    Does not raise on a non-zero CLI exit — inspect `returncode`/`stderr` in the result.
+    Does not raise on a non-zero CLI exit - inspect `returncode`/`stderr` in the result.
 
     args:
         targets - Bake targets to build (default: the `default` group)
@@ -601,7 +601,7 @@ def buildx_imagetools_inspect(
 
     Replaces `docker manifest inspect`. The standalone `docker manifest` command is in
     maintenance mode and lacks support for OCI image indexes, attestations, and
-    annotations — `buildx imagetools inspect` is the path forward and handles both
+    annotations - `buildx imagetools inspect` is the path forward and handles both
     single-platform manifests and multi-platform manifest lists / OCI indexes. Uses the docker
     CLI's credential store; `registry_manifest` answers the same question over direct HTTPS
     with no daemon or plugin.
@@ -649,10 +649,10 @@ def buildx_imagetools_create(
     """
     Create a manifest list / OCI image index from existing per-platform tags.
 
-    Replaces `docker manifest create` + `docker manifest push` — builds the index and pushes it in
+    Replaces `docker manifest create` + `docker manifest push` - builds the index and pushes it in
     one operation. Source tags must already be pushed; this only stitches them together. Verify
     the result with `buildx_imagetools_inspect`.
-    Does not raise on a non-zero CLI exit — inspect `returncode`/`stderr` in the result.
+    Does not raise on a non-zero CLI exit - inspect `returncode`/`stderr` in the result.
 
     args:
         target - Tag for the new manifest list (`-t`)
@@ -709,7 +709,7 @@ def buildx_history_list(builder: str | None = None, host: str | None = None) -> 
     """
     List recent build records (BuildKit build history), parsed from `--format '{{json .}}'`.
 
-    Each record is a past build with its ref, name, status, step counts, and timestamps — useful for
+    Each record is a past build with its ref, name, status, step counts, and timestamps - useful for
     finding a build to drill into with `buildx_history_inspect`. Requires buildx >= v0.13 (older
     versions have no `history` subcommand and this raises with the CLI's "unknown command" error).
 
@@ -730,13 +730,13 @@ def buildx_history_inspect(ref: str = "", builder: str | None = None, host: str 
     """
     Inspect a single build record by ref, parsed from `--format json`.
 
-    Returns the full record for one build — duration, materials, attestations, error (if any) —
+    Returns the full record for one build - duration, materials, attestations, error (if any) -
     for debugging a failed or slow build found via `buildx_history_list`. Requires buildx >=
     v0.13.
     Raises RuntimeError if the CLI call fails.
 
     args:
-        ref - Build record ref. Pass the `ref` field from `buildx_history_list` directly — it
+        ref - Build record ref. Pass the `ref` field from `buildx_history_list` directly - it
                    reports a qualified "<builder>/<node>/<id>", but `history inspect` only accepts the
                    bare id, so this reduces it to the id and (unless `builder` is given) targets the
                    builder named in the ref. Empty/omitted inspects the most recent build; the `^N`
@@ -774,7 +774,7 @@ def buildx_inspect(name: str | None = None, bootstrap: bool = False, host: str |
 
     Human-readable detail (driver, status, supported platforms) for one builder; `buildx_list`
     returns machine-parsed JSON for all builders.
-    Does not raise on a non-zero CLI exit — inspect `returncode`/`stderr` in the result.
+    Does not raise on a non-zero CLI exit - inspect `returncode`/`stderr` in the result.
 
     args:
         name - Builder name (defaults to the active builder)
@@ -877,7 +877,7 @@ def buildx_create(
     require a `docker-container` (or `kubernetes`/`remote`) builder. Pass `use=True` to make it
     the default for later `buildx_build` calls (else switch with `buildx_use`); `bootstrap=True`
     starts the builder now rather than on first build.
-    Does not raise on a non-zero CLI exit — inspect `returncode`/`stderr` in the result.
+    Does not raise on a non-zero CLI exit - inspect `returncode`/`stderr` in the result.
 
     args:
         name - Name for the new builder (defaults to a generated name)
@@ -959,7 +959,7 @@ def buildx_remove(
 
     Deletes a builder made by `buildx_create`, including its build cache unless keep_state=True;
     use `buildx_prune` to reclaim cache while keeping the builder.
-    Does not raise on a non-zero CLI exit — inspect `returncode`/`stderr` in the result.
+    Does not raise on a non-zero CLI exit - inspect `returncode`/`stderr` in the result.
 
     args:
         name - Builder name to remove (mutually exclusive with `all_inactive`)

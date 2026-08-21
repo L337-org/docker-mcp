@@ -46,7 +46,7 @@ def volume_inspect(name: str, host: str | None = None) -> dict:
     """
     Get a volume's full inspect payload by name.
 
-    Use it after `volume_list` to see a volume's on-disk location, driver, and labels — e.g.
+    Use it after `volume_list` to see a volume's on-disk location, driver, and labels - e.g.
     before a backup or `volume_remove`. Volumes are addressed purely by name; they have no
     separate id.
 
@@ -61,7 +61,7 @@ def volume_list(filters: dict | None = None, managed_only: bool = False, host: s
     """
     List volumes.
 
-    Volumes are addressed by name only — feed a Name to `volume_inspect` for detail or
+    Volumes are addressed by name only - feed a Name to `volume_inspect` for detail or
     `volume_remove` / `volume_prune` to clean up. filters={"dangling": True} finds volumes that no
     container references.
 
@@ -81,9 +81,9 @@ def volume_prune(filters: dict | None = None, host: str | None = None) -> dict:
     """
     Remove volumes not referenced by any container, running or stopped.
 
-    A volume used by even one stopped container is not "unused" and survives the prune —
+    A volume used by even one stopped container is not "unused" and survives the prune -
     remove the container first (or use `container_prune`, then this) to reclaim its
-    volumes. Valid filter keys: `label` (key or key=value), `all` ("true" as a string —
+    volumes. Valid filter keys: `label` (key or key=value), `all` ("true" as a string -
     without it only anonymous volumes are eligible, matching `docker volume prune`'s
     default). Use `volume_list` first to see what currently exists.
 
@@ -98,7 +98,7 @@ def volume_remove(name: str, force: bool = False, host: str | None = None) -> bo
     """
     Remove a single volume by name.
 
-    Fails if any container, running or stopped, still references the volume — remove or
+    Fails if any container, running or stopped, still references the volume - remove or
     recreate those containers first, or pass `force=True` to remove it anyway (the
     containers keep their reference but lose the underlying data). For bulk cleanup of
     volumes with no container references at all, use `volume_prune` instead.

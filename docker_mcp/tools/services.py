@@ -104,7 +104,7 @@ def service_inspect(id_or_name: str, insert_defaults: bool | None = None, host: 
     """
     Get a swarm service by id or name.
 
-    Must run against a swarm manager. Returns the desired-state spec and rollout status — for the
+    Must run against a swarm manager. Returns the desired-state spec and rollout status - for the
     actually-running tasks use `service_ps`, or the `service-tasks://{id_or_name}` resource for a
     computed rollout summary.
 
@@ -143,7 +143,7 @@ def service_update(id_or_name: str, updates: dict | None = None, force: bool = F
 
     Pass exactly one of `updates` (fields to change, same parameters as `service_create`) or
     `force=True` (the `docker service update --force` equivalent: bumps the ForceUpdate counter so
-    the service's tasks redeploy with an unchanged spec — e.g. to reschedule after a node change or
+    the service's tasks redeploy with an unchanged spec - e.g. to reschedule after a node change or
     re-pull a mutable tag).
 
     args:
@@ -167,7 +167,7 @@ def service_remove(id_or_name: str, host: str | None = None) -> bool:
     """
     Stop and remove a swarm service.
 
-    Requires a swarm manager. Deletes the service definition and shuts down its tasks — no
+    Requires a swarm manager. Deletes the service definition and shuts down its tasks - no
     confirmation, no undo. To stop work but keep the definition, `service_scale` to 0 replicas.
 
     args: id_or_name - The service id or name
@@ -216,8 +216,8 @@ def service_logs(
     following would block forever and grow unbounded. Collection is capped at `max_bytes` (ValueError
     if exceeded) so a noisy service can't OOM the server. The default is a bounded `tail=200`;
     `tail="all"` returns the whole buffer, which can be huge on long-running services and exceed
-    the agent's context — prefer an integer, or `since`, to constrain output. Logs aggregate
-    across all the service's tasks — `container_logs` reads a single container, and the
+    the agent's context - prefer an integer, or `since`, to constrain output. Logs aggregate
+    across all the service's tasks - `container_logs` reads a single container, and the
     `service-logs://{id_or_name}` resource is the resource-flavored equivalent of this tool.
 
     args:
@@ -253,7 +253,7 @@ def service_scale(id_or_name: str, replicas: int, host: str | None = None) -> bo
 
     Only applies to services in `Replicated` mode; a `Global` service runs one task per
     eligible node and has no replica count to set. The swarm scheduler places or removes
-    tasks asynchronously to converge on the new count — this call returns once the update
+    tasks asynchronously to converge on the new count - this call returns once the update
     is accepted, not once every task is running. Check progress with `service_ps` or
     `service_inspect`. For any other spec change (image, env, resources) use
     `service_update` instead.
@@ -271,7 +271,7 @@ def service_rollback(id_or_name: str, host: str | None = None) -> dict:
     """
     Roll a swarm service back to its previous spec (the docker `service rollback` equivalent).
 
-    Re-applies the service's `PreviousSpec` — the spec from before the most recent `service_update` /
+    Re-applies the service's `PreviousSpec` - the spec from before the most recent `service_update` /
     `service_scale`. Raises ValueError if the service has no PreviousSpec
     (it has never been updated, or was already rolled back). The high-level SDK exposes no rollback,
     so this reads the current version and previous spec via the low-level APIClient and submits them
@@ -345,13 +345,13 @@ def service_wait(
     """
     Block until a swarm service's tasks converge, or a rolling update finishes.
 
-    One contract for both modes: never raises on timeout — the result always carries `met` and
+    One contract for both modes: never raises on timeout - the result always carries `met` and
     `timed_out`. "running" polls task state via the same task-counting logic as
     `service-tasks://{id_or_name}` (not the unconfirmed daemon `ServiceStatus` field) until running
     tasks reach the desired count (Replicated mode) or every returned task is running (Global mode,
     which has no fixed target). "update-converged" polls `UpdateStatus.State` until it reaches a
     terminal value (`completed` or `rollback_completed`); if the service has never been updated (no
-    `UpdateStatus` at all), returns promptly with `met=false` — there's nothing to converge to, same
+    `UpdateStatus` at all), returns promptly with `met=false` - there's nothing to converge to, same
     as `container_wait`'s no-healthcheck case.
 
     args:

@@ -26,7 +26,7 @@ def network_create(
     Create a network.
 
     The daemon default driver is `bridge` (single-host); use `overlay` for swarm-wide networks.
-    Creating a network attaches nothing — connect containers afterwards with `network_connect` or
+    Creating a network attaches nothing - connect containers afterwards with `network_connect` or
     at start via `container_run(network=...)`. Created networks are stamped with provenance labels
     (find them later via `network_list(managed_only=True)`). A duplicate `name` is always rejected,
     so creating is not idempotent - check `network_list` first when the network may already exist.
@@ -72,7 +72,7 @@ def network_inspect(id_or_name: str, host: str | None = None) -> dict:
 
     Includes the connected containers (`Containers`, keyed by container id, with each
     entry's assigned IP), IPAM config, and driver options. For a quick overview of many
-    networks use `network_list` instead — its default (non-`greedy`) response omits the
+    networks use `network_list` instead - its default (non-`greedy`) response omits the
     per-network `Containers` detail for speed.
 
     args: id_or_name - The network id or name
@@ -97,7 +97,7 @@ def network_list(
     ("custom" or "builtin"). `names`/`ids` are a separate shorthand for filtering by exact
     name/id, applied in addition to `filters`. Set `greedy` to fetch each network's attrs
     individually (adds the connected-containers detail that `network_inspect` returns, at
-    the cost of one extra daemon call per network) — leave it False for a fast summary list.
+    the cost of one extra daemon call per network) - leave it False for a fast summary list.
 
     args:
         names - Filter by exact network names
@@ -122,7 +122,7 @@ def network_prune(filters: dict | None = None, host: str | None = None) -> dict:
 
     Built-in networks (bridge, host, none) are never removed. Only networks with zero
     connected containers are eligible. Valid filter keys: `until` (RFC3339 timestamp or
-    duration — removes networks created before that point), `label` (key or key=value). Use
+    duration - removes networks created before that point), `label` (key or key=value). Use
     `network_remove` to delete one specific network instead.
 
     args: filters - Narrow which networks to remove; omit to remove all unused custom networks

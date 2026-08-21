@@ -182,7 +182,7 @@ def compose_down(
 
     Inverse of `compose_up`. Images are kept; named volumes go only with volumes=True
     (destructive). Use `compose_stop` to stop without removing anything.
-    Does not raise on a non-zero CLI exit — inspect `returncode`/`stderr` in the result.
+    Does not raise on a non-zero CLI exit - inspect `returncode`/`stderr` in the result.
 
     args:
         project_dir - Dir with the compose file (default: server cwd; copied to the target host if no local plugin)
@@ -216,7 +216,7 @@ def compose_ps(
 
     Container-level view of one project (state, health, publishers); `compose_list` enumerates
     projects, and `container_list` covers non-compose containers.
-    Does not raise on a non-zero CLI exit: `services` comes back empty — inspect `raw.stderr`.
+    Does not raise on a non-zero CLI exit: `services` comes back empty - inspect `raw.stderr`.
 
     args:
         project_dir - Dir with the compose file (default: server cwd; copied to the target host if no local plugin)
@@ -265,7 +265,7 @@ def compose_logs(
 
     Bounded and non-following by design, so it always returns promptly. For one container's logs
     use `container_logs`; for a swarm service use `service_logs`. Log text arrives on `stdout`.
-    Does not raise on a non-zero CLI exit — inspect `returncode`/`stderr` in the result.
+    Does not raise on a non-zero CLI exit - inspect `returncode`/`stderr` in the result.
 
     args:
         project_dir - Dir with the compose file (default: server cwd; copied to the target host if no local plugin)
@@ -305,7 +305,7 @@ def compose_config(
     Render the canonical compose configuration after merges, profiles, and variable substitution.
 
     Use it to validate compose files and see exactly what the CLI will run before `compose_up`.
-    Does not raise on a non-zero CLI exit: on a failed render `config` may be None — inspect
+    Does not raise on a non-zero CLI exit: on a failed render `config` may be None - inspect
     `raw.stderr`.
 
     args:
@@ -350,9 +350,9 @@ def compose_build(
     """
     Build images for a compose project.
 
-    Builds the images declared by the project's `build:` sections without starting anything —
+    Builds the images declared by the project's `build:` sections without starting anything -
     `compose_up(build=True)` builds and starts in one step.
-    Does not raise on a non-zero CLI exit — inspect `returncode`/`stderr` in the result.
+    Does not raise on a non-zero CLI exit - inspect `returncode`/`stderr` in the result.
 
     args:
         project_dir - Dir with the compose file (default: server cwd; copied to the target host if no local plugin)
@@ -425,7 +425,7 @@ def compose_restart(
 
     Use this to bounce a service (e.g. to pick up a runtime file change or clear an
     in-memory state). If the compose file has changed (new image, environment, volumes,
-    ports) use `compose_up` instead — it recreates affected containers to apply the diff.
+    ports) use `compose_up` instead - it recreates affected containers to apply the diff.
     `stop_timeout_seconds` controls the SIGTERM grace period before Docker sends SIGKILL.
 
     args:
@@ -458,7 +458,7 @@ def compose_stop(
     """
     Stop services in a compose project without removing their containers.
 
-    Unlike `compose_down`, containers/networks/volumes survive — use `compose_start` to bring them back.
+    Unlike `compose_down`, containers/networks/volumes survive - use `compose_start` to bring them back.
 
     args:
         project_dir - Dir with the compose file (default: server cwd; copied to the target host if no local plugin)
@@ -625,7 +625,7 @@ def compose_images(
     """
     List the images used by a compose project's services, parsed from `--format json`.
 
-    Answers "what image and tag does each service container actually run?" — the containers must
+    Answers "what image and tag does each service container actually run?" - the containers must
     exist (`compose_up`/`compose_create` first). Use `compose_ps` for container state and
     `image_list` for daemon-wide images.
     Raises RuntimeError if the CLI call fails.
@@ -722,7 +722,7 @@ def compose_wait(
     Block until the named service containers stop, then return their exit codes.
 
     For one-shot / batch services. A long-running service that never exits blocks until
-    `timeout_seconds`, then the subprocess is killed (TimeoutExpired) — bound it sensibly.
+    `timeout_seconds`, then the subprocess is killed (TimeoutExpired) - bound it sensibly.
     Exit codes are on stdout. For a single container use `container_wait`; for swarm services
     use `service_wait`.
 
@@ -754,7 +754,7 @@ def compose_top(
 
     Output is the `ps`-style process table per service (not JSON); read it from `stdout`. The
     per-container equivalent is `container_top`.
-    Does not raise on a non-zero CLI exit — inspect `returncode`/`stderr` in the result.
+    Does not raise on a non-zero CLI exit - inspect `returncode`/`stderr` in the result.
 
     args:
         services - Restrict to these services (default: all)
@@ -890,16 +890,16 @@ def compose_cp(
 
     Exactly one of `source`/`dest` is `SERVICE:PATH`; the other is a path on the host running this
     MCP server, read/written as the server's user (same host exposure as the file-path archive
-    tools — see SECURITY.md). Copying to stdout (`dest="-"`) is unsupported; use
+    tools - see SECURITY.md). Copying to stdout (`dest="-"`) is unsupported; use
     `container_archive_get`.
-    Does not raise on a non-zero CLI exit — inspect `returncode`/`stderr` in the result. With no local
+    Does not raise on a non-zero CLI exit - inspect `returncode`/`stderr` in the result. With no local
     compose plugin and an `ssh://` target, runs the real `docker compose cp` on that host instead and
-    relays whichever side of the copy is local over the same SSH connection — every parameter above
+    relays whichever side of the copy is local over the same SSH connection - every parameter above
     behaves the same either way, since the actual copy always runs through the real CLI. The one
     difference: a container->host copy is refused with `FileExistsError` if the local destination already
     exists, since only this host (not the remote one) knows that. `unix://`/`tcp://`+TLS hosts with no
     local plugin are not covered by this fallback (no shell to run the CLI on) and still raise
-    `RuntimeError` — use `container_archive_put` (host to container) or `container_archive_get_to_file`
+    `RuntimeError` - use `container_archive_put` (host to container) or `container_archive_get_to_file`
     (container to host) there instead; both talk to the daemon directly and need no local CLI
     (`compose_ps` gives you the container name).
 
@@ -951,9 +951,9 @@ def compose_kill(
     """
     Send a signal to a compose project's containers (default SIGKILL).
 
-    Immediate, with no grace period — prefer `compose_stop` for a clean shutdown (stop signal,
+    Immediate, with no grace period - prefer `compose_stop` for a clean shutdown (stop signal,
     then kill after a timeout).
-    Does not raise on a non-zero CLI exit — inspect `returncode`/`stderr` in the result.
+    Does not raise on a non-zero CLI exit - inspect `returncode`/`stderr` in the result.
 
     args:
         services - Restrict to these services (default: all)
@@ -988,7 +988,7 @@ def compose_pause(
     Paused containers stop consuming CPU but keep memory, network endpoints, and state; resume
     with `compose_unpause`. To actually stop containers (each one's configured stop signal,
     freeing resources) use `compose_stop`; to stop and delete them use `compose_down`.
-    Does not raise on a non-zero CLI exit — inspect `returncode`/`stderr` in the result.
+    Does not raise on a non-zero CLI exit - inspect `returncode`/`stderr` in the result.
 
     args:
         services - Restrict to these services (default: all)
@@ -1016,7 +1016,7 @@ def compose_unpause(
 
     Reverse of `compose_pause`: processes continue from where they were frozen (no restart).
     `compose_start` is the counterpart for stopped containers.
-    Does not raise on a non-zero CLI exit — inspect `returncode`/`stderr` in the result.
+    Does not raise on a non-zero CLI exit - inspect `returncode`/`stderr` in the result.
 
     args:
         services - Restrict to these services (default: all)
