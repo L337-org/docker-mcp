@@ -10,8 +10,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 > or distribution channels MUST reach every layer that carries the rule, in the same change.** This is
 > the most-forgotten step. Before mirroring, check the rule belongs in an always-loaded file at all: if
 > a CI test already enforces it, neither mirror should carry it. The `Check docs mirror` job and the
-> `PostToolUse` hook in `.claude/settings.json` both prompt for this; both are touch-tests, so neither
-> can see whether the *same rule* reached each file.
+> `PostToolUse` hook in `.claude/settings.json` both prompt for this. The job **fails** only when
+> `CLAUDE.md` and `.github/copilot-instructions.md` disagree — one changed, the other not — and
+> **warns** on a detail-layer-only change, which is the correct shape for detail and not a defect.
+> Both are touch-tests, so neither can see whether the *same rule* reached each file.
 
 ## Read these before changing the matching area
 
