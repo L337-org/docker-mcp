@@ -46,9 +46,11 @@ real docstring the discriminator must name an actually-registered sibling tool.)
 Tool descriptions are scored externally on Glama's six-dimension Tool Definition Quality rubric
 (<https://glama.ai/mcp/servers/L337-org/docker-mcp/score>): Purpose Clarity 25%, Usage Guidelines
 20%, Behavioral Transparency 20%, Parameter Semantics 15%, Conciseness & Structure 10%, Contextual
-Completeness 10%. Four rounds of cleanup (#97, the 2.0 rename, #129, and the 2026-07 bottom-20
+Completeness 10%. Those six are Glama's own dimension names, quoted verbatim - "Behavioral
+Transparency" keeps its American spelling because renaming an external rubric's dimension would
+misname it. Four rounds of cleanup (#97, the 2.0 rename, #129, and the 2026-07 bottom-20
 pass - see [[project_glama_docstring_quality]] in memory) all chased the same failure: docstrings
-that state *what* the tool does but never *when to use it over its neighbors*, plus `args:` /
+that state *what* the tool does but never *when to use it over its neighbours*, plus `args:` /
 `returns:` lines that merely restate the schema. The standard below exists to prevent a fifth
 round. It applies to **every `@tool()` docstring added or modified in a PR** (a ratchet - untouched
 legacy docstrings are cleaned opportunistically, not churned):
@@ -57,14 +59,14 @@ legacy docstrings are cleaned opportunistically, not churned):
    could be confused ("Send a signal to a running container (default SIGKILL - immediate, no
    graceful shutdown)").
 2. **A usage-guidance paragraph (1-5 sentences between the summary and `args:`) is required for
-   every tool, not just complex ones.** Every tool in a 150+-tool server has neighbors. It must
+   every tool, not just complex ones.** Every tool in a 150+-tool server has neighbours. It must
    carry:
    - at least one *discriminator* naming the sibling tool(s) an agent could reach for instead and
      when to prefer which (`container_stop` vs `container_kill` vs `container_restart`;
      `service_ps` vs `stack_ps` vs the `service-tasks://` resource);
    - preconditions in prose (swarm manager only, plugin required, container must be
      running/paused);
-   - side effects and destructive/irreversible behavior in prose - the scorer explicitly discounts
+   - side effects and destructive/irreversible behaviour in prose - the scorer explicitly discounts
      `readOnlyHint`/`destructiveHint` annotations as a substitute for description text;
    - for CLI-backed tools, the error style ("does not raise on a non-zero CLI exit - inspect
      `returncode`/`stderr`" vs "raises `RuntimeError` on CLI failure"). Don't overpromise "never
@@ -105,6 +107,6 @@ exact names double as retrieval anchors that surface the right alternative even 
 searched for the wrong one.
 
 Self-check before opening the PR: read the docstring as an agent holding 150+ tool names and
-nothing else - could you pick this tool over its neighbors and call it correctly on the first try?
-**Write it this way the first time a tool is added or its behavior changes** - don't wait for a
+nothing else - could you pick this tool over its neighbours and call it correctly on the first try?
+**Write it this way the first time a tool is added or its behaviour changes** - don't wait for a
 future Glama pass to catch it.

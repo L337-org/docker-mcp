@@ -122,6 +122,9 @@ untouched neighbours. Push back on any of these:
    identifies neither form and is a finding.
 6. **Tool descriptions are strict ASCII, no symbol exception**
    (`tests/test_docs.py::test_advertised_tool_descriptions_are_plain_ascii` enforces it).
+   Shipped prose more widely is British English in ASCII punctuation - watch in particular for text
+   moved out of `CLAUDE.md`, which is exempt and so carries Americanisms and em dashes that become
+   defects the moment they land in a shipping file.
 7. **Every factual claim is verified** against docker-py docs or the Engine API spec.
 
 The test: reading only this docstring while holding 164 tool names and nothing else, could an agent
@@ -184,7 +187,11 @@ re-proposes these; it has no memory of last time.
   candidate workaround, not the fix.** Review has twice caught a comment claiming otherwise.
   `Formula[...].opt_bin` is kept over the `formula_opt_bin` helper deliberately: the helper only exists
   from Homebrew 6.0.3.
-- **`CLAUDE.md` and this file are exempt from the ASCII punctuation rule** - working instructions that
-  never ship, which is why they use em dashes freely. `architecture/`, `CONTRIBUTING.md`, the README,
-  the skill and every tool docstring are **not** exempt. Comments, tests and workflow files still hold
-  em dashes; none of them ship, and sweeping them is a separate decision.
+- **`CLAUDE.md` and this file are exempt from the prose style** - British English *and* ASCII
+  punctuation - because they are working instructions that never ship. That is why they use em dashes
+  and American spellings freely. `architecture/`, `CONTRIBUTING.md`, the README, the skill and every
+  tool docstring are **not** exempt. Comments, tests and workflow files still hold em dashes; none of
+  them ship, and sweeping them is a separate decision.
+- **Glama's rubric dimension names are quoted verbatim and keep their American spelling** -
+  "Behavioral Transparency" in `architecture/tool-descriptions.md`. Renaming an external rubric's
+  dimension would misname it. Labelled at the line; do not flag it.
