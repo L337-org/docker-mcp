@@ -277,13 +277,15 @@ jobs:
           #   them. CLAUDE.md says so itself: a detail-only edit to the deep layer correctly
           #   touches nothing else. Demanding it move in lockstep contradicts the rule.
           #
-          # Truth table (claude/copilot/detail -> result):
-          #   no  no  no   pass, silent      - touches none of the set
-          #   no  no  yes  pass, warning     - detail-only edit; confirm nothing is rule-level
-          #   yes no  any  FAIL              - one-sided mirror edit
-          #   no  yes any  FAIL              - one-sided mirror edit
-          #   yes yes no   pass              - mirrored rule with no detail-layer component
-          #   yes yes yes  pass              - whole set moved together
+          # Truth table (claude/copilot/detail -> result). Every pass prints a line saying
+          # WHICH pass it was, so a log reads unambiguously; "no annotation" below means no
+          # ::warning::/::error:: annotation, not no output.
+          #   no  no  no   pass, no annotation  - touches none of the set
+          #   no  no  yes  pass, ::warning::    - detail-only edit; confirm nothing is rule-level
+          #   yes no  any  FAIL                 - one-sided mirror edit
+          #   no  yes any  FAIL                 - one-sided mirror edit
+          #   yes yes no   pass, no annotation  - mirrored rule, no detail-layer component
+          #   yes yes yes  pass, no annotation  - whole set moved together
           #
           # Still a touch-test, not a semantics test: it cannot see whether the SAME rule
           # reached each file, so a green tick is not evidence the mirror is actually right.
@@ -297,11 +299,16 @@ jobs:
             exit 1
           fi
 
-          if [ "$detail" = yes ] && [ "$claude" = no ]; then
+          if [ "$claude" = no ] && [ "$detail" = no ]; then
+            echo "Docs mirror OK: this change touches none of the documentation set."
+          elif [ "$claude" = no ]; then
             echo "::warning::Detail-layer-only change (architecture/ or CONTRIBUTING.md). That is the correct shape for detail, and is not a failure. Confirm you have not written a RULE that ought to be promoted into CLAUDE.md and .github/copilot-instructions.md - no touch-test can tell the difference, which is why this is a prompt rather than a gate."
+            echo "Docs mirror OK: detail-layer-only change."
+          elif [ "$detail" = no ]; then
+            echo "Docs mirror OK: the mirror pair moved together, with no detail-layer component."
+          else
+            echo "Docs mirror OK: the whole documentation set changed together."
           fi
-
-          echo "Docs mirror OK."
           exit 0
 
   integration-tests:
