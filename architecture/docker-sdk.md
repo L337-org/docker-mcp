@@ -50,10 +50,11 @@ say why. **Anything deliberately not wrapped, or wrapped in an unobvious way, be
 - **`image_import`'s `api.import_image_from_{file,data,url,image}`** - stay low-level permanently.
   `ImageCollection` has no import method at all, so there is no high-level path to migrate onto.
   Note the call-site comment explaining why the per-source methods are used rather than
-  `import_image(src=...)`: `from_file`, `from_url` and `from_image` all `return self.import_image(...)`,
-  so choosing them does **not** avoid its "unreadable path is retried as a URL" behaviour - that is a
-  documented hazard guarded at our call site, not a fix. (`from_data` is the one exception: it posts
-  directly via `self._result`.)
+  `import_image(src=...)`: `import_image_from_file`, `import_image_from_url` and
+  `import_image_from_image` all `return self.import_image(...)`, so choosing them does **not** avoid
+  its "unreadable path is retried as a URL" behaviour - that is a documented hazard guarded at our
+  call site, not a fix. (`import_image_from_data` is the one exception: it posts directly via
+  `self._result`.)
 - **`plugin_privileges`'s `api.plugin_privileges`** - stays low-level permanently. `PluginCollection`
   exposes no privileges call; docker-py's own `install` calls this same low-level method internally.
 - **`DockerClient.from_context()`** (new public surface in docker-py 7.2.0) - never adopt it. It
@@ -63,9 +64,10 @@ say why. **Anything deliberately not wrapped, or wrapped in an unobvious way, be
   candidate precisely because it is new and plausible, which is why it is recorded here.
 - **`ServiceSpec.Networks` on `create_service` / `update_service`** - not a deprecation we are
   exposed to, and not to be re-raised. `networks` is in `TASK_TEMPLATE_KWARGS`
-  (`docker/models/services.py`), so the high-level path `service_create` uses pops it into
-  `TaskTemplate`; `create_service` then sends `"Networks": convert_service_networks(None)`, which
-  returns its falsy input unchanged, so the deprecated top-level field goes out empty.
+  (`docker/models/services.py`), so `ServiceCollection.create` - the high-level path behind
+  `service_create` - moves `networks` into `TaskTemplate` before calling `create_service`. That call
+  then sends `"Networks": convert_service_networks(None)`, and `convert_service_networks` returns its
+  falsy input unchanged, so the deprecated top-level field goes out empty.
   `update_service` writes `data['TaskTemplate']['Networks']` on anything from API v1.25 upwards.
   Two audit runs reached opposite conclusions on this in the same week; the above is what the 7.2.0
   source actually does.
