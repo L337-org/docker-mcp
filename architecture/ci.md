@@ -13,12 +13,28 @@ hooks running `uv run ruff ...` for the same reason, so a synced venv (`uv sync`
 committing. CI installs with `uv sync --locked`, which fails if `uv.lock` disagrees with
 `pyproject.toml` instead of silently re-locking - a lockfile-only dependency change (e.g. a
 Dependabot lock rewrite that raises a cap pyproject still pins) fails CI rather than landing. A
-non-required `Check docs mirror` job flags a PR that touches part of the documentation set but not
-all of it. That set is `CLAUDE.md`, `.github/copilot-instructions.md` and the rule-carrying detail
-layer (`architecture/`, `CONTRIBUTING.md`) - see the MIRROR RULE in
-[../CLAUDE.md](../CLAUDE.md). Membership is curated rather than derived from what the instruction
-files link to, and the job is a touch-test: it cannot see whether the *same* rule reached each file.
-It's a prompt to double-check, not a merge blocker.
+non-required `Check docs mirror` job watches the documentation set: `CLAUDE.md`,
+`.github/copilot-instructions.md` and the rule-carrying detail layer (`architecture/`,
+`CONTRIBUTING.md`) - see the MIRROR RULE in [../CLAUDE.md](../CLAUDE.md). Membership is curated
+rather than derived from what the instruction files link to.
+
+**It fails on exactly one thing: `CLAUDE.md` changing without `.github/copilot-instructions.md`, or
+the reverse.** Those two are a mirror - the same rules for an implementer and for a reviewer - so a
+one-sided edit is nearly always a mistake. The detail layer is different in kind: it is what those
+two *point at*, not a copy of them, so a detail-only change is the correct shape and passes with a
+`::warning::` asking you to confirm you have not written a rule that ought to be promoted.
+
+That distinction was learned the hard way. The job originally passed only when all three moved
+together or none did, which failed two changes that are correct by the very rule it enforces: a
+detail-only `architecture/` edit (which `CLAUDE.md` explicitly calls correct), and a rule mirrored
+properly across both instruction files when that rule has no detail-layer component. Firing on
+correct behaviour is how a guard gets ignored wholesale, so the fix was to narrow it rather than to
+tolerate the red. The truth table is recorded as a comment in the job itself.
+
+It remains a touch-test, not a semantics test: it cannot see whether the *same* rule reached each
+file, so a green tick is not evidence the mirror is right - and an unrelated edit to the other
+mirror in the same PR still masks a genuine one-sided change. The `PostToolUse` hook in
+`.claude/settings.json` carries the same distinction at edit time, and the two must stay in step.
 
 An `Action pins are immutable` job fails the build when any `uses:` reference in
 `.github/workflows` or `.github/actions` names a tag or branch rather than a full 40-hex commit SHA.

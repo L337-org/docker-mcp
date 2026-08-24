@@ -8,9 +8,11 @@ before judging a change to that area — the tables below say which.
 **MIRROR RULE.** `CLAUDE.md`, this file, and the detail layer (`architecture/`, `CONTRIBUTING.md`) are
 one documentation set. A change to project structure, conventions, env vars, the tool/prompt/resource
 surface or distribution channels must reach every layer that carries the rule. Flag a PR that updates
-one but not the others. The `Check docs mirror` job prompts for this but is a touch-test: it cannot
-see whether the *same rule* reached each file, so an unrelated edit to the other mirror in the same PR
-masks a genuine one-sided change. Check by reading, not by trusting the green tick. The inverse also
+one but not the others. The `Check docs mirror` job fails a PR that changes `CLAUDE.md` without this
+file or the reverse, and warns (does not fail) on a detail-layer-only change, which is the correct
+shape for detail. It is a touch-test either way: it cannot see whether the *same rule* reached each
+file, so an unrelated edit to the other mirror in the same PR masks a genuine one-sided change.
+Check by reading, not by trusting the green tick. The inverse also
 applies: if a CI test already enforces the rule mechanically, neither mirror should carry it as prose.
 
 ## Review priorities

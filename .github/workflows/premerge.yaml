@@ -265,22 +265,44 @@ jobs:
 
           echo "CLAUDE.md=$claude  copilot-instructions.md=$copilot  detail-layer=$detail"
 
-          if [ "$claude" = no ] && [ "$copilot" = no ] && [ "$detail" = no ]; then
-            echo "Docs mirror OK: this change touches none of the documentation set."
-            exit 0
-          fi
-          if [ "$claude" = yes ] && [ "$copilot" = yes ] && [ "$detail" = yes ]; then
-            echo "Docs mirror OK: the whole documentation set changed together."
-            exit 0
+          # The documentation set holds TWO different relationships, and conflating them is
+          # what an earlier version of this job got wrong (it passed only on all-three or
+          # none, so it failed two changes that are correct by the very rule it enforces):
+          #
+          #   CLAUDE.md <-> .github/copilot-instructions.md is a MIRROR. They carry the same
+          #   rules for an implementer and for a reviewer, so one moving without the other is
+          #   nearly always a mistake. That is the case worth failing on, and the only one.
+          #
+          #   architecture/ and CONTRIBUTING.md are what those two POINT AT, not copies of
+          #   them. CLAUDE.md says so itself: a detail-only edit to the deep layer correctly
+          #   touches nothing else. Demanding it move in lockstep contradicts the rule.
+          #
+          # Truth table (claude/copilot/detail -> result):
+          #   no  no  no   pass, silent      - touches none of the set
+          #   no  no  yes  pass, warning     - detail-only edit; confirm nothing is rule-level
+          #   yes no  any  FAIL              - one-sided mirror edit
+          #   no  yes any  FAIL              - one-sided mirror edit
+          #   yes yes no   pass              - mirrored rule with no detail-layer component
+          #   yes yes yes  pass              - whole set moved together
+          #
+          # Still a touch-test, not a semantics test: it cannot see whether the SAME rule
+          # reached each file, so a green tick is not evidence the mirror is actually right.
+          if [ "$claude" != "$copilot" ]; then
+            if [ "$claude" = no ]; then
+              missing="CLAUDE.md"; changed_one=".github/copilot-instructions.md"
+            else
+              missing=".github/copilot-instructions.md"; changed_one="CLAUDE.md"
+            fi
+            echo "::error::MIRROR RULE: this PR changes ${changed_one} but not ${missing}. Those two carry the same rules for an implementer and for a reviewer, so a rule that changed in one almost always needs to reach the other. Legitimate one-sided edits do exist - a reviewer-only 'do not flag' entry, a typo - so if that is what this is, say which in the PR description. Before mirroring, check the change belongs in an always-loaded file at all: if a CI test already enforces it, neither mirror should carry it."
+            exit 1
           fi
 
-          missing=""
-          [ "$claude"  = no ] && missing="$missing CLAUDE.md"
-          [ "$copilot" = no ] && missing="$missing .github/copilot-instructions.md"
-          [ "$detail"  = no ] && missing="$missing architecture/ or CONTRIBUTING.md"
+          if [ "$detail" = yes ] && [ "$claude" = no ]; then
+            echo "::warning::Detail-layer-only change (architecture/ or CONTRIBUTING.md). That is the correct shape for detail, and is not a failure. Confirm you have not written a RULE that ought to be promoted into CLAUDE.md and .github/copilot-instructions.md - no touch-test can tell the difference, which is why this is a prompt rather than a gate."
+          fi
 
-          echo "::error::MIRROR RULE: this PR changes part of the documentation set but not all of it. Untouched:${missing}. CLAUDE.md and .github/copilot-instructions.md carry the same rules for an implementer and a reviewer, and architecture/ plus CONTRIBUTING.md carry the rule-level detail they point at, so a rule that changed in one usually needs to reach the others. Legitimate one-sided edits exist — a detail-only architecture/ edit, a reviewer-only 'do not flag' entry, a typo — and this check is not required for merge, so say which it is in the PR description and carry on. Before mirroring, check the change belongs in an always-loaded file at all: if a CI test already enforces it, neither mirror should carry it."
-          exit 1
+          echo "Docs mirror OK."
+          exit 0
 
   integration-tests:
     # Runs the suite gated by `-m integration` against the Docker daemon that
