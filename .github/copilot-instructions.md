@@ -35,9 +35,6 @@ order.
 The centre of this file. Each of these is a rule whose violation produces no error, no failing test
 and no obvious symptom.
 
-- **A new tool domain needs a `_DOMAIN_BLURBS` entry in `server.py`.** Without it the `instructions`
-  router silently omits the domain, so a lazy-loading client never learns the vocabulary that finds
-  those tools. `TOOL_CATEGORIES` drift *is* caught by `tests/test_server.py`; this is not.
 - **The `@tool()` decorator must stay generic** (`def tool[F: Callable[..., Any]](...) -> Callable[[F], F]`).
   Annotating it as a bare `Callable` erases the parameter list and silently disables pyright's argument
   checking at *every* tool call site. Flag any loosening, including loosening only the return
@@ -91,7 +88,7 @@ Read the linked file before judging a substantive change to that area.
 
 | Area | Read | Watch for |
 |---|---|---|
-| `server.py`, `docker_mcp/tools/` | [architecture/server.md](../architecture/server.md) | missing `_DOMAIN_BLURBS`; `_slim_schema` or `_apply_host_schema` changing validation rather than display; a disabled capability registered-then-refusing instead of absent |
+| `server.py`, `docker_mcp/tools/` | [architecture/server.md](../architecture/server.md) | `_slim_schema` or `_apply_host_schema` changing validation rather than display; a disabled capability registered-then-refusing instead of absent |
 | `_hosts.py`, host selection | [architecture/hosts.md](../architecture/hosts.md) | `use_context=False` dropped; `system_reconnect` gaining the ability to retarget an arbitrary URL; a write path that no longer requires an explicit `host` in multi-host mode |
 | `_cli.py`, `_ssh_proxy.py`, CLI-backed tools | [architecture/cli-shell-out.md](../architecture/cli-shell-out.md) | `subprocess.run` called directly; `shell=True`; a missing `timeout=`; the remote-exec fallback preferred over a usable local CLI; staging consequences absent from the docstring |
 | any `@tool()` docstring | [architecture/tool-descriptions.md](../architecture/tool-descriptions.md) | the checklist below |
@@ -151,6 +148,12 @@ re-proposes these; it has no memory of last time.
   task collection at all. These documented `APIClient` methods are the only public path.
 
 **Other settled decisions.**
+
+- **A missing `_DOMAIN_BLURBS` entry is not a review item** - `tests/test_server.py`'s
+  `test_router_domain_lines_track_registered_domains_under_every_switch` and
+  `test_instructions_default_to_the_live_registered_surface` both fail and name the missing domain.
+  It was briefly listed here as an invariant that fails silently, which was simply wrong. Per the
+  MIRROR RULE, a rule a CI test already enforces does not belong in either instruction file.
 
 - **Target runtime is Python >=3.14.** Assume current stable CPython grammar and stdlib are available
   and valid; do not flag 3.14-valid syntax as a bug. The example reviewers and older models get wrong:

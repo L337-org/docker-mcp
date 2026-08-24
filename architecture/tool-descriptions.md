@@ -100,7 +100,7 @@ where the item-2 discriminators do their work. Consequences: pre-fetch discovera
 the naming convention and the router, not the docstring (don't pad docstrings with search
 keywords); a *cross-domain* selection caveat that must be visible before any schema is fetched
 (e.g. "prefer `dest_path` for large output") goes in the router's caveat list (`_DOMAIN_BLURBS` /
-`build_instructions()` - see "Server singleton" above), while *sibling-level* discriminators stay
+`build_instructions()` - see "Server singleton" in [server.md](server.md)), while *sibling-level* discriminators stay
 in docstrings and are never duplicated into the router; and sibling references must use the exact
 tool name (`container_kill`, never "the kill tool") - lazy clients keyword-search descriptions, so
 exact names double as retrieval anchors that surface the right alternative even when the agent

@@ -130,8 +130,10 @@ prompts; [hosts.md](architecture/hosts.md) for the multi-daemon registry;
 Two things about that surface are load-bearing enough to state here:
 
 - **A new tool module is a new domain**, so it needs a `TOOL_CATEGORIES` entry per tool *and* a
-  `_DOMAIN_BLURBS` entry, or the `instructions` router silently omits it. Full checklist in
-  [CONTRIBUTING.md](CONTRIBUTING.md).
+  `_DOMAIN_BLURBS` entry, or the `instructions` router omits the domain and a lazy-loading client
+  never learns the vocabulary that finds its tools. Both are caught by `tests/test_server.py` — the
+  router pair asserts the advertised domains equal the registered ones — so this is a "do it up
+  front" note, not a silent trap. Full checklist in [CONTRIBUTING.md](CONTRIBUTING.md).
 - **Tool modules import `tool` from `docker_mcp.server`; prompt modules import `prompt`.** Only
   resource modules import `mcp` directly — doing so in a tool or prompt module is a circular import.
 

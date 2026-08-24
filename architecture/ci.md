@@ -13,9 +13,12 @@ hooks running `uv run ruff ...` for the same reason, so a synced venv (`uv sync`
 committing. CI installs with `uv sync --locked`, which fails if `uv.lock` disagrees with
 `pyproject.toml` instead of silently re-locking - a lockfile-only dependency change (e.g. a
 Dependabot lock rewrite that raises a cap pyproject still pins) fails CI rather than landing. A
-non-required `Check docs mirror` job flags a PR that edits `CLAUDE.md` or
-`.github/copilot-instructions.md` without the other (see the MIRROR RULE above) - it's a prompt to
-double-check, not a merge blocker.
+non-required `Check docs mirror` job flags a PR that touches part of the documentation set but not
+all of it. That set is `CLAUDE.md`, `.github/copilot-instructions.md` and the rule-carrying detail
+layer (`architecture/`, `CONTRIBUTING.md`) - see the MIRROR RULE in
+[../CLAUDE.md](../CLAUDE.md). Membership is curated rather than derived from what the instruction
+files link to, and the job is a touch-test: it cannot see whether the *same* rule reached each file.
+It's a prompt to double-check, not a merge blocker.
 
 An `Action pins are immutable` job fails the build when any `uses:` reference in
 `.github/workflows` or `.github/actions` names a tag or branch rather than a full 40-hex commit SHA.
