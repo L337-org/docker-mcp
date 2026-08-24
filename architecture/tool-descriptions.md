@@ -91,7 +91,7 @@ legacy docstrings are cleaned opportunistically, not churned):
    SDK Policy below - an unverified claim about identifier semantics (e.g. "name or id" for a
    resource actually addressed by name only) is exactly the kind of thing PR review catches late.
 
-**Division of labor across the three discovery layers.** For a lazy-loading client (e.g. Claude
+**Division of labour across the three discovery layers.** For a lazy-loading client (e.g. Claude
 Code), tool schemas load on demand; what is always in context is only (1) the **tool names** and
 (2) the **`instructions` router**. Docstrings are layer (3): a deferred tool cannot be invoked
 without fetching its definition, so the docstring is guaranteed to be read at the moment of

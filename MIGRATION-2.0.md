@@ -2,7 +2,7 @@
 
 2.0 renames the entire tool surface to one convention, merges duplicate tools, removes two dead
 ones, standardizes parameter names, and drops the deprecated `DOCKER_MCP_*` env-var aliases. It is
-a **clean break**: no old name - tool, parameter, or env var - is honored. Nothing else changes:
+a **clean break**: no old name - tool, parameter, or env var - is honoured. Nothing else changes:
 transports, safety classifications (beyond the two noted below), resources, prompts, and
 provenance labels all behave as in 1.x.
 
@@ -154,7 +154,7 @@ All other `compose_*`, `stack_*`, `context_*`, `buildx_*`, and `scout_*` names a
 | `registry_get_config` | `registry_image_config` |
 | `hub_list_tags` | `hub_tags` |
 
-## Merged tools - behavior notes
+## Merged tools - behaviour notes
 
 - **`container_logs`**: `follow=True` replaces `follow_container_logs`; `limit_lines` and
   `timeout_seconds` apply only in follow mode, `until` only in snapshot mode.
@@ -195,11 +195,11 @@ All other `compose_*`, `stack_*`, `context_*`, `buildx_*`, and `scout_*` names a
   `--filter` expressions - one `filters` contract across the surface.
 - Logs `tail` is `int | "all"` on all three logs tools and **defaults to a bounded 200**
   (1.x defaulted `container_logs`/`service_logs` to `"all"`; pass `tail="all"` for the old
-  behavior). `compose_logs`'s `0`-means-all sentinel is gone.
+  behaviour). `compose_logs`'s `0`-means-all sentinel is gone.
 
 ## Environment variables
 
-The pre-rename `DOCKER_MCP_*` alias spellings are no longer honored. Use the canonical
+The pre-rename `DOCKER_MCP_*` alias spellings are no longer honoured. Use the canonical
 `DOCKER_MCP_SERVER_*` names: `READONLY`, `NO_DESTRUCTIVE`, `DISABLE`, `HOSTS`,
 `REGISTRY_USERNAME`, `REGISTRY_PASSWORD`, `ALLOW_SELF_TERMINATE`, `IN_CONTAINER`, `NO_LABELS`,
 `NAME`. And note the domain rename: `DOCKER_MCP_SERVER_DISABLE=client` becomes

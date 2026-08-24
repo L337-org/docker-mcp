@@ -195,6 +195,14 @@ re-proposes these; it has no memory of last time.
   and American spellings freely. `architecture/`, `CONTRIBUTING.md`, the README, the skill and every
   tool docstring are **not** exempt. Comments, tests and workflow files still hold em dashes; none of
   them ship, and sweeping them is a separate decision.
-- **Glama's rubric dimension names are quoted verbatim and keep their American spelling** -
-  "Behavioral Transparency" in `architecture/tool-descriptions.md`. Renaming an external rubric's
-  dimension would misname it. Labelled at the line; do not flag it.
+- **These American spellings are deliberate; do not flag them.** Shipped prose is British English,
+  but four sets are excluded for cause, and a sweep has confirmed nothing else remains:
+  - **`CODE_OF_CONDUCT.md` in full** - it is the Contributor Covenant 2.1, quoted from upstream.
+    Anglicising it would make it stop matching the document it claims to be.
+  - **"Behavioral Transparency"** in `architecture/tool-descriptions.md` - one of Glama's own rubric
+    dimension names, quoted verbatim. Renaming an external rubric's dimension misnames it. Labelled
+    at the line.
+  - **"catalog"** wherever it names the `tool_catalog()` function, the `docker-mcp://tool-catalog`
+    resource, or the OCI `_catalog` endpoint. Spelling the prose "catalogue" would disagree with the
+    identifier it refers to.
+  - **"dialog"** for a UI dialog box, which is the standard technical term in British usage too.
