@@ -9,12 +9,12 @@ provenance labels all behave as in 1.x.
 ## The naming convention
 
 Every tool is named `<management-command>_<verb>`, anchored to the docker CLI's own
-management-command structure (`docker container ls` → `container_list`), with long-form verbs
+management-command structure (`docker container ls` -> `container_list`), with long-form verbs
 (`list`/`remove`/`inspect` - never `ls`/`rm`/`get`). Names never encode the backing implementation
 (SDK vs CLI), so tools can move between backends without renaming. Read-only fetches may be
 noun-form (`container_logs`, `registry_tags`).
 
-## Tool renames (old → new)
+## Tool renames (old -> new)
 
 **system** (domain renamed from `client` - update `DOCKER_MCP_SERVER_DISABLE=client` to `system`):
 
@@ -181,14 +181,14 @@ All other `compose_*`, `stack_*`, `context_*`, `buildx_*`, and `scout_*` names a
   `image`); `name`/`names` for name-only resources (was `volume_id`, `stack_name`,
   `stack_names`); `repository` for remote repo refs (was `image` on `registry_*`, `name` on
   `image_registry_data`/`image_list`).
-- `timeout` → `timeout_seconds` everywhere (`plugin_enable`); in `container_stop` /
+- `timeout` -> `timeout_seconds` everywhere (`plugin_enable`); in `container_stop` /
   `container_restart` the stop-grace period is `stop_timeout_seconds` (matching
   `compose_stop`/`compose_restart` - `timeout_seconds` always means the call's own bound).
-- `container_remove(v=...)` → `volumes`.
-- `buildx_imagetools_create(files=...)` → `descriptor_files`.
-- `plugin_install(remote_name=...)` → `remote` (matching `plugin_upgrade`).
-- `node_update(node_spec=...)` → `spec` (replacement semantics - omitted keys are cleared).
-- `buildx_prune`: `filter` → `filters`; the deprecated `keep_storage` is removed (use
+- `container_remove(v=...)` -> `volumes`.
+- `buildx_imagetools_create(files=...)` -> `descriptor_files`.
+- `plugin_install(remote_name=...)` -> `remote` (matching `plugin_upgrade`).
+- `node_update(node_spec=...)` -> `spec` (replacement semantics - omitted keys are cleared).
+- `buildx_prune`: `filter` -> `filters`; the deprecated `keep_storage` is removed (use
   `reserved_space`).
 - `stack_ps`/`stack_services` `filters` take the same dict shape as the SDK tools
   (`{"name": "web"}`, list values repeat the filter) instead of a `list[str]` of

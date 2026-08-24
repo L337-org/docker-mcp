@@ -18,7 +18,7 @@ swarm secrets/configs, and swarm join/unlock tokens (the manager join
 token is cluster-root-equivalent) - the CLI shell-out attack surface,
 the startup-fixed daemon set, and the per-host read-only guard) are
 documented in
-[README.md → Security considerations](README.md#security-considerations).
+[README.md -> Security considerations](README.md#security-considerations).
 Read that section before connecting an AI agent to this server.
 
 In short: the Docker daemon's socket is effectively root-equivalent on its

@@ -4,12 +4,12 @@ All of these are **diagnosis**. Change nothing; propose the fix and let the user
 
 Pick the entry point by what you know:
 
-- a named container is misbehaving → **Diagnose one container**
-- something is wrong on the host but you don't know what → **Triage a host incident**
-- routine "is everything OK?" → **Fleet sweep**
-- a Compose project → **Diagnose a Compose project**
-- A can't reach B → **Container-to-container networking**
-- a swarm → **Swarm health audit**
+- a named container is misbehaving -> **Diagnose one container**
+- something is wrong on the host but you don't know what -> **Triage a host incident**
+- routine "is everything OK?" -> **Fleet sweep**
+- a Compose project -> **Diagnose a Compose project**
+- A can't reach B -> **Container-to-container networking**
+- a swarm -> **Swarm health audit**
 
 ## Diagnose one container
 
@@ -162,7 +162,7 @@ Read-only. Requires a manager (`reference/swarm.md`).
    ```bash
    docker service ps <svc> --no-trunc --format json | jq -rs '.[] | [.Name,.CurrentState,.Error] | @tsv'
    ```
-   Look for tasks stuck in `rejected`/`failed`, or cycling `shutdown` → `starting`.
+   Look for tasks stuck in `rejected`/`failed`, or cycling `shutdown` -> `starting`.
 4. **Check for a stalled rollout:**
    `docker service inspect <svc> --format '{{json .UpdateStatus}}' | jq` - `state: paused` will
    not resume on its own.
