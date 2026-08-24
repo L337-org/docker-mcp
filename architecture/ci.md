@@ -7,14 +7,14 @@ Deep detail behind the summaries in [../CLAUDE.md](../CLAUDE.md).
 Read this before changing `.github/workflows/`.
 
 CI (`.github/workflows/premerge.yaml`) enforces `pytest`, `ruff check`, `ruff format --check`, and
-`pyright` on every PR and push to main — all via `uv run`, so the dev-group pins in `pyproject.toml` (bumped by
+`pyright` on every PR and push to main - all via `uv run`, so the dev-group pins in `pyproject.toml` (bumped by
 Dependabot's monthly uv pass) are the single tool-version source. The pre-commit hooks are local
-hooks running `uv run ruff …` for the same reason, so a synced venv (`uv sync`) is required before
+hooks running `uv run ruff ...` for the same reason, so a synced venv (`uv sync`) is required before
 committing. CI installs with `uv sync --locked`, which fails if `uv.lock` disagrees with
-`pyproject.toml` instead of silently re-locking — a lockfile-only dependency change (e.g. a
+`pyproject.toml` instead of silently re-locking - a lockfile-only dependency change (e.g. a
 Dependabot lock rewrite that raises a cap pyproject still pins) fails CI rather than landing. A
 non-required `Check docs mirror` job flags a PR that edits `CLAUDE.md` or
-`.github/copilot-instructions.md` without the other (see the MIRROR RULE above) — it's a prompt to
+`.github/copilot-instructions.md` without the other (see the MIRROR RULE above) - it's a prompt to
 double-check, not a merge blocker.
 
 An `Action pins are immutable` job fails the build when any `uses:` reference in
@@ -47,12 +47,12 @@ whose *import surface* we touch, consider whether a cap or a guard like this bel
 **A required `Check fresh resolve still imports` job** (`premerge.yaml`) closes the blind spot that
 let the 2.2.0 incident through: every job above installs with `uv sync --locked`, so none of them
 ever resolve what a fresh `uvx`/`pip install` actually gets from the bare `pyproject.toml`
-specifiers — only the pinned, known-good set in `uv.lock`. This job does, via `uv pip install`
+specifiers - only the pinned, known-good set in `uv.lock`. This job does, via `uv pip install`
 (the pip-compatible interface, which never reads or writes `uv.lock`) into a throwaway venv, then
 runs `import docker_mcp` and `docker-mcp-server --version` against that install. It reports a
 resolution failure (a specifier no longer satisfiable) and an import failure (resolved fine, but
 broke on import) as distinct errors, since they call for different fixes. This is a PR/push gate,
-not a schedule — it complements rather than replaces the weekly canary's published-package install
+not a schedule - it complements rather than replaces the weekly canary's published-package install
 smoke below, which exercises the actual shipped artefact rather than a hypothetical resolve of the
 current tree.
 
@@ -61,10 +61,10 @@ drift premerge CI can't see: wheels-only (`--only-binary :all:`) dependency reso
 macOS / ARM macOS / Windows against both the repo `pyproject.toml` and the latest published PyPI
 release (the check that would have caught cryptography 49 dropping its x86_64-macOS wheel), plus
 real install smokes of the published package on `macos-latest`, `macos-15-intel` (Intel runner
-label retires Aug 2027), and `windows-latest` — `import docker_mcp` and `uvx docker-mcp-server
+label retires Aug 2027), and `windows-latest` - `import docker_mcp` and `uvx docker-mcp-server
 --version`. **PRs into main also run the repo-pyproject resolution leg** (the only part that
 exercises PR content), so a dependency change that breaks a platform is caught before merge; the
 published-package legs and issue filing stay schedule/dispatch-only. Failures on unattended runs
 file a deduplicated `ci-failure` + `wf:canary` issue via `.github/actions/file-failure-issue`.
 `main()` handles `--version` (print the installed version, exit) before any daemon/network
-contact — the canary's entry-point smoke depends on it.
+contact - the canary's entry-point smoke depends on it.
