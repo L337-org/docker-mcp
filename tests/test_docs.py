@@ -17,7 +17,24 @@ import docker_mcp.tools  # noqa: F401  - importing registers every tool on the s
 from docker_mcp.server import _CLI_DOMAINS, _REMOTE_EXEC_DOMAINS, mcp
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
-_DOC_FILES = ("README.md", "CLAUDE.md", "SECURITY.md", ".github/copilot-instructions.md")
+_ARCHITECTURE_DIR = _REPO_ROOT / "architecture"
+
+# The architecture/ layer is derived rather than listed, so a file added there is covered without
+# anyone remembering to update this tuple. The cost of deriving it is that `Path.glob` answers a
+# missing directory with an empty iterator rather than an error, so a rename or removal of
+# architecture/ would shrink this set in silence and the suite would stay green while covering none
+# of that layer. `test_the_derived_half_of_the_doc_set_is_not_empty` is what makes that loud.
+# `.as_posix()` rather than `str()`: on Windows the latter yields "architecture\\server.md", which
+# still *opens* correctly (WindowsPath splits on either separator) but reads inconsistently beside
+# the forward-slash entries above when a failure message quotes it.
+_ARCHITECTURE_DOCS = tuple(sorted(p.relative_to(_REPO_ROOT).as_posix() for p in _ARCHITECTURE_DIR.glob("*.md")))
+_DOC_FILES = (
+    "README.md",
+    "CLAUDE.md",
+    "CONTRIBUTING.md",
+    "SECURITY.md",
+    ".github/copilot-instructions.md",
+) + _ARCHITECTURE_DOCS
 
 # Only lines that *claim to describe the CLI-backed surface* are enumerations. Without this the check
 # false-positives on prose using the same words as nouns ("a build context", "Compose files") and on the
@@ -62,7 +79,11 @@ def _incomplete_enumeration(line: str) -> list[str] | None:
     args: line - one line of documentation
     returns: list[str] | None - the missing domains, or None when the line is fine or not an enumeration
     """
-    lowered = line.lower()
+    # Backticks are stripped before the marker test, not before anything else: the real lines carry
+    # the marker phrase as "`docker` CLI feature", and a plain-substring match against the raw line
+    # silently misses that - the guard stops firing on exactly the sentence it was written for. The
+    # exemption test below still matches the raw line, since those are quoted verbatim from the docs.
+    lowered = line.lower().replace("`", "")
     if not any(marker in lowered for marker in _ENUMERATION_MARKERS):
         return None
     if any(exemption in line for exemption in _NOT_ENUMERATIONS):
@@ -72,6 +93,25 @@ def _incomplete_enumeration(line: str) -> list[str] | None:
         return None
     closest = min(_VALID_SETS, key=lambda candidate: len(candidate ^ named))
     return sorted(closest - named)
+
+
+def test_the_derived_half_of_the_doc_set_is_not_empty():
+    """
+    architecture/ still exists and still contributes files to the checked set.
+
+    Without this, renaming or removing that directory would leave `Path.glob` returning nothing and
+    every check in this module quietly narrowing to the five hand-listed files - passing, while
+    covering none of the layer the enumerations were moved into. A guard that stops guarding without
+    saying so is the failure this whole module exists to prevent, so it gets a guard of its own.
+    """
+    assert _ARCHITECTURE_DIR.is_dir(), (
+        f"{_ARCHITECTURE_DIR} is missing. If the architecture/ layer was deliberately renamed or "
+        "removed, update _DOC_FILES to match rather than letting the glob silently cover nothing."
+    )
+    assert _ARCHITECTURE_DOCS, (
+        f"{_ARCHITECTURE_DIR} exists but holds no *.md files, so the derived half of _DOC_FILES is "
+        "empty and this module is checking only the five hand-listed documents."
+    )
 
 
 def test_doc_enumerations_of_cli_backed_domains_are_complete():
@@ -104,6 +144,14 @@ def test_doc_enumerations_of_cli_backed_domains_are_complete():
         ("a single domain mentioned in passing: CLI-backed compose only", None),
         # The one recorded exemption: a marker phrase in a sentence about containers, not about tools.
         ("Compose/stack containers (created via CLI shell-out) are also unstamped.", None),
+        # Backticked marker phrase: the form CLAUDE.md and architecture/cli-shell-out.md actually use.
+        # Before the backticks were stripped these returned None, so those two lines were unguarded.
+        (
+            "Any tool wrapping a `docker` CLI feature (Compose, Context) MUST go through run_docker",
+            ["buildx", "scout", "stack"],
+        ),
+        ("Any tool wrapping a `docker` CLI feature (Compose, Stack, Buildx, Scout, Context) MUST", None),
+        ("`CLI-backed` tools (Compose, Buildx, Context, Scout) shell out", ["stack"]),
     ],
 )
 def test_the_enumeration_check_itself_flags_what_it_should(line, expected):

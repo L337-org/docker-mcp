@@ -31,6 +31,8 @@ jobs:
     # without anyone having to remember.
     runs-on: [ubuntu-latest]
     name: Action pins are immutable
+    # 7s observed max - a grep over the workflow files.
+    timeout-minutes: 5
     steps:
       - name: Check out source repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -84,6 +86,9 @@ jobs:
     # reads or writes uv.lock, so it resolves purely from [project.dependencies].
     runs-on: [ubuntu-latest]
     name: Check fresh resolve still imports
+    # 18s observed max. Roomier than its runtime needs: it is the one premerge job that
+    # resolves against the live index, so a slow PyPI is a plausible stall.
+    timeout-minutes: 10
     steps:
       - name: Check out source repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -110,7 +115,7 @@ jobs:
       - name: Import the freshly-resolved install
         run: |
           if ! .venv-fresh/bin/python -c "import docker_mcp"; then
-            echo "::error::pyproject.toml resolved fine, but 'import docker_mcp' FAILED against the freshly-resolved dependency set. An admitted dependency release broke our import surface (see the mcp 2.0.0 incident in CLAUDE.md) — tighten the offending dependency's cap."
+            echo "::error::pyproject.toml resolved fine, but 'import docker_mcp' FAILED against the freshly-resolved dependency set. An admitted dependency release broke our import surface (see the mcp 2.0.0 incident in architecture/ci.md) — tighten the offending dependency's cap."
             exit 1
           fi
 
@@ -122,6 +127,8 @@ jobs:
   pytest-run:
     runs-on: [ubuntu-latest]
     name: Run pytest
+    # 124s observed max.
+    timeout-minutes: 15
     steps:
       - name: Check out source repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -151,6 +158,8 @@ jobs:
     runs-on: [ubuntu-latest]
 
     name: Run ruff
+    # 15s observed max.
+    timeout-minutes: 5
     steps:
       - name: Check out source repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -180,6 +189,9 @@ jobs:
     # pyproject.toml). Documented as a project convention; this job enforces it.
     runs-on: [ubuntu-latest]
     name: Run pyright
+    # 22s observed max. Roomier than that: the pyright package pulls a node runtime on
+    # first use, so a cold run is network-bound.
+    timeout-minutes: 10
     steps:
       - name: Check out source repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -202,32 +214,73 @@ jobs:
         run: uv run pyright
 
   mirror-check:
-    # CLAUDE.md and .github/copilot-instructions.md are mirrors (see the MIRROR RULE in
-    # CLAUDE.md); this flags a PR that edits one without the other. Deliberately NOT a
-    # required check — a one-sided edit can be legitimate (typo, wording) — so a red X
-    # here is a prompt to double-check, not a merge blocker. Fork-safe: read-only, no
-    # secrets, plain git diff (a PR-comment approach would need pull-requests:write,
-    # which fork PRs don't get).
+    # CLAUDE.md and .github/copilot-instructions.md are mirrors of each other (the same
+    # rules written for an implementer and for a reviewer); architecture/ and
+    # CONTRIBUTING.md hold the rule-level detail both point at. Together they are one
+    # documentation set, so a change touching some but not all of it is worth a second
+    # look. Ported from L337-org/send-to-influx's job of the same name, which extended
+    # this repo's original two-file version for the detail layer both repos now have.
+    #
+    # Deliberately NOT a required status check, so the red X is a prompt to double-check
+    # rather than a merge blocker — one-sided edits are legitimate and a blocker here
+    # would eventually be switched off wholesale. Fork-safe: read-only, no secrets, plain
+    # git diff (a PR-comment approach would need pull-requests:write, which fork PRs
+    # don't get).
     runs-on: [ubuntu-latest]
     name: Check docs mirror
     if: github.event_name == 'pull_request'
+    # 5-7s observed across recent PRs — a name-only diff. The ceiling is a backstop
+    # against a hung checkout, not a performance budget.
+    timeout-minutes: 5
     steps:
       - name: Check out source repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0  # need the merge-base with the PR base branch
 
-      - name: Compare CLAUDE.md and copilot-instructions.md changes
+      - name: Compare changes across CLAUDE.md, copilot-instructions.md and architecture/
         run: |
           base="$(git merge-base "origin/${GITHUB_BASE_REF}" HEAD)"
           changed="$(git diff --name-only "$base" HEAD)"
-          c=$(grep -cx 'CLAUDE.md' <<<"$changed" || true)
-          g=$(grep -cx '.github/copilot-instructions.md' <<<"$changed" || true)
-          if [ "$c" != "$g" ]; then
-            echo "::error::MIRROR RULE: this PR changes one of CLAUDE.md / .github/copilot-instructions.md but not the other. If the change is architectural, mirror it; if it's a legitimate one-sided edit (typo/wording), this warning can be ignored — the check is not required for merge."
-            exit 1
+
+          # -F on the two exact-path checks: an unanchored '.' in the copilot path would
+          # otherwise be a wildcard, so '.github/copilot-instructions.md' would also match
+          # a path with any character in that position. The fixed-string form is the same
+          # check without that latent bug. The third check is deliberately -E instead: it
+          # matches a directory prefix and an alternation, so it wants a regex, and it
+          # anchors with ^ and escapes the dot in CONTRIBUTING\.md for the same reason.
+          #
+          # The rule-carrying set is CURATED, not derived from what the instruction files
+          # link to — they also link to README/SECURITY/PRIVACY/CODE_OF_CONDUCT/
+          # MCP_VS_SKILLS, and a change to those implies nothing about the mirror. The
+          # test for membership is whether the document carries a rule that would
+          # otherwise live in an instruction file. architecture/ qualifies by
+          # construction; CONTRIBUTING.md qualifies because it owns the new-tool-module
+          # checklist and the testing conventions. Revisit this list whenever another
+          # document starts carrying rules.
+          claude=no; copilot=no; detail=no
+          if grep -Fqx 'CLAUDE.md' <<<"$changed"; then claude=yes; fi
+          if grep -Fqx '.github/copilot-instructions.md' <<<"$changed"; then copilot=yes; fi
+          if grep -qE '^(architecture/|CONTRIBUTING\.md$)' <<<"$changed"; then detail=yes; fi
+
+          echo "CLAUDE.md=$claude  copilot-instructions.md=$copilot  detail-layer=$detail"
+
+          if [ "$claude" = no ] && [ "$copilot" = no ] && [ "$detail" = no ]; then
+            echo "Docs mirror OK: this change touches none of the documentation set."
+            exit 0
           fi
-          echo "Docs mirror OK (both changed: $c)"
+          if [ "$claude" = yes ] && [ "$copilot" = yes ] && [ "$detail" = yes ]; then
+            echo "Docs mirror OK: the whole documentation set changed together."
+            exit 0
+          fi
+
+          missing=""
+          [ "$claude"  = no ] && missing="$missing CLAUDE.md"
+          [ "$copilot" = no ] && missing="$missing .github/copilot-instructions.md"
+          [ "$detail"  = no ] && missing="$missing architecture/ or CONTRIBUTING.md"
+
+          echo "::error::MIRROR RULE: this PR changes part of the documentation set but not all of it. Untouched:${missing}. CLAUDE.md and .github/copilot-instructions.md carry the same rules for an implementer and a reviewer, and architecture/ plus CONTRIBUTING.md carry the rule-level detail they point at, so a rule that changed in one usually needs to reach the others. Legitimate one-sided edits exist — a detail-only architecture/ edit, a reviewer-only 'do not flag' entry, a typo — and this check is not required for merge, so say which it is in the PR description and carry on. Before mirroring, check the change belongs in an always-loaded file at all: if a CI test already enforces it, neither mirror should carry it."
+          exit 1
 
   integration-tests:
     # Runs the suite gated by `-m integration` against the Docker daemon that

@@ -5,7 +5,7 @@
 # probe - but every subcommand requires the target daemon to be a swarm manager and will fail
 # otherwise. These tools shell out via the cross-platform helper in `tools/_cli.py`.
 #
-# Error convention (see CLAUDE.md): action tools (`stack_deploy`, `stack_remove`) return the raw
+# Error convention (see architecture/cli-shell-out.md): action tools (`stack_deploy`, `stack_remove`) return the raw
 # CliResult dict and never raise; parsed-query tools (`stack_list`, `stack_ps`, `stack_services`)
 # return a parsed list and raise RuntimeError via `raise_on_cli_failure` on a non-zero exit.
 

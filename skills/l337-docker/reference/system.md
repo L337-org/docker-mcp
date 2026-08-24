@@ -171,7 +171,7 @@ docker plugin create <user>/<plugin>:<tag> ./plugin-dir   # needs config.json + 
 - There is **no read-only `docker plugin` subcommand that prints those privileges**, and
   `docker plugin inspect` only works once the plugin is installed, which is too late. Read them
   straight out of the registry instead, before installing anything - see below.
-- Ordering is strict: `disable` → `set`/`upgrade` → `enable`. Doing it out of order gives errors
+- Ordering is strict: `disable` -> `set`/`upgrade` -> `enable`. Doing it out of order gives errors
   that read like the plugin is broken.
 - `disable` fails while a volume or network still uses the plugin - find and remove those first.
 - `docker plugin push` works normally here. (The docker-py SDK's plugin push is broken upstream -

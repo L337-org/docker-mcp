@@ -124,9 +124,9 @@ response to a newly-published CVE across a fleet.
 
 Group by what the user can do, not by severity alone:
 
-1. Fixable critical/high introduced by **this image** → bump the package, give the version.
-2. Fixable critical/high from the **base** → bump the base, give the exact `FROM` line.
-3. Unfixable → note the count; there is no action, so do not lead with it.
+1. Fixable critical/high introduced by **this image** -> bump the package, give the version.
+2. Fixable critical/high from the **base** -> bump the base, give the exact `FROM` line.
+3. Unfixable -> note the count; there is no action, so do not lead with it.
 
-Give the concrete one-line change. "Update openssl" is not actionable; `openssl 3.0.11 → 3.0.13`
+Give the concrete one-line change. "Update openssl" is not actionable; `openssl 3.0.11 -> 3.0.13`
 is.

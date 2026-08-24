@@ -70,9 +70,9 @@ curl -sI -H "Authorization: Bearer $TOKEN" -H "Accept: $ACCEPT" \
 
 Reading the response:
 
-- `...image.index.v1+json` / `...manifest.list.v2+json` → **multi-platform index**; each
+- `...image.index.v1+json` / `...manifest.list.v2+json` -> **multi-platform index**; each
   `.manifests[]` has `.platform` and `.digest`.
-- `...image.manifest.v1+json` / `...manifest.v2+json` → **single image**; `.config` and `.layers`.
+- `...image.manifest.v1+json` / `...manifest.v2+json` -> **single image**; `.config` and `.layers`.
 
 **`unknown/unknown` platform entries are attestations, not broken images** - provenance and SBOM
 records attached by buildx. Filter them out when reporting supported platforms:

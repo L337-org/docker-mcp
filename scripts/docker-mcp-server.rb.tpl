@@ -29,7 +29,7 @@ class DockerMcpServer < Formula
   # actually occurs.
   #
   # This file is rendered into L337-org/homebrew-tap, so read it from there: this tap's own README
-  # covers the pause, and the full record is in the "Homebrew tap" section of CLAUDE.md in
+  # covers the pause, and the full record is in architecture/distribution.md in
   # https://github.com/L337-org/docker-mcp.
   skip_clean "libexec"
 

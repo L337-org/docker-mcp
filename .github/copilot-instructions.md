@@ -1,331 +1,208 @@
 # GitHub Copilot Instructions
 
-This file provides guidance to GitHub Copilot when working with code in this repository.
+This file drives GitHub Copilot's review of every PR in this repository. It is the reviewer's half of
+a mirror: `CLAUDE.md` carries the same rules written for an implementer, and `architecture/` plus
+`CONTRIBUTING.md` carry the rule-level detail both point at. Read the matching `architecture/` file
+before judging a change to that area — the tables below say which.
 
-## Project
+**MIRROR RULE.** `CLAUDE.md`, this file, and the detail layer (`architecture/`, `CONTRIBUTING.md`) are
+one documentation set. A change to project structure, conventions, env vars, the tool/prompt/resource
+surface or distribution channels must reach every layer that carries the rule. Flag a PR that updates
+one but not the others. The `Check docs mirror` job prompts for this but is a touch-test: it cannot
+see whether the *same rule* reached each file, so an unrelated edit to the other mirror in the same PR
+masks a genuine one-sided change. Check by reading, not by trusting the green tick. The inverse also
+applies: if a CI test already enforces the rule mechanically, neither mirror should carry it as prose.
 
-`docker-mcp` is a Python MCP (Model Context Protocol) server that exposes the Docker SDK for Python - plus selected docker CLI features (Compose, Stack, Buildx, Scout, Context) and direct OCI-registry HTTPS access - as MCP tools. It requires Python >=3.14 and is managed with `uv`. It is published to PyPI as **`docker-mcp-server`** and as a container image to GHCR (`ghcr.io/l337-org/docker-mcp-server`), mirrored to Docker Hub (`gavinlucas/docker-mcp-server`) when the opt-in `DOCKERHUB_*` release secrets are configured (the import package stays `docker_mcp`, the repo stays `…/docker-mcp`); two console scripts - `docker-mcp` and `docker-mcp-server` - both target `docker_mcp:main`. A third distribution channel packages the server as a **Claude Desktop Extension (`.mcpb`)** attached to each GitHub Release (see "Desktop Extension (MCPB)" below). A fourth channel (**Homebrew tap**) exists in `L337-org/homebrew-tap` but is currently **paused** - see "Homebrew tap" below. The repo additionally ships a **Claude Code agent skill** in `skills/l337-docker/` - deliberately **not** a channel for the server but a CLI-only *alternative* to it, attached to each Release as a single `.tar.gz`; see "Agent skill" below.
+## Review priorities
 
-The `docker` dep uses the `[ssh]` extra (paramiko), so `DOCKER_HOST=ssh://…` works via a pure-Python transport (no system `ssh` binary; works in the container images). docker-py auto-selects paramiko for `ssh://`, so there's no transport code — only the `ssh://` branch in `system._connection_help`. CLI-backed tools (Compose, Stack, Buildx, Scout, Context) shell out to `docker`, which would otherwise need the system `ssh` client — instead, `_cli.py:run_docker` detects `DOCKER_HOST=ssh://…` and routes the subprocess through a per-call local TCP proxy (`docker_mcp/tools/_ssh_proxy.py`) that opens its own paramiko connection and runs `docker system dial-stdio` over it, so the CLI authenticates the same way the docker-py-backed tools do, with no system `ssh` binary involved (except a `ProxyCommand` in `~/.ssh/config` for bastion/jump-host setups, which paramiko runs as an external command — commonly `ssh -W %h:%p ...` — for both tool families alike). With no local `docker` binary (or plugin) at all, all of those except the `context_*` tools (which manage *this* host's own CLI contexts) fall back to running the command on the `ssh://` host itself — see "SSH remote-exec fallback" under the CLI shell-out policy. Both the docker-py-backed and CLI-backed SSH connections fall back from IPv6 to IPv4 on any connect failure (not just paramiko's own narrower retry) via `_ssh_proxy.py:connect_socket_with_family_fallback` — see "Client / CLI" below.
+Ordered by where real defects in this project have actually come from. Spend review effort in this
+order.
 
-## Architecture
+1. **Claims in prose that nothing type-checks.** Docstrings, docs and comments asserting a method,
+   flag, route or identifier semantics that does not exist. Three `scout` tools shipped a `--format`
+   flag the subcommand does not define; a docstring claimed buildx resolves `--file` against the build
+   context when it resolves against the CWD. Verify against the primary source, not recollection.
+2. **A guard that silently stops guarding.** See the invariant list below. These pass CI, pass review
+   at a glance, and fail in production or never fail loudly at all.
+3. **Enumerations that drift.** Any list of domains, tools, channels or files that is copied rather
+   than derived. One list was wrong in six places across a single feature branch.
+4. **Unbounded reads of anything external.** Daemon streams, registry bodies, staged files, CLI output.
+5. **Docstring quality on any touched `@tool()`** - the ratchet in the checklist below.
+6. **Everything else.**
 
-### Entry point
-The `docker_mcp` package is the entry point. `docker_mcp/__init__.py` defines `main()` and side-effect-imports the `server` and `tools` submodules (which registers all `@tool()` decorators); `docker_mcp/__main__.py` calls `main()` so `python -m docker_mcp` works.
+## Invariants that fail silently
 
-### Server singleton (`docker_mcp/server.py`)
-`docker_mcp/server.py` instantiates `MCPServer` (from `mcp.server.mcpserver`) and exports three things:
+The centre of this file. Each of these is a rule whose violation produces no error, no failing test
+and no obvious symptom.
 
-- **`tool`** — the registration decorator every tool module uses. **Always import `tool` from `docker_mcp.server`** and decorate with `@tool()`; never import from the `mcp` package directly in tool files (circular import) and never use `@mcp.tool()` in tool modules.
-- **`prompt`** — the prompt registration decorator `prompts.py` uses (`@prompt(description=..., domain=...)`), analogous to `tool` and gating on `DOCKER_MCP_SERVER_DISABLE`; never use `@mcp.prompt()` directly in `prompts.py`.
-- **`mcp`** — the MCPServer singleton, imported by `resources.py` for `@mcp.resource()`.
+- **The `@tool()` decorator must stay generic** (`def tool[F: Callable[..., Any]](...) -> Callable[[F], F]`).
+  Annotating it as a bare `Callable` erases the parameter list and silently disables pyright's argument
+  checking at *every* tool call site. Flag any loosening, including loosening only the return
+  annotation while keeping the type parameter.
+- **`from_env` must always be passed `use_context=False`.** Without it docker-py resolves the active
+  CLI context itself, reintroducing the mid-session `docker context use` drift that pinning exists to
+  prevent, and can disagree with the endpoint the CLI shell-out targets for the same label.
+- **A closed parameter value set must be `Literal[...]`, not `str`.** Docker does not reliably reject a
+  wrong value: `docker scout cves --only-severity CRITICAL` exits 0 reporting no vulnerabilities on an
+  image with three critical CVEs, and the daemon records an unrecognised `--scope` verbatim. Verify the
+  set against the subcommand's `--help` or docker-py's documented list. Where the set is genuinely not
+  closed, the parameter stays `str` **and says why at the parameter**, so a later pass does not
+  re-propose it.
+- **A new create tool that accepts a `labels` dict must route it through
+  `_labels.py:with_provenance(labels, "<tool_name>")`.** Missing it makes the resource invisible to
+  `managed_only=True` and to the `prune_managed` teardown, which then reports a clean daemon while
+  resources remain. A creator with nowhere to put a label is an expected exception and should say so
+  in its docstring.
+- **The agent skill's provenance label is `l337-docker-skill.*`, lowercase, and never the server's
+  `docker-mcp-server.*`.** Docker label keys are case-sensitive, so a mixed-case key published in one
+  place and filtered in lowercase elsewhere matches nothing, silently. Stamping the server's label
+  would misattribute the skill's resources to the server.
+- **Externally-sourced bytes are bounded on the decoded stream, before buffering or parsing.** CLI
+  output via `MAX_CLI_OUTPUT_BYTES`, registry bodies via `_MAX_RESPONSE_BYTES`, in-band payloads via
+  `join_bounded(stream, max_bytes, what)` (default `MAX_PAYLOAD_BYTES`, 32 MiB), staged files via
+  `_MAX_STAGE_BYTES` / `_MAX_STAGE_FILES`. Bounding the *compressed* stream is not bounding it.
+- **A tool iterating a potentially endless stream needs a wall-clock bound** - the `threading.Timer`
+  plus `CancellableStream.close()` watchdog in `system_events` and `container_logs` follow mode.
+- **Archive extraction uses `tarfile`'s `filter="data"`.** That, not the size and count bounds, is what
+  stops an escaping member.
+- **`buildx_build` must refuse a filesystem `dest=` in `output`/`cache_to`, a local `src=` in
+  `cache_from`, and any `ssh=`** when the remote-exec fallback is in play. Each would resolve on the
+  remote machine: losing the output, writing cache to the wrong disk, silently building uncached (a
+  missing cache import is non-fatal to BuildKit), or reading the remote user's agent. `dest=-` is
+  stdout and passes.
+- **External values in log and error messages use `!r`.** An unescaped value containing a newline
+  forges a log line.
+- **Emitted-data names are an interface.** Metric fields, columns, event types, returned dict keys.
+  Nothing type-checks them, so a rename silently breaks charts and queries. A changed unit or meaning
+  under an unchanged name is worse than a rename.
+- **Config written at install time is never rewritten by an upgrade.** New config is optional with a
+  safe default. Widening a value is safe; narrowing it is breaking.
+- **`server.json`'s version must stay in step with `pyproject.toml`** (`tests/test_pyproject_pins.py`
+  catches this one). The release job restamps it anyway, so a stale value could never reach the
+  registry - it is kept current because a stale value reads as drift to every reader and every
+  scheduled audit.
 
-```python
-from docker_mcp.server import tool     # tool modules
-from docker_mcp.server import prompt    # prompt modules (with domain=...)
-from docker_mcp.server import mcp       # resource modules only
-```
+## Area checks
 
-`server.py` also owns **`TOOL_CATEGORIES`**, the central map classifying every tool as `READ_ONLY` / `MUTATING` / `DESTRUCTIVE`. The `@tool()` decorator uses it to attach MCP `ToolAnnotations` — including `title`, mechanically derived from the tool name by `_title_for` (e.g. `container_list` → "Container List"), with a small `_TITLE_ACRONYMS` fixup list so `scout_cves`/`scout_sbom` title-case to "Scout CVEs"/"Scout SBOM" rather than "Cves"/"Sbom" — and to skip registration under the env switches `DOCKER_MCP_SERVER_READONLY` (register only read-only tools) and `DOCKER_MCP_SERVER_NO_DESTRUCTIVE` (register everything except destructive). It also records each tool's **domain** (its defining module's leaf, e.g. `containers`) so the orthogonal `DOCKER_MCP_SERVER_DISABLE=<domains>` switch can drop whole feature areas — including that domain's **prompts** (via the `prompt(domain=...)` helper) and its **doc-resource sections** (via `_SECTION_DOMAINS` in `resources.py`), not just its tools; the live snapshot is the `docker-mcp://tool-catalog` resource (`server.tool_catalog()`). A handful of tools (`_NO_DOMAIN_TOOLS`, e.g. `docs_lookup`) have **no domain at all** — `_domain_for` returns `None`, which short-circuits `DOCKER_MCP_SERVER_DISABLE` entirely (mirrors `@prompt(domain=None)`'s same always-available semantics) — for tools whose value isn't tied to one feature area. **Every new tool needs a `TOOL_CATEGORIES` entry** — `tests/test_server.py` fails the build if the map drifts from the registered set. The decorator also runs `_slim_schema` on the advertised `inputSchema` to drop three information-free patterns (~18% of schema tokens): pydantic `title` annotations, the `{"type":"null"}` branch of a nullable `anyOf` (gated on a sibling `default`), and redundant `additionalProperties: true`; it's display-only (validation runs off `fn_metadata`), and `tests/test_server.py` asserts none survive. All server tunables are namespaced `DOCKER_MCP_SERVER_*`; read them through `docker_mcp/_env.py` (`read_env` / `env_flag`). The pre-rename `DOCKER_MCP_*` alias spellings were removed in 2.0; the alias-fallback mechanism remains for any future rename.
+Read the linked file before judging a substantive change to that area.
 
-`server.py` also builds the MCPServer **`instructions`** string — pre-loaded into a client's context with the server name and tool names, *before* any per-tool schema, so for a lazy-loading client (e.g. Claude Code, which fetches tool schemas on demand) it's the main always-in-context surface. It's written as a **router** (per-domain keyword one-liners + a few tool-selection caveats), not docs, and does not enumerate tools (that's `docker-mcp://tool-catalog`). `build_instructions()` renders it from `_DOMAIN_BLURBS`, emitting a domain's line **only when that domain has a registered tool**, so `DOCKER_MCP_SERVER_DISABLE` / `_READONLY` / `_NO_DESTRUCTIVE` are honored via the one registration flag. `finalize_instructions()` (called from `docker_mcp/__init__.py` after all tools import) writes it through to `mcp._lowlevel_server.instructions` (MCPServer's `instructions` is a read-only property read at `run()` time, so a late write propagates; the reach-in is guarded). **A new tool domain needs a `_DOMAIN_BLURBS` entry** or the router silently omits it.
+| Area | Read | Watch for |
+|---|---|---|
+| `server.py`, `docker_mcp/tools/` | [architecture/server.md](../architecture/server.md) | `_slim_schema` or `_apply_host_schema` changing validation rather than display; a disabled capability registered-then-refusing instead of absent |
+| `_hosts.py`, host selection | [architecture/hosts.md](../architecture/hosts.md) | `use_context=False` dropped; `system_reconnect` gaining the ability to retarget an arbitrary URL; a write path that no longer requires an explicit `host` in multi-host mode |
+| `_cli.py`, `_ssh_proxy.py`, CLI-backed tools | [architecture/cli-shell-out.md](../architecture/cli-shell-out.md) | `subprocess.run` called directly; `shell=True`; a missing `timeout=`; the remote-exec fallback preferred over a usable local CLI; staging consequences absent from the docstring |
+| any `@tool()` docstring | [architecture/tool-descriptions.md](../architecture/tool-descriptions.md) | the checklist below |
+| code calling `docker` | [architecture/docker-sdk.md](../architecture/docker-sdk.md) | an unverified method; a hand-built route that is not in the Engine API spec; a reach-in past the public SDK introduced without recorded sign-off |
+| `Dockerfile`, `manifest.json`, `server.json`, release workflows | [architecture/distribution.md](../architecture/distribution.md) | version drift across the four files; a registry ownership marker no longer matching `server.json`'s `name` |
+| `skills/l337-docker/` | [architecture/agent-skill.md](../architecture/agent-skill.md) | the skill described as equivalent to the server; tool-permission frontmatter added; a hand-edited figure in `MCP_VS_SKILLS.md` |
+| `.github/workflows/` | [architecture/ci.md](../architecture/ci.md) | a `uses:` naming a tag or branch; a new job without `timeout-minutes` where the workflow requires one |
 
-### Multi-daemon host registry (`docker_mcp/_hosts.py`)
+## Docstring review checklist
 
-`DOCKER_MCP_SERVER_HOSTS` lets one server manage several daemons in a session (e.g. local dev + remote prod). **When set, `DOCKER_HOST` is ignored** (a one-time stderr notice fires when both are set); unset = today's single-daemon behavior (`DOCKER_HOST`, else auto-discovery). The mcpb bundle exposes only this field. `_hosts.py` lives at the package root (like `_env.py`, so `server.py` can import it without pulling in `docker_mcp.tools`) and parses the var into a pinned `{label: Host}` registry — pure env + Docker-config-file reads, no docker-py/CLI calls:
+Applies to **every `@tool()` docstring added or modified in the PR** - a ratchet, not a sweep of
+untouched neighbours. Push back on any of these:
 
-- **Grammar.** No `=` in the value → bare single-host shorthand (`ssh://ops@prod(ro)`, `auto`, `local`, empty → `auto`); with `=` → comma-separated `label=endpoint` list. `endpoint` is the keyword `auto`/`local` or a `unix://`/`tcp://`/`ssh://`/`npipe://` URL, with combinable trailing markers `(ro)` (read-only), `(nd)` (non-destructive — blocks only DESTRUCTIVE calls; `(ro)` already implies it, so combining is harmless but redundant) and `(tls=<dir>)` (a tcp+TLS cert dir; **`ca.pem` is required** — the daemon is always verified against it — and `cert.pem`+`key.pem` are optional, present together for mutual TLS or absent for verify-the-daemon-only, e.g. a self-signed daemon pinned via `ca.pem`). **Fail-fast** (`HostConfigError` → stderr + non-zero exit) on duplicate/empty/invalid labels, a missing `=`, an unknown marker, `(tls=)` on a non-tcp endpoint, a missing `ca.pem` or a lone `cert.pem`/`key.pem`, or an unrecognized scheme.
-- **`auto`/`local`/`default` are resolved to concrete URLs by us and pinned at `load()` (startup)** so the docker-py SDK and the CLI shell-out target the *same* daemon for a label (auditable) and a mid-session `docker context use` can't silently move a label. `default` = the first registry entry = the omitted-`host` fallback, and is **not** a selectable label. `load()` runs in `docker_mcp/__init__.py` before the tools import (the `@tool()` decorator and resources read `is_multi()`/`labels()` at registration) and scrubs whole-value `${...}` placeholders first.
-- **Per-call host selection (no modal active-host state).** Every daemon-targeting tool declares `host: str | None = None` and threads it to `_get_client(host)` / `run_docker(..., host=host)`. The `@tool()` decorator does **display-only schema surgery** (`_apply_host_schema`, like `_slim_schema`, gated on `_hosts.is_multi()`) — strip `host` in single-host mode (footprint-neutral), or constrain it to an `enum` of the labels and mark it required for writes in multi-host mode — and wraps the tool with `_enforce_host_guard` (multi-host: writes require an explicit `host`, unknown labels rejected, writes to an `(ro)` host refused, DESTRUCTIVE calls to an `(nd)` host refused; read-only tools and the `_CONNECTION_CONTROL` set `system_close`/`system_reconnect`/`system_login`/`system_logout` may omit `host`). The guard is wrapped on when `_host_guard_needed()` — multi-host **or a single host flagged `(ro)` or `(nd)`**: a lone `(ro)`/`(nd)` host has its `host` param stripped (footprint-neutral) but its refusals still apply, so the per-host markers are honored even in single-host mode (distinct from `DOCKER_MCP_SERVER_READONLY`/`_NO_DESTRUCTIVE`, which drop tools entirely). A host with both markers is refused by `(ro)` first — it's strictly stronger, so `(nd)` never fires for it. A single *unrestricted* host wires no guard. **Excluded** (no `host` param): `registry`/`hub_*` (HTTPS, no daemon) and `context` (manages the host's CLI contexts).
-- **Client / CLI.** `system.py` keeps a lazy pool `_clients` keyed by label with tiered per-host TLS (`(tls=)` dir → global `DOCKER_CERT_PATH`/`DOCKER_TLS_VERIFY` → plaintext); the legacy single host still uses `_build_default_client`/`from_env` unchanged. **Every `from_env` call must pass `use_context=False`** — docker-py 7.2.0 (the declared floor, for this reason) made `from_env` resolve the active Docker CLI context when the environment yields no `base_url`, duplicating resolution `_hosts.py` already does and pins at `load()`; a new `from_env` call site without it is a review finding, as is relaxing the `docker[ssh]>=7.2.0` floor. **`system_reconnect(host=None)` is rebuild-only** — it can't retarget to an arbitrary URL (edit the registry + restart), closing a trust-expansion hole. `system_close(host=None)` closes all/one. `startup_preflight` pings the default host but detects self-id against the *self host* (first local-transport entry, which can differ from a remote default); `guard_not_self(container, host=)` only fires on the self host. `_cli.py:_apply_host_env` injects the resolved `DOCKER_HOST` + per-host TLS into the child env for an explicit host. Every `ssh://` URL is run through `_ensure_reachable_family(_ensure_ssh_port(url))` before being handed to docker-py: `_ensure_ssh_port` splices in a `~/.ssh/config` `Port` that `docker.utils.parse_host()` would otherwise hardcode to 22 before `SSHHTTPAdapter` ever sees it; `_ensure_reachable_family` works around paramiko's own connect() only retrying the next resolved address family on `ECONNREFUSED`/`EHOSTUNREACH` (not `ETIMEDOUT`, what a broken IPv6 route actually produces) by probe-connecting itself via `_ssh_proxy.connect_socket_with_family_fallback` and splicing the address that answered into the URL as a literal IP — no monkeypatching of docker-py internals. A URL that's already a literal address, or where every candidate fails, is left unchanged. When reviewing a change near ssh:// connection handling, check whether both `_ensure_ssh_port` and `_ensure_reachable_family` are still being composed at every call site that builds a docker-py client from a URL.
-- **Surfaces.** `host_list` tool + `docker-mcp://hosts` resource expose the resolved registry; the router gains a multi-host caveat; the container observability resources go host-aware (empty-authority `docker:///…` for the default + `docker://{host}/…` variants); a `prompt(multi_host=True)` gate plus the `survey_hosts` prompt register only with 2+ hosts.
+1. **Summary** is a specific verb plus resource, with the distinguishing trait up front where a sibling
+   could be confused.
+2. **A usage-guidance paragraph is present** (1-5 sentences between the summary and `args:`), and
+   carries at least one discriminator naming the sibling tool(s) an agent could reach for instead,
+   **by exact tool name** - never "the kill tool". Preconditions, side effects and irreversibility must
+   be in prose: `readOnlyHint` / `destructiveHint` annotations do not substitute.
+3. **For a CLI-backed tool, the error style is stated** - "does not raise on a non-zero CLI exit,
+   inspect `returncode`/`stderr`" versus "raises `RuntimeError` on CLI failure". Do not let a docstring
+   promise "never raises": a missing binary or plugin, or a subprocess timeout, still raises.
+4. **`args:` lines add what the schema cannot carry** - format, accepted values, defaults, units,
+   interactions. A line echoing the parameter name ("name - The volume name") is a finding. The type is
+   **not** repeated: the annotation already reaches the client in `inputSchema`.
+5. **`returns:` names the shape**, not just the type. For a full engine inspect document, say which
+   document it is rather than enumerating an arbitrary subset of its keys. "dict - The X's attrs"
+   identifies neither form and is a finding.
+6. **Tool descriptions are strict ASCII, no symbol exception**
+   (`tests/test_docs.py::test_advertised_tool_descriptions_are_plain_ascii` enforces it).
+   Shipped prose more widely is British English in ASCII punctuation - watch in particular for text
+   moved out of `CLAUDE.md`, which is exempt and so carries Americanisms and em dashes that become
+   defects the moment they land in a shipping file.
+7. **Every factual claim is verified** against docker-py docs or the Engine API spec.
 
-**When reviewing a PR that changes the host grammar, env precedence, or the per-tool/resource/prompt host surface, this section is the spec.**
+The test: reading only this docstring while holding 164 tool names and nothing else, could an agent
+pick this tool over its neighbours and call it correctly first time?
 
-### Tools package (`docker_mcp/tools/`)
-Each file maps to one Docker SDK domain or one CLI/registry feature area. Underscore-prefixed modules are private helpers excluded from the star-import.
+## Deliberate - do not flag
 
-| File | Domain | Backed by |
-|------|--------|-----------|
-| `_cli.py` | Cross-platform subprocess helper (private) | — |
-| `_ssh_proxy.py` | Per-call paramiko proxy (dial-stdio) plus remote-exec and file-staging primitives, so CLI-backed tools reach `ssh://` daemons without a system `ssh` binary (private) | — |
-| `_utils.py` | Shared helpers: `drop_none`, `join_bounded`, `stream_to_file`, `close_stream_quietly`, `MAX_PAYLOAD_BYTES`, plus the container guards `in_container` / `assert_host_writable` / `host_read_path` / `classify_host_kernel` (private) | — |
-| `_labels.py` | Provenance labels stamped on created resources: `with_provenance` / `managed_filter` / `provenance_labels` (private) | — |
-| `system.py` | `DockerClient` — connection, lifecycle, `system_login`/`system_logout`, `system_reconnect` | docker-py |
-| `containers.py` | Container lifecycle and management | docker-py |
-| `images.py` | Image pull, build, push, inspect, save/load | docker-py |
-| `networks.py` | Network create, connect, inspect | docker-py |
-| `volumes.py` | Volume create, list, remove | docker-py |
-| `configs.py` | Swarm configs | docker-py |
-| `nodes.py` | Swarm nodes | docker-py |
-| `plugins.py` | Plugin install and management | docker-py |
-| `secrets.py` | Swarm secrets | docker-py |
-| `services.py` | Swarm services | docker-py |
-| `swarm.py` | Swarm init, join, leave, join tokens | docker-py |
-| `compose.py` | Docker Compose v2 | `docker compose` CLI via `_cli.py` |
-| `stack.py` | Docker stacks (Compose-on-Swarm) | `docker stack` CLI via `_cli.py` |
-| `context.py` | Docker CLI contexts | `docker context` CLI via `_cli.py` |
-| `buildx.py` | Buildx / BuildKit (incl. build history) | `docker buildx` CLI via `_cli.py` |
-| `scout.py` | Vulnerability scanning, SBOMs | `docker scout` CLI via `_cli.py` |
-| `registry.py` | OCI v2 registries + Docker Hub | HTTPS via `httpx` (no daemon) |
-| `prompts.py` | `@mcp.prompt()` workflow templates | — |
-| `resources.py` | `@mcp.resource()` doc endpoints | — |
+Decisions already taken on the merits. Raising these generates the same false positive on every PR.
+Removing an entry is a real decision, not a tidy-up.
 
-`docker_mcp/tools/__init__.py` star-imports all public modules so `docker_mcp/__init__.py` only needs `from docker_mcp import tools`.
+**SDK surface deliberately not wrapped, or wrapped unobviously.** A recurring audit routine
+re-proposes these; it has no memory of last time.
 
-### Tests (`tests/`)
-Each `docker_mcp/tools/<module>.py` has a corresponding `tests/test_<module>.py`; `tests/test_server.py` covers the classification/registration machinery. Tests use pytest with mocks. `tests/integration/` holds tests that need a real Docker daemon - excluded by default, run with `uv run pytest -m integration`; `tests/integration/test_remote_exec.py` needs a remote *ssh://* host instead and is gated on `DOCKER_MCP_TEST_SSH_HOST` (not a server tunable, so deliberately outside the `DOCKER_MCP_SERVER_*` namespace). `tests/conftest.py` clears the `DOCKER_MCP_SERVER_*` env switches (and pins the host registry to one local daemon) so the suite is hermetic. `tests/test_docs.py` checks the repo's own prose - today that any line describing the CLI-backed surface names a complete set of those domains, derived from `server.py`'s domain tuples; when reviewing a docs change, an incomplete enumeration fails there rather than needing to be spotted. `tests/test_skill.py` (static) and `tests/integration/test_skill.py` (daemon-backed) cover the `skills/l337-docker/` agent skill: frontmatter, cross-references, orphaned files, licence/attribution, one canonical lowercase provenance label, and a regression guard per shell/CLI trap the skill hit (`--until now` rejected, `timeout(1)` absent on macOS, `status` read-only in zsh, `compose ps` NDJSON vs `compose ls` array). Its parity checks derive from `tool_catalog()`, so **a PR adding a tool or domain fails until `MCP_VS_SKILLS.md`'s per-domain counts are updated** - when reviewing such a PR, expect that file to change too. The integration tests extract the skill's shell snippets from its markdown and execute them, so a snippet cannot drift from the CLI's actual behaviour; when reviewing a change to a snippet, check it is still the executed one rather than newly-unreferenced prose.
+- **`plugin_push`'s hand-built endpoint call.** docker-py's `Plugin.push()` / `APIClient.push_plugin()`
+  both POST to `/plugins/{name}/pull`, a route the Engine does not define, so they 404 against every
+  daemon. Our call is the working path, not debt. Revisit only if upstream fixes the URL.
+- **`Container.attach` / `attach_socket` / `resize` unwrapped.** An interactive bidirectional stream
+  does not fit a request/response tool call. `container_exec` covers scripted execution.
+- **`service_rollback`'s `api.inspect_service` + `api.update_service`.** The high-level
+  `Service`/`ServiceCollection` expose no `rollback`. Permanently low-level.
+- **`system_logout`'s `api._auth_configs`.** There is no `logout` anywhere in the SDK and no server-side
+  session to end. Permanently low-level.
+- **`swarm_task_list` / `swarm_task_inspect`'s `api.tasks()` / `api.inspect_task()`.** docker-py has no
+  task collection at all. These documented `APIClient` methods are the only public path.
 
-**An integration test skips only for a cause it can name**, via `fail_unless_environmental` / `fail_unless_environmental_error` in `tests/integration/conftest.py`, which fail when the failure matches no entry in `_ENVIRONMENTAL_SIGNALS`. Three `scout` tools shipped broken because the tests skipped on any non-zero exit and reported a real defect as "offline or auth required". When reviewing a PR that adds an integration skip, check it names a specific tolerated condition; a blanket `except Exception` or `if returncode != 0: skip` is the defect, and the fix is to widen `_ENVIRONMENTAL_SIGNALS`, not the skip. `tests/integration/test_cli_flag_drift.py` asserts every literal CLI flag the tool modules pass still exists in the installed `--help`, which a mocked test cannot do; it has no exemption list by design, so a flag surviving as a hidden alias should be migrated to the documented spelling.
+**Other settled decisions.**
 
-CI (`.github/workflows/premerge.yaml`) enforces `pytest`, `ruff check`, `ruff format --check`, and `pyright` on every PR and push to main — all via `uv run`, so the dev-group pins in `pyproject.toml` (bumped by Dependabot's monthly uv pass) are the single tool-version source; the pre-commit hooks are local hooks running `uv run ruff …` for the same reason. CI installs with `uv sync --locked`, which fails if `uv.lock` disagrees with `pyproject.toml` instead of silently re-locking — so when reviewing a PR that touches only `uv.lock`, check its recorded `requires-dist` specifiers still match pyproject (a Dependabot lock rewrite once raised the cryptography cap in the lock alone). A non-required `Check docs mirror` job flags a PR that edits `CLAUDE.md` or `.github/copilot-instructions.md` without the other (the MIRROR RULE) — when reviewing such a PR, check whether the one-sided edit was intentional. An `Action pins are immutable` job fails the build when any `uses:` reference in `.github/workflows` or `.github/actions` names a tag or branch instead of a full 40-hex commit SHA: `publish.yaml` mints a PyPI Trusted Publishing OIDC token (`id-token: write`), pushes to GHCR (`packages: write`) and uploads release assets (`contents: write`), so a repointed tag would execute inside the jobs holding this project's strongest credentials - and Trusted Publishing has no stored token to steal, so executing there is the whole attack. First-party `actions/*` get no exemption (Dependabot maintains the SHA and its trailing `# vX.Y.Z` comment); local `./` actions are exempt; bare, quoted and uppercase SHAs are all accepted, since hex is case-insensitive and GitHub resolves an uppercase ref. The trailing version comment is convention, not enforced. When adding a step, look up the SHA (`gh api repos/<owner>/<action>/git/ref/tags/<tag> --jq .object.sha`) rather than writing `@vN`. The job is a port of the identically-named one in [L337-org/apt](https://github.com/L337-org/apt) (the reference implementation; `send-to-influx` has the third copy) - keep all three in step rather than letting them drift.
+- **A missing `_DOMAIN_BLURBS` entry is not a review item** - `tests/test_server.py`'s
+  `test_router_domain_lines_track_registered_domains_under_every_switch` and
+  `test_instructions_default_to_the_live_registered_surface` both fail and name the missing domain.
+  It was briefly listed here as an invariant that fails silently, which was simply wrong. Per the
+  MIRROR RULE, a rule a CI test already enforces does not belong in either instruction file.
 
-A required `Check fresh resolve still imports` job (same workflow) covers what every `--locked` job above cannot: it resolves `pyproject.toml` with `uv pip install` (the pip-compatible interface, which never touches `uv.lock`) into a throwaway venv, then runs `import docker_mcp` and `docker-mcp-server --version` against that fresh install — the same set a `uvx`/`pip install` would actually get today, not the pinned known-good set in `uv.lock`. It reports a resolution failure (specifier unsatisfiable) separately from an import failure (resolved fine, broke on import), since a PR fixing one looks different from a PR fixing the other. When reviewing a dependency-cap change (raising or removing a cap, e.g. on `mcp` or `cryptography`), this job's result is the one that tells you whether the wider range still imports — a green `pytest-run` does not, since it stays on the locked pins.
+- **Target runtime is Python >=3.14.** Assume current stable CPython grammar and stdlib are available
+  and valid; do not flag 3.14-valid syntax as a bug. The example reviewers and older models get wrong:
+  [PEP 758](https://peps.python.org/pep-0758/) (Status: Final, Python-Version: 3.14) makes parentheses
+  optional in `except` / `except*` clauses, so `except OSError, ValueError:` is a valid two-exception
+  handler, **not** a `SyntaxError`. Verify with
+  `python3.14 -c "import ast; ast.parse('try:\n pass\nexcept OSError, ValueError:\n pass')"`.
+  The `as`-binding form still requires parentheses (`except (OSError, ValueError) as e:`), and ruff
+  (pyupgrade, 3.14 target) may rewrite to the unparenthesized form.
 
-A **weekly canary** (`.github/workflows/canary.yaml`, Mondays + dispatch) hunts platform/ecosystem drift premerge CI can't see: wheels-only (`--only-binary :all:`) dependency resolution for Intel macOS / ARM macOS / Windows against both the repo `pyproject.toml` and the latest published PyPI release (the check that would have caught cryptography 49 dropping its x86_64-macOS wheel), plus real install smokes of the published package on `macos-latest`, `macos-15-intel` (Intel runner label retires Aug 2027), and `windows-latest` — `import docker_mcp` and `uvx docker-mcp-server --version`. PRs into main also run the repo-pyproject resolution leg (the only part exercising PR content); the published-package legs and issue filing stay schedule/dispatch-only. Failures on unattended runs file a deduplicated `ci-failure` + `wf:canary` issue via `.github/actions/file-failure-issue`. `main()` handles `--version` (print the installed version, exit) before any daemon/network contact — the canary's entry-point smoke depends on it.
-
-### Container image (`Dockerfile`)
-
-An additional distribution channel alongside the uvx-from-git install (unchanged). One ARG-gated multi-stage `Dockerfile` builds `full` (docker CLI + compose + buildx + scout) and `no-scout` (sets `DOCKER_MCP_SERVER_DISABLE=scout` so absent-plugin scout tools don't register), published on each GitHub Release via the `images` job in `.github/workflows/publish.yaml` (see "Release pipeline" below) — always to GHCR, and mirrored to Docker Hub (plus a `DOCKERHUB.md`→Hub-description sync — a slim container-focused readme, as the full `README.md` exceeds Hub's 25 KB cap) when the opt-in `DOCKERHUB_USER`/`DOCKERHUB_TOKEN` secrets are set — the Hub token must have `read/write/delete` scope (build/measure on PRs/pushes is the separate `images.yaml`); `lite` (`INSTALL_CLI=0`) is buildable but not published. Two container-aware guards live behind `_utils.in_container()` (true when `/.dockerenv` exists or `DOCKER_MCP_SERVER_IN_CONTAINER=1`) and are **inert on the host install** — keep them in mind when editing `_utils.py` or the file-path tools:
-
-- **Filesystem guard** — `assert_host_writable` (hooked into `stream_to_file`) refuses a host-file write (`dest_path` / `container_archive_get_to_file`) to a path that isn't a host bind mount (it would be lost on `--rm`); `host_read_path` enriches the read-side "missing file" case.
-- **Self-termination guard** — `system.startup_preflight()` (called from `main()`) pins the server's own container id (detected against the *self host* — the first local-transport entry, which can differ from a remote default) and prints OS-aware socket hints to stderr; `system.guard_not_self(container, host=)` stops the destructive container-lifecycle tools (`container_remove`/`container_kill`/`container_stop`/`container_restart`/`container_pause`) from acting on the server's own container, **only when the call targets the self host** (override `DOCKER_MCP_SERVER_ALLOW_SELF_TERMINATE=1`).
-
-### Desktop Extension (MCPB)
-
-A third distribution channel for one-click install in Claude Desktop. Repo-root sources: `manifest.json` (MCPB manifest, `manifest_version` 0.4, `server.type: "uv"`), `mcpb_run.py` (bundle entry point — `from docker_mcp import main; main()`, at the root so `import docker_mcp` resolves under the host's managed `uv`), `.mcpbignore` (trims the packed bundle to source + `pyproject.toml` + `uv.lock` + `README.md`/`LICENSE` + manifest/entry-point + `assets/`), and `assets/icon.png` (512×512). It's a `uv`-type bundle: the host resolves deps from `pyproject.toml` at install time (no vendored venv). `manifest.json`'s `user_config` maps install-dialog fields to env — `DOCKER_MCP_SERVER_HOSTS` (the single host field; `DOCKER_HOST` is **not** exposed — the bare-value shorthand keeps the one-daemon case a one-liner) and the `DOCKER_MCP_SERVER_READONLY` / `_NO_DESTRUCTIVE` / `_DISABLE` switches (the container-only `_ALLOW_SELF_TERMINATE` is intentionally omitted — the bundle never runs containerized). The `mcpb` job in `.github/workflows/publish.yaml` rewrites the manifest `version` from the release tag, packs the `.mcpb` via `npx @anthropic-ai/mcpb`, and attaches it (plus a `.sha256` recording the bare filename, so `sha256sum -c` works on downloads) to each GitHub Release. `scripts/build-mcpb.sh` is the **developer-only** local equivalent of that pack step (auto-incrementing output in `dist/`) for smoke-testing in Claude Desktop — it is deliberately **not** used by CI. It stamps a **dev version** from `pyproject.toml` + git HEAD — `<version>-dev.<short-commit>[.dirty]` — so a local bundle can't be mistaken for a release and is traceable to its commit; the stamp goes into `manifest.json` only for the pack and is restored by an `EXIT` trap. `PRIVACY.md` (no-telemetry statement) is referenced by the manifest's `privacy_policies`. Keep the manifest `version` aligned with `pyproject.toml`; update this section when the manifest's tool/env surface or the bundled file set changes.
-
-### Homebrew tap (`L337-org/homebrew-tap`) — PAUSED
-
-The infrastructure exists (`scripts/docker-mcp-server.rb.tpl`, `.github/workflows/publish-homebrew.yaml`, `L337-org/homebrew-tap`) but the **release trigger is disabled** pending resolution of a Homebrew dylib linkage issue: pre-built PyPI wheels for `pydantic_core` lack `-headerpad_max_install_names`, so Homebrew's post-install relocation step fails to rewrite the `@rpath` ID (the binary's Mach-O header has no room for the longer absolute path). The workflow is `workflow_dispatch`-only until a fix is found. The channel is not advertised in this repo's README, and the tap's own README documents the pause rather than offering an install command.
-
-**`skip_clean "libexec"` in the template is a candidate workaround, not the fix, and it is unverified.** `skip_clean` affects only Homebrew's post-install *cleanup* phase (symbol stripping, `.la` pruning, permission fixing) — verified against Homebrew 6.0.17, where `skip_clean?` is read only in `cleaner.rb`. It does **not** disable the separate keg-relocation step that rewrites dylib IDs via `install_name_tool`, which is where the headerpad failure occurs. Do not read its presence as evidence the issue is closed, and reject any claim that it suppresses relocation — that error has now been caught twice in review, both times in the Ruby formula comment rather than in Python code. The template also keeps `Formula[...].opt_bin` rather than the `formula_opt_bin` helper `brew style` recommends, deliberately: that helper only exists from Homebrew 6.0.3, so adopting it would fail the formula on older Homebrew for a style-only gain (labelled at the line).
-
-To re-enable: (1) add `release: types: [published]` back to `publish-homebrew.yaml`'s `on:` block; (2) re-add the Homebrew section to this repo's README; (3) restore the tap's own README, which currently documents the pause — a release regenerates only `Formula/docker-mcp-server.rb`, never that file, so it will keep saying "paused" until edited by hand; (4) confirm the tap push still lands. That last one has never been exercised since the tap gained a `main` ruleset (2026-08-11) requiring signed commits, a PR, and Copilot review: the workflow does a raw `git push` of an unsigned `github-actions[bot]` commit, which only succeeds if the identity behind `secrets.TAP_GITHUB_TOKEN` holds a ruleset bypass. The tap's ruleset does grant `OrganizationAdmin` and repo-admin bypass `always`, so an org-admin-owned PAT should pass — but that is an inference, not an observation, so watch the first run.
-
-### MCP Registry (`server.json`)
-
-A discovery listing in the official MCP Registry (`registry.modelcontextprotocol.io`), which stores only metadata pointing at the existing artifacts. `server.json` (repo root, name `io.github.L337-org/docker-mcp-server`) declares three package types — `pypi`, `oci` (GHCR image), `mcpb` (release `.mcpb`). The `registry` job in `.github/workflows/publish.yaml` stamps the tag version + the published `.mcpb`'s `fileSha256` into `server.json`, authenticates via GitHub OIDC (`id-token: write`, no secret), and runs `mcp-publisher publish`. Ownership is verified per package against `server.json`'s `name`, so three markers must equal it: the `<!-- mcp-name: … -->` comment in `README.md` (PyPI), the `io.modelcontextprotocol.server.name` image label in the `images` job (OCI), and the `.mcpb` URL + hash (MCPB). Keep them in sync with `server.json`'s `name`. **`server.json`'s committed version is also kept in step with `pyproject.toml`** - `tests/test_pyproject_pins.py::test_server_json_versions_match_pyproject` scans every version-shaped token (the version appears in `version`, the pypi package's `version`, and inside both the oci and mcpb `identifier` strings), so a version-bump PR must touch `server.json` too. It was previously left stale on the grounds that the release job restamps it; that is true but the stale value read as drift to every reader and every scheduled audit, so consistency won. When reviewing a version bump, expect `pyproject.toml`, `manifest.json`, `server.json` and `uv.lock` to move together.
-
-### Agent skill (`skills/l337-docker/`)
-
-A **Claude Code agent skill** driving Docker entirely through the `docker` CLI - the CLI-only alternative to running this server, a peer of it rather than a channel for it. Nothing in `docker_mcp/` imports or depends on it. Layout mirrors the server's three-layer discovery model: `SKILL.md` is the always-loaded router (preflight, always-apply rules, JSON-parsing contract, daemon targeting) mapping into `reference/` (11 domain files) and `workflows/` (5 files, ported from the MCP prompts); the comparison/coverage record is `MCP_VS_SKILLS.md` at the repo root (not inside the skill, which ships standalone and links to it on GitHub); `LICENSE` is a copy of the repo's MIT licence so the skill stands alone when downloaded. It follows the open [Agent Skills specification](https://agentskills.io/specification), so it is not Claude-specific: GitHub Copilot reads the same `SKILL.md` from `.github/skills`, `.agents/skills` or the same `.claude/skills` directory. `tests/test_skill.py` asserts the spec's `name`/`description` constraints, so an edit cannot quietly make it Claude-only.
-
-**Guards are conventions here, not enforcement** - do not let a PR describe them otherwise. `DOCKER_MCP_SERVER_READONLY`, per-host `(ro)`/`(nd)` and the self-termination guard refuse at the server's call boundary; a skill has none, so its rules are instructions a model can skip. The skill declares **no tool-permission frontmatter** (`tools` / `disallowedTools`, nor the slash-command `allowed-tools` spelling) on purpose: an allow-list covering `docker` would pre-approve `docker rm -f` and defeat the skill's own confirmation rule - flag any PR adding one. Provenance labels are `l337-docker-skill.*`, a separate footprint from the server's `docker-mcp-server.managed=true`; the skill must never stamp the server's label, and the prefix stays **lowercase** because Docker label keys are case-sensitive (a mixed-case key silently matches nothing in a lowercase filter, so a teardown reports a clean daemon while resources remain).
-
-Distribution is the `skill` job in `publish.yaml`. There is no official packaging format for a skill (unlike `.mcpb` for MCP servers) - a plain directory is the unit, so the archive is that directory rooted at `l337-docker/`, which is load-bearing for the install UX. tar.gz only: `tar` ships by default on macOS, Linux and Windows 10 1803+, while `unzip` is often absent on minimal Linux images. When reviewing a change to the skill's structure, provenance label, or the server's tool/prompt surface, check this section and `MCP_VS_SKILLS.md` stay accurate.
-
-**`MCP_VS_SKILLS.md`'s measured figures are regenerated by `scripts/measure-comparison-figures.py`, never hand-counted** - token costs for all five configurations the document names (full, read-only, triage, core, floor), the description/parameter statistics, the skill's per-file costs and the per-task comparisons. Run it with `uv run scripts/measure-comparison-figures.py` (`--json` for structured output); a PEP 723 header pins its own `tiktoken` and installs the working tree editable, so it needs nothing in the dev group. It is developer-only and **report-only** (same footing as `scripts/build-mcpb.sh`) and **deliberately not a CI gate**: token figures move a few tokens on any docstring edit, so asserting them would fail constantly and signal nothing - **flag any PR proposing to promote it to a merge gate**, and flag a PR that edits a figure by hand instead of regenerating it. Drift is watched by the weekly "MCP vs skills figure drift" routine in `L337-org/claude-routines`, which opens a PR when a movement is worth republishing. What `tests/test_skill.py` *does* assert (binary, silent when broken): every configuration the script measures is still a document row, the published `DOCKER_MCP_SERVER_DISABLE` line matches the triage config the figures were measured with, and every per-task composition names registered tools and existing skill files. The method lives in the script's docstring: `tiktoken` `cl100k_base` over the wire form (`model_dump_json(by_alias=True, exclude_none=True)` - a client is sent `inputSchema`, not `input_schema`). Per-task compositions and the two skill prose counts are **chosen or heuristic, not measured**, and labelled so in the output; the document's eager-idle total omits resource templates, so the script reports that figure both ways.
-
-### Release pipeline (`.github/workflows/publish.yaml`)
-
-All publishing runs through one workflow on each **published GitHub Release**: `preflight` → `pypi` ∥ `images`(→`dockerhub-description`) ∥ `mcpb` → `registry` → `verify`, with `skill` running in parallel from `preflight` and joining at `verify`, plus a `notify` job on failure. `skill` is deliberately absent from `registry`'s `needs` (the registry entry doesn't reference the skill archives) but present in `verify`'s and `notify`'s - when reviewing a change to the job graph, check a new artifact job is wired into both, or verify races ahead of it and a pack failure files no issue. `preflight` resolves the tag once (every job checks out **the tag ref**) and fails fast if the tag disagrees with the committed `pyproject.toml` / `manifest.json` / `uv.lock` self-entry versions - preventing a split-brain release where PyPI ships the pyproject version and everything else ships the tag version. It also refuses to run when `github.repository_owner` isn't `L337-org`, so a release published from a fork (or mis-timed around a repo transfer) fails before anything ships rather than half-publishing. `verify` confirms all channels serve the version (PyPI JSON API, both GHCR tags, `.mcpb` asset + checksum, registry listing, and the skill archive - checksum plus an extraction asserting it is rooted at `l337-docker/SKILL.md` and stamps this release's `VERSION`). `notify` files a deduplicated `ci-failure` + `wf:release` issue via `.github/actions/file-failure-issue` (one open issue per failure stream; a scheduled Claude responder routine polls `ci-failure` issues). Re-runs go through `workflow_dispatch` with the tag and are idempotent end-to-end (`skip-existing` on PyPI, re-pushed image tags, `--clobber` on the `.mcpb` and the skill archive, duplicate-tolerant registry publish); the skill archive is additionally byte-reproducible (sorted entries, zeroed ownership, normalised mtimes, `gzip -n`), so a re-run republishes an identical checksum. **PyPI Trusted Publishing pins the workflow *filename* (`publish.yaml`)** - when reviewing a PR that renames or splits this workflow, flag that the PyPI trusted publisher must be updated first. `.github/release.yml` (GitHub's release-*notes* config - a different file) groups generated notes; `publish-homebrew.yaml` (paused, dispatch-only) stays separate. When reviewing changes to the pipeline's job graph, ownership markers, or re-run semantics, check this section stays accurate.
-
-## Conventions
-
-- **Tool naming convention (2.0, permanent):** every tool is named `<management-command>_<verb>`, anchored
-  to the docker CLI's management-command structure (`docker container ls` → `container_list`), with
-  **long-form verbs** (`list`/`remove`/`inspect` — never `ls`/`rm`/`get`), applied uniformly even where the
-  CLI lacks the long alias. Singular prefixes (`container_`, not `containers_`); read-only fetches may be
-  noun-form (`container_logs`, `registry_tags`). Names never encode the backend (SDK vs CLI). Identifier
-  params use one rule: `id_or_name` (daemon objects addressable by either), `name`/`names` (name-only
-  resources: volumes, contexts, plugins, stacks, builders), `repository` (remote repo refs); durations are
-  `timeout_seconds`. `tests/test_naming.py` enforces all of this (approved prefixes, banned short forms and
-  1.x spellings, canonical shared-param descriptions) — a violating tool fails CI.
-- **MIRROR RULE:** this file mirrors `CLAUDE.md` and drives Copilot review of every PR. Any change to project structure, conventions, env vars, or the tool/prompt/resource surface must update **both** files in the same PR — flag a PR that updates one but not the other.
-- New Docker functionality goes in the matching `docker_mcp/tools/<domain>.py` — do not create new tool files without a corresponding entry in `docker_mcp/tools/__init__.py` and a matching test file.
-- Tool functions are decorated with `@tool()` (imported from `docker_mcp.server`) and **must have a `TOOL_CATEGORIES` entry** in `docker_mcp/server.py`. A new tool module is a new domain - also add a `_DOMAIN_BLURBS` entry so the `instructions` router advertises it. A PR adding a tool must also bump the domain's count in `MCP_VS_SKILLS.md` (and cover the CLI equivalent in the matching `reference/` file); `tests/test_skill.py` derives the counts from `tool_catalog()`, so an unbumped count fails CI - a genuinely uncoverable tool belongs under "Structural gaps", not omitted silently.
-- A daemon-targeting tool declares `host: str | None = None` (last parameter) and threads it to `_get_client(host)` / `run_docker(..., host=host)`; it is intentionally **not** documented in the docstring `args:` (the `@tool()` decorator generates its description and strips/enum-injects it per mode — see the host-registry section). Registry/hub and context tools omit `host`.
-- **A parameter whose legal values are a genuinely closed set is typed `Literal[...]`, not `str`.**
-  Pydantic turns that into an `enum` in the advertised `inputSchema` (`_slim_schema` preserves it,
-  proven by a test) so an out-of-set value fails validation before anything executes, and the
-  docstring then drops the value list rather than repeating it. Verify the set against a primary
-  source - the subcommand's own `--help`, or docker-py's documented value list - never from
-  memory: `docker scout cves --only-severity CRITICAL` exits 0 reporting no vulnerabilities on an
-  image with three critical CVEs, and the daemon records an unrecognised `--scope` verbatim, so a
-  wrong value is not reliably rejected by Docker itself. Where the set is *not* provably closed
-  (compose validates `--protocol` not at all; buildx drivers are pluggable; docker-py documents no
-  values for `isolation`), leave it a `str` and record why at the parameter, so a later pass does
-  not re-propose it. `tests/test_server.py::test_closed_value_sets_are_advertised_as_enums` pins
-  the current set.
-- **The `@tool()` decorator is generic (`def tool[F: Callable[..., Any]](...) -> Callable[[F], F]`)
-  so pyright checks arguments at every tool call site**, in tests and at internal callers alike.
-  Annotating it as a bare `Callable` erases the parameter list and silently disables that checking
-  everywhere: a wrong type, an unknown keyword and a value outside a `Literal` all passed the gate
-  until this was fixed. `tests/test_server.py::test_pyright_still_checks_arguments_at_tool_call_sites`
-  runs pyright over those three deliberate errors, so it also fails if only the return annotation is
-  loosened while the type parameter stays. A test that must pass a deliberately invalid value marks
-  that one call `# pyright: ignore[reportArgumentType]` with a reason, rather than being softened to
-  a legal one.
-- Line length limit: 120 characters.
-- **Prose that ships is British English in plain ASCII punctuation.** A tool docstring ships: the server
-  advertises it verbatim as the tool's `description`, which is what a model reads when choosing between
-  164 tools. So do the README, the agent skill, prompts and resources, comments, commit messages and PR
-  descriptions — the test is whether it ships, not who reads it. **Never `—` or `–`**: use `-`, or `:`
-  where what follows explains what came before. Likewise `...` not `…`, `x` not `×`, straight quotes, and
-  `10-15%` for ranges.
-- **Tool descriptions are strict ASCII, with no symbol exception**, and CI enforces exactly that:
-  `tests/test_docs.py::test_advertised_tool_descriptions_are_plain_ascii` asserts it against what
-  `list_tools()` advertises, so a violating tool fails. There is no allow-list because none of the 164 has
-  needed one - the three arrows and one ellipsis found during the sweep all read better as words. Elsewhere
-  in shipped prose a symbol carrying meaning (`≥`, or `→` inside a table) is still fine; that is the one
-  place the general rule and this check deliberately differ.
-- **Scope stops at tool descriptions.** Comments, tests and workflow files still hold em dashes; none of
+- **Image builds are not provenance-stamped.** A build label changes the resulting image digest.
+  Compose and stack containers, and `plugin_create`, are unstamped for their own recorded reasons.
+- **Cross-host redirects are followed on purpose.** Registries answer blob fetches with a redirect to a
+  CDN on another host as normal operation, so refusing them breaks `registry_image_config`. httpx
+  strips `Authorization` on any cross-origin redirect, and a redirect reaches nothing a tool argument
+  could not reach directly. Do not propose "hardening" this.
+- **The two CLI error styles are intentional.** Action tools return the raw result dict and never raise
+  on a non-zero exit; parsed-query tools raise `RuntimeError`. `compose_ps` and `compose_config` are
+  sanctioned hybrids. Do not propose unifying them.
+- **`context.py` is permanently excluded from the SSH remote-exec fallback.** Its tools manage *this*
+  host's CLI context registry, which a remote host knows nothing about. This is not an oversight
+  pending work.
+- **`mcp` carries no major-version cap.**
+  `tests/test_pyproject_pins.py::test_the_declared_mcp_bound_matches_what_the_code_imports` is the
+  guard instead, and needs no cap remembered in advance. Flag only a change that silently narrows that
+  guard. The same question - cap or guard? - applies to any new direct dependency whose import surface
+  this project touches.
+- **No `cryptography` pin.** It is transitive, and a wheels-only Intel-macOS resolve landing on a
+  vulnerable version is accepted. Do not propose pinning it or asserting it in CI.
+- **`scripts/measure-comparison-figures.py` is deliberately not a CI gate.** Token figures move a few
+  tokens on any docstring edit, so asserting them would fail constantly and signal nothing. A weekly
+  routine watches for drift instead. Do not propose promoting it.
+- **The Homebrew tap is paused, and `skip_clean "libexec"` in the formula template is an unverified
+  candidate workaround, not the fix.** Review has twice caught a comment claiming otherwise.
+  `Formula[...].opt_bin` is kept over the `formula_opt_bin` helper deliberately: the helper only exists
+  from Homebrew 6.0.3.
+- **`CLAUDE.md` and this file are exempt from the prose style** - British English *and* ASCII
+  punctuation - because they are working instructions that never ship. That is why they use em dashes
+  and American spellings freely. `architecture/`, `CONTRIBUTING.md`, the README, the skill and every
+  tool docstring are **not** exempt. Comments, tests and workflow files still hold em dashes; none of
   them ship, and sweeping them is a separate decision.
-- **`CLAUDE.md` and `.github/copilot-instructions.md` are both exempt** — working instructions that never
-  ship — which is why they still use em dashes freely.
-- **Bound any externally-sourced bytes before buffering/parsing them, and parse safely.** CLI output is capped in `run_docker` (`MAX_CLI_OUTPUT_BYTES`); registry HTTP bodies are streamed and capped at `_MAX_RESPONSE_BYTES` in `registry.py` (registries are agent-pointed/untrusted; the cap is on the *decoded* stream, so it also stops a decompression bomb). New code reading an untrusted file or network body must apply a similar bound. Always `json.loads` (never `eval`); if YAML is ever parsed in Python, `yaml.safe_load` only — today nothing parses YAML in Python (Compose YAML is read by the `docker` CLI). Flag a PR that buffers an untrusted body unbounded.
-- **A URL taken from a response body is pinned to the origin it came from; a URL the caller named is not.** Who chose the destination is the distinction. A registry host in a tool argument is the caller's choice and the point of the `registry_*`/`hub_*` tools, so it is not restricted. A `next`/`Link` URL is the *response's* choice: `_validate_hub_next` requires Hub pagination to stay on `_HUB_API_BASE`'s scheme/host/port, and the OCI tag-list path keeps only the path from a `Link` header and re-applies the registry already being queried. A new paginating or link-following tool must do the same. **Do not flag `follow_redirects=True`, and do not suggest restricting redirects to the same host** - registries answer blob fetches with a redirect to a CDN on another host as normal operation (Docker Hub answers a config-blob GET with `307` to `production.cloudfront.docker.com`), so refusing cross-host redirects breaks `registry_image_config`; httpx strips `Authorization` on any cross-origin redirect, so a redirect cannot carry credentials, and it reaches nothing a tool argument could not reach directly. The read-only/no-destructive switches are **not** egress controls (the registry tools are read-only); `DOCKER_MCP_SERVER_DISABLE=registry` is.
-- Do not add comments that describe what the code does — only add comments for non-obvious constraints or workarounds.
-- **Target runtime is Python >=3.14** — when reviewing, assume current stable CPython grammar and stdlib are available and valid; do not flag 3.14-valid syntax as a bug. A concrete example reviewers (and older models) get wrong: [PEP 758](https://peps.python.org/pep-0758/) — **Status: Final, Python-Version: 3.14** — makes parentheses optional in `except` / `except*` clauses, so `except OSError, ValueError:` is a valid two-exception handler, **not** a `SyntaxError` (verifiable: `python3.14 -c "import ast; ast.parse('try:\n pass\nexcept OSError, ValueError:\n pass')"` parses it as a tuple handler). The `as`-binding form still requires parens (`except (OSError, ValueError) as e:`), and `ruff` (pyupgrade, 3.14 target) may rewrite to the unparenthesized form.
-
-### Provenance labels
-
-Resources this server **creates** are stamped with `docker-mcp-server.*` provenance labels (`.managed=true`, `.version`, `.tool`, `.created`) so the agent/operator can later enumerate that footprint (the `managed_only=True` arg on `container_list` / `network_list` / `volume_list` / `service_list`, or `--filter label=docker-mcp-server.managed=true`; the `prune_managed` prompt removes only the managed footprint). On by default; opt out with `DOCKER_MCP_SERVER_NO_LABELS=1`. When adding a new create tool that accepts a `labels` dict, route it through `docker_mcp/tools/_labels.py:with_provenance(labels, "<tool_name>")` — it merges provenance without overwriting caller keys and returns `None` (drop it via `drop_none`) when stamping is disabled and the caller passed nothing. The seven stamped creators today are `container_run`, `container_create`, `network_create`, `volume_create`, `service_create`, `config_create`, `secret_create`. **Image builds are intentionally not stamped** (a build label changes the image digest); Compose/stack containers and `plugin_create` are also unstamped. The rule is conditional on the tool *accepting a `labels` dict* — a creator with nowhere to put a label is an expected exception, not an oversight, and should say so in its docstring rather than being flagged in review.
-
-### CLI shell-out policy
-
-Any tool wrapping a `docker` CLI feature MUST go through `docker_mcp/tools/_cli.py:run_docker` — never call `subprocess.run` directly from a tool module. The helper enforces `shell=False`, argv lists, binary resolution via `shutil.which`, UTF-8 decoding with replace, an output byte cap, an environment allow-list, and Windows console suppression. Additional rules:
-
-- Wrap every user-supplied **positional** value in `safe_positional(value, "what")` — a value starting with `-` would otherwise be parsed by the docker CLI as a flag (argument injection). The only exception is an argv that is *meant* to be arbitrary (the trailing command of `compose_exec` / `compose_run`).
-- Always pass an explicit `timeout=` to `run_docker` (generous for build/pull, short for queries).
-- Error convention (intentional — do not "unify"): **action tools** return the raw `{"returncode", "stdout", "stderr", "truncated"}` dict and never raise on a non-zero exit; **parsed-query tools** (`context_list`, `buildx_list`/`du`, `compose_list`) raise `RuntimeError` via `raise_on_cli_failure` because they cannot return a useful partial parse; `compose_ps`/`compose_config` are the sanctioned hybrids (parsed view plus `raw`, never raise).
-
-**SSH remote-exec fallback.** The dial-stdio proxy still needs a local `docker` binary to point at the remote daemon; with none, CLI-backed tools fail at `_resolve("docker")` even though the docker-py-backed tools work against that host. So when the target host resolves to `ssh://` **and** nothing local can serve the call, the command runs on that host via `_ssh_proxy.py:run_remote_exec` (paramiko, `PosixDialect` wrapping the argv in an `sh -c` script that enforces the timeout itself and reports `124`, mapped back to `subprocess.TimeoutExpired`; both streams drained concurrently). Rules: the decision lives in each module's shared `_run_*` wrapper via `_cli.py:should_remote_exec(host, plugin=...)` (`plugin=None` = core-CLI subcommand) routing to `remote_exec_cli(host, args, timeout=)`, which returns the same `CliResult` so the error conventions above need no remote branch — never probe ad hoc in a tool body; and it is a fallback, never a preference (a usable local CLI always wins, a non-`ssh://` host is never eligible, and `remote_exec_cli` raises rather than degrading if called for one). Consequences to state in the docstring of any tool that gains this path: it runs as the **remote** SSH user, so registry credentials come from *its* `~/.docker/config.json` (`system_login` never writes the remote CLI's config); `stdin`/`extra_env` are rejected rather than dropped; the remote must be POSIX (`uname -s` allow-list — sshd inside WSL is accepted, a Windows-side cmd/PowerShell sshd or MSYS/Cygwin is refused). **Wired in: every CLI-backed domain except `context`** (excluded permanently — its tools manage *this* host's CLI context registry): `scout` is exec-only (`scout_compare`'s `to` is refused when it names an existing local path); `compose` stages `project_dir` (or the server's cwd) via `remote_stage_and_exec`, except `compose_list`, which asks the daemon and takes the exec-only path, and **`compose_cp`, which is bespoke** — one side of the copy is a local path outside the compose file's working directory, which `remote_stage_and_exec` has no concept of relaying, so it stages `project_dir` the same way and then uses `_split_cp_arg` (mirroring `docker compose cp`'s own `splitCpArg`, verified against `docker/compose`'s `pkg/compose/cp.go`) to identify which of `source`/`dest` is the container reference: a local source is staged like `project_dir`; a local destination gets a fresh path from `RemoteStagingSession.reserve_path()` for the remote `docker compose cp` to write into, fetched back via `RemoteStagingSession.fetch_path()` once the copy succeeds (`test -d` decides file vs. directory; a directory is packed remotely with `tar`, downloaded, and extracted locally with `tarfile`'s `filter="data"` — what actually stops an escaping member — under the same size/count bounds `_enforce_stage_limits` applies to uploads). Every parameter carries over unchanged since the real CLI always executes the copy; the one gap is a container→host copy whose local destination already exists, refused rather than merged into or overwritten. When neither or both sides look like `SERVICE:PATH`, the call passes through unchanged and the real remote CLI's own validation error surfaces. `unix://`/`tcp://`+TLS with no local plugin still raise via `require_plugin`, whose message now also names pointing the host at an `ssh://` endpoint via `DOCKER_MCP_SERVER_HOSTS` as an alternative to installing the plugin (shared by `compose`/`buildx`/`scout`); `stack` gained the shared `_run_stack` wrapper, where only `stack_deploy` passes `stage_cwd=True` (explicit, *not* inferred from `cwd is None`, since a Compose-style `cwd=None` still means "stage the server's cwd"); `buildx` splits three ways — queries exec-only, `buildx_bake` stages its working directory (with `path_values=files` passed **explicitly**, because bake appends caller-supplied targets that an argv scan could match, and those targets now go through `safe_positional`), `buildx_create --config` / `buildx_imagetools_create --file` stage only the files they name via `stage_cwd=False`, and **`buildx_build` is bespoke** (see below).
-
-**`buildx_build`** drives a session directly (`remote_cli_session` + `run_in_session`): its context needs `.dockerignore`-aware tarring and its `--build-context`/`--secret` values carry paths inside composite `key=value` tokens, rewritten flag-anchored via `_spec_component`/`_replace_spec_component`. The context is staged only when it names an **existing local directory** — the inverse test to recognising URL syntax — so a Git/HTTP context passes through. **buildx resolves `--file` against the CLI's working directory, not the context** (verified empirically; the pre-2.2.0 docstring claimed the opposite), so the remote command gets **no cwd** and every rewritten path is absolute — an in-context Dockerfile becomes `<staged context>/<relative>` via `RemoteStagingSession.join`, one outside it (or beside a URL context) is staged separately. A remote cwd would let a relative `--file` the local CLI cannot find resolve inside the copied context: the same build failing locally and succeeding remotely. It **refuses** (before connecting) a filesystem `dest=` in `output`/`cache_to`, a local `src=` in `cache_from`, and any `ssh=` — each would resolve on the remote machine (losing the output, caching to the wrong disk, silently building uncached since a missing local cache import is non-fatal, or reading the remote user's SSH agent). `dest=-` is stdout and passes. The `instructions` router names the fallback for the domains in `_REMOTE_EXEC_DOMAINS` that registered, so a `context`-only surface never advertises it.
-
-**Path tokens are reconciled with the staged copy** (`_cli.py:_reconcile_path_tokens`), since the argv still holds local paths after the tree is copied: relative in-tree is left alone (the remote cwd *is* that tree), absolute in-tree is rewritten relative (a local absolute path names nothing remotely), out-of-tree is staged separately and rewritten. The values come from `flag_values(args, "-f")` / `"-c"` rather than being threaded from each tool — one producer and one consumer, instead of twenty call sites able to forget one. A staged out-of-tree file that itself references relative paths will not find them; the remote CLI reports that.
-
-**Staging local files** (`_ssh_proxy.py:remote_staging_session`) covers a command whose arguments name local files (Compose files, bake file, build context): one connection, one 0700 `mktemp -d` root named `docker-mcp-server.stage.*` (distinct from the watchdog's marker files, which share the prefix), teardown in a `finally` so success/exception/timeout all remove it (only a dropped transport can leave one). `stage_tree` / `stage_file` / `stage_build_context` each land in their own numbered subdirectory and return an absolute remote path for use as `cwd` or an argument; `session.exec(...)` reuses the connection. `stage_tree` is an unfiltered tar → SFTP → remote `tar -xf` (nothing can tell which files a Compose file references); `stage_build_context` reuses docker-py's `tar`/`exclude_paths` so `.dockerignore` applies as it would for an SDK build, and measures only the included set. Both refuse an oversized payload (`_MAX_STAGE_BYTES` / `_MAX_STAGE_FILES`) lazily, with a message naming a way out. Extra host requirements: a working `tar`, and an SFTP subsystem on the **same filesystem** as the exec channel — stat-checked once per session, catching a Windows sshd shelling into `wsl.exe` and a chrooted SFTP; deliberately staging-only, since exec-only tools work fine on such a host. Consumers are listed above.
-
-### Tool function format
-
-All `@tool()` functions must follow this exact docstring format:
-
-```python
-from docker_mcp.server import tool
-
-
-@tool()
-def mcp_example(name: str):
-    """
-    Say hello to someone by name.
-
-    Use it for a single greeting; use `mcp_example_bulk` to greet many names in one call.
-    Read-only, no side effects.
-
-    args: name - The name to say hello to (any non-empty string)
-    returns: str - The greeting
-    """
-    return f"Hello, {name}!"
-```
-
-(`mcp_example` and `mcp_example_bulk` are illustrative only and exist nowhere in the repo — in a
-real docstring the discriminator must name an actually-registered sibling tool.)
-
-- One-line summary sentence, then a blank line
-- `args:` section lists each parameter as `name - description`. Do **not** repeat the parameter's
-  type — the type annotation already lands in the tool's `inputSchema`, which the client sees
-  alongside the description, so a `name: type - ...` form just duplicates it as prose tokens. (The
-  `returns:` line keeps its type, since the return shape is not in the input schema.)
-- `returns:` line documents the return type and what it contains
-- Keep descriptions terse: state every functional fact (defaults, accepted formats/values, return
-  keys, important caveats) but cut redundancy and verbose phrasing. The docstring is the entire
-  tool `description` the client pays tokens for on every session.
-
-#### Docstring quality standard (review checklist — push back on non-compliant docstrings)
-
-Tool descriptions are scored externally on Glama's six-dimension Tool Definition Quality rubric
-(<https://glama.ai/mcp/servers/L337-org/docker-mcp/score>): Purpose Clarity 25%, Usage Guidelines
-20%, Behavioral Transparency 20%, Parameter Semantics 15%, Conciseness & Structure 10%, Contextual
-Completeness 10%. Repeated cleanup PRs (#97, the 2.0 rename, #129, the 2026-07 bottom-20 pass) all
-chased the same failure: docstrings that state *what* the tool does but never *when to use it over
-its neighbors*, plus `args:`/`returns:` lines that merely restate the schema. **When a PR adds or
-modifies an `@tool()` docstring, check it against every numbered item below and request changes
-naming the specific item it fails.** The standard is a ratchet: it applies to docstrings the PR
-touches — do not demand rewrites of untouched legacy docstrings.
-
-1. **Summary = specific verb + resource**, with the distinguishing trait up front when a sibling
-   could be confused ("Send a signal to a running container (default SIGKILL — immediate, no
-   graceful shutdown)").
-2. **A usage-guidance paragraph (1–5 sentences between the summary and `args:`) is required for
-   every tool, not just complex ones.** Flag a new/edited tool whose docstring jumps straight from
-   summary to `args:`. The paragraph must carry:
-   - at least one *discriminator* naming the sibling tool(s) an agent could reach for instead and
-     when to prefer which (`container_stop` vs `container_kill` vs `container_restart`;
-     `service_ps` vs `stack_ps` vs the `service-tasks://` resource);
-   - preconditions in prose (swarm manager only, plugin required, container must be
-     running/paused);
-   - side effects and destructive/irreversible behavior in prose — the scorer explicitly discounts
-     `readOnlyHint`/`destructiveHint` annotations as a substitute for description text;
-   - for CLI-backed tools, the error style ("does not raise on a non-zero CLI exit — inspect
-     `returncode`/`stderr`" vs "raises `RuntimeError` on CLI failure"). Flag an absolute "never
-     raises" claim — a missing binary/plugin or a subprocess timeout still raises even in action
-     tools.
-   Scale to the tool: a trivial read-only tool needs one discriminator sentence, not five.
-3. **Every `args:` line adds semantics the schema cannot carry**: format, accepted values/ranges,
-   defaults, units, parameter interactions. Flag a line that merely echoes the parameter name
-   ("name - The volume name") — it scores 2/5 on the rubric. Canonical shared-param prefixes in
-   `tests/test_naming.py` still apply — tool-specific detail is appended after the canonical
-   prefix, not reworded.
-4. **`returns:` names the shape, not just the type.** For computed or partial returns the
-   load-bearing keys must be listed (`{"Titles", "Processes"}`). For a full engine inspect
-   document, key enumeration is NOT wanted — an arbitrary subset of hundreds of keys is noise; the
-   line should identify the document ("full inspect payload, as `docker inspect`"), optionally
-   plus one or two keys a caller typically wants. Flag the shapeless "dict - The X's attrs" on a
-   new/modified tool, which identifies neither form.
-5. **Front-loaded and terse** — the description is paid for in every session's context.
-6. **Every factual claim must be verifiable** against the docker-py docs / Engine API spec (Docker
-   SDK Policy below). Flag claims that contradict them — especially identifier semantics ("name or
-   id" for a resource actually addressed by name only), default values, and signal/timeout
-   behavior.
-
-**Division of labor across the three discovery layers.** For a lazy-loading client (e.g. Claude
-Code), tool schemas load on demand; always in context are only (1) the **tool names** and (2) the
-**`instructions` router** (`_DOMAIN_BLURBS` / `build_instructions()` in `server.py`). Docstrings
-are layer (3): a deferred tool cannot be invoked without fetching its definition, so it is read at
-the moment of choice, side by side with sibling definitions — where the item-2 discriminators do
-their work. When reviewing, apply the boundary: a *cross-domain* selection caveat that must be
-visible before any schema is fetched (e.g. "prefer `dest_path` for large output") belongs in the
-router's caveat list, not buried in one docstring; *sibling-level* discriminators belong in
-docstrings and should not be duplicated into the router; flag docstrings padded with search
-keywords (discoverability is the naming convention's and the router's job); and flag sibling
-references that don't use the exact tool name (`container_kill`, never "the kill tool") — lazy
-clients keyword-search descriptions, so exact names double as retrieval anchors.
-
-### Bounding rules
-
-- Tools that buffer a daemon-side byte stream in memory must cap it with `join_bounded(stream, max_bytes, what)`; the in-band default is `MAX_PAYLOAD_BYTES` (32 MiB). Large payloads belong in the file-path modes (`dest_path` / `from_file` params, or `container_archive_get_to_file`), which stream via `stream_to_file` / an open file handle.
-- Tools that iterate a potentially endless stream (events, followed logs) must have a wall-clock bound — see the `threading.Timer` + `CancellableStream.close()` watchdog pattern in `system.py:system_events` and `containers.py:container_logs` (follow mode).
-
-### MCP resources
-
-`docker_mcp/tools/resources.py` exposes `@mcp.resource(uri, mime_type=...)` endpoints (not tools) for read-only data: the Docker SDK for Python documentation under the `docker-docs://` URI scheme, `docker-mcp://tool-catalog` (the live tool/domain/category snapshot), `docker-mcp://hosts` (the resolved host registry), and three "watch this specific thing over time" observability families — **containers** (`docker://containers` / `docker-logs://{id_or_name}` / `docker-stats://{id_or_name}`, reusing `containers.py`'s private `_read_log_tail` / `_read_stats_summary`), **services** (`docker://services` / `service-logs://{id_or_name}` / `service-tasks://{id_or_name}`, reusing `services.py`'s private `_read_service_log_tail` / `_read_service_task_summary` — the latter also backs `service_wait`'s `running` mode), and **nodes** (`docker://nodes` index only — deliberately no per-node child resource, since that would need an unbounded per-service task fan-out with no single cheap call). All are `host=`-aware and refuse when their domain (`containers`/`services`/`nodes`) is disabled. **In multi-host mode all three families are host-aware** — the default forms become empty-authority (`docker:///containers`, `service-tasks:///{id}`, …) and host-qualified variants (`docker://{host}/containers`, `service-logs://{host}/{id}`, …) register alongside, disambiguated by path-segment count; single-host keeps the bare forms. Registration is gated on `_hosts.is_multi()`. `_SECTION_DOMAINS` maps each doc section to a domain so `DOCKER_MCP_SERVER_DISABLE` hides a disabled domain's sections (registered with the server via `register_resource_domains`). Use the same docstring format as tools.
-
-`resources.py` also has one `@tool()`: **`docs_lookup(section=None)`** — a tool-callable mirror of `docker-docs://` for clients that can't read MCP resources (Claude Desktop, Cursor). It wraps `list_docs_sections()`/`get_docs_section()` directly (same behavior either way, including per-section domain refusal) and is one of `_NO_DOMAIN_TOOLS` — always registered regardless of `DOCKER_MCP_SERVER_DISABLE`. Several `extra_kwargs`-heavy tool docstrings and docs-reliant prompts point at it as the resource-read fallback — do the same for new ones in that shape.
-
-`resources.py` carries a second `@tool()`: **`tool_list(domain=None, category=None, keyword=None)`** — a tool-callable mirror of `docker-mcp://tool-catalog` and the only way to express structured queries over the surface (destructive tools, tools taking a `host`, what actually registered). Thin pass-through to `server.py:query_catalog()`, which reads `_tool_registry` (`ToolRecord` captures each tool's docstring summary and parameter names at registration). Lists **only registered** tools — a tool dropped by a switch or disabled domain is absent, not flagged, so a disabled capability is never advertised; `hidden_by_configuration` keeps the config auditable in aggregate. In `_NO_DOMAIN_TOOLS`, so it survives `DOCKER_MCP_SERVER_DISABLE` naming every domain. A new tool appears automatically; its docstring's first line is the summary a row carries, so keep that line standalone.
-
-### MCP prompts
-
-`docker_mcp/tools/prompts.py` exposes `@prompt(description=..., domain=...)` templates (the `prompt` helper from `docker_mcp.server`, not `@mcp.prompt` directly) that return prompt strings to guide multi-step docker workflows (deploy, migrate, troubleshoot, prune, audit/security, networking, volume backup/restore, doc lookup). Each declares its primary `domain` so `DOCKER_MCP_SERVER_DISABLE` drops it with that domain; `domain=None` for general/cross-domain prompts. Use the same docstring format as tools.
-
-## Docker SDK Policy
-
-**Only use `docker` module methods that are documented in the official reference.**
-Always verify the exact method name, parameter names, and return type at https://docker-py.readthedocs.io/en/stable/ before writing or suggesting code. Do not suggest methods that sound plausible but are not in the docs.
-
-When the high-level SDK lacks a method (e.g. swarm node removal, service rollback), use the low-level `APIClient` via `_get_client().api` (`remove_node`, `update_service`, `inspect_service`, …), documented at https://docker-py.readthedocs.io/en/stable/api.html — verified the same way. Prefer the high-level object API where it exists.
-
-Treat "the method exists" as separate from "the method works": the rendered docs show a docstring, not the URL a method builds. `plugin_push` is the standing example — docker-py's `Plugin.push()` / `APIClient.push_plugin()` POST to `/plugins/{name}/pull`, which the Engine does not define (push is `POST /plugins/{name}/push`), so they 404 everywhere; broken since 2017 and still in `main`, because upstream has no test for it. Where a documented method is provably broken, the ladder is: another public SDK path, then the correct endpoint via docker-py's private request helpers (`_url`/`_post`/`_raise_for_status`/`_stream_helper`) resolved through `getattr` and guarded to raise an actionable message rather than `AttributeError` (as `system_logout` does with `api._auth_configs`), then a CLI shell-out if the domain is already CLI-backed. Anything below the first rung leaves the supported surface and is **a human's call, not an agent's**: a PR that adds a *new* private-helper reach-in should be flagged as needing explicit maintainer sign-off, even when it is well built — say so rather than approving it on the strength of the guards. Do flag one that is unguarded, undocumented, or that hits an endpoint absent from the Engine API spec (no compatibility promise, no deprecation cycle — a categorically worse bet than `plugin_push`'s, which uses a spec'd endpoint the CLI itself calls and reaches it through unofficial plumbing). Do **not** re-litigate the reach-ins already blessed above (`plugin_push`, `system_logout`, `stage_build_context`): being present on `main` *is* the sign-off, so a PR that merely touches or refactors one needs no fresh approval — only a genuinely new reach-in does. If a diff both adds and blesses one, that has already been decided; say nothing. And do not treat an audit or routine that *declined* to implement something and documented why as an unfinished job — that write-up is the intended escalation path, and is how `plugin_push` reached a human decision in the first place.
-
-**SDK audit exclusions.** A recurring audit routine looks for uncovered SDK surface and for low-level `client.api.*` calls a high-level method could replace. These were decided on the merits and must not be re-proposed (in review or by the routine): `Plugin.push()`/`APIClient.push_plugin()` — broken upstream, so `plugin_push`'s hand-built endpoint call is the working path, not debt to tidy away; `Container.attach`/`attach_socket`/`resize` — deliberately unwrapped, as an interactive bidirectional stream doesn't fit a request/response tool call (`container_exec` covers scripted exec); `service_rollback`'s `inspect_service`/`update_service` and `system_logout`'s `_auth_configs` — permanently low-level, as the high-level SDK has no `rollback` and no `logout` at all; `swarm_task_list`/`swarm_task_inspect`'s `api.tasks()`/`api.inspect_task()` — permanently low-level, as docker-py has no task collection at all. Anything deliberately not wrapped, or wrapped unobviously, belongs on that list in `CLAUDE.md`.
-
-Docker SDK docs: https://docker-py.readthedocs.io/en/stable/index.html
-Docker SDK low-level API: https://docker-py.readthedocs.io/en/stable/api.html
-Docker SDK GitHub: https://github.com/docker/docker-py
-
-### Review Notes
-
-There used to be a major-version cap on `mcp` (`"mcp>=1.27.1,<2"`), a hotfix for mcp 2.0.0 (2026-07-28) removing `mcp.server.fastmcp`, which `server.py` imported `FastMCP` from — premerge CI could not see this because it installs `--locked`, so the lockfile's 1.x kept every test green while a *fresh* resolve broke at import (the published 2.2.0 shipped uncapped and `uvx docker-mcp-server` failed at import on a clean machine; 2.2.1 was the hotfix). `server.py` has since been ported to `mcp.server.mcpserver.MCPServer` and the cap removed; `mcp` is now unpinned above `2.0.0`. Rather than a version cap, `tests/test_pyproject_pins.py::test_the_declared_mcp_bound_matches_what_the_code_imports` asserts the module `server.py` imports its server class from is one the installed mcp actually provides — a permanent guard against a future mcp release removing that import path, with no cap to remember to add first. If a PR touches this import or that test, check the change is not silently narrowing that guard. The same principle applies to any new direct dependency whose import surface this project touches — check whether a cap or a guard like this belongs with it.
+- **These American spellings are deliberate; do not flag them.** Shipped prose is British English,
+  but four sets are excluded for cause, and a sweep has confirmed nothing else remains:
+  - **`CODE_OF_CONDUCT.md` in full** - it is the Contributor Covenant 2.1, quoted from upstream.
+    Anglicising it would make it stop matching the document it claims to be.
+  - **"Behavioral Transparency"** in `architecture/tool-descriptions.md` - one of Glama's own rubric
+    dimension names, quoted verbatim. Renaming an external rubric's dimension misnames it. Labelled
+    at the line.
+  - **"catalog"** wherever it names the `tool_catalog()` function, the `docker-mcp://tool-catalog`
+    resource, or the OCI `_catalog` endpoint. Spelling the prose "catalogue" would disagree with the
+    identifier it refers to.
+  - **"dialog"** for a UI dialog box, which is the standard technical term in British usage too.

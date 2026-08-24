@@ -2,19 +2,19 @@
 
 2.0 renames the entire tool surface to one convention, merges duplicate tools, removes two dead
 ones, standardizes parameter names, and drops the deprecated `DOCKER_MCP_*` env-var aliases. It is
-a **clean break**: no old name - tool, parameter, or env var - is honored. Nothing else changes:
+a **clean break**: no old name - tool, parameter, or env var - is honoured. Nothing else changes:
 transports, safety classifications (beyond the two noted below), resources, prompts, and
 provenance labels all behave as in 1.x.
 
 ## The naming convention
 
 Every tool is named `<management-command>_<verb>`, anchored to the docker CLI's own
-management-command structure (`docker container ls` → `container_list`), with long-form verbs
+management-command structure (`docker container ls` -> `container_list`), with long-form verbs
 (`list`/`remove`/`inspect` - never `ls`/`rm`/`get`). Names never encode the backing implementation
 (SDK vs CLI), so tools can move between backends without renaming. Read-only fetches may be
 noun-form (`container_logs`, `registry_tags`).
 
-## Tool renames (old → new)
+## Tool renames (old -> new)
 
 **system** (domain renamed from `client` - update `DOCKER_MCP_SERVER_DISABLE=client` to `system`):
 
@@ -154,7 +154,7 @@ All other `compose_*`, `stack_*`, `context_*`, `buildx_*`, and `scout_*` names a
 | `registry_get_config` | `registry_image_config` |
 | `hub_list_tags` | `hub_tags` |
 
-## Merged tools - behavior notes
+## Merged tools - behaviour notes
 
 - **`container_logs`**: `follow=True` replaces `follow_container_logs`; `limit_lines` and
   `timeout_seconds` apply only in follow mode, `until` only in snapshot mode.
@@ -181,25 +181,25 @@ All other `compose_*`, `stack_*`, `context_*`, `buildx_*`, and `scout_*` names a
   `image`); `name`/`names` for name-only resources (was `volume_id`, `stack_name`,
   `stack_names`); `repository` for remote repo refs (was `image` on `registry_*`, `name` on
   `image_registry_data`/`image_list`).
-- `timeout` → `timeout_seconds` everywhere (`plugin_enable`); in `container_stop` /
+- `timeout` -> `timeout_seconds` everywhere (`plugin_enable`); in `container_stop` /
   `container_restart` the stop-grace period is `stop_timeout_seconds` (matching
   `compose_stop`/`compose_restart` - `timeout_seconds` always means the call's own bound).
-- `container_remove(v=...)` → `volumes`.
-- `buildx_imagetools_create(files=...)` → `descriptor_files`.
-- `plugin_install(remote_name=...)` → `remote` (matching `plugin_upgrade`).
-- `node_update(node_spec=...)` → `spec` (replacement semantics - omitted keys are cleared).
-- `buildx_prune`: `filter` → `filters`; the deprecated `keep_storage` is removed (use
+- `container_remove(v=...)` -> `volumes`.
+- `buildx_imagetools_create(files=...)` -> `descriptor_files`.
+- `plugin_install(remote_name=...)` -> `remote` (matching `plugin_upgrade`).
+- `node_update(node_spec=...)` -> `spec` (replacement semantics - omitted keys are cleared).
+- `buildx_prune`: `filter` -> `filters`; the deprecated `keep_storage` is removed (use
   `reserved_space`).
 - `stack_ps`/`stack_services` `filters` take the same dict shape as the SDK tools
   (`{"name": "web"}`, list values repeat the filter) instead of a `list[str]` of
   `--filter` expressions - one `filters` contract across the surface.
 - Logs `tail` is `int | "all"` on all three logs tools and **defaults to a bounded 200**
   (1.x defaulted `container_logs`/`service_logs` to `"all"`; pass `tail="all"` for the old
-  behavior). `compose_logs`'s `0`-means-all sentinel is gone.
+  behaviour). `compose_logs`'s `0`-means-all sentinel is gone.
 
 ## Environment variables
 
-The pre-rename `DOCKER_MCP_*` alias spellings are no longer honored. Use the canonical
+The pre-rename `DOCKER_MCP_*` alias spellings are no longer honoured. Use the canonical
 `DOCKER_MCP_SERVER_*` names: `READONLY`, `NO_DESTRUCTIVE`, `DISABLE`, `HOSTS`,
 `REGISTRY_USERNAME`, `REGISTRY_PASSWORD`, `ALLOW_SELF_TERMINATE`, `IN_CONTAINER`, `NO_LABELS`,
 `NAME`. And note the domain rename: `DOCKER_MCP_SERVER_DISABLE=client` becomes

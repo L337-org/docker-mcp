@@ -33,6 +33,7 @@ DOCKERHUB.md
 
 # Agent / project docs not needed inside the bundle.
 CLAUDE.md
+architecture/
 MCP_VS_SKILLS.md
 SECURITY.md
 CONTRIBUTING.md

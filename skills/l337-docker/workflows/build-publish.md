@@ -81,9 +81,9 @@ docker buildx imagetools inspect <ref> --raw | jq         # raw JSON
 
 Read `.mediaType` to know what you have:
 
-- `application/vnd.oci.image.index.v1+json` or `...manifest.list.v2+json` → **multi-platform index**.
+- `application/vnd.oci.image.index.v1+json` or `...manifest.list.v2+json` -> **multi-platform index**.
   Report each entry's platform and digest.
-- `application/vnd.oci.image.manifest.v1+json` or `...manifest.v2+json` → **single image**. Report
+- `application/vnd.oci.image.manifest.v1+json` or `...manifest.v2+json` -> **single image**. Report
   architecture, OS and layer count.
 
 `unknown/unknown` entries are **attestation manifests** (provenance, SBOM), not broken platforms.

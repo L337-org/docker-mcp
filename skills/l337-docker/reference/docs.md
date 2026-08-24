@@ -1,7 +1,7 @@
 # Authoritative documentation
 
 Never assert a flag, a default or an API shape from memory. Docker's CLI moves - flags get
-renamed (`--keep-storage` → `--reserved-space`), commands get deprecated (`docker manifest`), and
+renamed (`--keep-storage` -> `--reserved-space`), commands get deprecated (`docker manifest`), and
 defaults change between releases.
 
 ## Check the installed binary first
@@ -72,7 +72,7 @@ Fetch these when `--help` is insufficient (conceptual questions, file formats, A
 
 The Engine API reference is versioned - match it to the daemon's `ApiVersion`
 (`docker version --format '{{.Server.APIVersion}}'`), not to the newest published spec. Flag
-renames like `keep-storage` → `reserved-space` are recorded there against the version that
+renames like `keep-storage` -> `reserved-space` are recorded there against the version that
 introduced them.
 
 ## Using them

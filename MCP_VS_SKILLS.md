@@ -294,17 +294,17 @@ change available.
 
 So the honest summary is:
 
-- **Eager-loading client** → the skill is dramatically cheaper: ~6-9x on a real task at full
+- **Eager-loading client** -> the skill is dramatically cheaper: ~6-9x on a real task at full
   surface, ~2.5-3.5x even against a trimmed server, and ~140-360x at idle.
-- **Lazy-loading client** → the server is cheaper in use, by ~2.4-3.5x at full surface and ~3.9-6.4x
+- **Lazy-loading client** -> the server is cheaper in use, by ~2.4-3.5x at full surface and ~3.9-6.4x
   when trimmed, and both are cheap at idle.
-- **Docker rarely comes up in your work** → the skill, decisively; it costs ~140 tokens to have
+- **Docker rarely comes up in your work** -> the skill, decisively; it costs ~140 tokens to have
   installed and you may never pay more.
-- **Docker is most of what you do, on a lazy client** → the server. Trim the surface if you want
+- **Docker is most of what you do, on a lazy client** -> the server. Trim the surface if you want
   the control, but not for the tokens: on a lazy client that saving is negligible.
-- **Docker is most of what you do, on an eager client** → the server, trimmed to the domains you
+- **Docker is most of what you do, on an eager client** -> the server, trimmed to the domains you
   actually use. Here the trimming is what makes it viable rather than merely tidier.
-- **Eager client and you want everything available** → the skill, unless you need something only
+- **Eager client and you want everything available** -> the skill, unless you need something only
   the server enforces.
 
 Worst case for the skill is ~33,900 tokens if a single task somehow needed every reference and
@@ -451,7 +451,7 @@ All ✓: `docker network create/ls/inspect/connect/disconnect/rm/prune`,
 
 All ✓ - each maps to the identically-named `docker compose <sub>`: `up`, `down`, `ps`, `ls`,
 `logs`, `build`, `pull`, `config`, `cp`, `exec`, `run`, `start`, `stop`, `restart`, `kill`,
-`pause`, `unpause`, `port`, `top`, `images`, `wait`. (`compose_list` → `docker compose ls`.)
+`pause`, `unpause`, `port`, `top`, `images`, `wait`. (`compose_list` -> `docker compose ls`.)
 
 ### swarm (10) / services (10) / nodes (5) / secrets (4) / configs (4) / stack (5) - `reference/swarm.md`
 
@@ -488,7 +488,7 @@ All ✓: `docker context create/ls/inspect/rm/use`.
 ### plugins (11) - `reference/system.md`
 
 All ✓: `docker plugin install/ls/inspect/enable/disable/set/upgrade/rm/push/create`.
-`plugin_configure` → `docker plugin set`.
+`plugin_configure` -> `docker plugin set`.
 `plugin_privileges` ≈ no `docker plugin` subcommand prints them, and `docker plugin inspect` needs
 the plugin installed first; the skill reads the plugin's registry config blob over `curl` instead
 (`reference/system.md`), reproducing the install prompt's privilege list without installing
