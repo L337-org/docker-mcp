@@ -17,15 +17,21 @@ import docker_mcp.tools  # noqa: F401  - importing registers every tool on the s
 from docker_mcp.server import _CLI_DOMAINS, _REMOTE_EXEC_DOMAINS, mcp
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
-# Derived, not listed, for the architecture/ layer: detail extracted out of CLAUDE.md carries the same
-# enumerations, and a hand-maintained list would stop covering a file the moment someone adds one.
+_ARCHITECTURE_DIR = _REPO_ROOT / "architecture"
+
+# The architecture/ layer is derived rather than listed, so a file added there is covered without
+# anyone remembering to update this tuple. The cost of deriving it is that `Path.glob` answers a
+# missing directory with an empty iterator rather than an error, so a rename or removal of
+# architecture/ would shrink this set in silence and the suite would stay green while covering none
+# of that layer. `test_the_derived_half_of_the_doc_set_is_not_empty` is what makes that loud.
+_ARCHITECTURE_DOCS = tuple(sorted(str(p.relative_to(_REPO_ROOT)) for p in _ARCHITECTURE_DIR.glob("*.md")))
 _DOC_FILES = (
     "README.md",
     "CLAUDE.md",
     "CONTRIBUTING.md",
     "SECURITY.md",
     ".github/copilot-instructions.md",
-) + tuple(sorted(str(p.relative_to(_REPO_ROOT)) for p in (_REPO_ROOT / "architecture").glob("*.md")))
+) + _ARCHITECTURE_DOCS
 
 # Only lines that *claim to describe the CLI-backed surface* are enumerations. Without this the check
 # false-positives on prose using the same words as nouns ("a build context", "Compose files") and on the
@@ -84,6 +90,25 @@ def _incomplete_enumeration(line: str) -> list[str] | None:
         return None
     closest = min(_VALID_SETS, key=lambda candidate: len(candidate ^ named))
     return sorted(closest - named)
+
+
+def test_the_derived_half_of_the_doc_set_is_not_empty():
+    """
+    architecture/ still exists and still contributes files to the checked set.
+
+    Without this, renaming or removing that directory would leave `Path.glob` returning nothing and
+    every check in this module quietly narrowing to the five hand-listed files - passing, while
+    covering none of the layer the enumerations were moved into. A guard that stops guarding without
+    saying so is the failure this whole module exists to prevent, so it gets a guard of its own.
+    """
+    assert _ARCHITECTURE_DIR.is_dir(), (
+        f"{_ARCHITECTURE_DIR} is missing. If the architecture/ layer was deliberately renamed or "
+        "removed, update _DOC_FILES to match rather than letting the glob silently cover nothing."
+    )
+    assert _ARCHITECTURE_DOCS, (
+        f"{_ARCHITECTURE_DIR} exists but holds no *.md files, so the derived half of _DOC_FILES is "
+        "empty and this module is checking only the five hand-listed documents."
+    )
 
 
 def test_doc_enumerations_of_cli_backed_domains_are_complete():
