@@ -243,10 +243,12 @@ jobs:
           base="$(git merge-base "origin/${GITHUB_BASE_REF}" HEAD)"
           changed="$(git diff --name-only "$base" HEAD)"
 
-          # -F throughout: an unanchored '.' in the copilot path would otherwise be a
-          # wildcard, so '.github/copilot-instructions.md' would also match a path with
-          # any character in that position. The fixed-string form is the same check
-          # without that latent bug.
+          # -F on the two exact-path checks: an unanchored '.' in the copilot path would
+          # otherwise be a wildcard, so '.github/copilot-instructions.md' would also match
+          # a path with any character in that position. The fixed-string form is the same
+          # check without that latent bug. The third check is deliberately -E instead: it
+          # matches a directory prefix and an alternation, so it wants a regex, and it
+          # anchors with ^ and escapes the dot in CONTRIBUTING\.md for the same reason.
           #
           # The rule-carrying set is CURATED, not derived from what the instruction files
           # link to — they also link to README/SECURITY/PRIVACY/CODE_OF_CONDUCT/

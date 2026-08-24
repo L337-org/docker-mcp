@@ -70,7 +70,11 @@ def _incomplete_enumeration(line: str) -> list[str] | None:
     args: line - one line of documentation
     returns: list[str] | None - the missing domains, or None when the line is fine or not an enumeration
     """
-    lowered = line.lower()
+    # Backticks are stripped before the marker test, not before anything else: the real lines carry
+    # the marker phrase as "`docker` CLI feature", and a plain-substring match against the raw line
+    # silently misses that - the guard stops firing on exactly the sentence it was written for. The
+    # exemption test below still matches the raw line, since those are quoted verbatim from the docs.
+    lowered = line.lower().replace("`", "")
     if not any(marker in lowered for marker in _ENUMERATION_MARKERS):
         return None
     if any(exemption in line for exemption in _NOT_ENUMERATIONS):
@@ -112,6 +116,14 @@ def test_doc_enumerations_of_cli_backed_domains_are_complete():
         ("a single domain mentioned in passing: CLI-backed compose only", None),
         # The one recorded exemption: a marker phrase in a sentence about containers, not about tools.
         ("Compose/stack containers (created via CLI shell-out) are also unstamped.", None),
+        # Backticked marker phrase: the form CLAUDE.md and architecture/cli-shell-out.md actually use.
+        # Before the backticks were stripped these returned None, so those two lines were unguarded.
+        (
+            "Any tool wrapping a `docker` CLI feature (Compose, Context) MUST go through run_docker",
+            ["buildx", "scout", "stack"],
+        ),
+        ("Any tool wrapping a `docker` CLI feature (Compose, Stack, Buildx, Scout, Context) MUST", None),
+        ("`CLI-backed` tools (Compose, Buildx, Context, Scout) shell out", ["stack"]),
     ],
 )
 def test_the_enumeration_check_itself_flags_what_it_should(line, expected):
