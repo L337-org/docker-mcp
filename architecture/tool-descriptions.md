@@ -13,6 +13,7 @@ All `@tool()` functions must follow this exact docstring format:
 ```python
 from docker_mcp.server import tool
 
+
 @tool()
 def mcp_example(name: str):
     """

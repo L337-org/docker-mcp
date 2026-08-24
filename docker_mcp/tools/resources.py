@@ -465,7 +465,7 @@ else:
     mcp.resource("service-tasks://{id_or_name}", mime_type="application/json")(get_service_tasks_resource)
 
 
-# Node observability resource. Index only (see CLAUDE.md for why: a per-node child resource would
+# Node observability resource. Index only (see architecture/server.md for why: a per-node child resource would
 # need an expensive per-service task fan-out with no single cheap call, unlike containers/services).
 _NODES_DOMAIN = "nodes"
 

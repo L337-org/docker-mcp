@@ -17,7 +17,15 @@ import docker_mcp.tools  # noqa: F401  - importing registers every tool on the s
 from docker_mcp.server import _CLI_DOMAINS, _REMOTE_EXEC_DOMAINS, mcp
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
-_DOC_FILES = ("README.md", "CLAUDE.md", "SECURITY.md", ".github/copilot-instructions.md")
+# Derived, not listed, for the architecture/ layer: detail extracted out of CLAUDE.md carries the same
+# enumerations, and a hand-maintained list would stop covering a file the moment someone adds one.
+_DOC_FILES = (
+    "README.md",
+    "CLAUDE.md",
+    "CONTRIBUTING.md",
+    "SECURITY.md",
+    ".github/copilot-instructions.md",
+) + tuple(sorted(str(p.relative_to(_REPO_ROOT)) for p in (_REPO_ROOT / "architecture").glob("*.md")))
 
 # Only lines that *claim to describe the CLI-backed surface* are enumerations. Without this the check
 # false-positives on prose using the same words as nouns ("a build context", "Compose files") and on the

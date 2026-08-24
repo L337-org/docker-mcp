@@ -110,7 +110,7 @@ jobs:
       - name: Import the freshly-resolved install
         run: |
           if ! .venv-fresh/bin/python -c "import docker_mcp"; then
-            echo "::error::pyproject.toml resolved fine, but 'import docker_mcp' FAILED against the freshly-resolved dependency set. An admitted dependency release broke our import surface (see the mcp 2.0.0 incident in CLAUDE.md) — tighten the offending dependency's cap."
+            echo "::error::pyproject.toml resolved fine, but 'import docker_mcp' FAILED against the freshly-resolved dependency set. An admitted dependency release broke our import surface (see the mcp 2.0.0 incident in architecture/ci.md) — tighten the offending dependency's cap."
             exit 1
           fi
 
