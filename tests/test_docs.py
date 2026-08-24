@@ -24,7 +24,10 @@ _ARCHITECTURE_DIR = _REPO_ROOT / "architecture"
 # missing directory with an empty iterator rather than an error, so a rename or removal of
 # architecture/ would shrink this set in silence and the suite would stay green while covering none
 # of that layer. `test_the_derived_half_of_the_doc_set_is_not_empty` is what makes that loud.
-_ARCHITECTURE_DOCS = tuple(sorted(str(p.relative_to(_REPO_ROOT)) for p in _ARCHITECTURE_DIR.glob("*.md")))
+# `.as_posix()` rather than `str()`: on Windows the latter yields "architecture\\server.md", which
+# still *opens* correctly (WindowsPath splits on either separator) but reads inconsistently beside
+# the forward-slash entries above when a failure message quotes it.
+_ARCHITECTURE_DOCS = tuple(sorted(p.relative_to(_REPO_ROOT).as_posix() for p in _ARCHITECTURE_DIR.glob("*.md")))
 _DOC_FILES = (
     "README.md",
     "CLAUDE.md",
