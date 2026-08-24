@@ -31,6 +31,8 @@ jobs:
     # without anyone having to remember.
     runs-on: [ubuntu-latest]
     name: Action pins are immutable
+    # 7s observed max - a grep over the workflow files.
+    timeout-minutes: 5
     steps:
       - name: Check out source repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -84,6 +86,9 @@ jobs:
     # reads or writes uv.lock, so it resolves purely from [project.dependencies].
     runs-on: [ubuntu-latest]
     name: Check fresh resolve still imports
+    # 18s observed max. Roomier than its runtime needs: it is the one premerge job that
+    # resolves against the live index, so a slow PyPI is a plausible stall.
+    timeout-minutes: 10
     steps:
       - name: Check out source repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -122,6 +127,8 @@ jobs:
   pytest-run:
     runs-on: [ubuntu-latest]
     name: Run pytest
+    # 124s observed max.
+    timeout-minutes: 15
     steps:
       - name: Check out source repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -151,6 +158,8 @@ jobs:
     runs-on: [ubuntu-latest]
 
     name: Run ruff
+    # 15s observed max.
+    timeout-minutes: 5
     steps:
       - name: Check out source repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -180,6 +189,9 @@ jobs:
     # pyproject.toml). Documented as a project convention; this job enforces it.
     runs-on: [ubuntu-latest]
     name: Run pyright
+    # 22s observed max. Roomier than that: the pyright package pulls a node runtime on
+    # first use, so a cold run is network-bound.
+    timeout-minutes: 10
     steps:
       - name: Check out source repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
