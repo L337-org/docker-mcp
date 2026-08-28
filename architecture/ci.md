@@ -10,10 +10,10 @@ The documentation set is no longer checked mechanically. `AGENTS.md` is the sing
 file, so there is no pair to keep in step, and the job that watched for one-sided edits was
 removed with the rule it enforced.
 
-It remains a touch-test, not a semantics test: it cannot see whether the *same* rule reached each
-file, so a green tick is not evidence the mirror is right - and an unrelated edit to the other
-mirror in the same PR still masks a genuine one-sided change. The `PostToolUse` hook in
-`.claude/settings.json` carries the same distinction at edit time, and the two must stay in step.
+Nothing mechanical watches the documentation set now, and that is deliberate rather than a gap: a
+check could only see that a file was touched, never that the right rule reached it, so it produced
+green ticks it could not justify. A rule belongs in `AGENTS.md`, or in the `architecture/` note
+that owns the detail, and which of those it is remains a judgement made at review.
 
 An `Action pins are immutable` job fails the build when any `uses:` reference in
 `.github/workflows` or `.github/actions` names a tag or branch rather than a full 40-hex commit SHA.
