@@ -3,7 +3,7 @@
 
 # Tool docstrings: format and quality standard
 
-Deep detail behind the summaries in [../CLAUDE.md](../CLAUDE.md).
+Deep detail behind the summaries in [../AGENTS.md](../AGENTS.md).
 Read this before changing any `@tool()` docstring.
 
 ## Tool function format

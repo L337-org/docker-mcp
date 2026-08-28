@@ -1,6 +1,6 @@
 # Guards the 2.0 tool-naming convention so it can't drift as tools are added.
 #
-# The rule (see CLAUDE.md "Naming convention"): every tool is named
+# The rule (see AGENTS.md "Conventions"): every tool is named
 # `<management-command>_<verb-or-noun>`, anchored to the docker CLI's management-command
 # structure, with long-form verb vocabulary (list/remove/inspect — never ls/rm/get).
 
@@ -67,7 +67,7 @@ def test_no_tool_name_starts_with_a_bare_verb():
 
 # ---------- parameter conventions ----------
 
-# Identifier params use exactly these spellings (see CLAUDE.md "Naming convention"):
+# Identifier params use exactly these spellings (see AGENTS.md "Conventions"):
 #   id_or_name — daemon objects addressable by either (containers, images, networks, services, ...)
 #   name/names — name-only resources (volumes, contexts, plugins, stacks, builders)
 #   repository — remote repo refs (pull/push, hub_*, registry_*)
