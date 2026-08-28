@@ -23,7 +23,7 @@ _when writing or running tests, or adding behaviour that needs them_
 - **TE.5.1** You MUST cover the failure paths of new behaviour as well as the happy path: malformed input, absent dependency, permission denied, timeout, partial result.
 - **TE.5.2** You MUST assert what a failure says, not only that it happened, because an error path asserted only by exception type passes while its message is useless to whoever hits it.
 - **TE.6.1** Where a convention or a piece of configuration can be checked mechanically, you SHOULD write a test that fails CI rather than prose someone has to remember.
-- **TE.7.1** You MUST cover drift that no pull request could cause with a scheduled run, and its failure MUST reach a person; a deduplicated issue is the default mechanism, and where another channel demonstrably reaches the owner and an issue would not, you MUST record why rather than filing one nobody reads.
+- **TE.7.1** You MUST cover drift that no pull request could cause with a scheduled run, and its failure MUST reach a person, defaulting to the project's Slack channel or the organisation's where it has none.
 - **TE.7.2** Where a pull request could also cause such a failure, that check SHOULD run on pull requests as well as on the schedule.
 - **DS.9.1** A scheduled check MUST resolve and install dependencies across every platform the project claims to support, because an ecosystem can break a build with no change on our side.
 - **DV.5.1** You MUST treat a clean install and an upgrade as different test cases, because the upgrade is the one that breaks.
