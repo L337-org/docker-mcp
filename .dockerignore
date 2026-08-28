@@ -19,6 +19,7 @@ wheels
 .vscode
 .cursor
 .claude
+.agents
 tests
 skills
 .DS_Store

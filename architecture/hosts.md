@@ -3,7 +3,7 @@
 
 # Multi-daemon host registry
 
-Deep detail behind the summaries in [../CLAUDE.md](../CLAUDE.md).
+Deep detail behind the summaries in [../AGENTS.md](../AGENTS.md).
 Read this before changing `docker_mcp/_hosts.py`, or per-call host selection anywhere.
 
 ## Multi-daemon host registry (`docker_mcp/_hosts.py`)

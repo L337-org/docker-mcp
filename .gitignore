@@ -1,5 +1,6 @@
 # Hidden files
 /.*
+!/.agents/
 !/.python-version
 !/.gitignore
 !/.dockerignore

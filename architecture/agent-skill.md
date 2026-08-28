@@ -3,7 +3,7 @@
 
 # Agent skill
 
-Deep detail behind the summaries in [../CLAUDE.md](../CLAUDE.md).
+Deep detail behind the summaries in [../AGENTS.md](../AGENTS.md).
 Read this before changing anything under `skills/l337-docker/`.
 
 ## Agent skill (`skills/l337-docker/`)

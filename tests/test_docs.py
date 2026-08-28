@@ -30,10 +30,9 @@ _ARCHITECTURE_DIR = _REPO_ROOT / "architecture"
 _ARCHITECTURE_DOCS = tuple(sorted(p.relative_to(_REPO_ROOT).as_posix() for p in _ARCHITECTURE_DIR.glob("*.md")))
 _DOC_FILES = (
     "README.md",
-    "CLAUDE.md",
+    "AGENTS.md",
     "CONTRIBUTING.md",
     "SECURITY.md",
-    ".github/copilot-instructions.md",
 ) + _ARCHITECTURE_DOCS
 
 # Only lines that *claim to describe the CLI-backed surface* are enumerations. Without this the check
@@ -144,7 +143,7 @@ def test_doc_enumerations_of_cli_backed_domains_are_complete():
         ("a single domain mentioned in passing: CLI-backed compose only", None),
         # The one recorded exemption: a marker phrase in a sentence about containers, not about tools.
         ("Compose/stack containers (created via CLI shell-out) are also unstamped.", None),
-        # Backticked marker phrase: the form CLAUDE.md and architecture/cli-shell-out.md actually use.
+        # Backticked marker phrase: the form AGENTS.md and architecture/cli-shell-out.md actually use.
         # Before the backticks were stripped these returned None, so those two lines were unguarded.
         (
             "Any tool wrapping a `docker` CLI feature (Compose, Context) MUST go through run_docker",
@@ -169,7 +168,7 @@ def test_the_enumeration_check_itself_flags_what_it_should(line, expected):
 # over and none of the 164 descriptions has needed one. The three arrows and one ellipsis found during
 # the sweep all read better as words (`dict of str to str`). If a description ever genuinely needs a
 # symbol, widen this check deliberately rather than working around it - and update the rule in
-# CLAUDE.md and its mirror in the same change, since they promise exactly what this enforces.
+# AGENTS.md in the same change, since it promises exactly what this enforces.
 #
 # The assertion runs against what `list_tools()` actually advertises rather than against the source,
 # because the advertised text is the thing that ships and the two could drift.
@@ -195,16 +194,15 @@ def test_the_ascii_check_reads_distinct_real_descriptions():
     assert len(set(descriptions)) > 100
 
 
-def test_the_instruction_files_name_a_check_that_exists():
-    # `CLAUDE.md` and its mirror name this module's checks by full node id, so that the rule points at
+def test_the_instruction_file_names_a_check_that_exists():
+    # `AGENTS.md` names this module's checks by full node id, so that the rule points at
     # its own enforcement. A rename would leave the docs promising a check that no longer runs, which is
     # the same failure this file exists to catch in the domain enumerations - documentation that reads
     # as authoritative while being quietly wrong.
     referenced: set[str] = set()
-    for name in ("CLAUDE.md", ".github/copilot-instructions.md"):
-        text = (_REPO_ROOT / name).read_text(encoding="utf-8")
-        referenced |= set(re.findall(r"tests/test_docs\.py::(test_\w+)", text))
-    assert referenced, "the instruction files no longer name any check in this module"
+    text = (_REPO_ROOT / "AGENTS.md").read_text(encoding="utf-8")
+    referenced |= set(re.findall(r"tests/test_docs\.py::(test_\w+)", text))
+    assert referenced, "AGENTS.md no longer names any check in this module"
     defined = set(re.findall(r"^def (test_\w+)", Path(__file__).read_text(encoding="utf-8"), re.M))
     missing = sorted(referenced - defined)
-    assert not missing, f"named in the instruction files but not defined here: {missing}"
+    assert not missing, f"named in AGENTS.md but not defined here: {missing}"

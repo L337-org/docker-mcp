@@ -1,0 +1,102 @@
+# Architecture
+
+_when changing module structure, public surface, docstrings, generated files, deprecation, or log levels_
+
+- **DK.12.1** You MUST NOT treat the size limit as a risk of losing an instruction; the advisory threshold drives a notice only, and the file is still loaded in full with nothing truncated.
+- **DK.12.2** The real danger is that a large file makes its instructions less likely to be followed, because the load-bearing rules end up buried among rationale and detail irrelevant to the task in hand.
+- **DK.12.3** You MUST decide what stays per sentence, by asking whether it is an instruction or an explanation; instructions stay whatever the file then measures, and explanation moves.
+- **DK.12.4** You MUST treat our 40,000-character target as a review trigger rather than a cap, and MUST NOT remove a rule in order to reach a number.
+- **DK.12.5** Every edit to one of these files MUST be an editing pass on the section it touches rather than an append, cutting reasoning that has become obvious, an alternative nobody will re-propose, or a war story whose lesson a test now enforces.
+- **DK.12.6** Extracted explanation MUST go to the repository's architecture notes behind an imperative pointer - read this file before changing anything under that path - never a passive see-also.
+- **DK.12.7** That directory MUST be named so it cannot be mistaken for user-facing documentation.
+- **DK.12.8** Only explanation may move, because an on-demand file is read only if something already in context says to read it, which is the one real way this can lose an instruction.
+- **DK.12.9** Where extracted material duplicates something the repository already documents for contributors, you MUST merge it into that document rather than creating a second home.
+- **DK.13.1** You MUST measure before cutting, so the effort goes where the mass actually is rather than where the prose feels worst.
+- **DK.13.2** You MUST extract verbatim by line range with a script rather than retyping or paraphrasing, re-derive the ranges from version control, and assert equality before cutting anything.
+- **DK.13.3** You MUST demote headings by one level while tracking fenced-code state, or a shell comment inside a code block gets mangled.
+- **DK.13.4** You MUST use three separate commits in order - the faithful move, the restyle, then the cut and the new pointers - because mixing the move with the cut makes the move unreviewable.
+- **DK.13.5** You MUST check for duplication before relocating, and merge into an existing document rather than creating a third home.
+- **DK.13.6** You MUST restyle text that crosses from an exempt file into a shipping one, in its own commit.
+- **DK.13.7** You MUST sweep the whole repository for stale pointers afterwards, including maintainer scripts, unit-file comments, test docstrings and the security, contributing and readme files, then confirm every relative link resolves.
+- **DK.13.8** You MUST verify no rule was lost semantically rather than by line diff, comparing the emphasised rule leads with whitespace and dashes normalised, and reading the reported misses rather than trusting the count.
+- **DK.13.9** You MUST run the project's own gates afterwards, including a syntax check on any script edited, because a docstring or comment edit can break a test that asserts on it.
+- **DK.13.10** A reviewer-facing mirror MUST be a different document rather than a copy: led by review priorities ordered by where that project's real defects have come from, centred on the invariants whose violation fails silently, and dropping everything a reviewer never acts on.
+- **DK.13.11** A reviewer-facing mirror SHOULD carry a deliberate-do-not-flag section recording decisions already taken, which otherwise generate the same false positive on every pull request.
+- **DK.13.12** You MUST NOT add an item to a reviewer mirror that CI already guarantees; the test is not whether it is true or important but whether the guard already exists, because spending attention on an item that always passes trains readers to skim.
+- **DK.13.13** Where a mechanical guard is only a heuristic, the residual it cannot catch MUST sit next to that guard rather than in the mirror.
+- **DK.14.1** You MUST NOT decide extraction on size; two tests both have to pass.
+- **DK.14.2** First, the trigger MUST be recognisable before the rule is needed, because an on-demand file is read only when something in context says to read it.
+- **DK.14.3** Anything governing how every turn is conducted MUST stay resident whatever it costs, as MUST a fallback whose trigger is the absence of an applicable rule.
+- **DK.14.4** Second, it MUST actually save something: for a section of size S with a description of size D and an invocation rate P, lazy loading only pays when P is below one minus D over S.
+- **DK.14.5** A section needed on most sessions is more expensive lazily loaded than resident, and the smaller the section the worse the arithmetic.
+- **DK.14.6** You MUST bias the threshold towards keeping things resident, because an unnecessarily resident section costs a fixed predictable number of characters while a rule that should have loaded and did not costs a wrong action, which is unbounded.
+- **CS.2.1** New functionality MUST go in the existing module that owns that area rather than in a new file; a new file is for a genuinely new area.
+- **CS.2.2** Private helpers MUST be marked as such by the language's convention and MUST stay out of the public surface.
+- **CS.2.3** The public surface MUST be declared explicitly - an export list, an index module, a visibility keyword - rather than implied by naming, because documentation generators, linters and import checks all need the declaration.
+- **CS.2.4** Adding a module MUST follow a documented checklist enumerating everything updated in the same change: registration, any central map, the export list, tests, user documentation, architecture notes and the assistant-instruction file.
+- **CS.2.5** Writing that checklist MUST be part of adding the first such module, because this-area-is-fragile-be-careful is not a process.
+- **CS.6.1** Every public module, class and function MUST carry a docstring, and a private helper MUST carry one where the reason for its existence is not obvious from the code.
+- **CS.6.2** Docstrings MUST be written so that adopting a generator later is a change to the generator's configuration and nothing else.
+- **CS.6.3** A project MUST use one docstring format, chosen once and enforced by the linter, because a generator parses the format and a codebase using three produces broken output whichever is configured.
+- **CS.6.4** The first line MUST be a single standalone sentence that reads correctly with no following context, and MUST NOT open with This function.
+- **CS.6.5** A blank line MUST separate the summary from any detail, because that is what most generators use to split summary from body.
+- **CS.6.6** Parameters, return values and raised errors MUST be documented in the chosen format's structured syntax rather than as free prose, which does not survive generation as structure.
+- **CS.6.7** A docstring MUST NOT restate what type annotations already carry; state instead the units, ranges, accepted formats, interactions between parameters, and what the returned value actually contains.
+- **CS.6.8** Other symbols MUST be referenced using the format's cross-reference syntax rather than bare names in prose, so links resolve the day generation is switched on.
+- **CS.6.9** Every module MUST have a module-level docstring saying what it owns; this is the part most often missing and what a generator uses to build the top level.
+- **CS.6.10** Where the language supports executable examples you SHOULD prefer them and run them in the test suite, because an executed example cannot rot silently and an illustrative one eventually lies.
+- **CS.6.11** A docstring MUST NOT carry change history, author names, dates or issue references.
+- **CS.10.1** A generated artefact that a build consumes MUST carry a header stating that it is generated and what regenerates it; do-not-edit alone says someone made a mistake but not how to do what they were trying to do.
+- **CS.10.2** A generated file SHOULD be excluded from formatting and lint gates, since the generator owns its style and a formatter would otherwise fight it on every run.
+- **CS.10.3** Where the generator is not public, or the artefact plays no part in the build, you MUST NOT name the generator and MUST NOT declare the file generated at all.
+- **CS.11.1** Removing something from the public surface MUST happen in two steps rather than one.
+- **CS.11.2** A deprecated item MUST emit the language's real deprecation signal, not merely a note in its docstring, which is invisible to everyone already using the thing.
+- **CS.11.3** A deprecation MUST state what to use instead, when it was deprecated, and when it will be removed, because an open-ended deprecation is never actioned and eventually gets un-deprecated by attrition.
+- **CS.11.4** You MUST first ask whether the caller persists; an interface refetched every session, such as a tool schema, has no stored caller to break and needs no window at all.
+- **CS.11.5** Removal is a breaking change and MUST be versioned accordingly.
+- **LS.6.1** Where work is concurrent, repeated or spread across components, log lines MUST carry a consistent identifier - source, job, device, request or session - so the lines for one operation can be pulled out together.
+- **LS.6.2** Those identifiers MUST use consistent field names and formatting, so the log is greppable and parseable by an aggregator without rewriting every call site.
+- **LS.7.1** Log levels MUST be chosen by the reader's response: ERROR for something that failed and will not fix itself, WARNING for degraded or recovered but continuing, INFO for significant state changes, DEBUG for diagnostic detail off by default.
+- **LS.7.2** A line that appears on every iteration of a healthy system MUST be at DEBUG; INFO is for things that changed, not things still happening.
+- **LS.7.3** Retry attempts MUST be logged at WARNING and the eventual give-up at ERROR; a retry that ultimately succeeded MUST NOT be an ERROR, because that trains people to ignore ERROR.
+- **LS.7.4** Verbosity MUST be raisable without a code change, or the diagnosability standard cannot be met anywhere you do not control the machine.
+- **LS.8.1** Every log line MUST have a reader and a purpose; the cost of noise is that people stop reading and the one line that mattered is filtered out with everything else.
+- **LS.8.2** You MUST NOT emit per-iteration success messages at INFO from anything running on a short interval.
+- **LS.8.3** Repeated identical failures MUST be rate-limited or aggregated - the first, then a periodic summary with a count, then the recovery.
+- **LS.9.1** You MUST NOT build a message that may be discarded; use deferred formatting and guard expensive work behind a level check.
+- **LS.9.2** Log volume MUST be bounded - rotation configured, retention decided, and a size cap a failure loop cannot defeat - because a service that fills the disk logging its inability to reach a dependency converts a recoverable outage into an unrecoverable one.
+- **LS.9.3** You MUST NOT log large payloads; log identifiers, sizes and shapes, and bound anything that came from outside before logging it at all.
+- **LS.9.4** A log destination MUST NOT be able to take the service down; a full disk, unreachable syslog host or wedged aggregator degrades to dropping lines, never to blocking or crashing.
+- **LS.9.5** A line emitted per item in a large loop MUST justify itself against measurement.
+- **LS.12.1** Every diagnostic MUST go to standard error and standard output MUST carry only the program's own data, because a caller piping the output expects data and a diagnostic mixed into it corrupts whatever parses it.
+- **LS.12.2** You MUST NOT treat a success or progress message as data; anything a machine is meant to read goes to standard output, and everything a human is meant to read about how the run went goes to standard error.
+- **SK.3.1** Where the platform provides a credential store or helper, you MUST use it rather than reading, caching or re-deriving credentials yourself.
+- **SK.3.2** A subprocess environment allow-list MUST include the keys the platform's own credential helpers need, because omitting them fails as what looks like a permissions bug.
+- **SK.8.1** A permission check SHOULD consider whether a real secret is actually present, so that freshly-installed placeholder defaults do not trip an alarm users then learn to ignore.
+- **DV.3.1** You MUST treat names in emitted data - metric names and field keys, table columns, file formats, event names - as an interface, even though nothing type-checks them and nothing fails when they change.
+- **DV.3.2** A rename in emitted data MUST either write the new name alongside the old for a transition period, or be a major version; additions are safe.
+- **DV.3.3** Where a value's unit or meaning changes, you MUST change its name too, because the data stays plausible and nothing downstream can detect the discontinuity.
+- **AC.1.1** Where the consumer is a language model, you MUST write every description to be terse and complete - every functional fact, no redundant phrasing - because each word is paid for in context on every session that loads it.
+- **AC.1.2** The total advertised surface size MUST be treated as a tracked engineering metric rather than an afterthought.
+- **AC.1.3** Machine-generated schema noise - redundant titles, null-branch alternatives, defaulted attributes - MUST be stripped from what is advertised.
+- **AC.1.4** Presentational stripping MUST NOT change validation behaviour, and a test MUST assert that it did not.
+- **AC.2.1** You MUST put each fact in exactly one discovery layer: names, which are always in context; a short router, also always in context; and individual descriptions, loaded on demand.
+- **AC.2.2** Because discoverability lives in the names layer, a rigorous predictable naming convention MUST be treated as a functional requirement rather than a style choice.
+- **AC.2.3** The router MUST map the vocabulary a user might use onto the area a search will find, and MUST carry any cross-area selection caveat needed before a definition is fetched, but MUST NOT enumerate the surface.
+- **AC.2.4** You MUST NOT duplicate a fact across layers, and MUST NOT pad descriptions with search keywords.
+- **AC.2.5** The router MUST be generated from what actually registered, so a configuration that disables part of the product cannot leave it advertising that part.
+- **AC.3.1** Every description MUST carry a discriminator naming the sibling or siblings an agent might otherwise reach for and when each wins, using their exact names, because clients keyword-search descriptions and the exact name is what surfaces the alternative.
+- **AC.3.2** Every description MUST state its preconditions in prose.
+- **AC.3.3** Every description MUST state side effects and irreversibility in prose; a machine-readable annotation MUST NOT be treated as a substitute, because external quality scoring explicitly discounts it.
+- **AC.3.4** Every description MUST state the error behaviour honestly, and MUST NOT promise that nothing raises when a missing dependency still can.
+- **AC.3.5** Parameter and return documentation MUST add what the schema cannot carry - formats, units, ranges, interactions, and the shape of what comes back - and a line that merely restates a parameter's name is wasted context.
+- **AC.4.1** You MUST treat the structured annotation set as its own completeness requirement, checked independently of prose quality, because a client's auto-permission logic and an automated registry review read the annotations without ever looking at the prose.
+- **AC.4.2** Every registered tool MUST carry a title distinct from its own name, and the applicable safety hint - a read-only hint for a read, a destructive hint for anything that mutates or deletes.
+- **AC.4.3** You MUST enforce that with a test that fails when a new tool is registered without one, rather than a comment asking the next author to remember.
+- **AC.4.4** You MUST verify the exact annotation field names and the required set against the consuming registry's current published review criteria rather than memory or an older internal note, because this class of requirement evolves and an assumption fails silently at review rather than loudly at build time.
+- **AC.5.1** Anything added or modified MUST meet this standard as part of that change; this is a ratchet.
+- **AC.5.2** Untouched legacy items SHOULD be cleaned opportunistically rather than churned.
+- **AC.6.1** Every factual claim in a description MUST be verified against the primary source - the actual library or API documentation, or the installed artefact - because the consumer relies on it without being able to check it, so an unverified claim ships into something with no way to notice.
+- **AC.7.1** Where the product can be reduced, the reduction MUST remove capabilities from the advertised surface entirely, MUST apply consistently across every kind of exposed object, and MUST be inspectable at runtime.
+- **AC.7.2** A capability MUST NOT be registered and then refuse when called, because that leaks its own existence and invites a bypass.
+
