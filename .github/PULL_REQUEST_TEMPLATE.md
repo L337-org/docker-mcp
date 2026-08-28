@@ -10,5 +10,5 @@
 
 - [ ] `uv run pytest -v`, `uv run ruff check .`, `uv run ruff format --check .`, and `uv run pyright` all pass locally
 - [ ] If this adds or changes a tool: the ["Checklist when adding a new tool module"](https://github.com/L337-org/docker-mcp/blob/main/CONTRIBUTING.md#checklist-when-adding-a-new-tool-module) in `CONTRIBUTING.md` has been followed (tests, prompts, resources, README, naming convention)
-- [ ] If this changes project structure, conventions, env vars, or the tool/prompt/resource surface: every layer of the documentation set that carries the rule is updated - `CLAUDE.md`, `.github/copilot-instructions.md`, and the detail in `architecture/` or `CONTRIBUTING.md` (see the MIRROR RULE at the top of `CLAUDE.md`)
+- [ ] If this changes project structure, conventions, env vars, or the tool/prompt/resource surface: every layer of the documentation set that carries the rule is updated - `AGENTS.md`, and the detail in `architecture/` or `CONTRIBUTING.md` (see the MIRROR RULE at the top of `AGENTS.md`)
 - [ ] If this changes a dependency: `uv.lock` is updated (`uv lock`) and committed alongside `pyproject.toml`

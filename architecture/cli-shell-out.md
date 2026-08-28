@@ -3,7 +3,7 @@
 
 # CLI shell-out policy
 
-Deep detail behind the summaries in [../CLAUDE.md](../CLAUDE.md).
+Deep detail behind the summaries in [../AGENTS.md](../AGENTS.md).
 Read this before changing `docker_mcp/tools/_cli.py`, `_ssh_proxy.py`, or any CLI-backed tool module.
 
 Any tool that wraps a `docker` CLI feature (Compose, Stack, Buildx, Scout, Context) MUST go through `docker_mcp/tools/_cli.py:run_docker` - never call `subprocess.run` directly from a tool module. The helper centralizes:

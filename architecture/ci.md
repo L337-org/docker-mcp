@@ -3,33 +3,12 @@
 
 # Continuous integration
 
-Deep detail behind the summaries in [../CLAUDE.md](../CLAUDE.md).
+Deep detail behind the summaries in [../AGENTS.md](../AGENTS.md).
 Read this before changing `.github/workflows/`.
 
-CI (`.github/workflows/premerge.yaml`) enforces `pytest`, `ruff check`, `ruff format --check`, and
-`pyright` on every PR and push to main - all via `uv run`, so the dev-group pins in `pyproject.toml` (bumped by
-Dependabot's monthly uv pass) are the single tool-version source. The pre-commit hooks are local
-hooks running `uv run ruff ...` for the same reason, so a synced venv (`uv sync`) is required before
-committing. CI installs with `uv sync --locked`, which fails if `uv.lock` disagrees with
-`pyproject.toml` instead of silently re-locking - a lockfile-only dependency change (e.g. a
-Dependabot lock rewrite that raises a cap pyproject still pins) fails CI rather than landing. A
-non-required `Check docs mirror` job watches the documentation set: `CLAUDE.md`,
-`.github/copilot-instructions.md` and the rule-carrying detail layer (`architecture/`,
-`CONTRIBUTING.md`) - see the MIRROR RULE in [../CLAUDE.md](../CLAUDE.md). Membership is curated
-rather than derived from what the instruction files link to.
-
-**It fails on exactly one thing: `CLAUDE.md` changing without `.github/copilot-instructions.md`, or
-the reverse.** Those two are a mirror - the same rules for an implementer and for a reviewer - so a
-one-sided edit is nearly always a mistake. The detail layer is different in kind: it is what those
-two *point at*, not a copy of them, so a detail-only change is the correct shape and passes with a
-`::warning::` asking you to confirm you have not written a rule that ought to be promoted.
-
-That distinction was learned the hard way. The job originally passed only when all three moved
-together or none did, which failed two changes that are correct by the very rule it enforces: a
-detail-only `architecture/` edit (which `CLAUDE.md` explicitly calls correct), and a rule mirrored
-properly across both instruction files when that rule has no detail-layer component. Firing on
-correct behaviour is how a guard gets ignored wholesale, so the fix was to narrow it rather than to
-tolerate the red. The truth table is recorded as a comment in the job itself.
+The documentation set is no longer checked mechanically. `AGENTS.md` is the single instruction
+file, so there is no pair to keep in step, and the job that watched for one-sided edits was
+removed with the rule it enforced.
 
 It remains a touch-test, not a semantics test: it cannot see whether the *same* rule reached each
 file, so a green tick is not evidence the mirror is right - and an unrelated edit to the other

@@ -10,7 +10,7 @@ The practical mental model for finding your way around:
 
 - One file per Docker feature area (`containers.py`, `images.py`, `swarm.py`, ...), each backed by either the [docker-py SDK](https://docker-py.readthedocs.io/en/stable/) or a `docker` CLI shell-out (`compose.py`, `stack.py`, `context.py`, `buildx.py`, `scout.py`). See the tree below for the full map.
 - Every tool function is registered centrally in `docker_mcp/server.py`, which is also where read-only/destructive classification, naming enforcement, and the domain-disable switches live.
-- `CLAUDE.md` (repo root) is the always-loaded brief for Claude Code, and the map of everything else: it carries the conventions and a table pointing at the deeper notes. Those notes live in `architecture/` - one file per area (`server.md`, `hosts.md`, `cli-shell-out.md`, `tool-descriptions.md`, `docker-sdk.md`, `distribution.md`, `agent-skill.md`, `ci.md`), and they are the canonical detail for humans and assistants alike. This file (`CONTRIBUTING.md`) covers the practical day-to-day: setup, the checklist for adding a tool, testing conventions, and submitting changes. If something isn't covered here, look at `CLAUDE.md`'s table and follow it into `architecture/`.
+- `AGENTS.md` (repo root) is the always-loaded brief for every assistant, and the map of everything else: it carries the conventions and a table pointing at the deeper notes. Those notes live in `architecture/` - one file per area (`server.md`, `hosts.md`, `cli-shell-out.md`, `tool-descriptions.md`, `docker-sdk.md`, `distribution.md`, `agent-skill.md`, `ci.md`), and they are the canonical detail for humans and assistants alike. This file (`CONTRIBUTING.md`) covers the practical day-to-day: setup, the checklist for adding a tool, testing conventions, and submitting changes. If something isn't covered here, look at `CLAUDE.md`'s table and follow it into `architecture/`.
 
 ## Project layout
 
@@ -163,7 +163,7 @@ update **all** of these. Several fail CI if missed, but not all of them do:
 7. **`README.md`** - append to "What the agent can do", and to "Security considerations" if the module introduces a new class of risk.
 8. **`SECURITY.md`** - only if that new class of risk goes beyond what is already documented.
 9. **`MCP_VS_SKILLS.md`** - bump the domain's tool count (and add a `### <domain> (n)` heading for a new domain), plus a `reference/` entry covering the CLI equivalent. `tests/test_skill.py` derives the expected counts from `tool_catalog()`, so this fails CI until done; a genuinely uncoverable tool is recorded under "Structural gaps" rather than left out silently.
-10. **`CLAUDE.md`, `.github/copilot-instructions.md` and the matching `architecture/` file** - mirror the architecture or convention change across the documentation set (see the MIRROR RULE at the top of `CLAUDE.md`). `copilot-instructions.md` drives Copilot's review of every PR.
+10. **`AGENTS.md` and the matching `architecture/` file** - carry the architecture or convention change into whichever of them holds the rule. `AGENTS.md` is what every assistant loads, including the reviewer on each pull request, so a rule that never reaches it is a rule nobody applies.
 
 If you are only adding a tool or two to an *existing* domain file rather than a whole new module,
 items 1 and 8 don't apply, but the rest still do wherever relevant: a new tool still needs its
@@ -211,7 +211,8 @@ CI (`.github/workflows/premerge.yaml`) runs on every pull request and push to `m
 - `pyright` - type-check.
 - CI installs with `uv sync --locked`, which **fails** if `uv.lock` disagrees with `pyproject.toml` rather than silently re-locking. If you change a dependency, run `uv lock` and commit the updated lockfile alongside `pyproject.toml`.
 
-A separate, non-blocking `Check docs mirror` job flags a PR that touches part of the documentation set but not all of it. That set is `CLAUDE.md`, `.github/copilot-instructions.md`, and the rule-level detail layer (`architecture/`, this file). The first two intentionally mirror each other - Copilot's own PR review is driven by `copilot-instructions.md` - so a change to project structure, conventions, or the tool surface should reach every layer that carries the rule. The job is a touch-test, not a semantics test: it cannot see whether the same rule reached each file, so read rather than trusting the tick.
+`AGENTS.md` is the single instruction file, so there is no documentation pair to keep in step and
+no mirror check. A rule belongs in it, or in the `architecture/` file that owns the detail.
 
 Keep PRs focused - one logical change per PR is easier to review than a bundle of unrelated fixes. For anything beyond a small, self-contained fix, consider opening an issue first (see "Reporting issues" below) so the approach can be discussed before you invest time in an implementation.
 
