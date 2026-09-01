@@ -185,10 +185,10 @@ def test_admits_answers_the_question_the_caps_actually_pose(requirement, admits_
 
 # The MCP Registry proves we own each listed package by matching an ownership marker against
 # server.json's `name`. The markers live in files edited for entirely unrelated reasons - a
-# readme and a publish workflow - and a mismatch breaks the listing silently: no build fails,
-# no test catches it, and the registry simply stops believing the claim. These two assertions
-# are what makes that loud, at the point the marker is changed rather than whenever someone
-# next looks.
+# readme and a publish workflow - and a mismatch used to break the listing silently: no build
+# failed, nothing errored, and the registry simply stopped believing the claim. The two
+# assertions below are what makes that loud, at the point the marker is changed rather than
+# whenever someone next looks.
 #
 # The third marker, the .mcpb asset's checksum in server.json, is deliberately not here: it is
 # stamped at release time against a published artefact, so there is nothing for a test on a
@@ -201,7 +201,7 @@ def _server_name() -> str:
 
 def test_readme_ownership_marker_matches_server_json():
     """
-    The PyPI long-description marker in README.md names the server server.json declares.
+    README.md's PyPI long-description marker names whatever server.json declares.
 
     This is the marker the registry reads from the published package, so a mismatch means the
     package no longer proves it belongs to us.
