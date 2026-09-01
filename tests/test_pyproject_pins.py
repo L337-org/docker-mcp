@@ -208,8 +208,9 @@ def test_readme_ownership_marker_matches_server_json():
     """
     match = re.search(r"<!--\s*mcp-name:\s*(\S+)\s*-->", README.read_text(encoding="utf-8"))
     assert match, "README.md carries no <!-- mcp-name: ... --> marker at all"
-    assert match.group(1) == _server_name(), (
-        f"README.md marker {match.group(1)!r} != server.json name {_server_name()!r} - "
+    marker, expected = match.group(1), _server_name()
+    assert marker == expected, (
+        f"README.md marker {marker!r} != server.json name {expected!r} - "
         f"the MCP Registry listing for the PyPI package will stop verifying"
     )
 
@@ -224,7 +225,8 @@ def test_image_label_ownership_marker_matches_server_json():
     text = PUBLISH_WORKFLOW.read_text(encoding="utf-8")
     match = re.search(r"io\.modelcontextprotocol\.server\.name=(\S+)", text)
     assert match, "publish.yaml stamps no io.modelcontextprotocol.server.name label"
-    assert match.group(1) == _server_name(), (
-        f"publish.yaml image label {match.group(1)!r} != server.json name {_server_name()!r} - "
+    label, expected = match.group(1), _server_name()
+    assert label == expected, (
+        f"publish.yaml image label {label!r} != server.json name {expected!r} - "
         f"the MCP Registry listing for the OCI image will stop verifying"
     )
