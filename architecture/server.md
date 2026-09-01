@@ -1,5 +1,5 @@
-<!-- Architecture note: implementation detail for contributors and assistants.
-     Not user documentation - see README.md for that. -->
+&lt;!-- Architecture note: implementation detail for contributors and assistants.
+     Not user documentation - see README.md for that. --&gt;
 
 # Server internals: registration, tools package, resources and prompts
 
@@ -15,9 +15,9 @@ The `docker_mcp` package is the entry point. `docker_mcp/__init__.py` defines `m
 Instantiates `MCPServer` (from `mcp.server.mcpserver`), exports the `mcp` object, and exports the `tool` and `prompt` registration helpers. **Tool modules import `tool`; prompt modules import `prompt`** - both gate on `DOCKER_MCP_SERVER_DISABLE` (never import from `mcp` directly in those modules - that would create circular imports). `@mcp.resource()` modules still import `mcp` (plus `is_domain_disabled` / `register_resource_domains` for section gating).
 
 ```python
-from docker_mcp.server import tool     # tool modules
-from docker_mcp.server import prompt   # prompt modules (with domain=...)
-from docker_mcp.server import mcp      # resource modules
+from docker_mcp.server import tool  # tool modules
+from docker_mcp.server import prompt  # prompt modules (with domain=...)
+from docker_mcp.server import mcp  # resource modules
 ```
 
 `server.py` also owns the central **`TOOL_CATEGORIES`** map (every tool name -> `READ_ONLY` / `MUTATING` / `DESTRUCTIVE`). The `@tool()` decorator uses it to (a) attach `ToolAnnotations` (`title` - mechanically derived from the tool name by `_title_for`, e.g. `container_list` -> "Container List", with a small `_TITLE_ACRONYMS` fixup list so names like `scout_cves`/`scout_sbom` title-case to "Scout CVEs"/"Scout SBOM" rather than "Cves"/"Sbom"; plus `readOnlyHint` / `destructiveHint`, and `idempotentHint` for the prune family) and (b) skip registration entirely under the read-only env switches `DOCKER_MCP_SERVER_READONLY` (only read-only tools) and `DOCKER_MCP_SERVER_NO_DESTRUCTIVE` (everything except destructive). Every registered tool must have a `TOOL_CATEGORIES` entry - `tests/test_server.py` fails if the map and the registered set drift. The `title` annotation exists because some external directories (e.g. the Claude Connectors Directory) mechanically require one on every tool, independent of description quality - see the docstring quality standard in [tool-descriptions.md](tool-descriptions.md), point 2's "annotations don't substitute for prose" is the opposite failure mode, not a contradiction.
