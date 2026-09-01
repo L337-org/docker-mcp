@@ -11,6 +11,8 @@ PYPROJECT = _ROOT / "pyproject.toml"
 MANIFEST = _ROOT / "manifest.json"
 UV_LOCK = _ROOT / "uv.lock"
 SERVER_JSON = _ROOT / "server.json"
+README = _ROOT / "README.md"
+PUBLISH_WORKFLOW = _ROOT / ".github" / "workflows" / "publish.yaml"
 
 
 def _admits(requirement: str, version: str) -> bool:
@@ -179,3 +181,50 @@ def test_admits_answers_the_question_the_caps_actually_pose(requirement, admits_
     guard that cries wolf on a reordered specifier gets disabled — so both are pinned here.
     """
     assert _admits(requirement, "2.0.0") is admits_two
+
+
+# The MCP Registry proves we own each listed package by matching an ownership marker against
+# server.json's `name`. The markers live in files edited for entirely unrelated reasons - a
+# readme and a publish workflow - and a mismatch breaks the listing silently: no build fails,
+# no test catches it, and the registry simply stops believing the claim. These two assertions
+# are what makes that loud, at the point the marker is changed rather than whenever someone
+# next looks.
+#
+# The third marker, the .mcpb asset's checksum in server.json, is deliberately not here: it is
+# stamped at release time against a published artefact, so there is nothing for a test on a
+# working tree to compare.
+
+
+def _server_name() -> str:
+    return json.loads(SERVER_JSON.read_text(encoding="utf-8"))["name"]
+
+
+def test_readme_ownership_marker_matches_server_json():
+    """
+    The PyPI long-description marker in README.md names the server server.json declares.
+
+    This is the marker the registry reads from the published package, so a mismatch means the
+    package no longer proves it belongs to us.
+    """
+    match = re.search(r"<!--\s*mcp-name:\s*(\S+)\s*-->", README.read_text(encoding="utf-8"))
+    assert match, "README.md carries no <!-- mcp-name: ... --> marker at all"
+    assert match.group(1) == _server_name(), (
+        f"README.md marker {match.group(1)!r} != server.json name {_server_name()!r} - "
+        f"the MCP Registry listing for the PyPI package will stop verifying"
+    )
+
+
+def test_image_label_ownership_marker_matches_server_json():
+    """
+    The io.modelcontextprotocol.server.name label the images job stamps names the same server.
+
+    Read from the workflow rather than from a built image, so this fails on the pull request
+    that changes the label rather than after a release has already published the wrong one.
+    """
+    text = PUBLISH_WORKFLOW.read_text(encoding="utf-8")
+    match = re.search(r"io\.modelcontextprotocol\.server\.name=(\S+)", text)
+    assert match, "publish.yaml stamps no io.modelcontextprotocol.server.name label"
+    assert match.group(1) == _server_name(), (
+        f"publish.yaml image label {match.group(1)!r} != server.json name {_server_name()!r} - "
+        f"the MCP Registry listing for the OCI image will stop verifying"
+    )
