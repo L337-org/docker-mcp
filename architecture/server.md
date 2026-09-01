@@ -1,5 +1,5 @@
-&lt;!-- Architecture note: implementation detail for contributors and assistants.
-     Not user documentation - see README.md for that. --&gt;
+<!-- Architecture note: implementation detail for contributors and assistants.
+     Not user documentation - see README.md for that. -->
 
 # Server internals: registration, tools package, resources and prompts
 
