@@ -213,7 +213,7 @@ def test_stream_to_file_expands_user(tmp_path, monkeypatch):
 def test_stream_to_file_refuses_existing_without_overwrite(tmp_path):
     dest = tmp_path / "out.bin"
     dest.write_bytes(b"old")
-    with pytest.raises(FileExistsError, match="already exists"):
+    with pytest.raises(ToolInputError, match="already exists"):
         stream_to_file(iter([b"new"]), str(dest))
     assert dest.read_bytes() == b"old"
 

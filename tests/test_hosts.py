@@ -7,7 +7,7 @@ import pytest
 
 import docker_mcp._hosts as hosts
 from docker_mcp._hosts import Host, parse_registry
-from docker_mcp.exceptions import HostConfigError
+from docker_mcp.exceptions import HostConfigError, HostGuardError
 
 
 @pytest.fixture(autouse=True)
@@ -245,7 +245,7 @@ def test_single_host_is_not_multi(monkeypatch, stub_resolution):
 
 def test_unknown_label_raises_listing_known(monkeypatch, stub_resolution):
     monkeypatch.setattr(hosts, "_registry", parse_registry("local=auto, prod=ssh://h"))
-    with pytest.raises(KeyError, match="unknown host 'staging'"):
+    with pytest.raises(HostGuardError, match="unknown host 'staging'"):
         hosts.resolve("staging")
 
 
@@ -253,7 +253,7 @@ def test_default_is_not_a_selectable_label(monkeypatch, stub_resolution):
     # The internal "default" fallback is never a user label in multi-host mode.
     monkeypatch.setattr(hosts, "_registry", parse_registry("local=auto, prod=ssh://h"))
     assert "default" not in hosts.labels()
-    with pytest.raises(KeyError):
+    with pytest.raises(HostGuardError):
         hosts.resolve("default")
 
 

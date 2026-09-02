@@ -250,10 +250,20 @@ and no obvious symptom.
   `CapabilityError` (this host or install cannot, ever). Each type's docstring in
   `docker_mcp/exceptions.py` is the authority; a state error that says nothing a caller can use
   stays a builtin.
-- **A bare `raise ValueError`/`RuntimeError` must appear in `DELIBERATE_CRASHES`**
+- **A failure raised by a library, not by us, is classified in `_LIBRARY_FAILURES`** (`server.py`).
+  A daemon rejection, a registry status or a CLI timeout is as deliberate from the caller's side as
+  anything this code raises, and its text is the useful part - without the table they reached the
+  model as `Error executing tool <name>` with the explanation withheld. Order in that table is
+  load-bearing: `NotFound` subclasses `APIError` subclasses `DockerException`, so the narrow entry
+  goes first. Do not add `OSError`: `docker.errors.APIError` is one, so it would capture every
+  daemon error along with whatever local problem you meant.
+- **A bare `raise` of any builtin exception must appear in `DELIBERATE_CRASHES`**
   (`tests/test_server.py`) with the reason its text belongs only in the log. The list is exact, so
   adding a raise or removing one both fail until it is updated - which is the point: nothing else
-  notices when a refusal is written as a builtin and stops reaching the model.
+  notices when a refusal is written as a builtin and stops reaching the model. The scan covers every
+  builtin exception rather than a chosen few, because `raise FileNotFoundError("pass from_url
+  instead")` is exactly as invisible as a bare `ValueError` - it named two classes once, and two
+  actionable messages walked past it.
 - **Register every tool through `@tool()` and every resource through `@resource()`**, never
   `@mcp.tool`/`@mcp.resource` directly. A direct registration
   returns the right payload and passes every behaviour test, and only stops explaining itself when
@@ -370,7 +380,7 @@ re-proposes these; it has no memory of last time.
   strips `Authorization` on any cross-origin redirect, and a redirect reaches nothing a tool argument
   could not reach directly. Do not propose "hardening" this.
 - **The two CLI error styles are intentional.** Action tools return the raw result dict and never raise
-  on a non-zero exit; parsed-query tools raise `RuntimeError`. `compose_ps` and `compose_config` are
+  on a non-zero exit; parsed-query tools raise `RemoteFailureError`. `compose_ps` and `compose_config` are
   sanctioned hybrids. Do not propose unifying them.
 - **`context.py` is permanently excluded from the SSH remote-exec fallback.** Its tools manage *this*
   host's CLI context registry, which a remote host knows nothing about. This is not an oversight

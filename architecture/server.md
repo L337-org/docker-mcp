@@ -52,6 +52,24 @@ resources: the SDK routes both through `read_resource` and classifies a template
 failure identically. It is a floor rather than a preference that this needs `mcp>=2.1.0` - 2.0.0
 flattened even a deliberately raised `ResourceError`, so a resource could not explain itself at all.
 
+**Two families are translated, and the second is the larger one.** `DockerMcpError` covers what this
+code raises deliberately. `_LIBRARY_FAILURES` covers what a library raises through it: a
+`docker.errors.NotFound` for any Docker object the caller named that the daemon does not have - a container, image, network, volume or plugin alike (a fixable argument) - any other
+`DockerException`, any `httpx.HTTPError` from a registry or the docs endpoints (a 4xx/5xx, and
+equally a connection refused or a timeout, which never reach a status check), and any
+`subprocess.SubprocessError` from a CLI call. Converting at this one point rather than at the ~106
+call sites that touch the SDK is the reason the table exists at all; without it the daemon's own
+"No such container" never reached the model, which is most of what a caller actually hits.
+
+Each entry names the **base** of its family, because a leaf is only ever the one whoever wrote the
+entry happened to be reading: `httpx.HTTPStatusError` was listed once, and every registry timeout and
+connection refusal went out generic as a result. `docker.errors.NotFound` is the only narrow entry
+that earns its place, being a fixable argument where the rest of `DockerException` is a far-end
+failure - and because it is narrow, order is load-bearing and it must match first. `OSError` must
+never be added, because `docker.errors.APIError` is an `OSError` via `requests` and would be captured
+wholesale. A test asserts the ordering against
+the installed SDK rather than trusting the hierarchy to stay put.
+
 `TRANSLATES_FAILURES` marks each wrapper so `tests/test_server.py` can walk the built server and fail
 any registration that bypassed `@tool()`/`@resource()`. That check is on the server rather than on
 the source of the modules that register things today, which is what lets it reach a module nobody

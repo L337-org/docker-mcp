@@ -184,7 +184,7 @@ def test_image_import_refuses_a_from_file_path_that_is_not_a_readable_file(tmp_p
         (tmp_path / missing).mkdir()
     with _patch() as mock_client:
         api = mock_client.return_value.api
-        with pytest.raises(FileNotFoundError, match="No such rootfs tarball"):
+        with pytest.raises(ToolInputError, match="No such rootfs tarball"):
             image_import(from_file=str(tmp_path / missing), repository="myorg/rootfs")
     api.import_image_from_file.assert_not_called()
     api.import_image_from_url.assert_not_called()
@@ -314,7 +314,7 @@ def test_image_save_to_dest_path_refuses_existing_without_overwrite(tmp_path):
     image.save.return_value = iter([b"new"])
     with _patch() as mock_client:
         mock_client.return_value.images.get.return_value = image
-        with pytest.raises(FileExistsError, match="already exists"):
+        with pytest.raises(ToolInputError, match="already exists"):
             image_save("alpine", dest_path=str(dest))
     assert dest.read_bytes() == b"old"  # untouched
 

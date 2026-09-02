@@ -258,7 +258,7 @@ def stream_to_file(chunks: Iterable[bytes], dest_path: str, *, overwrite: bool =
     assert_host_writable(dest_path)
     path = Path(dest_path).expanduser()
     if path.exists() and not overwrite:
-        raise FileExistsError(f"{path} already exists; pass overwrite=True to replace it.")
+        raise ToolInputError(f"{path} already exists; pass overwrite=True to replace it.")
     fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".partial")
     tmp_path = Path(tmp_name)
     written = 0

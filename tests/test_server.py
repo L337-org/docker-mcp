@@ -7,6 +7,8 @@ import sys
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import docker.errors
+import httpx
 import pytest
 
 import docker_mcp  # noqa: F401 — imported for its side effect of registering every tool
@@ -1446,13 +1448,24 @@ DELIBERATE_CRASHES = {
     # Empty argv, negative max_output_bytes: internal misuse of the helper.
     ("tools/_ssh_proxy.py", "_validate_exec_args"): 2,
     # "SSH transport is not connected" in three places: a torn-down session or a missing connect.
-    ("tools/_ssh_proxy.py", "detect_remote_dialect"): 1,
+    # Two: the transport check above, plus a `TimeoutError` when the probe never reports an exit
+    # status. That one is caught two lines later by this function's own `except OSError` arm
+    # (TimeoutError subclasses OSError) and falls through to WINDOWS, which is the documented
+    # "no POSIX shell here" answer - it never leaves the function.
+    ("tools/_ssh_proxy.py", "detect_remote_dialect"): 2,
     ("tools/_ssh_proxy.py", "exec_remote"): 1,
     ("tools/_ssh_proxy.py", "factory"): 1,
     # `_hosts` validated the URL at startup, so reaching these means a caller skipped `is_ssh_url`.
     ("tools/_ssh_proxy.py", "parse_ssh_url"): 2,
     # Negative max_bytes: internal misuse.
     ("tools/_utils.py", "join_bounded"): 1,
+    # `SystemExit` on a malformed DOCKER_MCP_SERVER_HOSTS, raised at import before any tool is
+    # registered. It ends the process rather than answering a caller; there is no client to tell.
+    ("_hosts.py", "load"): 1,
+    # Every resolved address failed to connect. `connect_ssh_client` catches OSError from this
+    # helper and re-raises it as a RemoteFailureError carrying actionable guidance, so this text
+    # never reaches a client on its own.
+    ("tools/_ssh_proxy.py", "connect_socket_with_family_fallback"): 1,
 }
 
 
@@ -1464,16 +1477,37 @@ def _raised_builtin(node: ast.AST) -> str | None:
     guard that sees only the first is one a future bare `raise ValueError` walks straight past -
     which is the whole failure mode this check exists to prevent. Attribute forms
     (`builtins.ValueError`) count too.
+
+    And every builtin exception, not a chosen few: the message withheld from the model is withheld
+    whatever the class is called.
     """
+    import builtins
+
     if not isinstance(node, ast.Raise) or node.exc is None:
         return None
     target = node.exc.func if isinstance(node.exc, ast.Call) else node.exc
-    name = getattr(target, "id", None) or getattr(target, "attr", None)
-    return name if name in {"ValueError", "RuntimeError"} else None
+    if isinstance(target, ast.Name):
+        name = target.id
+    elif isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name) and target.value.id == "builtins":
+        # Only a `builtins.`-qualified attribute. Matching on the attribute name alone counted
+        # `somelib.TimeoutError` as a builtin raise, over-reporting a third-party class that merely
+        # shares a name and forcing a DELIBERATE_CRASHES entry for something this rule never meant.
+        name = target.attr
+    else:
+        return None
+    # Any builtin exception, not a hand-written pair of names. The pair was a copied list and it had
+    # already gone stale: `raise FileNotFoundError("pass from_url instead")` is exactly as invisible
+    # to the model as a bare ValueError, and walked straight past a check written to catch it.
+    # `builtins` is the enumeration, so there is nothing left to keep current.
+    candidate = getattr(builtins, name, None)
+    return name if isinstance(candidate, type) and issubclass(candidate, BaseException) else None
 
 
 def _builtin_raise_sites() -> dict:
-    """Every `raise ValueError`/`RuntimeError` in `docker_mcp`, counted per enclosing function."""
+    """Every bare raise of a builtin exception in `docker_mcp`, counted per enclosing function.
+
+    Any builtin, not the two names this once looked for - see `_raised_builtin`.
+    """
     import ast
     import collections
     import pathlib as _pathlib
@@ -1510,8 +1544,90 @@ def test_the_builtin_raise_scan_sees_both_spellings():
     assert scan("raise ValueError") == ["ValueError"], "a parenless raise slips past the guard"
     assert scan("raise RuntimeError") == ["RuntimeError"]
     assert scan("import builtins\nraise builtins.ValueError('x')") == ["ValueError"]
+    assert scan("import somelib\nraise somelib.TimeoutError('x')") == [], (
+        "a third-party class sharing a builtin name is not a builtin raise"
+    )
     assert scan("raise ToolInputError('x')") == []
     assert scan("try:\n    pass\nexcept Exception:\n    raise") == [], "a bare re-raise is not a site"
+
+
+# ---------- library failures on the wire ----------
+
+
+def test_the_library_failure_table_orders_narrow_before_broad():
+    """`NotFound` subclasses `APIError` subclasses `DockerException`.
+
+    Ordering is the whole correctness of the table: put the broad entry first and every missing
+    container is classified as a daemon failure instead of a fixable argument. Asserted against the
+    installed docker SDK rather than from memory, so a hierarchy change fails here.
+    """
+    import docker.errors
+
+    from docker_mcp.server import _LIBRARY_FAILURES
+
+    assert issubclass(docker.errors.NotFound, docker.errors.DockerException), "hierarchy assumption is stale"
+    types = [library_type for library_type, _ in _LIBRARY_FAILURES]
+    for index, library_type in enumerate(types):
+        for later in types[index + 1 :]:
+            assert not issubclass(later, library_type), (
+                f"{later.__name__} subclasses {library_type.__name__} but is listed after it, so it "
+                f"can never match - move the narrower entry first"
+            )
+
+
+@pytest.mark.parametrize(
+    ("exception", "expected"),
+    [
+        (docker.errors.NotFound("No such container: x"), "ToolInputError"),
+        (docker.errors.APIError("500 Server Error: something broke"), "RemoteFailureError"),
+        (subprocess.TimeoutExpired(cmd=["docker", "ps"], timeout=60), "RemoteFailureError"),
+        # Transport failures never reach `raise_for_status()`, so listing only `HTTPStatusError`
+        # left every registry timeout and connection refusal arriving as a generic crash.
+        (httpx.InvalidURL("not a usable URL"), "ToolInputError"),
+        (httpx.ConnectError("connection refused"), "RemoteFailureError"),
+        (httpx.ConnectTimeout("timed out"), "RemoteFailureError"),
+        (
+            httpx.HTTPStatusError("404", request=httpx.Request("GET", "https://x"), response=httpx.Response(404)),
+            "RemoteFailureError",
+        ),
+    ],
+    ids=["NotFound", "APIError", "TimeoutExpired", "InvalidURL", "ConnectError", "ConnectTimeout", "HTTPStatusError"],
+)
+def test_a_library_failure_is_classified_by_the_table(exception, expected):
+    from docker_mcp.server import _as_project_failure
+
+    assert type(_as_project_failure(exception)).__name__ == expected
+
+
+def test_a_daemon_rejection_reaches_the_caller_with_its_own_text(monkeypatch, on_the_wire):
+    """The daemon's message is the useful part, and before the table none of it arrived.
+
+    106 of the tools reach the daemon through docker-py, and every one of them reported
+    `Error executing tool <name>` with the daemon's explanation withheld and a traceback logged at
+    ERROR - the same failure the project-exception translation was written to prevent, left standing
+    for the exceptions this server does not raise itself.
+    """
+    from mcp.server.mcpserver.exceptions import ToolError, UnexpectedToolError
+
+    client = MagicMock()
+    client.containers.get.side_effect = docker.errors.NotFound("404 Client Error: No such container: nope")
+    monkeypatch.setattr("docker_mcp.tools.containers._get_client", MagicMock(return_value=client))
+
+    with pytest.raises(ToolError) as excinfo:
+        on_the_wire("container_inspect", {"id_or_name": "nope"})
+    assert not isinstance(excinfo.value, UnexpectedToolError)
+    assert "No such container: nope" in str(excinfo.value)
+
+
+def test_a_missing_docker_binary_says_how_to_fix_it(monkeypatch, on_the_wire):
+    """The most likely first-run failure there is, and it used to say nothing."""
+    from mcp.server.mcpserver.exceptions import ToolError, UnexpectedToolError
+
+    monkeypatch.setattr("docker_mcp.tools._cli.shutil.which", lambda _binary: None)
+    with pytest.raises(ToolError) as excinfo:
+        on_the_wire("context_list", {})
+    assert not isinstance(excinfo.value, UnexpectedToolError)
+    assert "was not found on PATH" in str(excinfo.value)
 
 
 def test_a_bare_builtin_raise_is_a_deliberate_crash_or_a_mistake():

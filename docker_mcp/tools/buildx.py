@@ -14,7 +14,7 @@
 
 from pathlib import Path
 
-from docker_mcp.exceptions import CapabilityError, ToolInputError
+from docker_mcp.exceptions import ToolInputError
 from docker_mcp.server import tool
 from docker_mcp.tools._cli import (
     CliResult,
@@ -151,7 +151,7 @@ def _refuse_flags_that_resolve_on_the_wrong_host(
         cache_to - `--cache-to` specs
         cache_from - `--cache-from` specs
         ssh - `--ssh` specs
-    raises: CapabilityError - any of the above is present
+    raises: ToolInputError - any of the above is present
     """
     checks = (
         (
@@ -185,14 +185,14 @@ def _refuse_flags_that_resolve_on_the_wrong_host(
             value = _spec_component(spec, key)
             if value is None or (stdout_exempt and value == "-"):
                 continue
-            raise CapabilityError(
+            raise ToolInputError(
                 f"buildx_build cannot honour {flag}={spec!r} against this host: this server has no local "
                 f"buildx plugin, so the build runs on the target host over SSH and {key}={value!r} would "
                 f"resolve on *that* machine - {consequence}, or run the build on a host with a local "
                 f"docker CLI."
             )
     if ssh:
-        raise CapabilityError(
+        raise ToolInputError(
             f"buildx_build cannot honour ssh={ssh!r} against this host: this server has no local buildx plugin, "
             f"so the build runs on the target host over SSH, where `--ssh` reads that host's $SSH_AUTH_SOCK - "
             f"the remote user's agent, not yours (this server does not request agent forwarding). Bake the "
@@ -333,7 +333,7 @@ def buildx_build(
     `--progress=plain` so output is captured rather than redrawn on a TTY.
     With no local buildx plugin and an `ssh://` target, the build runs on that host: a local `context`
     directory is copied there honouring `.dockerignore`, as are `file`, `build_contexts` and `secret`
-    paths. Raises CapabilityError in that case for `output`/`cache_to` with a filesystem `dest=`,
+    paths. Raises ToolInputError in that case for `output`/`cache_to` with a filesystem `dest=`,
     `cache_from` with a local `src=`, or any `ssh=` - each would resolve on the remote machine, losing
     the output or silently changing the build.
 
@@ -486,8 +486,8 @@ def _run_buildx_build_remotely(
         host - configured host label, or None for the default host
     returns: CliResult - the build's outcome, in `run_docker`'s shape
     raises:
-        CapabilityError - a refused flag (see `_refuse_flags_that_resolve_on_the_wrong_host`)
-        ToolInputError - a `file` that cannot be resolved against this server's working directory
+        ToolInputError - a refused flag (see `_refuse_flags_that_resolve_on_the_wrong_host`), or a
+                     `file` that cannot be resolved against this server's working directory
     """
     # Before connecting: a refusal should not cost an SSH handshake and a context upload.
     _refuse_flags_that_resolve_on_the_wrong_host(output=output, cache_to=cache_to, cache_from=cache_from, ssh=ssh)
