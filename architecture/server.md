@@ -55,14 +55,19 @@ flattened even a deliberately raised `ResourceError`, so a resource could not ex
 **Two families are translated, and the second is the larger one.** `DockerMcpError` covers what this
 code raises deliberately. `_LIBRARY_FAILURES` covers what a library raises through it: a
 `docker.errors.NotFound` for a container the caller named (a fixable argument), any other
-`DockerException`, an `httpx.HTTPStatusError` from a registry or the docs endpoints, and a
-`subprocess.TimeoutExpired` from a CLI call. Converting at this one point rather than at the ~106
+`DockerException`, any `httpx.HTTPError` from a registry or the docs endpoints (a 4xx/5xx, and
+equally a connection refused or a timeout, which never reach a status check), and any
+`subprocess.SubprocessError` from a CLI call. Converting at this one point rather than at the ~106
 call sites that touch the SDK is the reason the table exists at all; without it the daemon's own
 "No such container" never reached the model, which is most of what a caller actually hits.
 
-Its order is load-bearing - `NotFound` subclasses `APIError` subclasses `DockerException`, so the
-narrow entry has to match first - and `OSError` must never be added, because `docker.errors.APIError`
-is an `OSError` via `requests` and would be captured wholesale. A test asserts the ordering against
+Each entry names the **base** of its family, because a leaf is only ever the one whoever wrote the
+entry happened to be reading: `httpx.HTTPStatusError` was listed once, and every registry timeout and
+connection refusal went out generic as a result. `docker.errors.NotFound` is the only narrow entry
+that earns its place, being a fixable argument where the rest of `DockerException` is a far-end
+failure - and because it is narrow, order is load-bearing and it must match first. `OSError` must
+never be added, because `docker.errors.APIError` is an `OSError` via `requests` and would be captured
+wholesale. A test asserts the ordering against
 the installed SDK rather than trusting the hierarchy to stay put.
 
 `TRANSLATES_FAILURES` marks each wrapper so `tests/test_server.py` can walk the built server and fail
