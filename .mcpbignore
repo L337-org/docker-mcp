@@ -13,7 +13,7 @@ scripts/
 # server, not part of it - packing it here would ship ~140 KB of markdown the bundle never reads.
 skills/
 .github/
-# Claude Code project config: the mirror-rule PostToolUse hook and the /docker-sdk command. Both are
+# Claude Code project config: the instruction-layer PostToolUse hook and the /docker-sdk command. Both are
 # development tooling for this repo, meaningless to an installed bundle, and 2.2.4 shipped them by
 # omission. `.dockerignore` already excludes this directory.
 .claude/
@@ -32,7 +32,9 @@ Dockerfile
 DOCKERHUB.md
 
 # Agent / project docs not needed inside the bundle.
+AGENTS.md
 CLAUDE.md
+.agents/
 architecture/
 MCP_VS_SKILLS.md
 SECURITY.md

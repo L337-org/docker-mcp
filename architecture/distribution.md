@@ -3,7 +3,7 @@
 
 # Distribution channels and the release pipeline
 
-Deep detail behind the summaries in [../CLAUDE.md](../CLAUDE.md).
+Deep detail behind the summaries in [../AGENTS.md](../AGENTS.md).
 Read this before changing `Dockerfile`, `manifest.json`, `server.json`, `scripts/`, or the release workflows.
 
 ## Container image (`Dockerfile`)

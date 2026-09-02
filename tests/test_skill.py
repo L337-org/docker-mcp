@@ -186,6 +186,20 @@ def test_the_skill_is_excluded_from_the_other_channels_artifacts():
     assert "skills" in (_REPO_ROOT / ".dockerignore").read_text(encoding="utf-8").splitlines()
 
 
+def test_the_instruction_files_are_excluded_from_the_bundle():
+    """Same denylist trap as the skill, for the shared instruction file and its policy directory.
+
+    `AGENTS.md` and `.agents/` are agent guidance, read from a checkout and never at runtime, so
+    an installed bundle has no use for them.  `.agents/` in particular is a new top-level directory
+    and therefore included by default, which is how the previous instruction file came to ship by
+    omission.
+    """
+    mcpb = (_REPO_ROOT / ".mcpbignore").read_text(encoding="utf-8").splitlines()
+    assert "AGENTS.md" in mcpb
+    assert ".agents/" in mcpb
+    assert ".agents" in (_REPO_ROOT / ".dockerignore").read_text(encoding="utf-8").splitlines()
+
+
 # --------------------------------------------------------------------------------------------
 # Provenance labels
 # --------------------------------------------------------------------------------------------

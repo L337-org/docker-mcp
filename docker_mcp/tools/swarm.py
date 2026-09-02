@@ -121,24 +121,65 @@ def swarm_update(
     rotate_worker_token: bool = False,
     rotate_manager_token: bool = False,
     rotate_manager_unlock_key: bool = False,
+    updates: dict | None = None,
     host: str | None = None,
 ) -> bool:
     """
-    Update swarm-wide settings: the single home for join-token and unlock-key rotation.
+    Update swarm-wide settings: the single home for join-token rotation and cluster spec changes.
 
     Must be called on a swarm manager node. Token rotation invalidates the old join token
     immediately - nodes that have not yet joined using the old token must use the new one.
     Existing joined nodes are unaffected. Use `swarm_join_tokens` to retrieve the new
     tokens after rotation. Rotating the unlock key requires all managers to be re-unlocked
-    on restart with the new key; retrieve it immediately via `swarm_unlock_key`.
+    on restart with the new key; retrieve it immediately via `swarm_unlock_key`. Rotation and
+    `updates` are independent and may be combined in one call; `swarm_init` sets these same
+    fields when the swarm is first created, and `swarm_inspect` reads the current values back.
+
+    The Engine replaces the whole cluster spec on every update, so this reads the current spec
+    first and resubmits it, merging `updates` over it - omitting `updates` therefore changes
+    nothing but the requested rotation.
 
     args:
         rotate_worker_token - Issue a new worker join token, invalidating the current one
         rotate_manager_token - Issue a new manager join token, invalidating the current one
         rotate_manager_unlock_key - Issue a new autolock unlock key for manager restart
+        updates - Engine SwarmSpec fields to change, merged over the current spec one top-level
+            key at a time, so a named block is replaced whole rather than field by field: keys are
+            "Name", "Labels", "Orchestration", "Raft", "Dispatcher", "CAConfig",
+            "EncryptionConfig" and "TaskDefaults", e.g. {"EncryptionConfig": {"AutoLockManagers":
+            True}} to turn manager autolock on. Read the current blocks from `swarm_inspect`
     returns: bool - True after the update completes
     """
-    _get_client(host).swarm.update(
+    client = _get_client(host)
+    swarm = client.swarm
+    # `POST /swarm/update` replaces the cluster spec outright: the Engine's own note on the handler
+    # is "client should provide the complete spec of the swarm, including Name and Labels. If a
+    # field is specified with 0 or nil, then the default value will be used", so anything left out
+    # is reset. Read the live spec and send it back, which is what `docker swarm update` itself does.
+    swarm.reload()
+    spec = {**(swarm.attrs.get("Spec") or {}), **(updates or {})}
+    # `Version.Index` is the optimistic-concurrency token the endpoint requires, and the reload above
+    # is what keeps it current. Taken from the inspect document rather than the `swarm.version`
+    # property, which returns this same value but is typed `str | None` by typeshed - contradicting
+    # `update_swarm(version: int)` in that same stub set.
+    version = (swarm.attrs.get("Version") or {}).get("Index")
+    if not isinstance(version, int):
+        raise RuntimeError(
+            "Swarm inspect returned no Version.Index, so the update cannot be version-guarded. "
+            "Check `swarm_inspect` - this node may not be a swarm manager."
+        )
+    # Stays on the low-level `client.api`, and deliberately: the high-level `Swarm.update()` builds
+    # the outgoing spec from *docker-py kwargs* via `create_swarm_spec`, so it cannot resubmit the
+    # daemon's own spec document. Called with no spec kwargs it sends exactly
+    # {"CAConfig": {"NodeCertExpiry": 7776000000000000}} (verified against docker-py 7.2.0) - which,
+    # against a replace-semantics endpoint, silently clears manager autolock, cluster labels, the
+    # default task log driver and any Raft/Orchestration/Dispatcher tuning. Round-tripping the
+    # document through its kwargs would also be lossy (`SwarmSpec` drops the whole `Raft` block
+    # unless one of its five values is truthy, and knows nothing of Engine fields added later), so
+    # the documented `APIClient.update_swarm` is the only faithful path.
+    client.api.update_swarm(
+        version=version,
+        swarm_spec=spec,
         rotate_worker_token=rotate_worker_token,
         rotate_manager_token=rotate_manager_token,
         rotate_manager_unlock_key=rotate_manager_unlock_key,
