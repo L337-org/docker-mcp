@@ -230,7 +230,7 @@ config and restart, whereas the skill always has every recipe available at no id
 | | MCP (eager, full) | MCP (eager, triage config) | MCP (lazy, full) | Skill |
 |---|---|---|---|---|
 | Always in context | all 164 tool defs + router | 64 tool defs + router | router + tool names | name + description |
-| | 48,854 (tools) | 19,167 (tools) | 647 (router) | 136 |
+| | 48,586 (tools) | 19,150 (tools) | 647 (router) | 136 |
 | | 647 (router) | 315 (router) | 576 (names) | |
 | **Floor - every eager client** | **~49,200 tok** | **~19,500 tok** | **~1,200 tok** | **~140 tok** |
 | *plus, for a client that loads them:* | | | | |
