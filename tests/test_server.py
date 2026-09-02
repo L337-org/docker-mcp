@@ -1486,8 +1486,14 @@ def _raised_builtin(node: ast.AST) -> str | None:
     if not isinstance(node, ast.Raise) or node.exc is None:
         return None
     target = node.exc.func if isinstance(node.exc, ast.Call) else node.exc
-    name = getattr(target, "id", None) or getattr(target, "attr", None)
-    if not name:
+    if isinstance(target, ast.Name):
+        name = target.id
+    elif isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name) and target.value.id == "builtins":
+        # Only a `builtins.`-qualified attribute. Matching on the attribute name alone counted
+        # `somelib.TimeoutError` as a builtin raise, over-reporting a third-party class that merely
+        # shares a name and forcing a DELIBERATE_CRASHES entry for something this rule never meant.
+        name = target.attr
+    else:
         return None
     # Any builtin exception, not a hand-written pair of names. The pair was a copied list and it had
     # already gone stale: `raise FileNotFoundError("pass from_url instead")` is exactly as invisible
@@ -1538,6 +1544,9 @@ def test_the_builtin_raise_scan_sees_both_spellings():
     assert scan("raise ValueError") == ["ValueError"], "a parenless raise slips past the guard"
     assert scan("raise RuntimeError") == ["RuntimeError"]
     assert scan("import builtins\nraise builtins.ValueError('x')") == ["ValueError"]
+    assert scan("import somelib\nraise somelib.TimeoutError('x')") == [], (
+        "a third-party class sharing a builtin name is not a builtin raise"
+    )
     assert scan("raise ToolInputError('x')") == []
     assert scan("try:\n    pass\nexcept Exception:\n    raise") == [], "a bare re-raise is not a site"
 
