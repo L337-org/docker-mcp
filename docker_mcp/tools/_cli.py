@@ -16,6 +16,7 @@ from collections.abc import Iterator, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+from docker_mcp.exceptions import CapabilityError, RemoteFailureError, ToolInputError
 from docker_mcp._hosts import is_multi as _is_multi, is_ssh_url, resolve as _resolve_host
 from docker_mcp.tools._ssh_proxy import (
     RemoteExecResult,
@@ -275,7 +276,7 @@ def require_plugin(name: str) -> None:
     support that fallback.
     """
     if not has_plugin(name):
-        raise RuntimeError(
+        raise CapabilityError(
             f"Docker CLI plugin {name!r} is not installed or not available on PATH. Install it "
             f"(Docker Desktop ships it by default; on a plain Docker Engine install, use your "
             f"distribution's docker-{name}-plugin package, or follow the upstream docs) - or point "
@@ -448,7 +449,7 @@ def remote_stage_and_exec(
                 if stage_cwd
                 else "that is what this call's relative paths resolve against. Pass absolute paths instead."
             )
-            raise ValueError(
+            raise CapabilityError(
                 f"Cannot run `docker {args[0] if args else ''}` on the remote host: this server's own working "
                 f"directory is unavailable ({exc}), and with no explicit working directory {remedy}"
             ) from exc
@@ -458,7 +459,7 @@ def remote_stage_and_exec(
         # actually being copied: with `stage_cwd=False` it is just the base for relative path values, and
         # a missing one simply leaves them unresolved for the remote CLI to report.
         detail = "it exists but is not a directory" if local_cwd.exists() else "nothing exists at that path"
-        raise ValueError(
+        raise ToolInputError(
             f"Cannot run `docker {args[0] if args else ''}` on the remote host: {str(local_cwd)!r} is not a usable "
             f"working directory on this host ({detail}), and it is what would be copied over."
         )
@@ -557,7 +558,7 @@ def _ssh_url_for(host: str | None, args: list[str]) -> str:
     if url is None or not resolved.is_ssh:
         # A programming error, not a user-facing condition: every call site gates on
         # should_remote_exec, which is False for a host we cannot reach over SSH.
-        raise RuntimeError(
+        raise CapabilityError(
             f"remote-exec was requested for host {resolved.label!r} ({url or 'platform default'}), which is "
             f"not reached over ssh:// - there is no remote shell to run `docker {args[0] if args else ''}` on."
         )
@@ -702,7 +703,7 @@ def safe_positional(value: str, what: str = "value") -> str:
     call sites can wrap inline: `args.append(safe_positional(image, "image"))`.
     """
     if value.startswith("-"):
-        raise ValueError(
+        raise ToolInputError(
             f"Refusing to pass {what}={value!r} as a positional docker argument: it starts with '-', "
             f"which the docker CLI parses as a flag rather than a value. This is blocked to prevent "
             f"flag injection; a real {what} cannot start with '-'."
@@ -728,7 +729,7 @@ def safe_spec_value(value: str, what: str = "value") -> str:
     one, so it is deliberately allowed - do not "harden" this to include it.
     """
     if "," in value:
-        raise ValueError(
+        raise ToolInputError(
             f"Refusing to pass {what}={value!r} into a docker spec argument: it contains ',', which "
             f"separates keys in the spec, so the value would inject additional settings (such as "
             f"skip-tls-verify) that were not requested. Remove the comma."
@@ -763,7 +764,7 @@ def raise_on_cli_failure(result: CliResult, command: str) -> None:
         command: the docker subcommand for the message, e.g. "buildx ls" or "context inspect".
     """
     if result.returncode != 0:
-        raise RuntimeError(
+        raise RemoteFailureError(
             f"`docker {command}` failed with exit code {result.returncode}: "
             f"{result.stderr.strip() or result.stdout.strip() or '<no output>'}"
         )

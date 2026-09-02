@@ -14,6 +14,7 @@
 
 from pathlib import Path
 
+from docker_mcp.exceptions import CapabilityError, ToolInputError
 from docker_mcp.server import tool
 from docker_mcp.tools._cli import (
     CliResult,
@@ -184,14 +185,14 @@ def _refuse_flags_that_resolve_on_the_wrong_host(
             value = _spec_component(spec, key)
             if value is None or (stdout_exempt and value == "-"):
                 continue
-            raise RuntimeError(
+            raise CapabilityError(
                 f"buildx_build cannot honour {flag}={spec!r} against this host: this server has no local "
                 f"buildx plugin, so the build runs on the target host over SSH and {key}={value!r} would "
                 f"resolve on *that* machine - {consequence}, or run the build on a host with a local "
                 f"docker CLI."
             )
     if ssh:
-        raise RuntimeError(
+        raise CapabilityError(
             f"buildx_build cannot honour ssh={ssh!r} against this host: this server has no local buildx plugin, "
             f"so the build runs on the target host over SSH, where `--ssh` reads that host's $SSH_AUTH_SOCK - "
             f"the remote user's agent, not yours (this server does not request agent forwarding). Bake the "
@@ -233,7 +234,7 @@ def _local_dockerfile(file: str | None, *, context_is_local: bool) -> Path | Non
     try:
         return Path.cwd() / path
     except OSError as exc:
-        raise ValueError(
+        raise ToolInputError(
             f"buildx_build cannot resolve file={file!r}: it is relative to this server's working directory, "
             f"which is unavailable ({exc}). Pass an absolute path."
         ) from exc
@@ -372,14 +373,14 @@ def buildx_build(
     returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
     """
     if context == "-":
-        raise ValueError(
+        raise ToolInputError(
             "buildx_build: context='-' (read a tarball from stdin) is not supported by this "
             "tool because we don't forward stdin to the buildx subprocess - `-` would block "
             "on the MCP server's own stdin. Use a filesystem path or an HTTP/Git URL instead, "
             "or pre-stage the context on disk."
         )
     if push and load:
-        raise ValueError(
+        raise ToolInputError(
             "buildx_build: `push` and `load` are mutually exclusive; --load only works for "
             "single-platform builds loaded into the local image store, --push uploads to a "
             "registry. Pick one (or use `output=` for a custom output spec)."
@@ -617,7 +618,7 @@ def buildx_imagetools_inspect(
                     the caller can parse.
     """
     if raw and format is not None:
-        raise ValueError(
+        raise ToolInputError(
             "buildx_imagetools_inspect: `raw` and `format` are mutually exclusive - `raw` "
             "always emits the unmodified manifest JSON, while `format` runs a Go template "
             "against a rendered view. Pick one."
@@ -668,7 +669,7 @@ def buildx_imagetools_create(
     returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
     """
     if not sources and not descriptor_files:
-        raise ValueError("buildx_imagetools_create requires at least one source ref or file")
+        raise ToolInputError("buildx_imagetools_create requires at least one source ref or file")
     args: list[str] = ["imagetools", "create", "--tag", target]
     if append:
         args.append("--append")
@@ -970,9 +971,9 @@ def buildx_remove(
     returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
     """
     if not name and not all_inactive:
-        raise ValueError("buildx_remove requires either `name` or `all_inactive=True`")
+        raise ToolInputError("buildx_remove requires either `name` or `all_inactive=True`")
     if name and all_inactive:
-        raise ValueError(
+        raise ToolInputError(
             "buildx_remove: `name` and `all_inactive=True` are mutually exclusive - pass `name` to "
             "remove a specific builder, or `all_inactive=True` to sweep every inactive one."
         )

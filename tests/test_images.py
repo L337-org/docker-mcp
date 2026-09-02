@@ -271,7 +271,7 @@ def test_save_image_raises_when_max_bytes_exceeded():
     image.save.return_value = iter([b"x" * 50, b"x" * 60])
     with _patch() as mock_client:
         mock_client.return_value.images.get.return_value = image
-        with pytest.raises(ValueError, match="exceeded max_bytes=100"):
+        with pytest.raises(ToolInputError, match="exceeded max_bytes=100"):
             image_save("nginx", max_bytes=100)
 
 

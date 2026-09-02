@@ -1432,6 +1432,70 @@ def test_every_registered_tool_translates_its_anticipated_failures():
     )
 
 
+# Every bare `raise ValueError`/`RuntimeError` left in `docker_mcp`, with why it stays one. These
+# say this server is broken or in a state it did not expect: text for the log, not for the model, so
+# the SDK withholding it and logging the traceback is the wanted behaviour. Keyed by function rather
+# than line so ordinary edits do not churn it, and exact rather than a ceiling so removing one is
+# noticed too.
+DELIBERATE_CRASHES = {
+    # An internal guard, not an answer to a caller: the comment at the site reads "no consumer needs
+    # it today", so reaching it means an internal caller passed something unforwardable.
+    ("tools/_cli.py", "_reject_unforwardable"): 2,
+    # The docker CLI emitted something this server cannot parse - our bug or a format change.
+    ("tools/_cli.py", "parse_ndjson"): 1,
+    # Empty argv, negative max_output_bytes: internal misuse of the helper.
+    ("tools/_ssh_proxy.py", "_validate_exec_args"): 2,
+    # "SSH transport is not connected" in three places: a torn-down session or a missing connect.
+    ("tools/_ssh_proxy.py", "detect_remote_dialect"): 1,
+    ("tools/_ssh_proxy.py", "exec_remote"): 1,
+    ("tools/_ssh_proxy.py", "factory"): 1,
+    # `_hosts` validated the URL at startup, so reaching these means a caller skipped `is_ssh_url`.
+    ("tools/_ssh_proxy.py", "parse_ssh_url"): 2,
+    # Negative max_bytes: internal misuse.
+    ("tools/_utils.py", "join_bounded"): 1,
+}
+
+
+def _builtin_raise_sites() -> dict:
+    """Every `raise ValueError`/`RuntimeError` in `docker_mcp`, counted per enclosing function."""
+    import ast
+    import collections
+    import pathlib as _pathlib
+
+    root = _pathlib.Path(__file__).resolve().parent.parent / "docker_mcp"
+    counts: collections.Counter = collections.Counter()
+    for path in sorted(root.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        spans = {}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+                for line in range(node.lineno, (node.end_lineno or node.lineno) + 1):
+                    spans[line] = node.name
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Raise) or not isinstance(node.exc, ast.Call):
+                continue
+            name = getattr(node.exc.func, "id", getattr(node.exc.func, "attr", ""))
+            if name in {"ValueError", "RuntimeError"}:
+                counts[(path.relative_to(root).as_posix(), spans.get(node.lineno, "?"))] += 1
+    return dict(counts)
+
+
+def test_a_bare_builtin_raise_is_a_deliberate_crash_or_a_mistake():
+    """A new bare `raise ValueError`/`RuntimeError` is almost always the wrong choice now.
+
+    The SDK reports anything that is not a `DockerMcpError` as `Error executing tool <name>` with the
+    text withheld, so a refusal or a bad-argument message written as a builtin reaches the model
+    saying nothing it can act on - and nothing else fails when that happens, which is why this is a
+    test rather than a note. Adding a site means either raising the right `DockerMcpError` subclass
+    or adding it here with the reason it is genuinely a crash.
+    """
+    assert _builtin_raise_sites() == DELIBERATE_CRASHES, (
+        "the bare builtin raises in docker_mcp no longer match DELIBERATE_CRASHES - raise a "
+        "DockerMcpError subclass (see docker_mcp/exceptions.py) so the caller is told why, or add "
+        "the site above with the reason its text belongs only in the log"
+    )
+
+
 def test_every_registered_resource_translates_its_anticipated_failures():
     """The resource half of the same guard.
 

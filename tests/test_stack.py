@@ -2,7 +2,7 @@ from unittest.mock import patch
 
 import pytest
 
-from docker_mcp.exceptions import ToolInputError
+from docker_mcp.exceptions import RemoteFailureError, ToolInputError
 from docker_mcp.tools._cli import CliResult
 from docker_mcp.tools.stack import (
     stack_deploy,
@@ -84,7 +84,7 @@ def test_stack_deploy_rejects_invalid_resolve_image():
 
 
 def test_stack_deploy_rejects_flag_like_stack_name():
-    with pytest.raises(ValueError, match="flag"):
+    with pytest.raises(ToolInputError, match="flag"):
         stack_deploy("--rm", compose_files=["c.yml"])
 
 
@@ -111,7 +111,7 @@ def test_stack_ls_single_object_wrapped_in_list():
 def test_stack_ls_raises_on_failure():
     with _patch_run() as run:
         run.return_value = _fail("This node is not a swarm manager")
-        with pytest.raises(RuntimeError, match="stack ls"):
+        with pytest.raises(RemoteFailureError, match="stack ls"):
             stack_list()
 
 
@@ -134,7 +134,7 @@ def test_stack_ps_builds_args_with_no_trunc_and_filters():
 def test_stack_ps_raises_on_failure():
     with _patch_run() as run:
         run.return_value = _fail("nothing found in stack: web")
-        with pytest.raises(RuntimeError, match="stack ps"):
+        with pytest.raises(RemoteFailureError, match="stack ps"):
             stack_ps("web")
 
 
@@ -150,7 +150,7 @@ def test_stack_services_builds_args_with_filters():
 
 
 def test_stack_services_rejects_flag_like_name():
-    with pytest.raises(ValueError, match="flag"):
+    with pytest.raises(ToolInputError, match="flag"):
         stack_services("-x")
 
 
@@ -181,7 +181,7 @@ def test_stack_rm_requires_a_stack_name():
 
 
 def test_stack_rm_rejects_flag_like_name():
-    with pytest.raises(ValueError, match="flag"):
+    with pytest.raises(ToolInputError, match="flag"):
         stack_remove(["web", "-rf"])
 
 

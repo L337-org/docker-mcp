@@ -250,6 +250,10 @@ and no obvious symptom.
   `CapabilityError` (this host or install cannot, ever). Each type's docstring in
   `docker_mcp/exceptions.py` is the authority; a state error that says nothing a caller can use
   stays a builtin.
+- **A bare `raise ValueError`/`RuntimeError` must appear in `DELIBERATE_CRASHES`**
+  (`tests/test_server.py`) with the reason its text belongs only in the log. The list is exact, so
+  adding a raise or removing one both fail until it is updated - which is the point: nothing else
+  notices when a refusal is written as a builtin and stops reaching the model.
 - **Register every tool through `@tool()` and every resource through `@resource()`**, never
   `@mcp.tool`/`@mcp.resource` directly. A direct registration
   returns the right payload and passes every behaviour test, and only stops explaining itself when

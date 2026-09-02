@@ -38,6 +38,7 @@ from typing import IO, Protocol, cast
 
 import paramiko
 
+from docker_mcp.exceptions import CapabilityError, RemoteFailureError, ToolInputError
 from docker_mcp._hosts import is_ssh_url
 from docker_mcp.tools._utils import assert_host_writable, stream_to_file
 
@@ -236,7 +237,7 @@ def connect_ssh_client(docker_host: str, *, timeout: float | None = None) -> par
         client.connect(**connect_kwargs)
     except (paramiko.SSHException, OSError) as exc:
         client.close()
-        raise RuntimeError(
+        raise RemoteFailureError(
             f"Could not establish the SSH connection to {docker_host!r} for the docker CLI: {exc}. "
             f"Check that your key is loaded (run `ssh-add`, and forward SSH_AUTH_SOCK), that the host "
             f"key is in ~/.ssh/known_hosts (paramiko rejects unknown hosts - connect once with `ssh` "
@@ -820,7 +821,7 @@ def get_dialect(kind: RemoteDialectKind) -> RemoteDialect:
         # Deliberately not phrased as "this is a Windows host": `detect_remote_dialect` also routes a
         # failed probe and an unrecognized `uname -s` here, so a restricted shell or an uncommon Unix
         # kernel reaches this message too, and calling those Windows would be wrong.
-        raise RuntimeError(
+        raise CapabilityError(
             "Remote-exec fallback: no supported POSIX shell was detected on this host, so the docker "
             "CLI cannot be run on it. Any host presenting a POSIX shell is supported - including "
             f"{', '.join(sorted(_POSIX_UNAME_VALUES))} - as is sshd running inside a WSL distro. Common "
@@ -1185,7 +1186,7 @@ def _enforce_stage_limits(root: Path, entries: Iterator[str] | Sequence[str], *,
         with contextlib.suppress(OSError):
             total += os.lstat(root / relative).st_size
         if count > _MAX_STAGE_FILES or total > _MAX_STAGE_BYTES:
-            raise ValueError(
+            raise ToolInputError(
                 f"Refusing to stage the {what} {str(root)!r} onto the remote host: it holds at least "
                 f"{count} entries totalling {total // (1024 * 1024)} MiB, past the staging limit of "
                 f"{_MAX_STAGE_FILES} entries / {_MAX_STAGE_BYTES // (1024 * 1024)} MiB. With no local docker "
@@ -1263,7 +1264,7 @@ def _load_context_tar_helpers():
     try:
         from docker.utils import exclude_paths, tar
     except ImportError as exc:
-        raise RuntimeError(
+        raise CapabilityError(
             f"Cannot stage a build context onto the remote host: the installed docker-py does not provide the "
             f"context-tarring helpers this needs ({exc}). `docker.utils.tar` / `docker.utils.exclude_paths` "
             f"have been stable for years but are not part of docker-py's published API, so a release can drop "
@@ -1369,7 +1370,7 @@ class RemoteStagingSession:
         result = self.exec(argv, timeout=timeout, max_output_bytes=_STAGING_OUTPUT_CAP_BYTES)
         if result.returncode != 0:
             detail = (result.stderr or result.stdout).decode("utf-8", errors="replace").strip()
-            raise RuntimeError(
+            raise RemoteFailureError(
                 f"Remote-exec could not {what} on {self.docker_host}: `{shlex.join(argv)}` exited "
                 f"{result.returncode}: {detail or '<no output>'}"
             )
@@ -1421,7 +1422,7 @@ class RemoteStagingSession:
         """
         source = Path(local_dir).expanduser()
         if not source.is_dir():
-            raise ValueError(f"Cannot stage {str(source)!r} onto the remote host: it is not a directory.")
+            raise ToolInputError(f"Cannot stage {str(source)!r} onto the remote host: it is not a directory.")
         _enforce_stage_limits(source, _walk_relative(source), what="directory")
         destination, archive_path = self._new_slot("tree")
         with _tar_local_tree(source) as archive:
@@ -1444,10 +1445,10 @@ class RemoteStagingSession:
         """
         source = Path(local_file).expanduser()
         if not source.is_file():
-            raise ValueError(f"Cannot stage {str(source)!r} onto the remote host: it is not a file.")
+            raise ToolInputError(f"Cannot stage {str(source)!r} onto the remote host: it is not a file.")
         size = source.stat().st_size
         if size > _MAX_STAGE_BYTES:
-            raise ValueError(
+            raise ToolInputError(
                 f"Refusing to stage the file {str(source)!r} onto the remote host: it is "
                 f"{size // (1024 * 1024)} MiB, past the staging limit of "
                 f"{_MAX_STAGE_BYTES // (1024 * 1024)} MiB."
@@ -1480,7 +1481,9 @@ class RemoteStagingSession:
         """
         source = Path(context_dir).expanduser()
         if not source.is_dir():
-            raise ValueError(f"Cannot stage the build context {str(source)!r} onto the remote host: not a directory.")
+            raise ToolInputError(
+                f"Cannot stage the build context {str(source)!r} onto the remote host: not a directory."
+            )
         context_tar, exclude_paths = _load_context_tar_helpers()
         patterns = _read_dockerignore(source)
         # Both helpers mutate the pattern list they are given (each appends a `!<dockerfile>`
@@ -1533,7 +1536,7 @@ class RemoteStagingSession:
         """Fetch a single remote file straight to `local_dest`, via `stream_to_file`'s safe write."""
         size = self._sftp.stat(remote_path).st_size
         if size is not None and size > _MAX_STAGE_BYTES:
-            raise ValueError(
+            raise ToolInputError(
                 f"Refusing to fetch {remote_path!r} from the remote host: it is {size // (1024 * 1024)} MiB, "
                 f"past the staging limit of {_MAX_STAGE_BYTES // (1024 * 1024)} MiB."
             )
@@ -1575,7 +1578,7 @@ class RemoteStagingSession:
         try:
             size = self._sftp.stat(archive_path).st_size
             if size is not None and size > _MAX_STAGE_BYTES:
-                raise ValueError(
+                raise ToolInputError(
                     f"Refusing to fetch {remote_path!r} from the remote host: the result is "
                     f"{size // (1024 * 1024)} MiB, past the staging limit of {_MAX_STAGE_BYTES // (1024 * 1024)} MiB."
                 )
@@ -1586,7 +1589,7 @@ class RemoteStagingSession:
                 with tarfile.open(fileobj=archive, mode="r") as bundle:
                     members = bundle.getmembers()
                     if len(members) > _MAX_STAGE_FILES:
-                        raise ValueError(
+                        raise ToolInputError(
                             f"Refusing to fetch {remote_path!r} from the remote host: the result holds "
                             f"{len(members)} entries, past the staging limit of {_MAX_STAGE_FILES}."
                         )
@@ -1631,7 +1634,7 @@ class RemoteStagingSession:
                 f"remote command started from - remove the existing path first, or choose a different one."
             )
         if not local_dest.parent.is_dir():
-            raise ValueError(
+            raise ToolInputError(
                 f"Cannot fetch {remote_path!r} to {str(local_dest)!r}: {str(local_dest.parent)!r} is not a "
                 f"directory on this host."
             )
@@ -1697,7 +1700,7 @@ def _make_stage_root(ssh_client: paramiko.SSHClient, dialect_kind: RemoteDialect
     root = result.stdout.decode("utf-8", errors="replace").strip()
     if result.returncode != 0 or not root or "\n" in root:
         detail = (result.stderr or result.stdout).decode("utf-8", errors="replace").strip()
-        raise RuntimeError(
+        raise RemoteFailureError(
             f"Could not create a staging directory on {docker_host}: `{shlex.join(argv)}` exited "
             f"{result.returncode} and reported {detail or '<no output>'}. Staging needs a writable temp "
             f"directory (${{TMPDIR:-/tmp}}) on the target host."
@@ -1728,7 +1731,7 @@ def _verify_shared_filesystem(sftp: paramiko.SFTPClient, root: str, docker_host:
     try:
         sftp.stat(root)
     except OSError as exc:
-        raise RuntimeError(
+        raise CapabilityError(
             f"Remote-exec cannot stage files to {docker_host}: the directory {root!r} created over the SSH "
             f"exec channel is not visible to that host's SFTP subsystem ({exc}), so the two are not looking "
             f"at the same filesystem. The usual cause is a Windows sshd whose shell is `wsl.exe` - exec lands "

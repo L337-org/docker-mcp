@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 import paramiko
 import pytest
 
+from docker_mcp.exceptions import RemoteFailureError
 from docker_mcp.tools._ssh_proxy import (
     SshDialStdioProxy,
     SshTarget,
@@ -212,7 +213,7 @@ def test_connect_ssh_client_wraps_connection_failure_with_guidance(monkeypatch):
         "docker_mcp.tools._ssh_proxy.connect_socket_with_family_fallback", MagicMock(return_value=MagicMock())
     )
     with patch("docker_mcp.tools._ssh_proxy.paramiko.SSHClient", return_value=fake_client):
-        with pytest.raises(RuntimeError, match="Could not establish the SSH connection"):
+        with pytest.raises(RemoteFailureError, match="Could not establish the SSH connection"):
             connect_ssh_client("ssh://bob@example.com")
     # The half-open client is closed rather than leaked on the failure path.
     fake_client.close.assert_called_once()
@@ -228,7 +229,7 @@ def test_connect_ssh_client_wraps_family_fallback_probe_failure_with_guidance(mo
         MagicMock(side_effect=OSError("all addresses failed")),
     )
     with patch("docker_mcp.tools._ssh_proxy.paramiko.SSHClient", return_value=fake_client):
-        with pytest.raises(RuntimeError, match="Could not establish the SSH connection"):
+        with pytest.raises(RemoteFailureError, match="Could not establish the SSH connection"):
             connect_ssh_client("ssh://bob@example.com")
     fake_client.connect.assert_not_called()
     fake_client.close.assert_called_once()

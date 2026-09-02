@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 from docker.errors import DockerException
 
+from docker_mcp.exceptions import ToolInputError
 from docker_mcp.tools import _utils
 from docker_mcp.tools._utils import (
     MAX_PAYLOAD_BYTES,
@@ -134,7 +135,7 @@ def test_as_byte_chunks_closes_the_source_when_the_cap_aborts_iteration():
     never end on its own, so only the abort path can close it.
     """
     stream = _FakeDockerStream()
-    with pytest.raises(ValueError, match="exceeded max_bytes"):
+    with pytest.raises(ToolInputError, match="exceeded max_bytes"):
         join_bounded(as_byte_chunks(stream), 2000, "test")
     assert stream.closed is True
 
@@ -162,7 +163,7 @@ def test_join_bounded_at_exact_cap_succeeds():
 
 
 def test_join_bounded_raises_when_cap_exceeded():
-    with pytest.raises(ValueError, match="exceeded max_bytes=4"):
+    with pytest.raises(ToolInputError, match="exceeded max_bytes=4"):
         join_bounded(iter([b"abc", b"de"]), max_bytes=4, what="test")
 
 
@@ -184,7 +185,7 @@ def test_join_bounded_does_not_extend_past_cap():
         consumed.append("big")
         yield b"x" * 1000
 
-    with pytest.raises(ValueError, match="exceeded max_bytes=10"):
+    with pytest.raises(ToolInputError, match="exceeded max_bytes=10"):
         join_bounded(stream(), max_bytes=10, what="test")
     assert consumed == ["big"]
 
@@ -274,7 +275,7 @@ def test_join_bounded_closes_stream_on_success():
 
 def test_join_bounded_closes_stream_on_abort():
     chunks = _ClosingChunks([b"x" * 10, b"y" * 10])
-    with pytest.raises(ValueError, match="exceeded max_bytes"):
+    with pytest.raises(ToolInputError, match="exceeded max_bytes"):
         join_bounded(chunks, max_bytes=5, what="test")
     assert chunks.closed
 
@@ -391,7 +392,7 @@ def test_assert_host_writable_allows_mapped_path_in_container(monkeypatch):
 def test_assert_host_writable_rejects_unmapped_path_in_container(monkeypatch):
     monkeypatch.setattr(_utils, "in_container", lambda: True)
     monkeypatch.setattr(_utils, "_host_backed", lambda path: False)
-    with pytest.raises(RuntimeError, match="bind-mounted in"):
+    with pytest.raises(ToolInputError, match="bind-mounted in"):
         assert_host_writable("/scratch/img.tar")
 
 
@@ -399,7 +400,7 @@ def test_stream_to_file_guard_blocks_unmapped_write_in_container(monkeypatch, tm
     monkeypatch.setattr(_utils, "in_container", lambda: True)
     monkeypatch.setattr(_utils, "_host_backed", lambda path: False)
     dest = tmp_path / "out.bin"
-    with pytest.raises(RuntimeError, match="lost when the container exits"):
+    with pytest.raises(ToolInputError, match="lost when the container exits"):
         stream_to_file(iter([b"data"]), str(dest))
     assert not dest.exists()  # refused before any bytes were written
 
@@ -424,7 +425,7 @@ def test_host_read_path_existing_file_allowed_in_container(monkeypatch, tmp_path
 def test_host_read_path_missing_unmapped_raises_in_container(monkeypatch, tmp_path):
     monkeypatch.setattr(_utils, "in_container", lambda: True)
     monkeypatch.setattr(_utils, "_host_backed", lambda path: False)
-    with pytest.raises(RuntimeError, match="no such path is visible"):
+    with pytest.raises(ToolInputError, match="no such path is visible"):
         host_read_path(str(tmp_path / "missing.tar"))
 
 

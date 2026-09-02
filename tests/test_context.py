@@ -2,7 +2,7 @@ from unittest.mock import patch
 
 import pytest
 
-from docker_mcp.exceptions import RemoteFailureError
+from docker_mcp.exceptions import RemoteFailureError, ToolInputError
 from docker_mcp.tools._cli import CliResult
 from docker_mcp.tools.context import (
     context_create,
@@ -49,7 +49,7 @@ def test_context_ls_skips_blank_lines():
 
 def test_context_ls_raises_on_failure():
     with patch("docker_mcp.tools.context.run_docker", return_value=_fail("permission denied")):
-        with pytest.raises(RuntimeError, match="permission denied"):
+        with pytest.raises(RemoteFailureError, match="permission denied"):
             context_list()
 
 
@@ -75,7 +75,7 @@ def test_context_inspect_raises_on_empty_array():
 
 def test_context_inspect_raises_on_failure():
     with patch("docker_mcp.tools.context.run_docker", return_value=_fail("context not found")):
-        with pytest.raises(RuntimeError, match="context not found"):
+        with pytest.raises(RemoteFailureError, match="context not found"):
             context_inspect("missing")
 
 
@@ -124,7 +124,7 @@ def test_context_create_refuses_to_smuggle_skip_tls_verify_through_docker_host()
     reads False, which is exactly the visibility the explicit parameter exists to provide.
     """
     with patch("docker_mcp.tools.context.run_docker", return_value=_ok()) as run:
-        with pytest.raises(ValueError, match="contains ','"):
+        with pytest.raises(ToolInputError, match="contains ','"):
             context_create("remote", docker_host="tcp://10.0.0.5:2376,skip-tls-verify=true")
     run.assert_not_called()  # refused before the CLI ran at all
 
@@ -147,7 +147,7 @@ _HOST = "tcp://10.0.0.5:2376"
 )
 def test_context_create_refuses_a_comma_in_a_tls_path(call):
     with patch("docker_mcp.tools.context.run_docker", return_value=_ok()) as run:
-        with pytest.raises(ValueError, match="contains ','"):
+        with pytest.raises(ToolInputError, match="contains ','"):
             call()
     run.assert_not_called()
 
@@ -190,10 +190,23 @@ def test_context_rm_with_force():
 
 
 def test_context_use_rejects_flag_like_name():
-    with pytest.raises(ValueError, match="parses as a flag"):
+    with pytest.raises(ToolInputError, match="parses as a flag"):
         context_use("--help")
 
 
 def test_context_rm_rejects_flag_like_name():
-    with pytest.raises(ValueError, match="parses as a flag"):
+    with pytest.raises(ToolInputError, match="parses as a flag"):
         context_remove("-x")
+
+
+def test_a_failing_docker_command_carries_its_stderr_to_the_caller(on_the_wire):
+    """`raise_on_cli_failure` is how docker's own error text reaches the model, and it only does so
+    because the message is now on a translated type: the SDK would otherwise report the call as
+    `Error executing tool context_list` and keep the CLI's explanation in the server log."""
+    from mcp.server.mcpserver.exceptions import ToolError, UnexpectedToolError
+
+    with patch("docker_mcp.tools.context.run_docker", return_value=_fail("permission denied")):
+        with pytest.raises(ToolError) as excinfo:
+            on_the_wire("context_list", {})
+    assert not isinstance(excinfo.value, UnexpectedToolError)
+    assert "permission denied" in str(excinfo.value)

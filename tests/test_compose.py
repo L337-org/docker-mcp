@@ -3,7 +3,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from docker_mcp.exceptions import ToolInputError
+from docker_mcp.exceptions import RemoteFailureError, ToolInputError
 from docker_mcp.tools._cli import CliResult
 from docker_mcp.tools.compose import (
     _global_args,
@@ -367,7 +367,7 @@ def test_compose_ls_all_flag():
 
 def test_compose_ls_raises_on_failure():
     with patch("docker_mcp.tools.compose.run_docker", return_value=_fail("daemon unreachable")):
-        with pytest.raises(RuntimeError, match="daemon unreachable"):
+        with pytest.raises(RemoteFailureError, match="daemon unreachable"):
             compose_list()
 
 
@@ -385,7 +385,7 @@ def test_compose_stop_with_timeout_and_services():
 
 
 def test_compose_stop_rejects_flag_like_service():
-    with pytest.raises(ValueError, match="parses as a flag"):
+    with pytest.raises(ToolInputError, match="parses as a flag"):
         compose_stop(services=["--all"])
 
 
@@ -426,7 +426,7 @@ def test_compose_images_single_object_wrapped():
 
 def test_compose_images_raises_on_failure():
     with patch("docker_mcp.tools.compose.run_docker", return_value=_fail("no such project")):
-        with pytest.raises(RuntimeError, match="compose images"):
+        with pytest.raises(RemoteFailureError, match="compose images"):
             compose_images()
 
 
@@ -476,7 +476,7 @@ def test_compose_port_multiline_parses_first_binding_and_lists_all():
 
 def test_compose_port_raises_on_failure():
     with patch("docker_mcp.tools.compose.run_docker", return_value=_fail("no such service")):
-        with pytest.raises(RuntimeError, match="compose port"):
+        with pytest.raises(RemoteFailureError, match="compose port"):
             compose_port("web", 80)
 
 
@@ -525,7 +525,7 @@ def test_compose_cp_builds_args_both_positionals():
 
 def test_compose_cp_rejects_stdout_dash_dest():
     # `-` (stdout) starts with '-', so safe_positional blocks it; binary streaming isn't supported here.
-    with pytest.raises(ValueError, match="flag"):
+    with pytest.raises(ToolInputError, match="flag"):
         compose_cp("web:/app/log.txt", "-")
 
 

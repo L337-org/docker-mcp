@@ -14,6 +14,7 @@ from urllib.parse import urlparse
 
 import httpx
 
+from docker_mcp.exceptions import RemoteFailureError, ToolInputError, ToolRefusalError
 from docker_mcp.server import tool
 from docker_mcp.tools._utils import package_version, read_env
 
@@ -177,19 +178,19 @@ def _validate_bearer_realm(realm: str, registry: str) -> None:
     """
     parsed = urlparse(realm)
     if parsed.scheme not in ("http", "https"):
-        raise RuntimeError(
+        raise ToolRefusalError(
             f"Registry bearer realm {realm!r} has an unsupported scheme {parsed.scheme!r}; "
             f"refusing to send credentials. Only http/https token endpoints are allowed."
         )
     realm_host = parsed.hostname or ""
     if parsed.scheme != "https" and not _is_local_host(realm_host):
-        raise RuntimeError(
+        raise ToolRefusalError(
             f"Registry bearer realm {realm!r} is plaintext http to a non-local host; refusing to "
             f"send credentials over an unencrypted connection. A legitimate public registry uses an "
             f"https token endpoint."
         )
     if _is_local_host(realm_host) and not _is_local_host(_host_of(registry)):
-        raise RuntimeError(
+        raise ToolRefusalError(
             f"Registry {registry!r} pointed its token realm at a private/loopback host ({realm_host!r}); "
             f"refusing to send credentials to an internal address on behalf of a public registry "
             f"(possible SSRF)."
@@ -206,7 +207,7 @@ def _get_bearer_token(
 ) -> str:
     realm = challenge.get("realm")
     if not realm:
-        raise RuntimeError("Registry bearer challenge missing 'realm' parameter; cannot authenticate.")
+        raise RemoteFailureError("Registry bearer challenge missing 'realm' parameter; cannot authenticate.")
     _validate_bearer_realm(realm, registry)
     params: dict[str, str] = {}
     if "service" in challenge:
@@ -219,7 +220,7 @@ def _get_bearer_token(
     body = resp.json()
     token = body.get("token") or body.get("access_token")
     if not token:
-        raise RuntimeError(f"Registry token endpoint at {realm!r} returned no token.")
+        raise RemoteFailureError(f"Registry token endpoint at {realm!r} returned no token.")
     return token
 
 
@@ -275,7 +276,7 @@ def _raise_rate_limited(resp: httpx.Response, url: str) -> NoReturn:
             " Consult the target registry's rate-limit policy; most registries raise the "
             "limit substantially once you authenticate with `username`/`password`."
         )
-    raise RuntimeError(f"Registry rate-limited (HTTP 429) for {url}{suffix}.{guidance}")
+    raise RemoteFailureError(f"Registry rate-limited (HTTP 429) for {url}{suffix}.{guidance}")
 
 
 # Cap on the (decoded) bytes we'll buffer from a single registry HTTP response. Registries are
@@ -296,7 +297,7 @@ def _read_capped_response(resp: httpx.Response, url: str) -> httpx.Response:
     for chunk in resp.iter_bytes():
         total += len(chunk)
         if total > _MAX_RESPONSE_BYTES:
-            raise RuntimeError(
+            raise ToolRefusalError(
                 f"Registry response from {url} exceeded the {_MAX_RESPONSE_BYTES}-byte limit; "
                 f"refusing to buffer a response this large."
             )
@@ -422,7 +423,7 @@ def _validate_hub_next(next_url: object) -> str:
     actionable error as a malicious one rather than an AttributeError out of urlparse.
     """
     if not isinstance(next_url, str):
-        raise RuntimeError(
+        raise ToolRefusalError(
             f"Docker Hub returned a non-string pagination `next` value ({next_url!r}); refusing to "
             f"follow it. Expected a URL string on {_HUB_API_BASE}."
         )
@@ -433,11 +434,11 @@ def _validate_hub_next(next_url: object) -> str:
         # _origin_of raises this when reading ParseResult.port for an unparseable or out-of-range
         # port (":99999", ":abc"); urlparse itself accepts those. The value came from an untrusted
         # body, so it must not pick the exception type the caller sees.
-        raise RuntimeError(
+        raise ToolRefusalError(
             f"Docker Hub returned an unparseable pagination `next` URL ({next_url!r}): {exc}. Refusing to follow it."
         ) from exc
     if origin != (base_scheme, base_host, base_port):
-        raise RuntimeError(
+        raise ToolRefusalError(
             f"Docker Hub returned a pagination `next` URL on a different origin ({next_url!r}); "
             f"refusing to follow it. Expected {base_scheme}://{base_host}. A response body "
             f"cannot redirect this server at an arbitrary host."
@@ -481,7 +482,7 @@ def registry_tags(
     returns: dict - {"name": <repo>, "registry": <host>, "tags": [..], "truncated": bool}
     """
     if limit < 1:
-        raise ValueError(f"limit must be >= 1, got {limit}")
+        raise ToolInputError(f"limit must be >= 1, got {limit}")
     username, password = _env_credentials(username, password)
     registry, repo = _parse_image_ref(repository)
     tags: list[str] = []
@@ -548,9 +549,9 @@ def registry_tag_wait(
     returns: dict - {"repository", "tag", "met", "timed_out", "waited_seconds"}
     """
     if timeout_seconds < 0:
-        raise ValueError(f"timeout_seconds must be >= 0, got {timeout_seconds}.")
+        raise ToolInputError(f"timeout_seconds must be >= 0, got {timeout_seconds}.")
     if poll_interval <= 0:
-        raise ValueError(f"poll_interval must be > 0, got {poll_interval}.")
+        raise ToolInputError(f"poll_interval must be > 0, got {poll_interval}.")
     start = time.monotonic()
     deadline = start + timeout_seconds
     while True:
@@ -667,7 +668,7 @@ def registry_image_config(
 
     config = manifest.get("config")
     if not isinstance(config, dict) or "digest" not in config:
-        raise RuntimeError(
+        raise RemoteFailureError(
             f"Manifest for {repo}:{reference} has no config descriptor; cannot fetch the config blob "
             f"(media type {manifest.get('mediaType', 'unknown')!r})."
         )
@@ -697,7 +698,7 @@ def _parse_platform(platform: str) -> tuple[str, str, str | None]:
         return parts[0], parts[1], None
     if len(parts) == 3:
         return parts[0], parts[1], parts[2]
-    raise ValueError(f"platform must be 'os/arch' or 'os/arch/variant', got {platform!r}")
+    raise ToolInputError(f"platform must be 'os/arch' or 'os/arch/variant', got {platform!r}")
 
 
 def _select_platform_digest(index: dict, platform: str) -> tuple[str, str]:
@@ -728,7 +729,7 @@ def _select_platform_digest(index: dict, platform: str) -> tuple[str, str]:
             digest = entry.get("digest")
             if digest:
                 return digest, actual
-    raise ValueError(
+    raise ToolInputError(
         f"No manifest for platform {platform!r} in image index. Available platforms: "
         f"{', '.join(sorted(set(available))) or 'none'}."
     )
@@ -777,7 +778,7 @@ def hub_tags(repository: str, limit: int = 100) -> dict:
                      "truncated": bool}
     """
     if limit < 1:
-        raise ValueError(f"limit must be >= 1, got {limit}")
+        raise ToolInputError(f"limit must be >= 1, got {limit}")
     repo = _hub_normalize(repository)
     url: str | None = f"{_HUB_API_BASE}/repositories/{repo}/tags?page_size=100"
     tags: list[dict[str, Any]] = []

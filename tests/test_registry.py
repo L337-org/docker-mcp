@@ -4,6 +4,7 @@ from unittest.mock import patch
 import httpx
 import pytest
 
+from docker_mcp.exceptions import RemoteFailureError, ToolInputError, ToolRefusalError
 from docker_mcp.tools.registry import (
     _env_credentials,
     _is_local_host,
@@ -155,18 +156,18 @@ def test_validate_bearer_realm_allows_local_realm_for_local_registry():
 
 
 def test_validate_bearer_realm_rejects_plaintext_http_to_public_host():
-    with pytest.raises(RuntimeError, match="plaintext http"):
+    with pytest.raises(ToolRefusalError, match="plaintext http"):
         _validate_bearer_realm("http://auth.evil.com/token", "registry-1.docker.io")
 
 
 def test_validate_bearer_realm_rejects_non_http_scheme():
-    with pytest.raises(RuntimeError, match="unsupported scheme"):
+    with pytest.raises(ToolRefusalError, match="unsupported scheme"):
         _validate_bearer_realm("file:///etc/passwd", "registry-1.docker.io")
 
 
 def test_validate_bearer_realm_rejects_private_realm_for_public_registry():
     # Public registry trying to redirect credentialed requests to an internal host = SSRF.
-    with pytest.raises(RuntimeError, match="possible SSRF"):
+    with pytest.raises(ToolRefusalError, match="possible SSRF"):
         _validate_bearer_realm("https://169.254.169.254/token", "registry-1.docker.io")
 
 
@@ -180,7 +181,7 @@ def test_registry_list_tags_rejects_malicious_http_realm():
         )
 
     with _mock_client(handler):
-        with pytest.raises(RuntimeError, match="plaintext http"):
+        with pytest.raises(ToolRefusalError, match="plaintext http"):
             registry_tags("reg.example.com/foo/bar", username="u", password="p")
 
 
@@ -296,9 +297,9 @@ def test_registry_list_tags_respects_limit():
 
 
 def test_registry_list_tags_rejects_non_positive_limit():
-    with pytest.raises(ValueError, match="limit must be >= 1"):
+    with pytest.raises(ToolInputError, match="limit must be >= 1"):
         registry_tags("alpine", limit=0)
-    with pytest.raises(ValueError, match="limit must be >= 1"):
+    with pytest.raises(ToolInputError, match="limit must be >= 1"):
         registry_tags("alpine", limit=-5)
 
 
@@ -382,7 +383,7 @@ def test_hub_list_tags_refuses_a_next_url_on_another_host():
         return httpx.Response(200, json={"next": "https://169.254.169.254/latest/meta-data/", "results": []})
 
     with _mock_client(handler):
-        with pytest.raises(RuntimeError, match="different origin"):
+        with pytest.raises(ToolRefusalError, match="different origin"):
             hub_tags("alpine")
     # The foreign URL was never requested; only the first, self-constructed page was.
     assert len(requested) == 1
@@ -407,7 +408,7 @@ def test_hub_list_tags_pins_scheme_host_and_port(bad_next):
         return httpx.Response(200, json={"next": bad_next, "results": []})
 
     with _mock_client(handler):
-        with pytest.raises(RuntimeError, match="different origin"):
+        with pytest.raises(ToolRefusalError, match="different origin"):
             hub_tags("alpine")
 
 
@@ -458,7 +459,7 @@ def test_hub_list_tags_converts_an_unparseable_port_to_its_own_error(bad_next):
         return httpx.Response(200, json={"next": bad_next, "results": []})
 
     with _mock_client(handler):
-        with pytest.raises(RuntimeError, match="unparseable pagination"):
+        with pytest.raises(ToolRefusalError, match="unparseable pagination"):
             hub_tags("alpine")
 
 
@@ -475,7 +476,7 @@ def test_hub_list_tags_rejects_a_falsy_but_present_next(falsy):
         return httpx.Response(200, json={"next": falsy, "results": [{"name": "3.18"}]})
 
     with _mock_client(handler):
-        with pytest.raises(RuntimeError):
+        with pytest.raises(ToolRefusalError):
             hub_tags("alpine")
 
 
@@ -499,7 +500,7 @@ def test_hub_list_tags_rejects_a_non_string_next(bad_value):
         return httpx.Response(200, json={"next": bad_value, "results": []})
 
     with _mock_client(handler):
-        with pytest.raises(RuntimeError, match="non-string pagination"):
+        with pytest.raises(ToolRefusalError, match="non-string pagination"):
             hub_tags("alpine")
 
 
@@ -518,7 +519,7 @@ def test_hub_list_tags_respects_limit():
 
 
 def test_hub_list_tags_rejects_non_positive_limit():
-    with pytest.raises(ValueError, match="limit must be >= 1"):
+    with pytest.raises(ToolInputError, match="limit must be >= 1"):
         hub_tags("alpine", limit=0)
 
 
@@ -573,7 +574,7 @@ def test_registry_list_tags_raises_when_retry_after_is_long():
         return httpx.Response(429, headers={"Retry-After": "3600"})
 
     with _mock_client(handler):
-        with pytest.raises(RuntimeError, match="rate-limited.*retry after ~3600s") as excinfo:
+        with pytest.raises(RemoteFailureError, match="rate-limited.*retry after ~3600s") as excinfo:
             registry_tags("alpine")
     # Default registry is Docker Hub — message should mention the Hub-specific cap.
     assert "Docker Hub" in str(excinfo.value)
@@ -584,7 +585,7 @@ def test_registry_list_tags_message_is_generic_for_non_hub_registry():
         return httpx.Response(429, headers={"Retry-After": "3600"})
 
     with _mock_client(handler):
-        with pytest.raises(RuntimeError, match="rate-limited") as excinfo:
+        with pytest.raises(RemoteFailureError, match="rate-limited") as excinfo:
             registry_tags("ghcr.io/org/repo")
     # GHCR is not Docker Hub — the Hub-specific guidance must not appear; the
     # registry-agnostic hint about authenticating should.
@@ -598,7 +599,7 @@ def test_registry_list_tags_raises_when_retry_after_missing():
         return httpx.Response(429)
 
     with _mock_client(handler):
-        with pytest.raises(RuntimeError, match="rate-limited"):
+        with pytest.raises(RemoteFailureError, match="rate-limited"):
             registry_tags("alpine")
 
 
@@ -607,7 +608,7 @@ def test_registry_list_tags_raises_on_second_429_after_retry():
         return httpx.Response(429, headers={"Retry-After": "0"})
 
     with _mock_client(handler):
-        with pytest.raises(RuntimeError, match="rate-limited"):
+        with pytest.raises(RemoteFailureError, match="rate-limited"):
             registry_tags("alpine")
 
 
@@ -632,7 +633,7 @@ def test_hub_repo_info_applies_429_policy():
         return httpx.Response(429, headers={"Retry-After": "3600"})
 
     with _mock_client(handler):
-        with pytest.raises(RuntimeError, match="rate-limited"):
+        with pytest.raises(RemoteFailureError, match="rate-limited"):
             hub_repo_info("alpine")
 
 
@@ -871,7 +872,7 @@ def test_parse_platform_two_and_three_parts():
 
 
 def test_parse_platform_invalid_raises():
-    with pytest.raises(ValueError, match="os/arch"):
+    with pytest.raises(ToolInputError, match="os/arch"):
         _parse_platform("linux")
 
 
@@ -906,7 +907,7 @@ def test_select_platform_digest_omitted_variant_reports_actual_selected_variant(
 
 def test_select_platform_digest_no_match_lists_available():
     index = {"manifests": [{"digest": "sha256:amd", "platform": {"os": "linux", "architecture": "amd64"}}]}
-    with pytest.raises(ValueError, match="linux/amd64"):
+    with pytest.raises(ToolInputError, match="linux/amd64"):
         _select_platform_digest(index, "windows/amd64")
 
 
@@ -1006,7 +1007,7 @@ def test_registry_get_config_raises_when_no_config_descriptor():
         return httpx.Response(200, json={"mediaType": "application/weird", "layers": []})
 
     with _mock_client(handler):
-        with pytest.raises(RuntimeError, match="no config descriptor"):
+        with pytest.raises(RemoteFailureError, match="no config descriptor"):
             registry_image_config("alpine", reference="3.19")
 
 
@@ -1069,7 +1070,7 @@ def test_registry_response_size_is_capped(monkeypatch):
         return httpx.Response(200, json={"tags": ["a", "b", "c", "d", "e", "f"]})  # > 20 bytes
 
     with _mock_client(handler):
-        with pytest.raises(RuntimeError, match="refusing to buffer a response this large"):
+        with pytest.raises(ToolRefusalError, match="refusing to buffer a response this large"):
             registry_tags("alpine")
 
 
@@ -1122,10 +1123,33 @@ def test_registry_tag_wait_times_out():
 
 
 def test_registry_tag_wait_rejects_negative_timeout():
-    with pytest.raises(ValueError, match="timeout_seconds"):
+    with pytest.raises(ToolInputError, match="timeout_seconds"):
         registry_tag_wait("alpine", "latest", timeout_seconds=-1)
 
 
 def test_registry_tag_wait_rejects_nonpositive_poll_interval():
-    with pytest.raises(ValueError, match="poll_interval"):
+    with pytest.raises(ToolInputError, match="poll_interval"):
         registry_tag_wait("alpine", "latest", poll_interval=0)
+
+
+def test_a_credential_leak_refusal_tells_the_caller_why_on_the_wire(on_the_wire):
+    """A registry pointing its token realm at plaintext http is refused, and the caller is told so.
+
+    Deliberate: the registry already knows what it sent, so naming the defence gives it nothing,
+    while a model told only `Error executing tool registry_tags` would retry or route around a
+    refusal it cannot see. Asserted on the wire because that is the only place the choice shows -
+    the type decides whether the reason survives at all.
+    """
+    from mcp.server.mcpserver.exceptions import ToolError, UnexpectedToolError
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            401,
+            headers={"WWW-Authenticate": 'Bearer realm="http://auth.evil.example/token",service="registry"'},
+        )
+
+    with _mock_client(handler):
+        with pytest.raises(ToolError) as excinfo:
+            on_the_wire("registry_tags", {"repository": "alpine"})
+    assert not isinstance(excinfo.value, UnexpectedToolError)
+    assert "plaintext http" in str(excinfo.value)
