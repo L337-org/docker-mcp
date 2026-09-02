@@ -122,7 +122,7 @@ Two things about that surface are load-bearing enough to state here:
   router pair asserts the advertised domains equal the registered ones — so this is a "do it up
   front" note, not a silent trap. Full checklist in [CONTRIBUTING.md](CONTRIBUTING.md).
 - **Tool modules import `tool` from `docker_mcp.server`; prompt modules import `prompt`.** Only
-  resource modules import `mcp` directly — doing so in a tool or prompt module is a circular import.
+  resource modules import `resource` — no module imports `mcp` to register with any more.
 
 ## CLI shell-out policy
 
@@ -250,12 +250,12 @@ and no obvious symptom.
   `CapabilityError` (this host or install cannot, ever). Each type's docstring in
   `docker_mcp/exceptions.py` is the authority; a state error that says nothing a caller can use
   stays a builtin.
-- **Register every tool through `@tool()`**, never `@mcp.tool` directly. A direct registration
+- **Register every tool through `@tool()` and every resource through `@resource()`**, never
+  `@mcp.tool`/`@mcp.resource` directly. A direct registration
   returns the right payload and passes every behaviour test, and only stops explaining itself when
   something fails - so the guard is mechanical:
-  `tests/test_server.py::test_every_registered_tool_translates_its_anticipated_failures` walks the
-  built server and fails any tool whose callable is not translated, including one in a module that
-  does not exist yet.
+  `tests/test_server.py` walks the built server and fails any tool, resource or template whose
+  callable is not translated, including one in a module that does not exist yet.
 - **The `@tool()` decorator must stay generic** (`def tool[F: Callable[..., Any]](...) -> Callable[[F], F]`).
   Annotating it as a bare `Callable` erases the parameter list and silently disables pyright's argument
   checking at *every* tool call site. Flag any loosening, including loosening only the return

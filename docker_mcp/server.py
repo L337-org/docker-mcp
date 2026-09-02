@@ -969,6 +969,35 @@ def tool[F: Callable[..., Any]](**kwargs: Any) -> Callable[[F], F]:
     return decorator
 
 
+def resource[F: Callable[..., Any]](uri: str, **kwargs: Any) -> Callable[[F], F]:
+    """
+    Register an `@mcp.resource` whose anticipated failures keep their message - the `@resource()`
+    every resource registration uses, decorator or call form.
+
+    The SDK applies the same type rule to a read as to a tool call: a `ResourceError` keeps its
+    message and logs at INFO, and anything else becomes `Error reading resource <uri>` with the text
+    withheld and a traceback logged at ERROR. Without the translation an unusable path, a disabled
+    domain and a bug in this server are indistinguishable to a client, which is a poor answer for a
+    URI it attached as context.
+
+    Like `@tool()`, the translated wrapper is registered while the plain function is returned, so an
+    internal caller still gets the project type. Applies to a template as well as a static resource:
+    the SDK routes both through `read_resource`, and a template's own creation failure is classified
+    the same way.
+
+    args:
+        uri - the resource URI or URI template, passed straight to `mcp.resource`
+        kwargs - passed to `mcp.resource` (name, title, description, mime_type, ...)
+    returns: Callable - a decorator registering the function as a resource
+    """
+
+    def decorator(func: F) -> F:
+        mcp.resource(uri, **kwargs)(_translate_failures(func, ResourceError))
+        return func
+
+    return decorator
+
+
 def prompt(description: str, *, domain: str | None = None, multi_host: bool = False) -> Callable[[Callable], Callable]:
     """
     Register an `@mcp.prompt`, honoring DOCKER_MCP_SERVER_DISABLE - the `@prompt()` every prompt module uses.

@@ -1432,6 +1432,36 @@ def test_every_registered_tool_translates_its_anticipated_failures():
     )
 
 
+def test_every_registered_resource_translates_its_anticipated_failures():
+    """The resource half of the same guard.
+
+    A resource registered with a bare `@mcp.resource` serves the right payload and passes every
+    behaviour test; it only stops explaining itself when a read fails, which no payload assertion
+    can see. Templates are checked alongside static resources because the SDK routes both through
+    `read_resource` and classifies a template's own creation failure the same way.
+    """
+    registry = mcp._resource_manager
+    # getattr, not `.fn`: the SDK's `Resource` base does not declare it - only the function-backed
+    # subclasses do. `test_the_resource_guard_is_reading_a_full_surface` asserts every entry has one,
+    # so a missing `fn` is caught there rather than being silently skipped here.
+    entries = [(str(r.uri), getattr(r, "fn", None)) for r in registry._resources.values()]
+    entries += [(uri, getattr(template, "fn", None)) for uri, template in registry._templates.items()]
+    unwrapped = sorted(uri for uri, fn in entries if not getattr(fn, TRANSLATES_FAILURES, False))
+    assert not unwrapped, (
+        f"resources {unwrapped} do not translate DockerMcpError - register through @resource() so a "
+        f"failed read says why instead of a bare 'Error reading resource <uri>'"
+    )
+
+
+def test_the_resource_guard_is_reading_a_full_surface():
+    """As above: "no bad entries found" is also what an empty registry says."""
+    registry = mcp._resource_manager
+    assert len(registry._resources) >= 3, f"enumerated only {len(registry._resources)} static resources"
+    assert len(registry._templates) >= 1, f"enumerated only {len(registry._templates)} templates"
+    assert all(callable(getattr(r, "fn", None)) for r in registry._resources.values()), "Resource.fn moved"
+    assert all(callable(getattr(t, "fn", None)) for t in registry._templates.values()), "ResourceTemplate.fn moved"
+
+
 def test_the_translation_guard_is_reading_a_full_surface():
     """ "No bad entries found" is also what an empty list says.
 
