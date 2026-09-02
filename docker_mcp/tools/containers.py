@@ -404,7 +404,13 @@ def _read_bounded_container_logs(container: Any, what: str, **log_kwargs: Any) -
     # as_byte_chunks handles both shapes: docker-py returns a stream for stream=True today, and a
     # whole-payload return would be yielded as one chunk rather than iterated into digit soup.
     output = container.logs(stream=True, follow=False, **log_kwargs)
-    raw = join_bounded(as_byte_chunks(output), MAX_PAYLOAD_BYTES, what)
+    # The cap here is fixed, so the caller cannot raise it; what they can do is ask for less.
+    raw = join_bounded(
+        as_byte_chunks(output),
+        MAX_PAYLOAD_BYTES,
+        what,
+        remedy="Request fewer lines with `tail`, or narrow the window with `since`/`until`.",
+    )
     return raw.decode("utf-8", errors="replace")
 
 

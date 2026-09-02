@@ -21,7 +21,13 @@ def _read_service_log_tail(id_or_name: str, tail: int = 200, host: str | None = 
     service = _get_client(host).services.get(id_or_name)
     output = service.logs(stdout=True, stderr=True, follow=False, tail=tail)
 
-    raw = join_bounded(as_byte_chunks(output), MAX_PAYLOAD_BYTES, f"logs of service {id_or_name}")
+    # Fixed cap, as in `_read_bounded_container_logs`: `tail` is the lever the caller has.
+    raw = join_bounded(
+        as_byte_chunks(output),
+        MAX_PAYLOAD_BYTES,
+        f"logs of service {id_or_name}",
+        remedy="Request fewer lines with `tail`.",
+    )
     return raw.decode("utf-8", errors="replace")
 
 

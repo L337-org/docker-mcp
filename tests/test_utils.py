@@ -505,3 +505,20 @@ def test_open_host_read_file_returns_a_usable_handle(tmp_path):
     target.write_bytes(b"contents")
     with open_host_read_file(str(target)) as handle:
         assert handle.read() == b"contents"
+
+
+def test_join_bounded_advice_matches_what_the_caller_can_actually_change():
+    """A cap the caller cannot reach must not be described as one they can raise.
+
+    `container_logs` and `service_logs` pass a fixed MAX_PAYLOAD_BYTES, so the default advice -
+    "raise max_bytes" - names a parameter those tools do not expose. Guidance a caller cannot act on
+    is worse than none, because it reads as actionable and sends them looking for a knob.
+    """
+    from docker_mcp.tools._utils import join_bounded
+
+    with pytest.raises(ToolInputError, match="Raise max_bytes"):
+        join_bounded([b"abc"], 1, "a payload")
+
+    with pytest.raises(ToolInputError, match="Request fewer lines") as excinfo:
+        join_bounded([b"abc"], 1, "a payload", remedy="Request fewer lines with `tail`.")
+    assert "Raise max_bytes" not in str(excinfo.value)

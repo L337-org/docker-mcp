@@ -343,11 +343,16 @@ def as_byte_chunks(chunks: Iterable | bytes | bytearray | str) -> Iterable[bytes
         close_stream_quietly(chunks)
 
 
-def join_bounded(chunks: Iterable[bytes], max_bytes: int, what: str) -> bytes:
+def join_bounded(chunks: Iterable[bytes], max_bytes: int, what: str, remedy: str | None = None) -> bytes:
     """
     Concatenate bytes chunks, aborting with ToolInputError if the running total would exceed
-    max_bytes - the caller can raise the cap, so the message says so. A negative `max_bytes`
-    is a caller bug rather than an answer to give a model, and stays a `ValueError`.
+    max_bytes. A negative `max_bytes` is a caller bug rather than an answer to give a model, and
+    stays a `ValueError`.
+
+    `remedy` is what the message tells the caller to do about it, and it has to be passed by any
+    caller whose own cap is fixed. The default names `max_bytes`, which is right for the tools that
+    expose it as a parameter and useless for the ones that do not - being told to raise something
+    they cannot reach is worse guidance than none, because it reads as actionable.
 
     Wraps the `b"".join(stream)` pattern used by tools that buffer a whole daemon-side
     payload (container export, image save, container archive) so a pathological input can't
@@ -361,9 +366,9 @@ def join_bounded(chunks: Iterable[bytes], max_bytes: int, what: str) -> bytes:
     try:
         for chunk in chunks:
             if len(collected) + len(chunk) > max_bytes:
+                advice = remedy or "Raise max_bytes if a larger payload is intended."
                 raise ToolInputError(
-                    f"{what} exceeded max_bytes={max_bytes}; aborted to prevent memory exhaustion. "
-                    f"Raise max_bytes if a larger payload is intended."
+                    f"{what} exceeded max_bytes={max_bytes}; aborted to prevent memory exhaustion. {advice}"
                 )
             collected.extend(chunk)
     finally:
