@@ -6,7 +6,7 @@ from collections.abc import Iterable
 from functools import lru_cache
 from importlib.metadata import version as _pkg_version
 from pathlib import Path
-from typing import Any
+from typing import IO, Any
 
 # Alias-aware env lookups, re-exported so tool modules can keep importing them from _utils.
 from docker_mcp.exceptions import ToolInputError
@@ -185,7 +185,7 @@ def host_read_path(file_path: str) -> Path:
     return path
 
 
-def open_host_read_file(file_path: str):
+def open_host_read_file(file_path: str) -> IO[bytes]:
     """Open a caller-supplied file for reading, as a `ToolInputError` when it cannot be opened.
 
     `host_read_path` resolves the path and explains an unmapped one inside a container; this adds the
@@ -197,7 +197,8 @@ def open_host_read_file(file_path: str):
     opening a named file for reading is something the caller can address by naming a different one.
 
     :param file_path: the caller's path
-    :returns: the open binary handle, for use as a context manager
+    :returns: IO[bytes] - the open binary handle, for use as a context manager and for handing
+        straight to a docker-py call that wants a binary file-like
     """
     path = host_read_path(file_path)
     try:
