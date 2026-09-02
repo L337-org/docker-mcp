@@ -1456,6 +1456,22 @@ DELIBERATE_CRASHES = {
 }
 
 
+def _raised_builtin(node: ast.AST) -> str | None:
+    """The builtin name a `raise` statement raises, or None.
+
+    Covers both spellings, because they are equivalent at runtime and only one of them was matched
+    to begin with: `raise ValueError("...")` instantiates, `raise ValueError` lets Python do it. A
+    guard that sees only the first is one a future bare `raise ValueError` walks straight past -
+    which is the whole failure mode this check exists to prevent. Attribute forms
+    (`builtins.ValueError`) count too.
+    """
+    if not isinstance(node, ast.Raise) or node.exc is None:
+        return None
+    target = node.exc.func if isinstance(node.exc, ast.Call) else node.exc
+    name = getattr(target, "id", None) or getattr(target, "attr", None)
+    return name if name in {"ValueError", "RuntimeError"} else None
+
+
 def _builtin_raise_sites() -> dict:
     """Every `raise ValueError`/`RuntimeError` in `docker_mcp`, counted per enclosing function."""
     import ast
@@ -1472,12 +1488,30 @@ def _builtin_raise_sites() -> dict:
                 for line in range(node.lineno, (node.end_lineno or node.lineno) + 1):
                     spans[line] = node.name
         for node in ast.walk(tree):
-            if not isinstance(node, ast.Raise) or not isinstance(node.exc, ast.Call):
-                continue
-            name = getattr(node.exc.func, "id", getattr(node.exc.func, "attr", ""))
-            if name in {"ValueError", "RuntimeError"}:
+            # The isinstance check stays here as well as inside the helper: it is what narrows the
+            # type for `node.lineno` below, which `ast.walk`'s `AST` does not carry.
+            if isinstance(node, ast.Raise) and _raised_builtin(node):
                 counts[(path.relative_to(root).as_posix(), spans.get(node.lineno, "?"))] += 1
     return dict(counts)
+
+
+def test_the_builtin_raise_scan_sees_both_spellings():
+    """The scan itself, on both forms plus the ones it must not count.
+
+    Tested directly rather than by planting a raise in the package, because the guard below reports
+    a count and a miscount looks identical to a clean tree from outside it.
+    """
+    import ast
+
+    def scan(source: str) -> list:
+        return [name for node in ast.walk(ast.parse(source)) if (name := _raised_builtin(node))]
+
+    assert scan("raise ValueError('x')") == ["ValueError"]
+    assert scan("raise ValueError") == ["ValueError"], "a parenless raise slips past the guard"
+    assert scan("raise RuntimeError") == ["RuntimeError"]
+    assert scan("import builtins\nraise builtins.ValueError('x')") == ["ValueError"]
+    assert scan("raise ToolInputError('x')") == []
+    assert scan("try:\n    pass\nexcept Exception:\n    raise") == [], "a bare re-raise is not a site"
 
 
 def test_a_bare_builtin_raise_is_a_deliberate_crash_or_a_mistake():
