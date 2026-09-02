@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import NoReturn
 
-from docker_mcp.exceptions import HostConfigError
+from docker_mcp.exceptions import HostConfigError, HostGuardError
 
 from docker_mcp._env import read_env, scrub_unresolved_env
 
@@ -332,7 +332,11 @@ def resolve(host: str | None) -> Host:
     try:
         return _registry[host]
     except KeyError:
-        raise KeyError(f"unknown host {host!r}; configured hosts: {labels()}") from None
+        # HostGuardError, not KeyError: a resource read never passes through `_enforce_host_guard`,
+        # so on a host-qualified URI this is the only place a typo can be named. As a bare KeyError
+        # its careful wording was withheld and the client got "Error creating resource from
+        # template" instead.
+        raise HostGuardError(f"unknown host {host!r}; configured hosts: {labels()}") from None
 
 
 def default() -> Host:

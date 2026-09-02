@@ -564,7 +564,7 @@ def test_container_export_to_dest_path_refuses_existing(tmp_path):
     container.export.return_value = iter([b"new"])
     with _patch() as mock_client:
         mock_client.return_value.containers.get.return_value = container
-        with pytest.raises(FileExistsError):
+        with pytest.raises(ToolInputError):
             container_export("web", dest_path=str(dest))
 
 

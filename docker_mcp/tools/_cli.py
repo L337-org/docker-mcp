@@ -93,7 +93,7 @@ class CliResult:
 def _resolve(binary: str) -> str:
     path = shutil.which(binary)
     if path is None:
-        raise FileNotFoundError(
+        raise CapabilityError(
             f"Required executable {binary!r} was not found on PATH. "
             f"Install it (e.g. Docker Desktop on macOS/Windows, the docker package on Linux) "
             f"or extend PATH for the user running the MCP server."
@@ -230,7 +230,13 @@ def run_docker(
 # out of `has_plugin`. Assigning the tuple to a module-level constant also dodges
 # the PEP 758 parenthesis-free `except` form that older parsers (and PR review bots)
 # flag as a syntax error.
-_PLUGIN_PROBE_ERRORS: tuple[type[BaseException], ...] = (FileNotFoundError, subprocess.TimeoutExpired)
+# CapabilityError is here because `require_binary` raises it for a missing `docker`: this
+# probe asks *whether* a plugin is there and must answer False, not propagate.
+_PLUGIN_PROBE_ERRORS: tuple[type[BaseException], ...] = (
+    FileNotFoundError,
+    subprocess.TimeoutExpired,
+    CapabilityError,
+)
 
 # Plugin availability is cached with a short TTL rather than forever (the old `functools.cache`):
 # a plugin installed (or removed) while the server is running becomes visible within the TTL

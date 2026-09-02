@@ -7,18 +7,21 @@
 
 import functools
 import inspect
+import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, NoReturn, cast
 
+import docker.errors
+import httpx
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ResourceError, ToolError
 from mcp.types import ToolAnnotations
 
 import docker_mcp._hosts as _hosts
 from docker_mcp._env import env_flag, read_env
-from docker_mcp.exceptions import DockerMcpError, HostGuardError
+from docker_mcp.exceptions import DockerMcpError, HostGuardError, RemoteFailureError, ToolInputError
 
 mcp = MCPServer("docker-mcp-server")
 
@@ -865,6 +868,47 @@ def _wrap_with_host_guard[F: Callable[..., Any]](func: F, name: str, category: T
 TRANSLATES_FAILURES = "docker_mcp_translates_failures"
 
 
+# Failures raised by a library rather than by this code, and the project type whose meaning each
+# one carries. Converting them here rather than at the ~106 call sites that touch the SDK is the
+# whole point: a client only ever sees a message when the exception is a `ToolError`/`ResourceError`,
+# and before this table the daemon's own "No such container: x", a registry's 401, and a CLI timeout
+# all reached the model as `Error executing tool <name>` with the text withheld and a traceback
+# logged at ERROR - the same failure the project-exception translation was written to prevent,
+# left standing for the exceptions this server does not raise itself.
+#
+# Order matters and is load-bearing: `NotFound` subclasses `APIError` subclasses `DockerException`,
+# so the narrower entry has to come first or every missing container reads as a daemon failure.
+#
+# `docker.errors.APIError` is also an `OSError` (via `requests`), so do not add `OSError` here
+# expecting it to mean "a local file or socket problem": it would capture every daemon error too.
+_LIBRARY_FAILURES: tuple[tuple[type[BaseException], type[DockerMcpError]], ...] = (
+    # The caller named something the daemon does not have: an argument they can correct.
+    (docker.errors.NotFound, ToolInputError),
+    # Anything else the daemon or the SDK reports. Its own text is the useful part, so it travels.
+    (docker.errors.DockerException, RemoteFailureError),
+    # A registry or docs endpoint answering 4xx/5xx - `raise_for_status()` on our HTTP calls.
+    (httpx.HTTPStatusError, RemoteFailureError),
+    # A CLI call that outran its bound; the message names the command and the timeout to raise.
+    (subprocess.TimeoutExpired, RemoteFailureError),
+)
+
+_LIBRARY_FAILURE_TYPES: tuple[type[BaseException], ...] = tuple(exc for exc, _ in _LIBRARY_FAILURES)
+
+
+def _as_project_failure(exc: BaseException) -> DockerMcpError:
+    """The project exception a library failure corresponds to, carrying the library's own message.
+
+    Only called for the types in `_LIBRARY_FAILURE_TYPES`, so the fallback is unreachable rather
+    than a default: a type in that tuple but missing from the table would be a table someone had
+    edited by halves, and returning a bare `DockerMcpError` says so in the message rather than
+    silently classifying it as something it is not.
+    """
+    for library_type, project_type in _LIBRARY_FAILURES:
+        if isinstance(exc, library_type):
+            return project_type(str(exc))
+    return DockerMcpError(f"{type(exc).__name__}: {exc}")
+
+
 def _translate_failures[F: Callable[..., Any]](func: F, error_cls: type[ToolError] | type[ResourceError]) -> F:
     """Re-raise a `DockerMcpError` as the SDK error whose message the client is allowed to see.
 
@@ -873,9 +917,12 @@ def _translate_failures[F: Callable[..., Any]](func: F, error_cls: type[ToolErro
     reading resource <uri>`, the original text is withheld, and a traceback is logged at ERROR. So a
     refusal raised as a bare `RuntimeError` reaches the model saying nothing it can act on.
 
-    Only `DockerMcpError` is translated, never `Exception`: a bug dressed as a deliberate refusal
-    loses its traceback and puts internal text on the wire, which is what the SDK's rule exists to
-    prevent.
+    Two families are translated and nothing else. `DockerMcpError` - what this code raises
+    deliberately. And the named library failures in `_LIBRARY_FAILURES`, because a daemon rejection,
+    a registry status or a CLI timeout is equally deliberate from the caller's side and its text is
+    equally useful; leaving them out meant the majority of real failures still arrived generic.
+    Never `Exception`: a bug dressed as a deliberate refusal loses its traceback and puts internal
+    text on the wire, which is what the SDK's rule exists to prevent.
 
     Preserves the signature (the SDK builds the input schema from it) and the sync/async-ness (the
     SDK decides whether to await by asking `is_async_callable`), the same way `_wrap_with_host_guard`
@@ -889,6 +936,8 @@ def _translate_failures[F: Callable[..., Any]](func: F, error_cls: type[ToolErro
                 return await func(*args, **kwargs)
             except DockerMcpError as exc:
                 raise error_cls(str(exc)) from exc
+            except _LIBRARY_FAILURE_TYPES as exc:
+                raise error_cls(str(_as_project_failure(exc))) from exc
 
         async_wrapper.__signature__ = inspect.signature(func)  # pyright: ignore[reportAttributeAccessIssue]
         # After functools.wraps, which copies the wrapped function's __dict__ and would drop this.
@@ -903,6 +952,8 @@ def _translate_failures[F: Callable[..., Any]](func: F, error_cls: type[ToolErro
             return func(*args, **kwargs)
         except DockerMcpError as exc:
             raise error_cls(str(exc)) from exc
+        except _LIBRARY_FAILURE_TYPES as exc:
+            raise error_cls(str(_as_project_failure(exc))) from exc
 
     wrapper.__signature__ = inspect.signature(func)  # pyright: ignore[reportAttributeAccessIssue]
     setattr(wrapper, TRANSLATES_FAILURES, True)

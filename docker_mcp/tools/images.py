@@ -374,7 +374,7 @@ def image_import(
             and import untagged). Blank is also a ToolInputError, not a shorthand for the default: the
             daemon would substitute `latest` without saying so
         from_file - Path to a rootfs tarball on the server host (`~` expanded), read by the server's
-            user; FileNotFoundError if it is not an existing regular file; exactly one source
+            user; refused if it is not an existing regular file; exactly one source
         data - Rootfs tarball contents in band (base64-encoded by MCP, so prefer `from_file` for
             anything but small archives); exactly one source
         from_url - URL the daemon fetches the tarball from; exactly one source
@@ -427,7 +427,7 @@ def image_import(
         # parity and keeps `from_url` the only source that leaves the host.
         path = host_read_path(from_file)
         if not path.is_file():
-            raise FileNotFoundError(
+            raise ToolInputError(
                 f"No such rootfs tarball: {path}. Pass `from_url` to have the daemon fetch a URL, "
                 "or `data` to send the archive in band."
             )

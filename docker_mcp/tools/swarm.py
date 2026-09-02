@@ -285,7 +285,7 @@ def swarm_task_list(filters: dict | None = None, host: str | None = None) -> lis
     simpler call. Each task carries its full `Spec`, including the `ContainerSpec` (image, command,
     env), so this returns much more per task than the `service-tasks://{id_or_name}` resource's
     computed rollout summary. Read-only. Requires a swarm manager: any other node raises
-    `docker.errors.APIError`.
+    the daemon's own error.
 
     args:
         filters - Filter dict; keys: id, name, service, node, label, desired-state
@@ -307,7 +307,7 @@ def swarm_task_inspect(id_or_name: str, host: str | None = None) -> dict:
     To reach the container behind a running task, read `Status.ContainerStatus.ContainerID` and pass
     it to `container_inspect` / `container_logs` -- but note the container may be on another node,
     where those tools cannot see it, and `service_logs` aggregates across tasks instead. Read-only.
-    Requires a swarm manager; raises `docker.errors.APIError` if the task does not exist, if a
+    Requires a swarm manager; reports the daemon's own error if the task does not exist, if a
     prefix matches more than one task, or if this node is not a manager.
 
     args:

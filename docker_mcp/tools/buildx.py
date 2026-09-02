@@ -14,7 +14,7 @@
 
 from pathlib import Path
 
-from docker_mcp.exceptions import CapabilityError, ToolInputError
+from docker_mcp.exceptions import ToolInputError
 from docker_mcp.server import tool
 from docker_mcp.tools._cli import (
     CliResult,
@@ -185,14 +185,14 @@ def _refuse_flags_that_resolve_on_the_wrong_host(
             value = _spec_component(spec, key)
             if value is None or (stdout_exempt and value == "-"):
                 continue
-            raise CapabilityError(
+            raise ToolInputError(
                 f"buildx_build cannot honour {flag}={spec!r} against this host: this server has no local "
                 f"buildx plugin, so the build runs on the target host over SSH and {key}={value!r} would "
                 f"resolve on *that* machine - {consequence}, or run the build on a host with a local "
                 f"docker CLI."
             )
     if ssh:
-        raise CapabilityError(
+        raise ToolInputError(
             f"buildx_build cannot honour ssh={ssh!r} against this host: this server has no local buildx plugin, "
             f"so the build runs on the target host over SSH, where `--ssh` reads that host's $SSH_AUTH_SOCK - "
             f"the remote user's agent, not yours (this server does not request agent forwarding). Bake the "

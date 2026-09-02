@@ -38,7 +38,7 @@ from typing import IO, Protocol, cast
 
 import paramiko
 
-from docker_mcp.exceptions import CapabilityError, RemoteFailureError, ToolInputError
+from docker_mcp.exceptions import CapabilityError, DockerMcpError, RemoteFailureError, ToolInputError
 from docker_mcp._hosts import is_ssh_url
 from docker_mcp.tools._utils import assert_host_writable, stream_to_file
 
@@ -1065,7 +1065,8 @@ def exec_remote(
         dialect - the host's detected dialect; a non-POSIX one is refused by `get_dialect`
     returns: RemoteExecResult - exit status plus captured (possibly truncated) stdout/stderr bytes
     raises:
-        RuntimeError - the transport is gone, or the dialect isn't implemented
+        RuntimeError - the transport is gone
+        CapabilityError - the dialect isn't implemented
         subprocess.TimeoutExpired - the command exceeded `timeout`
     """
     _validate_exec_args(argv, timeout, max_output_bytes)
@@ -1565,7 +1566,7 @@ class RemoteStagingSession:
         """
         extracted = local_dest.parent / posixpath.basename(remote_path.rstrip("/"))
         if extracted.exists():
-            raise FileExistsError(
+            raise ToolInputError(
                 f"Cannot fetch {remote_path!r} to {str(local_dest)!r}: the temporary extraction path "
                 f"{str(extracted)!r} already exists on this host, and extracting into it could merge with "
                 f"unrelated content there. Remove it, or choose a different destination."
@@ -1622,14 +1623,14 @@ class RemoteStagingSession:
             remote_path - absolute remote path a command wrote to (typically a `reserve_path` result)
             local_dest - local path to create; refused if it already exists
         raises:
-            FileExistsError - `local_dest` already exists
+            ToolInputError - `local_dest` already exists
             ToolInputError - `local_dest`'s parent is not a directory, or the fetched payload exceeds the
                          staging limits
             RemoteFailureError - the remote path is missing, or packing/removing it remotely failed
         """
         local_dest = Path(local_dest).expanduser()
         if local_dest.exists():
-            raise FileExistsError(
+            raise ToolInputError(
                 f"Refusing to fetch {remote_path!r} to {str(local_dest)!r}: the destination already exists "
                 f"on this host. The remote-exec fallback only creates a new path, matching the state the "
                 f"remote command started from - remove the existing path first, or choose a different one."
@@ -1751,6 +1752,11 @@ _TEARDOWN_ERRORS: tuple[type[BaseException], ...] = (
     paramiko.SSHException,
     subprocess.TimeoutExpired,
     RuntimeError,
+    # get_dialect() raises CapabilityError now, and _remove_stage_root() reaches it from a finally.
+    # Not reachable today - the dialect is validated at session open - but the tuple has to keep
+    # backing the promise above rather than the set of types that happened to be raised when it was
+    # written.
+    DockerMcpError,
 )
 
 

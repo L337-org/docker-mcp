@@ -57,7 +57,7 @@ def test_run_docker_passes_argv_list_and_no_shell():
 
 def test_run_docker_raises_when_binary_missing():
     with patch("docker_mcp.tools._cli.shutil.which", return_value=None):
-        with pytest.raises(FileNotFoundError, match="was not found on PATH"):
+        with pytest.raises(CapabilityError, match="was not found on PATH"):
             run_docker(["version"])
 
 

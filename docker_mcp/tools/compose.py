@@ -830,7 +830,7 @@ def _remote_compose_cp(
     if ctr_src and not ctr_dst:
         local_dest = Path(dest).expanduser()
         if local_dest.exists():
-            raise FileExistsError(
+            raise ToolInputError(
                 f"compose_cp: refusing to fetch {source!r} to {dest!r}: the destination already exists on "
                 f"this host. The remote-exec fallback only creates a new path there, matching the state the "
                 f"remote command starts from - remove the existing path first, or choose a different one."
@@ -897,7 +897,7 @@ def compose_cp(
     compose plugin and an `ssh://` target, runs the real `docker compose cp` on that host instead and
     relays whichever side of the copy is local over the same SSH connection - every parameter above
     behaves the same either way, since the actual copy always runs through the real CLI. The one
-    difference: a container->host copy is refused with `FileExistsError` if the local destination already
+    difference: a container->host copy is refused if the local destination already
     exists, since only this host (not the remote one) knows that. `unix://`/`tcp://`+TLS hosts with no
     local plugin are not covered by this fallback (no shell to run the CLI on) and still raise
     `CapabilityError` - use `container_archive_put` (host to container) or `container_archive_get_to_file`

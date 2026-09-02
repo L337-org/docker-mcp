@@ -755,7 +755,7 @@ def test_compose_cp_remote_refuses_an_existing_local_destination_before_opening_
         patch("docker_mcp.tools.compose.should_remote_exec", return_value=True),
         patch("docker_mcp.tools.compose.remote_cli_session") as session_cm,
     ):
-        with pytest.raises(FileExistsError, match="already exists"):
+        with pytest.raises(ToolInputError, match="already exists"):
             compose_cp("web:/app/log.txt", str(existing), host="prod")
     session_cm.assert_not_called()
 

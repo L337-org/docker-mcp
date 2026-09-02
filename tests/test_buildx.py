@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
-from docker_mcp.exceptions import CapabilityError, RemoteFailureError, ToolInputError
+from docker_mcp.exceptions import RemoteFailureError, ToolInputError
 from docker_mcp.tools._cli import CliResult
 from docker_mcp.tools.buildx import (
     buildx_bake,
@@ -734,7 +734,7 @@ def test_buildx_build_refuses_flags_that_would_resolve_on_the_remote_host(tmp_pa
     with contextlib.ExitStack() as stack:
         for patcher in _remote_build(session):
             stack.enter_context(patcher)
-        with pytest.raises(CapabilityError, match=needle):
+        with pytest.raises(ToolInputError, match=needle):
             buildx_build(str(context), host="prod", **kwargs)
     assert session.calls == []
     assert session.contexts == []
@@ -793,7 +793,7 @@ def test_buildx_build_refusals_name_the_consequence_for_that_flag(tmp_path):
         with contextlib.ExitStack() as stack:
             for patcher in _remote_build(session):
                 stack.enter_context(patcher)
-            with pytest.raises(CapabilityError) as excinfo:
+            with pytest.raises(ToolInputError) as excinfo:
                 buildx_build(str(context), host="prod", **kwargs)
         messages[flag] = str(excinfo.value)
     assert "deleted when the call returns" in messages["output"]
