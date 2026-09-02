@@ -230,7 +230,7 @@ def run_docker(
 # out of `has_plugin`. Assigning the tuple to a module-level constant also dodges
 # the PEP 758 parenthesis-free `except` form that older parsers (and PR review bots)
 # flag as a syntax error.
-# CapabilityError is here because `require_binary` raises it for a missing `docker`: this
+# CapabilityError is here because `_resolve()` above raises it when the binary is missing: this
 # probe asks *whether* a plugin is there and must answer False, not propagate.
 _PLUGIN_PROBE_ERRORS: tuple[type[BaseException], ...] = (
     FileNotFoundError,

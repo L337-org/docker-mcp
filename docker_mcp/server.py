@@ -897,8 +897,10 @@ _LIBRARY_FAILURES: tuple[tuple[type[BaseException], type[DockerMcpError]], ...] 
     # `HTTPStatusError`, because both mean the same thing to a caller and naming the narrower one
     # left every transport failure arriving generic.
     (httpx.HTTPError, RemoteFailureError),
-    # A CLI call that outran its bound, or exited non-zero under `check=True`. The base for the same
-    # reason: the leaf is the one you happen to think of while reading the code that raises it.
+    # A CLI call that outran its bound. `run_docker` checks `returncode` itself rather than passing
+    # `check=True`, so `TimeoutExpired` is the only member reached today - the base is named anyway,
+    # for the same reason as above: the leaf is the one you happen to think of while reading the
+    # code that raises it.
     (subprocess.SubprocessError, RemoteFailureError),
 )
 
