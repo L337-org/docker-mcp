@@ -266,7 +266,7 @@ def has_plugin(name: str) -> bool:
 
 def require_plugin(name: str) -> None:
     """
-    Raise RuntimeError with an actionable message if the named CLI plugin is unavailable.
+    Raise CapabilityError with an actionable message if the named CLI plugin is unavailable.
 
     Every caller reaches this only after `should_remote_exec` has already returned False for the
     target host, which means that host is not reached over ssh:// (an ssh:// host with no local
@@ -356,8 +356,8 @@ def remote_exec_cli(
         extra_env - must be None/empty: the child's environment is the remote login shell's
     returns: CliResult - exit status, decoded stdout/stderr, and whether the byte cap truncated them
     raises:
-        ValueError - `stdin` or `extra_env` was supplied
-        RuntimeError - `host` is not an ssh:// host, the connection failed, or the remote is not POSIX
+        ToolInputError - `stdin` or `extra_env` was supplied
+        CapabilityError - `host` is not an ssh:// host, the connection failed, or the remote is not POSIX
         subprocess.TimeoutExpired - the command exceeded `timeout`
     """
     _reject_unforwardable(stdin, extra_env)
@@ -416,9 +416,9 @@ def remote_stage_and_exec(
         extra_env - must be None/empty: the child's environment is the remote login shell's
     returns: CliResult - exit status, decoded stdout/stderr, and whether the byte cap truncated them
     raises:
-        ValueError - `cwd` is not a directory (when `stage_cwd`), the payload exceeds the staging
+        ToolInputError - `cwd` is not a directory (when `stage_cwd`), the payload exceeds the staging
                      limits, or `stdin`/`extra_env` was supplied
-        RuntimeError - `host` is not an ssh:// host, the connection failed, the remote is not POSIX, or
+        CapabilityError - `host` is not an ssh:// host, the connection failed, the remote is not POSIX, or
                        staging failed (including an SFTP subsystem on a different filesystem)
         subprocess.TimeoutExpired - the command exceeded `timeout`
     """
@@ -497,7 +497,7 @@ def remote_cli_session(host: str | None, *, timeout: float) -> Iterator[RemoteSt
         host - configured host label, or None for the default host; must resolve to an ssh:// URL
         timeout - bound on the SSH handshake and dialect probe
     returns: Iterator[RemoteStagingSession] - the session, valid inside the `with` block only
-    raises: RuntimeError - not an ssh:// host, connection failure, non-POSIX remote, or staging setup
+    raises: CapabilityError - not an ssh:// host, connection failure, non-POSIX remote, or staging setup
     """
     with remote_staging_session(_ssh_url_for(host, []), timeout=timeout) as session:
         yield session
@@ -551,7 +551,7 @@ def _ssh_url_for(host: str | None, args: list[str]) -> str:
         host - configured host label, or None for the default host
         args - the docker argv, for the error message only
     returns: str - the host's resolved ssh:// URL
-    raises: RuntimeError - the host is not reached over ssh://
+    raises: CapabilityError - the host is not reached over ssh://
     """
     resolved = _resolve_host(host)
     url = resolved.url
@@ -757,7 +757,7 @@ def filter_args(filters: dict | None) -> list[str]:
 
 def raise_on_cli_failure(result: CliResult, command: str) -> None:
     """
-    Raise RuntimeError if a docker subprocess exited non-zero.
+    Raise RemoteFailureError if a docker subprocess exited non-zero.
 
     args:
         result: the CliResult from run_docker.

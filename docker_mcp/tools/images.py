@@ -356,7 +356,7 @@ def image_import(
     came from somewhere else: a `container_export` archive, a distro base tarball, a VM image dump.
     The result has an empty config - no `CMD`/`ENTRYPOINT`/`ENV` - unless you supply `changes`, so an
     imported image is usually not runnable until you set at least a command. Pass exactly one source
-    (`from_file`, `data`, `from_url` or `from_image`); ValueError otherwise. `from_url` and
+    (`from_file`, `data`, `from_url` or `from_image`); ToolInputError otherwise. `from_url` and
     `from_image` are fetched by the *daemon*, `from_file`/`data` are read here and uploaded; a
     `from_file` path that is not a readable file raises rather than being retried as a URL. Unlike
     the other image-creating tools this stamps no provenance labels: the Engine's import call accepts
@@ -366,12 +366,12 @@ def image_import(
         repository - Repository name to give the new image, e.g. "myorg/rootfs"; may include a tag
             (`myorg/rootfs:v1`), and defaults to `:latest` when it does not. Omit to import untagged,
             addressable only by the id in the returned progress (omit it entirely -- a blank string
-            is a ValueError, not a shorthand for untagged). A digest reference is refused by the
+            is a ToolInputError, not a shorthand for untagged). A digest reference is refused by the
             daemon. Required if `tag` is given
         tag - Tag to apply, e.g. "v1". **Overrides** a tag already in `repository` rather than being
             ignored, so passing `repository="myorg/rootfs:v1"` with `tag="v2"` yields `:v2`. Requires
-            `repository` (ValueError without it - the daemon would otherwise silently drop the tag
-            and import untagged). Blank is also a ValueError, not a shorthand for the default: the
+            `repository` (ToolInputError without it - the daemon would otherwise silently drop the tag
+            and import untagged). Blank is also a ToolInputError, not a shorthand for the default: the
             daemon would substitute `latest` without saying so
         from_file - Path to a rootfs tarball on the server host (`~` expanded), read by the server's
             user; FileNotFoundError if it is not an existing regular file; exactly one source
@@ -464,7 +464,7 @@ def image_save(
         dest_path - Destination path on the server host; omit to return the bytes in band
         named - Whether to retain repository/tag names in the saved archive
         overwrite - Replace dest_path if it already exists (default False)
-        max_bytes - In-band mode: abort with ValueError beyond this many bytes (default 32 MiB)
+        max_bytes - In-band mode: abort with ToolInputError beyond this many bytes (default 32 MiB)
     returns: bytes | dict - the tarball bytes (in band), or {"path": <resolved path>, "bytes_written": int}
     """
     image = _get_client(host).images.get(id_or_name)

@@ -396,7 +396,7 @@ def _origin_of(url: str) -> tuple[str, str, int | None]:
     the integer 0, so `port or default` would quietly rewrite `https://host:0/` into the scheme
     default and let it compare equal to an origin it is not.
 
-    Raises ValueError on an unparseable or out-of-range port (`:99999`, `:abc`). `urlparse` itself
+    Raises ToolInputError on an unparseable or out-of-range port (`:99999`, `:abc`). `urlparse` itself
     returns cleanly for those - it leaves the port in `netloc` - and the error comes from reading the
     `ParseResult.port` property here. Callers handling untrusted input must convert it: see
     `_validate_hub_next`.
@@ -418,7 +418,7 @@ def _validate_hub_next(next_url: object) -> str:
     already refuses to leave its registry (`registry_tags` keeps only the path from a `Link` header);
     this brings Hub into line rather than leaving the two pagination paths inconsistent.
 
-    Raises RuntimeError on a foreign origin or on a non-string value, matching `hub_tags`'
+    Raises ToolRefusalError on a foreign origin or on a non-string value, matching `hub_tags`'
     parsed-query error style: the body is untrusted, so a malformed `next` must produce the same
     actionable error as a malicious one rather than an AttributeError out of urlparse.
     """
@@ -710,7 +710,7 @@ def _select_platform_digest(index: dict, platform: str) -> tuple[str, str]:
     convention rather than forcing callers to know the variant. The returned platform string always
     reflects the entry *actually* selected (including its variant), so the caller is never misled
     about which variant they got; the first matching entry wins when several share an os/arch. Skips
-    attestation manifests (no real os/arch). Raises ValueError if nothing matches, listing what the
+    attestation manifests (no real os/arch). Raises ToolInputError if nothing matches, listing what the
     index does offer so the caller can retry.
 
     returns: (digest, actual_platform) of the selected sub-manifest

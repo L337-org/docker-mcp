@@ -151,7 +151,7 @@ def _refuse_flags_that_resolve_on_the_wrong_host(
         cache_to - `--cache-to` specs
         cache_from - `--cache-from` specs
         ssh - `--ssh` specs
-    raises: RuntimeError - any of the above is present
+    raises: CapabilityError - any of the above is present
     """
     checks = (
         (
@@ -222,7 +222,7 @@ def _local_dockerfile(file: str | None, *, context_is_local: bool) -> Path | Non
         file - the `file` parameter as given, or None
         context_is_local - whether `context` names an existing local directory
     returns: Path | None - the local path buildx would read, else None
-    raises: ValueError - a relative `file` cannot be resolved (this server's cwd is unavailable)
+    raises: ToolInputError - a relative `file` cannot be resolved (this server's cwd is unavailable)
     """
     if file is None:
         return None
@@ -333,7 +333,7 @@ def buildx_build(
     `--progress=plain` so output is captured rather than redrawn on a TTY.
     With no local buildx plugin and an `ssh://` target, the build runs on that host: a local `context`
     directory is copied there honouring `.dockerignore`, as are `file`, `build_contexts` and `secret`
-    paths. Raises RuntimeError in that case for `output`/`cache_to` with a filesystem `dest=`,
+    paths. Raises CapabilityError in that case for `output`/`cache_to` with a filesystem `dest=`,
     `cache_from` with a local `src=`, or any `ssh=` - each would resolve on the remote machine, losing
     the output or silently changing the build.
 
@@ -485,7 +485,7 @@ def _run_buildx_build_remotely(
         timeout - seconds allowed for the build
         host - configured host label, or None for the default host
     returns: CliResult - the build's outcome, in `run_docker`'s shape
-    raises: RuntimeError - a refused flag (see `_refuse_flags_that_resolve_on_the_wrong_host`)
+    raises: RemoteFailureError - a refused flag (see `_refuse_flags_that_resolve_on_the_wrong_host`)
     """
     # Before connecting: a refusal should not cost an SSH handshake and a context upload.
     _refuse_flags_that_resolve_on_the_wrong_host(output=output, cache_to=cache_to, cache_from=cache_from, ssh=ssh)
@@ -694,7 +694,7 @@ def buildx_list(host: str | None = None) -> list:
 
     Machine-parsed view of every builder; use `buildx_inspect` for one builder's human-readable
     detail and `buildx_use` to switch the default.
-    Raises RuntimeError if the CLI call fails.
+    Raises RemoteFailureError if the CLI call fails.
 
     returns: list - One dict per builder (parsed from `--format '{{json .}}'`).
                     If the captured stdout was truncated by MAX_CLI_OUTPUT_BYTES the
@@ -734,7 +734,7 @@ def buildx_history_inspect(ref: str = "", builder: str | None = None, host: str 
     Returns the full record for one build - duration, materials, attestations, error (if any) -
     for debugging a failed or slow build found via `buildx_history_list`. Requires buildx >=
     v0.13.
-    Raises RuntimeError if the CLI call fails.
+    Raises RemoteFailureError if the CLI call fails.
 
     args:
         ref - Build record ref. Pass the `ref` field from `buildx_history_list` directly - it
@@ -801,7 +801,7 @@ def buildx_du(builder: str | None = None, host: str | None = None) -> list:
     For an exhaustive accounting on a busy builder, run `docker buildx du --format '{{json .}}'`
     on the host directly. Reclaim the cache with `buildx_prune` (`system_df` covers daemon-side
     disk, not builder cache).
-    Raises RuntimeError if the CLI call fails.
+    Raises RemoteFailureError if the CLI call fails.
 
     args: builder - Override the active builder
     returns: list - One dict per cache record (parsed from `--format '{{json .}}'`)

@@ -310,7 +310,9 @@ def as_byte_chunks(chunks: Iterable | bytes | bytearray | str) -> Iterable[bytes
 
 def join_bounded(chunks: Iterable[bytes], max_bytes: int, what: str) -> bytes:
     """
-    Concatenate bytes chunks, aborting with ValueError if the running total would exceed max_bytes.
+    Concatenate bytes chunks, aborting with ToolInputError if the running total would exceed
+    max_bytes - the caller can raise the cap, so the message says so. A negative `max_bytes`
+    is a caller bug rather than an answer to give a model, and stays a `ValueError`.
 
     Wraps the `b"".join(stream)` pattern used by tools that buffer a whole daemon-side
     payload (container export, image save, container archive) so a pathological input can't

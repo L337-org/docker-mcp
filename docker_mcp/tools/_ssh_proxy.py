@@ -203,7 +203,7 @@ def connect_ssh_client(docker_host: str, *, timeout: float | None = None) -> par
     back from IPv6 to IPv4 on any connect failure rather than paramiko's own narrower
     ECONNREFUSED/EHOSTUNREACH-only retry (see that function's docstring).
 
-    A connection failure (auth, unknown host key, unreachable host) is re-raised as a `RuntimeError`
+    A connection failure (auth, unknown host key, unreachable host) is re-raised as a `RemoteFailureError`
     with actionable guidance rather than a bare paramiko/socket exception.
 
     args:
@@ -814,7 +814,7 @@ def get_dialect(kind: RemoteDialectKind) -> RemoteDialect:
 
     args: kind - the dialect a host was detected as
     returns: RemoteDialect - the implementation to wrap commands with
-    raises: RuntimeError - for a detected-but-unimplemented dialect (today: WINDOWS)
+    raises: CapabilityError - for a detected-but-unimplemented dialect (today: WINDOWS)
     """
     dialect = _DIALECTS.get(kind)
     if dialect is None:
@@ -1118,7 +1118,7 @@ def run_remote_exec(
         cwd - remote directory to run in
     returns: RemoteExecResult - exit status plus captured (possibly truncated) stdout/stderr bytes
     raises:
-        RuntimeError - connection failure (with guidance), or a non-POSIX remote
+        CapabilityError - connection failure (with guidance), or a non-POSIX remote
         subprocess.TimeoutExpired - the command exceeded `timeout`
     """
     # Validate before connecting: opening (and authenticating) an SSH session only to reject the
@@ -1177,7 +1177,7 @@ def _enforce_stage_limits(root: Path, entries: Iterator[str] | Sequence[str], *,
         root - the directory the entries are relative to
         entries - relative paths to account for; a generator is consumed lazily, which is the point
         what - noun for the message, e.g. "directory" or "build context"
-    raises: ValueError - the payload exceeds `_MAX_STAGE_BYTES` or `_MAX_STAGE_FILES`
+    raises: ToolInputError - the payload exceeds `_MAX_STAGE_BYTES` or `_MAX_STAGE_FILES`
     """
     total = 0
     count = 0
@@ -1259,7 +1259,7 @@ def _load_context_tar_helpers():
     detectable here - only absence is.
 
     returns: tuple - (tar, exclude_paths) from docker.utils
-    raises: RuntimeError - the installed docker-py does not provide them
+    raises: CapabilityError - the installed docker-py does not provide them
     """
     try:
         from docker.utils import exclude_paths, tar
@@ -1365,7 +1365,7 @@ class RemoteStagingSession:
             timeout - seconds allowed
             what - infinitive phrase for the error message, e.g. "unpack the staged archive"
         returns: RemoteExecResult - the successful result
-        raises: RuntimeError - the command exited non-zero
+        raises: RemoteFailureError - the command exited non-zero
         """
         result = self.exec(argv, timeout=timeout, max_output_bytes=_STAGING_OUTPUT_CAP_BYTES)
         if result.returncode != 0:
@@ -1389,7 +1389,7 @@ class RemoteStagingSession:
             archive - a rewound tar
             destination - remote directory to unpack into
             archive_path - remote path to upload the tar to
-        raises: RuntimeError - the upload or the extraction failed
+        raises: RemoteFailureError - the upload or the extraction failed
         """
         self._sftp.putfo(archive, archive_path, confirm=True)
         self._control(
@@ -1417,8 +1417,8 @@ class RemoteStagingSession:
         args: local_dir - the directory to copy; `~` is expanded
         returns: str - the remote directory holding the copied contents
         raises:
-            ValueError - `local_dir` is not a directory, or exceeds the staging limits
-            RuntimeError - the upload or remote extraction failed
+            ToolInputError - `local_dir` is not a directory, or exceeds the staging limits
+            RemoteFailureError - the upload or remote extraction failed
         """
         source = Path(local_dir).expanduser()
         if not source.is_dir():
@@ -1440,8 +1440,8 @@ class RemoteStagingSession:
         args: local_file - the file to copy; `~` is expanded
         returns: str - the remote path of the copied file, keeping its basename
         raises:
-            ValueError - `local_file` is not a file, or is larger than `_MAX_STAGE_BYTES`
-            RuntimeError - the upload failed
+            ToolInputError - `local_file` is not a file, or is larger than `_MAX_STAGE_BYTES`
+            RemoteFailureError - the upload failed
         """
         source = Path(local_file).expanduser()
         if not source.is_file():
@@ -1476,8 +1476,8 @@ class RemoteStagingSession:
             dockerfile - path to the Dockerfile relative to the context, or None for the default
         returns: str - the remote directory holding the unpacked context
         raises:
-            ValueError - `context_dir` is not a directory, or the included set exceeds the limits
-            RuntimeError - the upload or remote extraction failed
+            ToolInputError - `context_dir` is not a directory, or the included set exceeds the limits
+            RemoteFailureError - the upload or remote extraction failed
         """
         source = Path(context_dir).expanduser()
         if not source.is_dir():
@@ -1622,9 +1622,9 @@ class RemoteStagingSession:
             local_dest - local path to create; refused if it already exists
         raises:
             FileExistsError - `local_dest` already exists
-            ValueError - `local_dest`'s parent is not a directory, or the fetched payload exceeds the
+            ToolInputError - `local_dest`'s parent is not a directory, or the fetched payload exceeds the
                          staging limits
-            RuntimeError - the remote path is missing, or packing/removing it remotely failed
+            RemoteFailureError - the remote path is missing, or packing/removing it remotely failed
         """
         local_dest = Path(local_dest).expanduser()
         if local_dest.exists():
@@ -1687,7 +1687,7 @@ def _make_stage_root(ssh_client: paramiko.SSHClient, dialect_kind: RemoteDialect
         dialect_kind - the host's detected dialect
         docker_host - the host's URL, for the error message
     returns: str - the absolute remote path of the new directory
-    raises: RuntimeError - the remote could not create a temp directory, or named it unusably
+    raises: RemoteFailureError - the remote could not create a temp directory, or named it unusably
     """
     argv = get_dialect(dialect_kind).temp_dir_argv()
     result = exec_remote(
@@ -1726,7 +1726,7 @@ def _verify_shared_filesystem(sftp: paramiko.SFTPClient, root: str, docker_host:
         sftp - the session's SFTP client
         root - the directory created over the exec channel
         docker_host - the host's URL, for the error message
-    raises: RuntimeError - SFTP cannot see `root`
+    raises: CapabilityError - SFTP cannot see `root`
     """
     try:
         sftp.stat(root)
@@ -1815,7 +1815,7 @@ def remote_staging_session(docker_host: str, *, timeout: float | None = None) ->
                   bookkeeping commands use their own bounds, and each `exec` takes its own timeout
     returns: Iterator[RemoteStagingSession] - the session, valid inside the `with` block only
     raises:
-        RuntimeError - connection failure, a non-POSIX remote, no writable remote temp dir, or an
+        CapabilityError - connection failure, a non-POSIX remote, no writable remote temp dir, or an
                        SFTP subsystem that cannot see the exec channel's filesystem
     """
     ssh_client = connect_ssh_client(docker_host, timeout=timeout)
