@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 # Alias-aware env lookups, re-exported so tool modules can keep importing them from _utils.
+from docker_mcp.exceptions import ToolInputError
 from docker_mcp._env import env_flag, read_env  # noqa: F401
 
 # Default cap (32 MiB) for tools that buffer a daemon-side byte stream *in band* and return it
@@ -166,7 +167,7 @@ def assert_host_writable(dest_path: str) -> None:
     if not in_container():
         return
     if not _host_backed(Path(dest_path).expanduser()):
-        raise RuntimeError(_unmapped_path_message(Path(dest_path).expanduser(), for_write=True))
+        raise ToolInputError(_unmapped_path_message(Path(dest_path).expanduser(), for_write=True))
 
 
 def host_read_path(file_path: str) -> Path:
@@ -180,7 +181,7 @@ def host_read_path(file_path: str) -> Path:
     """
     path = Path(file_path).expanduser()
     if in_container() and not path.exists() and not _host_backed(path):
-        raise RuntimeError(_unmapped_path_message(path, for_write=False))
+        raise ToolInputError(_unmapped_path_message(path, for_write=False))
     return path
 
 
@@ -309,7 +310,9 @@ def as_byte_chunks(chunks: Iterable | bytes | bytearray | str) -> Iterable[bytes
 
 def join_bounded(chunks: Iterable[bytes], max_bytes: int, what: str) -> bytes:
     """
-    Concatenate bytes chunks, aborting with ValueError if the running total would exceed max_bytes.
+    Concatenate bytes chunks, aborting with ToolInputError if the running total would exceed
+    max_bytes - the caller can raise the cap, so the message says so. A negative `max_bytes`
+    is a caller bug rather than an answer to give a model, and stays a `ValueError`.
 
     Wraps the `b"".join(stream)` pattern used by tools that buffer a whole daemon-side
     payload (container export, image save, container archive) so a pathological input can't
@@ -323,7 +326,7 @@ def join_bounded(chunks: Iterable[bytes], max_bytes: int, what: str) -> bytes:
     try:
         for chunk in chunks:
             if len(collected) + len(chunk) > max_bytes:
-                raise ValueError(
+                raise ToolInputError(
                     f"{what} exceeded max_bytes={max_bytes}; aborted to prevent memory exhaustion. "
                     f"Raise max_bytes if a larger payload is intended."
                 )

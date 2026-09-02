@@ -116,7 +116,7 @@ def test_service_logs_aborts_when_exceeding_max_bytes():
     service.logs.return_value = iter([b"x" * 6, b"y" * 6])
     with _patch() as mock_client:
         mock_client.return_value.services.get.return_value = service
-        with pytest.raises(ValueError, match="exceeded max_bytes"):
+        with pytest.raises(ToolInputError, match="exceeded max_bytes"):
             service_logs("svc1", max_bytes=10)
 
 

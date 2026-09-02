@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
+from docker_mcp.exceptions import CapabilityError, RemoteFailureError, ToolInputError
 from docker_mcp.tools._cli import CliResult
 from docker_mcp.tools.buildx import (
     buildx_bake,
@@ -135,7 +136,7 @@ def test_buildx_build_returns_returncode_dict():
 
 
 def test_buildx_build_rejects_push_and_load_together():
-    with pytest.raises(ValueError, match="`push` and `load` are mutually exclusive"):
+    with pytest.raises(ToolInputError, match="`push` and `load` are mutually exclusive"):
         buildx_build(context=".", push=True, load=True)
 
 
@@ -192,7 +193,7 @@ def test_buildx_imagetools_inspect_raw_and_format():
 
 
 def test_buildx_imagetools_inspect_rejects_raw_and_format_together():
-    with pytest.raises(ValueError, match="`raw` and `format` are mutually exclusive"):
+    with pytest.raises(ToolInputError, match="`raw` and `format` are mutually exclusive"):
         buildx_imagetools_inspect("alpine:3.19", raw=True, format="{{json .}}")
 
 
@@ -227,7 +228,7 @@ def test_buildx_imagetools_create_append_dry_run_annotations():
 
 
 def test_buildx_imagetools_create_requires_sources_or_files():
-    with pytest.raises(ValueError, match="at least one source ref or file"):
+    with pytest.raises(ToolInputError, match="at least one source ref or file"):
         buildx_imagetools_create(target="org/app:v1", sources=[])
 
 
@@ -251,7 +252,7 @@ def test_buildx_ls_parses_ndjson():
 
 def test_buildx_ls_raises_on_failure():
     with patch("docker_mcp.tools.buildx.run_docker", return_value=_fail("daemon error")):
-        with pytest.raises(RuntimeError, match="daemon error"):
+        with pytest.raises(RemoteFailureError, match="daemon error"):
             buildx_list()
 
 
@@ -342,12 +343,12 @@ def test_buildx_use_with_default_flags():
 
 
 def test_buildx_rm_requires_target():
-    with pytest.raises(ValueError, match="`name` or `all_inactive=True`"):
+    with pytest.raises(ToolInputError, match="`name` or `all_inactive=True`"):
         buildx_remove()
 
 
 def test_buildx_rm_rejects_name_and_all_inactive_together():
-    with pytest.raises(ValueError, match="mutually exclusive"):
+    with pytest.raises(ToolInputError, match="mutually exclusive"):
         buildx_remove(name="builder-x", all_inactive=True)
 
 
@@ -372,17 +373,17 @@ def test_buildx_rm_named_with_force():
 
 
 def test_buildx_build_rejects_flag_like_context():
-    with pytest.raises(ValueError, match="parses as a flag"):
+    with pytest.raises(ToolInputError, match="parses as a flag"):
         buildx_build(context="--output=type=local,dest=/etc")
 
 
 def test_buildx_imagetools_inspect_rejects_flag_like_image():
-    with pytest.raises(ValueError, match="parses as a flag"):
+    with pytest.raises(ToolInputError, match="parses as a flag"):
         buildx_imagetools_inspect(image="--raw")
 
 
 def test_buildx_imagetools_create_rejects_flag_like_source():
-    with pytest.raises(ValueError, match="parses as a flag"):
+    with pytest.raises(ToolInputError, match="parses as a flag"):
         buildx_imagetools_create(target="me/img:latest", sources=["ok/img:amd64", "--bad"])
 
 
@@ -408,7 +409,7 @@ def test_buildx_history_ls_passes_builder():
 
 def test_buildx_history_ls_raises_on_failure():
     with patch("docker_mcp.tools.buildx.run_docker", return_value=_fail('unknown command "history"')):
-        with pytest.raises(RuntimeError, match="buildx history ls"):
+        with pytest.raises(RemoteFailureError, match="buildx history ls"):
             buildx_history_list()
 
 
@@ -551,7 +552,7 @@ def test_buildx_bake_target_named_like_a_flag_is_refused():
     Targets are appended verbatim to the argv, so an unvalidated one would be parsed as a flag — and it
     is also why `path_values` is passed explicitly rather than recovered by scanning for `-f`.
     """
-    with pytest.raises(ValueError, match="parses as a flag"):
+    with pytest.raises(ToolInputError, match="parses as a flag"):
         buildx_bake(targets=["-f"], files=["docker-bake.hcl"], host="prod")
 
 
@@ -733,7 +734,7 @@ def test_buildx_build_refuses_flags_that_would_resolve_on_the_remote_host(tmp_pa
     with contextlib.ExitStack() as stack:
         for patcher in _remote_build(session):
             stack.enter_context(patcher)
-        with pytest.raises(RuntimeError, match=needle):
+        with pytest.raises(CapabilityError, match=needle):
             buildx_build(str(context), host="prod", **kwargs)
     assert session.calls == []
     assert session.contexts == []
@@ -792,7 +793,7 @@ def test_buildx_build_refusals_name_the_consequence_for_that_flag(tmp_path):
         with contextlib.ExitStack() as stack:
             for patcher in _remote_build(session):
                 stack.enter_context(patcher)
-            with pytest.raises(RuntimeError) as excinfo:
+            with pytest.raises(CapabilityError) as excinfo:
                 buildx_build(str(context), host="prod", **kwargs)
         messages[flag] = str(excinfo.value)
     assert "deleted when the call returns" in messages["output"]

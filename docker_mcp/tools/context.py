@@ -26,7 +26,7 @@ def context_list() -> list:
     daemons. This server uses whatever DOCKER_HOST / current-context resolved to at startup, so
     changing contexts only affects future subprocess-based tools, not the docker-py SDK client.
     Use `context_inspect` for one context's full config and `context_use` to switch.
-    Raises RuntimeError if the CLI call fails.
+    Raises RemoteFailureError if the CLI call fails.
 
     returns: list - One dict per context with at least name, description, dockerEndpoint, and current
     """
@@ -41,7 +41,7 @@ def context_inspect(name: str) -> dict:
     Return the full configuration for a single Docker context.
 
     Full endpoint/TLS detail for one context; `context_list` gives the one-line summary of all.
-    Raises RuntimeError if the CLI call fails.
+    Raises RemoteFailureError if the CLI call fails.
 
     args: name - Context name (use the `Name` field from `context_list`)
     returns: dict - The parsed `docker context inspect` entry (keys include "Name" and
@@ -74,7 +74,7 @@ def context_create(
     Registers a named endpoint for the CLI; switch with `context_use`, enumerate with
     `context_list`. It does not retarget this server's docker-py client (pinned at startup).
     Does not raise on a non-zero CLI exit - inspect `returncode`/`stderr` in the result. It does
-    raise ValueError before running anything if `docker_host` or a TLS path contains a comma, which
+    raise ToolInputError before running anything if `docker_host` or a TLS path contains a comma, which
     would inject extra keys (including `skip-tls-verify`) into the endpoint spec.
 
     args:

@@ -629,7 +629,7 @@ def compose_images(
     Answers "what image and tag does each service container actually run?" - the containers must
     exist (`compose_up`/`compose_create` first). Use `compose_ps` for container state and
     `image_list` for daemon-wide images.
-    Raises RuntimeError if the CLI call fails.
+    Raises RemoteFailureError if the CLI call fails.
 
     args:
         project_dir - Dir with the compose file (default: server cwd; copied to the target host if no local plugin)
@@ -671,7 +671,7 @@ def compose_port(
     The compose equivalent of `docker port`: which host address/port a service's private port is
     published on. `published` is None when the port isn't published. For non-compose containers
     read `container_inspect`'s NetworkSettings.Ports instead.
-    Raises RuntimeError if the CLI call fails.
+    Raises RemoteFailureError if the CLI call fails.
 
     args:
         service - Service name from the compose file
@@ -900,7 +900,7 @@ def compose_cp(
     difference: a container->host copy is refused with `FileExistsError` if the local destination already
     exists, since only this host (not the remote one) knows that. `unix://`/`tcp://`+TLS hosts with no
     local plugin are not covered by this fallback (no shell to run the CLI on) and still raise
-    `RuntimeError` - use `container_archive_put` (host to container) or `container_archive_get_to_file`
+    `CapabilityError` - use `container_archive_put` (host to container) or `container_archive_get_to_file`
     (container to host) there instead; both talk to the daemon directly and need no local CLI
     (`compose_ps` gives you the container name).
 
@@ -1039,7 +1039,7 @@ def compose_list(all: bool = False, host: str | None = None) -> list:
 
     Project-level view (one entry per project); `compose_ps` lists the containers of a single
     project.
-    Raises RuntimeError if the CLI call fails.
+    Raises RemoteFailureError if the CLI call fails.
 
     args: all - Include stopped projects
     returns: list - One dict per project (parsed from `--format json`)

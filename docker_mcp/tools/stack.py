@@ -163,7 +163,7 @@ def stack_list(host: str | None = None) -> list:
 
     Requires the target daemon to be a swarm manager. `compose_list` is the non-swarm equivalent;
     drill into one stack with `stack_services`.
-    Raises RuntimeError if the CLI call fails.
+    Raises RemoteFailureError if the CLI call fails.
 
     returns: list - One dict per stack (name, services count, orchestrator)
     """
@@ -179,7 +179,7 @@ def stack_ps(name: str, no_trunc: bool = False, filters: dict | None = None, hos
 
     Task-level view across every service in the stack (`service_ps` covers one service): where
     each task runs and why it failed. Requires a swarm manager.
-    Raises RuntimeError if the CLI call fails.
+    Raises RemoteFailureError if the CLI call fails.
 
     args:
         name - The stack to list tasks for
@@ -204,7 +204,7 @@ def stack_services(name: str, filters: dict | None = None, host: str | None = No
 
     Service-level rollup (replicas ready per service); use `stack_ps` for individual tasks and
     `service_inspect` for one service's full spec. Requires a swarm manager.
-    Raises RuntimeError if the CLI call fails.
+    Raises RemoteFailureError if the CLI call fails.
 
     args:
         name - The stack to list services for

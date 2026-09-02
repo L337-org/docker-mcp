@@ -281,10 +281,10 @@ def test_scout_compare_allows_a_local_path_target_when_running_locally(tmp_path)
 
 
 def test_scout_cves_rejects_flag_like_image():
-    with pytest.raises(ValueError, match="parses as a flag"):
+    with pytest.raises(ToolInputError, match="parses as a flag"):
         scout_cves(image="--output=/etc/passwd")
 
 
 def test_scout_compare_rejects_flag_like_image():
-    with pytest.raises(ValueError, match="parses as a flag"):
+    with pytest.raises(ToolInputError, match="parses as a flag"):
         scout_compare(image="-x", to="alpine:3.19")

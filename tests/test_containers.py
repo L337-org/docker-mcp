@@ -260,7 +260,7 @@ def test_container_logs_snapshot_aborts_when_exceeding_the_cap():
     container.logs.return_value = iter([b"x" * oversized])
     with _patch() as mock_client:
         mock_client.return_value.containers.get.return_value = container
-        with pytest.raises(ValueError, match="exceeded max_bytes"):
+        with pytest.raises(ToolInputError, match="exceeded max_bytes"):
             container_logs("web")
 
 
@@ -282,7 +282,7 @@ def test_container_logs_snapshot_cap_does_not_buffer_past_the_limit():
     container.logs.return_value = endless()
     with _patch() as mock_client:
         mock_client.return_value.containers.get.return_value = container
-        with pytest.raises(ValueError, match="exceeded max_bytes"):
+        with pytest.raises(ToolInputError, match="exceeded max_bytes"):
             container_logs("web")
     # 32 MiB cap, 1 MiB chunks: stops on the chunk that would breach it, not after draining forever.
     assert pulled == (MAX_PAYLOAD_BYTES // len(chunk)) + 1
@@ -319,7 +319,7 @@ def test_read_log_tail_is_capped_for_the_logs_resource():
     container.logs.return_value = iter([b"y" * (MAX_PAYLOAD_BYTES + 1)])
     with _patch() as mock_client:
         mock_client.return_value.containers.get.return_value = container
-        with pytest.raises(ValueError, match="exceeded max_bytes"):
+        with pytest.raises(ToolInputError, match="exceeded max_bytes"):
             _read_log_tail("web")
 
 
@@ -503,7 +503,7 @@ def test_container_export_raises_when_max_bytes_exceeded():
     container.export.return_value = iter([b"x" * 50, b"x" * 60])
     with _patch() as mock_client:
         mock_client.return_value.containers.get.return_value = container
-        with pytest.raises(ValueError, match="exceeded max_bytes=100"):
+        with pytest.raises(ToolInputError, match="exceeded max_bytes=100"):
             container_export("web", max_bytes=100)
 
 
@@ -521,7 +521,7 @@ def test_container_archive_get_raises_when_max_bytes_exceeded():
     container.get_archive.return_value = (iter([b"x" * 50, b"x" * 60]), {"name": "etc"})
     with _patch() as mock_client:
         mock_client.return_value.containers.get.return_value = container
-        with pytest.raises(ValueError, match="exceeded max_bytes=100"):
+        with pytest.raises(ToolInputError, match="exceeded max_bytes=100"):
             container_archive_get("web", "/etc", max_bytes=100)
 
 

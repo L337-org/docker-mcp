@@ -237,7 +237,7 @@ def scout_compare(
     target. Use it after a rebuild to check the new image against the old (`scout_cves` scans a
     single image).
     Does not raise on a non-zero CLI exit (a missing scout plugin still raises) - inspect
-    `raw.stderr`. Raises ValueError if `to` names a local directory/archive while the call has to run
+    `raw.stderr`. Raises ToolInputError if `to` names a local directory/archive while the call has to run
     on a remote `ssh://` host (no local scout plugin): the file is not staged, so it would resolve
     against that host's filesystem instead.
 

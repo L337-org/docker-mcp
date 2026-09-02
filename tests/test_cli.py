@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from docker_mcp.exceptions import CapabilityError, RemoteFailureError, ToolInputError
 import docker_mcp._hosts as _hosts_mod
 import docker_mcp.tools._cli as cli_module
 from docker_mcp._hosts import Host, parse_registry
@@ -339,7 +340,7 @@ def test_clear_plugin_cache_forces_reprobe():
 
 def test_require_plugin_raises_when_missing():
     with patch("docker_mcp.tools._cli.has_plugin", return_value=False):
-        with pytest.raises(RuntimeError, match="'buildx' is not installed"):
+        with pytest.raises(CapabilityError, match="'buildx' is not installed"):
             require_plugin("buildx")
 
 
@@ -347,7 +348,7 @@ def test_require_plugin_message_names_ssh_as_an_alternative_to_installing():
     # compose/buildx/scout all share this helper and all support the remote-exec fallback, so the
     # message should point at it alongside the install guidance rather than naming only one remedy.
     with patch("docker_mcp.tools._cli.has_plugin", return_value=False):
-        with pytest.raises(RuntimeError, match="DOCKER_MCP_SERVER_HOSTS") as excinfo:
+        with pytest.raises(CapabilityError, match="DOCKER_MCP_SERVER_HOSTS") as excinfo:
             require_plugin("scout")
     assert "ssh://" in str(excinfo.value)
 
@@ -372,12 +373,12 @@ def test_safe_positional_allows_normal_values(value):
 
 @pytest.mark.parametrize("value", ["-rf", "--follow", "--output=/etc/passwd", "-"])
 def test_safe_positional_rejects_leading_dash(value):
-    with pytest.raises(ValueError, match="parses as a flag"):
+    with pytest.raises(ToolInputError, match="parses as a flag"):
         safe_positional(value, "service")
 
 
 def test_safe_positional_error_names_the_argument_kind():
-    with pytest.raises(ValueError, match="service="):
+    with pytest.raises(ToolInputError, match="service="):
         safe_positional("--rm", "service")
 
 
@@ -389,14 +390,14 @@ def test_raise_on_cli_failure_silent_on_zero_exit():
 
 
 def test_raise_on_cli_failure_raises_with_command_and_stderr():
-    with pytest.raises(RuntimeError, match=r"`docker buildx ls` failed with exit code 2: boom"):
+    with pytest.raises(RemoteFailureError, match=r"`docker buildx ls` failed with exit code 2: boom"):
         raise_on_cli_failure(CliResult(2, "", "boom", False), "buildx ls")
 
 
 def test_raise_on_cli_failure_falls_back_to_stdout_then_placeholder():
-    with pytest.raises(RuntimeError, match="only-on-stdout"):
+    with pytest.raises(RemoteFailureError, match="only-on-stdout"):
         raise_on_cli_failure(CliResult(1, "only-on-stdout", "", False), "context inspect")
-    with pytest.raises(RuntimeError, match="<no output>"):
+    with pytest.raises(RemoteFailureError, match="<no output>"):
         raise_on_cli_failure(CliResult(1, "", "", False), "context inspect")
 
 
@@ -639,7 +640,7 @@ def test_remote_exec_cli_propagates_timeout_as_timeout_expired(monkeypatch):
 def test_remote_exec_cli_refuses_a_non_ssh_host(monkeypatch):
     _pin_hosts(monkeypatch, "prod=tcp://prod:2376")
     with patch("docker_mcp.tools._cli.run_remote_exec") as remote:
-        with pytest.raises(RuntimeError, match="not reached over ssh://"):
+        with pytest.raises(CapabilityError, match="not reached over ssh://"):
             cli_module.remote_exec_cli("prod", ["scout", "cves", "alpine"])
     remote.assert_not_called()
 
@@ -836,9 +837,9 @@ def test_remote_stage_and_exec_refuses_an_unusable_working_directory(monkeypatch
     a_file.write_text("services: {}\n", encoding="utf-8")
     session = _FakeSession()
     with _stage_patched(session):
-        with pytest.raises(ValueError, match="nothing exists at that path"):
+        with pytest.raises(ToolInputError, match="nothing exists at that path"):
             cli_module.remote_stage_and_exec("prod", ["compose", "up"], cwd=tmp_path / "gone", timeout=60.0)
-        with pytest.raises(ValueError, match="exists but is not a directory"):
+        with pytest.raises(ToolInputError, match="exists but is not a directory"):
             cli_module.remote_stage_and_exec("prod", ["compose", "up"], cwd=a_file, timeout=60.0)
     assert session.trees == []
 
@@ -847,13 +848,15 @@ def test_remote_stage_and_exec_refuses_stdin_extra_env_and_a_non_ssh_host(monkey
     _pin_hosts(monkeypatch, "prod=ssh://ops@prod, local=unix:///local.sock")
     session = _FakeSession()
     with _stage_patched(session):
+        # stdin and extra_env stay ValueError: `_reject_unforwardable` is an internal guard, not an
+        # answer to a caller, and is on DELIBERATE_CRASHES in tests/test_server.py.
         with pytest.raises(ValueError, match="stdin"):
             cli_module.remote_stage_and_exec("prod", ["compose", "up"], cwd=tmp_path, stdin=b"x", timeout=60.0)
         with pytest.raises(ValueError, match="COMPOSE_FILE"):
             cli_module.remote_stage_and_exec(
                 "prod", ["compose", "up"], cwd=tmp_path, extra_env={"COMPOSE_FILE": "x"}, timeout=60.0
             )
-        with pytest.raises(RuntimeError, match="not reached over ssh://"):
+        with pytest.raises(CapabilityError, match="not reached over ssh://"):
             cli_module.remote_stage_and_exec("local", ["compose", "up"], cwd=tmp_path, timeout=60.0)
     assert session.trees == []  # every refusal lands before anything is connected or copied
 
@@ -902,12 +905,12 @@ def test_remote_stage_and_exec_explains_an_unavailable_server_cwd(monkeypatch, t
         cli_module.Path, "cwd", staticmethod(lambda: (_ for _ in ()).throw(FileNotFoundError(2, "No such file")))
     )
     with _stage_patched(session):
-        with pytest.raises(ValueError, match="that is what would be copied over"):
+        with pytest.raises(CapabilityError, match="that is what would be copied over"):
             cli_module.remote_stage_and_exec("prod", ["compose", "ps"], cwd=None, timeout=60.0)
         # The same failure means something different when nothing is being staged as a working
         # directory: there it is only what relative paths resolve against, so the message says so — and
         # the remedy differs, because such a tool may expose no `cwd` for the caller to set.
-        with pytest.raises(ValueError, match="Pass absolute paths instead"):
+        with pytest.raises(CapabilityError, match="Pass absolute paths instead"):
             cli_module.remote_stage_and_exec(
                 "prod",
                 ["buildx", "create", "--config", "rel.toml"],
@@ -955,7 +958,7 @@ def test_remote_stage_and_exec_does_not_expand_tilde_in_cwd_or_path_tokens(monke
     _pin_hosts(monkeypatch, "prod=ssh://ops@prod")
     session = _FakeSession()
     with _stage_patched(session):
-        with pytest.raises(ValueError, match="nothing exists at that path"):
+        with pytest.raises(ToolInputError, match="nothing exists at that path"):
             cli_module.remote_stage_and_exec("prod", ["compose", "up"], cwd="~", timeout=60.0)
     # And a `~` token is passed through untouched rather than resolved to the server user's home.
     project = tmp_path / "project"
