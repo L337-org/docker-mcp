@@ -6,6 +6,7 @@ from typing import Literal
 import httpx
 
 import docker_mcp._hosts as _hosts
+from docker_mcp.exceptions import CapabilityError, ToolInputError, ToolRefusalError
 from docker_mcp.server import is_domain_disabled, mcp, query_catalog, register_resource_domains, tool, tool_catalog
 from docker_mcp.tools._utils import package_version
 from docker_mcp.tools.system import _get_client, host_list
@@ -36,7 +37,7 @@ def _read_capped_docs_response(url: str) -> bytes:
         for chunk in resp.iter_bytes():
             total += len(chunk)
             if total > _MAX_DOCS_RESPONSE_BYTES:
-                raise RuntimeError(
+                raise ToolRefusalError(
                     f"Docs response from {url} exceeded the {_MAX_DOCS_RESPONSE_BYTES}-byte limit; "
                     f"refusing to buffer a response this large."
                 )
@@ -131,7 +132,9 @@ def _section_url(section: str) -> str:
         return f"{DOCKER_DOCS_BASE_URL}/{section}.html"
     if section in EXTERNAL_SECTIONS:
         return EXTERNAL_SECTIONS[section]
-    raise ValueError(f"Unknown documentation section '{section}'. Read docker-docs://contents to list valid sections.")
+    raise ToolInputError(
+        f"Unknown documentation section '{section}'. Read docker-docs://contents to list valid sections."
+    )
 
 
 @mcp.resource("docker-docs://contents", mime_type="application/json")
@@ -212,7 +215,7 @@ _CONTAINERS_DOMAIN = "containers"
 def _require_containers_domain() -> None:
     """Refuse a container resource read when the `containers` domain is disabled via DOCKER_MCP_SERVER_DISABLE."""
     if is_domain_disabled(_CONTAINERS_DOMAIN):
-        raise ValueError(
+        raise CapabilityError(
             "Container observability resources are unavailable because the 'containers' domain is "
             "disabled via DOCKER_MCP_SERVER_DISABLE."
         )
@@ -353,7 +356,7 @@ _SERVICES_DOMAIN = "services"
 def _require_services_domain() -> None:
     """Refuse a service resource read when the `services` domain is disabled via DOCKER_MCP_SERVER_DISABLE."""
     if is_domain_disabled(_SERVICES_DOMAIN):
-        raise ValueError(
+        raise CapabilityError(
             "Service observability resources are unavailable because the 'services' domain is "
             "disabled via DOCKER_MCP_SERVER_DISABLE."
         )
@@ -473,7 +476,7 @@ _NODES_DOMAIN = "nodes"
 def _require_nodes_domain() -> None:
     """Refuse a node resource read when the `nodes` domain is disabled via DOCKER_MCP_SERVER_DISABLE."""
     if is_domain_disabled(_NODES_DOMAIN):
-        raise ValueError(
+        raise CapabilityError(
             "Node observability resources are unavailable because the 'nodes' domain is disabled "
             "via DOCKER_MCP_SERVER_DISABLE."
         )
@@ -538,7 +541,7 @@ def get_docs_section(section: str) -> str:
     returns: str - The HTML (or rendered Markdown) content of the documentation page
     """
     if not _section_enabled(section):
-        raise ValueError(
+        raise CapabilityError(
             f"Documentation section '{section}' is unavailable because its domain is disabled via "
             f"DOCKER_MCP_SERVER_DISABLE. Read docker-docs://contents for the sections this server exposes."
         )

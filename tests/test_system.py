@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from docker.errors import DockerException
 
+from docker_mcp.exceptions import RemoteFailureError, ToolRefusalError
 import docker_mcp._hosts as _hosts_mod
 import docker_mcp.tools.system as system_module
 from docker_mcp._hosts import Host, parse_registry
@@ -167,7 +168,7 @@ def test_events_returns_on_timeout_when_stream_is_quiet():
 def test_get_client_wraps_daemon_unreachable():
     system_module._clients.clear()
     with patch("docker_mcp.tools.system._build_default_client", side_effect=DockerException("connection refused")):
-        with pytest.raises(RuntimeError, match="Cannot reach the Docker daemon"):
+        with pytest.raises(RemoteFailureError, match="Cannot reach the Docker daemon"):
             _get_client()
     system_module._clients.clear()
 
@@ -205,7 +206,7 @@ def test_reconnect_keeps_old_client_when_rebuild_unreachable():
     new_client.version.side_effect = DockerException("connection refused")
     system_module._clients["default"] = old_client
     with patch("docker_mcp.tools.system._build_default_client", return_value=new_client):
-        with pytest.raises(RuntimeError, match="daemon is unreachable"):
+        with pytest.raises(RemoteFailureError, match="daemon is unreachable"):
             system_reconnect()
     # The working client must survive a failed rebuild, and the half-built one is closed.
     assert system_module._clients["default"] is old_client
@@ -257,7 +258,7 @@ def test_guard_not_self_allows_other_container(monkeypatch):
 
 def test_guard_not_self_blocks_own_container(monkeypatch):
     monkeypatch.setattr(system_module, "_self_container_id", "self-full-id")
-    with pytest.raises(RuntimeError, match="own container"):
+    with pytest.raises(ToolRefusalError, match="own container"):
         system_module.guard_not_self(_fake_container("self-full-id", name="docker-mcp"))
 
 
@@ -595,7 +596,7 @@ def test_guard_not_self_enforced_on_the_self_host(monkeypatch):
     _set_multi(monkeypatch)
     monkeypatch.setattr(system_module, "_self_container_id", "self-full-id")
     monkeypatch.setattr(system_module, "_self_host_label", "local")
-    with pytest.raises(RuntimeError, match="own container"):
+    with pytest.raises(ToolRefusalError, match="own container"):
         system_module.guard_not_self(_fake_container("self-full-id", name="mcp"), host="local")
 
 

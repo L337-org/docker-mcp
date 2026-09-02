@@ -2,6 +2,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from docker_mcp.exceptions import ToolInputError
 from docker_mcp.tools.services import (
     _read_service_log_tail,
     _read_service_task_summary,
@@ -154,9 +155,9 @@ def test_service_update_force_redeploys_unchanged():
 
 
 def test_service_update_rejects_ambiguous_arguments():
-    with pytest.raises(ValueError, match="exactly one"):
+    with pytest.raises(ToolInputError, match="exactly one"):
         service_update("svc1")
-    with pytest.raises(ValueError, match="exactly one"):
+    with pytest.raises(ToolInputError, match="exactly one"):
         service_update("svc1", updates={"labels": {}}, force=True)
 
 
@@ -192,7 +193,7 @@ def test_rollback_service_without_previous_spec_raises():
     with _patch() as mock_client:
         api = mock_client.return_value.api
         api.inspect_service.return_value = info
-        with pytest.raises(ValueError, match="no PreviousSpec"):
+        with pytest.raises(ToolInputError, match="no PreviousSpec"):
             service_rollback("svc1")
     api.update_service.assert_not_called()
 
@@ -401,18 +402,18 @@ def test_service_wait_update_converged_rollback_completed_is_terminal():
 
 
 def test_service_wait_rejects_negative_timeout():
-    with pytest.raises(ValueError, match="timeout_seconds"):
+    with pytest.raises(ToolInputError, match="timeout_seconds"):
         service_wait("web", timeout_seconds=-1)
 
 
 def test_service_wait_rejects_nonpositive_poll_interval():
-    with pytest.raises(ValueError, match="poll_interval"):
+    with pytest.raises(ToolInputError, match="poll_interval"):
         service_wait("web", poll_interval=0)
 
 
 def test_service_wait_rejects_negative_replicas():
     # A negative override must not make `running_tasks >= desired` trivially true.
-    with pytest.raises(ValueError, match="replicas"):
+    with pytest.raises(ToolInputError, match="replicas"):
         service_wait("web", replicas=-1)
 
 

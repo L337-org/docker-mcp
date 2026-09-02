@@ -18,6 +18,7 @@ import json
 from pathlib import Path
 from typing import Literal
 
+from docker_mcp.exceptions import ToolInputError
 from docker_mcp.server import tool
 from docker_mcp.tools._cli import (
     CliResult,
@@ -49,7 +50,7 @@ def _refuse_local_path_args(candidates: dict[str, str | None]) -> None:
     """
     for name, value in candidates.items():
         if value and Path(value).exists():
-            raise ValueError(
+            raise ToolInputError(
                 f"Refusing to run `docker scout` on the remote host with {name}={value!r}: that names a path on "
                 f"the host running this MCP server, but with no local scout plugin available the command runs "
                 f"on the target host over SSH, where the path means something else (or nothing). Pass an image "
@@ -255,7 +256,7 @@ def scout_compare(
     """
     targets = [bool(to), bool(to_env), bool(to_latest)]
     if sum(targets) != 1:
-        raise ValueError("scout_compare requires exactly one of `to`, `to_env`, or `to_latest=True`")
+        raise ToolInputError("scout_compare requires exactly one of `to`, `to_env`, or `to_latest=True`")
     args: list[str] = ["compare", "--format", format]
     if to is not None:
         args.extend(["--to", to])

@@ -1,5 +1,6 @@
 # library of mcp tools relating to docker swarm
 
+from docker_mcp.exceptions import RemoteFailureError
 from docker_mcp.server import tool
 from docker_mcp.tools._utils import drop_none
 from docker_mcp.tools.system import _get_client
@@ -164,7 +165,7 @@ def swarm_update(
     # `update_swarm(version: int)` in that same stub set.
     version = (swarm.attrs.get("Version") or {}).get("Index")
     if not isinstance(version, int):
-        raise RuntimeError(
+        raise RemoteFailureError(
             "Swarm inspect returned no Version.Index, so the update cannot be version-guarded. "
             "Check `swarm_inspect` - this node may not be a swarm manager."
         )

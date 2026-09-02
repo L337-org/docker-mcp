@@ -243,7 +243,13 @@ and no obvious symptom.
   `ToolError`, whose message survives, and anything else is reported as `Error executing tool
   <name>` with the text withheld and a traceback logged. Get this backwards and either a refusal
   arrives saying nothing actionable, or a bug's internals go on the wire untraced. Never widen the
-  translation to `Exception`. `docker_mcp/exceptions.py` holds the types.
+  translation to `Exception`.
+- **Pick the subclass by what the caller does next**, since that is the only thing the distinction
+  buys: `ToolInputError` (fix the argument), `ToolRefusalError` (this server declined; do not retry
+  as-is), `RemoteFailureError` (the far end failed and said why; may be transient),
+  `CapabilityError` (this host or install cannot, ever). Each type's docstring in
+  `docker_mcp/exceptions.py` is the authority; a state error that says nothing a caller can use
+  stays a builtin.
 - **Register every tool through `@tool()`**, never `@mcp.tool` directly. A direct registration
   returns the right payload and passes every behaviour test, and only stops explaining itself when
   something fails - so the guard is mechanical:

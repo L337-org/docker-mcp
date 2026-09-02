@@ -3,6 +3,7 @@
 import time
 from typing import Literal, cast
 
+from docker_mcp.exceptions import ToolInputError
 from docker_mcp.server import tool
 from docker_mcp.tools._labels import managed_filter, with_provenance
 from docker_mcp.tools._utils import MAX_PAYLOAD_BYTES, as_byte_chunks, drop_none, join_bounded
@@ -153,7 +154,7 @@ def service_update(id_or_name: str, updates: dict | None = None, force: bool = F
     returns: bool - True after the update
     """
     if (updates is None) == (not force):
-        raise ValueError("Pass exactly one of `updates` (fields to change) or `force=True` (redeploy unchanged).")
+        raise ToolInputError("Pass exactly one of `updates` (fields to change) or `force=True` (redeploy unchanged).")
     service = _get_client(host).services.get(id_or_name)
     if force:
         service.force_update()
@@ -284,7 +285,7 @@ def service_rollback(id_or_name: str, host: str | None = None) -> dict:
     info = api.inspect_service(id_or_name)
     previous = info.get("PreviousSpec")
     if not previous:
-        raise ValueError(
+        raise ToolInputError(
             f"Service {id_or_name} has no PreviousSpec to roll back to (never updated, or already rolled back)."
         )
     version = info["Version"]["Index"]
@@ -366,11 +367,11 @@ def service_wait(
                      "failed_tasks", "update_state", "waited_seconds"}
     """
     if timeout_seconds < 0:
-        raise ValueError(f"timeout_seconds must be >= 0, got {timeout_seconds}.")
+        raise ToolInputError(f"timeout_seconds must be >= 0, got {timeout_seconds}.")
     if poll_interval <= 0:
-        raise ValueError(f"poll_interval must be > 0, got {poll_interval}.")
+        raise ToolInputError(f"poll_interval must be > 0, got {poll_interval}.")
     if replicas is not None and replicas < 0:
-        raise ValueError(f"replicas must be >= 0, got {replicas}.")
+        raise ToolInputError(f"replicas must be >= 0, got {replicas}.")
     start = time.monotonic()
     deadline = start + timeout_seconds
     while True:

@@ -3,6 +3,7 @@ import urllib3
 
 from unittest.mock import MagicMock, patch
 
+from docker_mcp.exceptions import CapabilityError
 from docker_mcp.tools.plugins import (
     plugin_configure,
     plugin_create,
@@ -141,7 +142,7 @@ def test_plugin_push_raises_a_clear_error_if_docker_py_drops_the_internals_it_us
     api = _push_api([], spec_missing=("_stream_helper",))
     with _patch() as mock_client:
         mock_client.return_value.api = api
-        with pytest.raises(RuntimeError, match="_stream_helper"):
+        with pytest.raises(CapabilityError, match="_stream_helper"):
             plugin_push("me/myplugin")
 
 

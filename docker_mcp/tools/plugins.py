@@ -5,6 +5,7 @@ import threading
 from docker import auth
 from docker.types.daemon import CancellableStream
 
+from docker_mcp.exceptions import CapabilityError
 from docker_mcp.server import tool
 from docker_mcp.tools._utils import close_stream_quietly, host_read_path
 from docker_mcp.tools.system import _get_client
@@ -157,7 +158,7 @@ def plugin_push(name: str, timeout_seconds: float = 300.0, host: str | None = No
             )
             if fn is None
         )
-        raise RuntimeError(
+        raise CapabilityError(
             f"the installed docker-py no longer exposes {', '.join(missing)} on APIClient, which "
             "plugin_push needs to reach POST /plugins/{name}/push; push the plugin with "
             "`docker plugin push` until this tool is updated"

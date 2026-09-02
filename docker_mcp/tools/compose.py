@@ -21,6 +21,7 @@ import os
 from pathlib import Path
 from typing import Literal
 
+from docker_mcp.exceptions import ToolInputError
 from docker_mcp.server import tool
 from docker_mcp.tools._cli import (
     CliResult,
@@ -735,7 +736,7 @@ def compose_wait(
     returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
     """
     if not services:
-        raise ValueError("compose_wait requires at least one service.")
+        raise ToolInputError("compose_wait requires at least one service.")
     args = [*_global_args(files, project_name, None), "wait"]
     args.extend(safe_positional(s, "service") for s in services)
     return _run_compose(args, cwd=project_dir, timeout=timeout_seconds, host=host).to_dict()
@@ -838,7 +839,7 @@ def _remote_compose_cp(
     local_cwd = Path(project_dir).expanduser() if project_dir else Path.cwd()
     if not local_cwd.is_dir():
         detail = "it exists but is not a directory" if local_cwd.exists() else "nothing exists at that path"
-        raise ValueError(
+        raise ToolInputError(
             f"Cannot run `docker compose cp` on the remote host: {str(local_cwd)!r} is not a usable project "
             f"directory on this host ({detail}), and it is what would be copied over."
         )
@@ -854,7 +855,7 @@ def _remote_compose_cp(
         if ctr_dst and not ctr_src:
             local_source = Path(source).expanduser()
             if not local_source.exists():
-                raise ValueError(f"compose_cp: {source!r} does not exist on this host.")
+                raise ToolInputError(f"compose_cp: {source!r} does not exist on this host.")
             staged_source = (
                 session.stage_tree(local_source) if local_source.is_dir() else session.stage_file(local_source)
             )

@@ -13,6 +13,7 @@ import requests.exceptions
 from docker.errors import DockerException
 from docker.models.containers import Container
 
+from docker_mcp.exceptions import RemoteFailureError, ToolRefusalError
 from docker_mcp._env import scrub_unresolved_env
 from docker_mcp._hosts import (
     Host,
@@ -101,7 +102,7 @@ def guard_not_self(container: Container, host: str | None = None) -> None:
         return
     if env_flag(_SELF_TERMINATE_OVERRIDE_ENV):
         return
-    raise RuntimeError(
+    raise ToolRefusalError(
         f"Refusing to operate on the docker-mcp-server's own container ({container.short_id} "
         f"{container.name}) - this would terminate the MCP session mid-call. Set "
         f"{_SELF_TERMINATE_OVERRIDE_ENV}=1 to override, or run the action from the host shell "
@@ -303,7 +304,7 @@ def _get_client(host: str | None = None) -> docker.DockerClient:
                 client = _build_client(resolved)
             except _CONNECT_ERRORS as exc:
                 where = resolved.url or os.environ.get("DOCKER_HOST") or "the default Docker socket"
-                raise RuntimeError(
+                raise RemoteFailureError(
                     f"Cannot reach the Docker daemon for host {label!r} at {where}. Is Docker running, "
                     f"and is the endpoint correct? Underlying error: {exc}"
                 ) from exc
@@ -558,12 +559,12 @@ def system_reconnect(host: str | None = None) -> dict:
     try:
         new_client = _build_client(resolved)
     except _CONNECT_ERRORS as exc:
-        raise RuntimeError(f"Could not build a Docker client for host {label!r}: {exc}") from exc
+        raise RemoteFailureError(f"Could not build a Docker client for host {label!r}: {exc}") from exc
     try:
         version_info = new_client.version()
     except _CONNECT_ERRORS as exc:
         _close_client_quietly(new_client)
-        raise RuntimeError(
+        raise RemoteFailureError(
             f"Built a Docker client for host {label!r} but the daemon is unreachable: {exc}. "
             f"Kept the previous client; check the endpoint and try again."
         ) from exc

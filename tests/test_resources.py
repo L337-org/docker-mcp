@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 import httpx
 import pytest
 
+from docker_mcp.exceptions import CapabilityError, ToolInputError, ToolRefusalError
 import docker_mcp  # noqa: F401 — side-effect import: docker_mcp/__init__ runs _hosts.load() to pin the registry
 import docker_mcp._hosts as _hosts_mod
 from docker_mcp._hosts import parse_registry
@@ -104,12 +105,12 @@ def test_get_docs_section_raises_for_status():
 def test_get_docs_section_rejects_a_response_over_the_byte_cap():
     ctx = _docs_response(b"x" * (_MAX_DOCS_RESPONSE_BYTES + 1))
     with patch("docker_mcp.tools.resources.httpx.stream", return_value=ctx):
-        with pytest.raises(RuntimeError, match="exceeded the .*-byte limit"):
+        with pytest.raises(ToolRefusalError, match="exceeded the .*-byte limit"):
             get_docs_section("containers")
 
 
 def test_get_docs_section_rejects_unknown_section():
-    with pytest.raises(ValueError, match="Unknown documentation section"):
+    with pytest.raises(ToolInputError, match="Unknown documentation section"):
         get_docs_section("not-a-section")
 
 
@@ -150,9 +151,9 @@ def test_list_docs_sections_disabled_is_empty_by_default():
 
 def test_get_docs_section_refuses_a_disabled_section(monkeypatch):
     monkeypatch.setattr("docker_mcp.server.DISABLED_DOMAINS", frozenset({"scout"}))
-    with pytest.raises(ValueError, match="disabled via DOCKER_MCP_SERVER_DISABLE"):
+    with pytest.raises(CapabilityError, match="disabled via DOCKER_MCP_SERVER_DISABLE"):
         get_docs_section("scout")
-    with pytest.raises(ValueError, match="disabled via DOCKER_MCP_SERVER_DISABLE"):
+    with pytest.raises(CapabilityError, match="disabled via DOCKER_MCP_SERVER_DISABLE"):
         get_docs_section("scout-cli")
 
 
@@ -184,7 +185,7 @@ def test_docs_lookup_still_refuses_a_disabled_section(monkeypatch):
     # The tool itself is un-disablable, but an individual section still respects its own domain's
     # DOCKER_MCP_SERVER_DISABLE state, exactly like the docker-docs://{section} resource.
     monkeypatch.setattr("docker_mcp.server.DISABLED_DOMAINS", frozenset({"scout"}))
-    with pytest.raises(ValueError, match="disabled via DOCKER_MCP_SERVER_DISABLE"):
+    with pytest.raises(CapabilityError, match="disabled via DOCKER_MCP_SERVER_DISABLE"):
         docs_lookup("scout")
 
 
@@ -240,7 +241,7 @@ def test_container_resources_refused_when_containers_domain_disabled(monkeypatch
         lambda: get_container_logs_resource("web"),
         lambda: get_container_stats_resource("web"),
     ):
-        with pytest.raises(ValueError, match="disabled via DOCKER_MCP_SERVER_DISABLE"):
+        with pytest.raises(CapabilityError, match="disabled via DOCKER_MCP_SERVER_DISABLE"):
             call()
 
 
@@ -365,7 +366,7 @@ def test_service_resources_refused_when_services_domain_disabled(monkeypatch):
         lambda: get_service_logs_resource("web"),
         lambda: get_service_tasks_resource("web"),
     ):
-        with pytest.raises(ValueError, match="disabled via DOCKER_MCP_SERVER_DISABLE"):
+        with pytest.raises(CapabilityError, match="disabled via DOCKER_MCP_SERVER_DISABLE"):
             call()
 
 
@@ -452,7 +453,7 @@ def test_list_node_resources_indexes_state_availability_role():
 
 def test_node_resources_refused_when_nodes_domain_disabled(monkeypatch):
     monkeypatch.setattr("docker_mcp.server.DISABLED_DOMAINS", frozenset({"nodes"}))
-    with pytest.raises(ValueError, match="disabled via DOCKER_MCP_SERVER_DISABLE"):
+    with pytest.raises(CapabilityError, match="disabled via DOCKER_MCP_SERVER_DISABLE"):
         list_node_resources()
 
 
@@ -517,3 +518,15 @@ def test_tool_list_is_registered_and_read_only():
     assert TOOL_CATEGORIES["tool_list"] is ToolCategory.READ_ONLY
     assert "tool_list" in _NO_DOMAIN_TOOLS
     assert _tool_registry["tool_list"].domain is None
+
+
+def test_an_unknown_docs_section_tells_the_caller_where_the_list_is(on_the_wire):
+    """The message names the resource that lists the valid sections, so a client can recover in one
+    step. Asserted on the wire because that is the only place it matters: the SDK withholds the text
+    of anything it classifies as a crash, and a direct call cannot tell the two apart."""
+    from mcp.server.mcpserver.exceptions import ToolError, UnexpectedToolError
+
+    with pytest.raises(ToolError) as excinfo:
+        on_the_wire("docs_lookup", {"section": "no-such-section"})
+    assert not isinstance(excinfo.value, UnexpectedToolError)
+    assert "docker-docs://contents" in str(excinfo.value)

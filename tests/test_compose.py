@@ -3,6 +3,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from docker_mcp.exceptions import ToolInputError
 from docker_mcp.tools._cli import CliResult
 from docker_mcp.tools.compose import (
     _global_args,
@@ -493,7 +494,7 @@ def test_compose_wait_builds_args_and_returns_raw():
 
 
 def test_compose_wait_requires_a_service():
-    with pytest.raises(ValueError, match="at least one"):
+    with pytest.raises(ToolInputError, match="at least one"):
         compose_wait([])
 
 
@@ -803,7 +804,7 @@ def test_compose_cp_remote_raises_when_project_dir_is_unusable(tmp_path):
         patch("docker_mcp.tools.compose.should_remote_exec", return_value=True),
         patch("docker_mcp.tools.compose.remote_cli_session") as session_cm,
     ):
-        with pytest.raises(ValueError, match="not a usable project directory"):
+        with pytest.raises(ToolInputError, match="not a usable project directory"):
             compose_cp(
                 "web:/app/log.txt", str(tmp_path / "out.txt"), project_dir=str(tmp_path / "missing"), host="prod"
             )
@@ -816,7 +817,7 @@ def test_compose_cp_remote_raises_when_the_local_source_is_missing(tmp_path):
         patch("docker_mcp.tools.compose.should_remote_exec", return_value=True),
         patch("docker_mcp.tools.compose.remote_cli_session", _session_cm(session)),
     ):
-        with pytest.raises(ValueError, match="does not exist"):
+        with pytest.raises(ToolInputError, match="does not exist"):
             compose_cp(str(tmp_path / "missing.txt"), "web:/app/log.txt", project_dir=str(tmp_path), host="prod")
 
 

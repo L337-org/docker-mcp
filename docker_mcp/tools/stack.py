@@ -15,6 +15,7 @@
 
 from typing import Literal, get_args
 
+from docker_mcp.exceptions import ToolInputError
 from docker_mcp.server import tool
 from docker_mcp.tools._cli import (
     CliResult,
@@ -138,9 +139,9 @@ def stack_deploy(
     returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
     """
     if not compose_files:
-        raise ValueError("stack_deploy requires at least one entry in compose_files.")
+        raise ToolInputError("stack_deploy requires at least one entry in compose_files.")
     if resolve_image is not None and resolve_image not in _RESOLVE_IMAGE_CHOICES:
-        raise ValueError(f"resolve_image must be one of {sorted(_RESOLVE_IMAGE_CHOICES)}, got {resolve_image!r}.")
+        raise ToolInputError(f"resolve_image must be one of {sorted(_RESOLVE_IMAGE_CHOICES)}, got {resolve_image!r}.")
     args = ["stack", "deploy"]
     for f in compose_files:
         args.extend(["-c", f])
@@ -237,7 +238,7 @@ def stack_remove(
     returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
     """
     if not names:
-        raise ValueError("stack_remove requires at least one entry in names.")
+        raise ToolInputError("stack_remove requires at least one entry in names.")
     args = ["stack", "rm", f"--detach={'true' if detach else 'false'}"]
     args.extend(safe_positional(name, "stack name") for name in names)
     return _run_stack(args, timeout=timeout_seconds, host=host).to_dict()
