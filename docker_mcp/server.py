@@ -892,6 +892,10 @@ _LIBRARY_FAILURES: tuple[tuple[type[BaseException], type[DockerMcpError]], ...] 
     (docker.errors.NotFound, ToolInputError),
     # Anything else the daemon or the SDK reports. Its own text is the useful part, so it travels.
     (docker.errors.DockerException, RemoteFailureError),
+    # A URL that cannot be formed at all, which here means a caller-supplied registry or reference
+    # that is not usable in one - a fixable argument, and not an `HTTPError` at all (it derives
+    # straight from `Exception`), so it needs its own entry rather than riding the family below.
+    (httpx.InvalidURL, ToolInputError),
     # Anything httpx reports: a 4xx/5xx from `raise_for_status()`, and equally a connection refused,
     # a DNS failure or a timeout, which never reach that call at all. The base rather than
     # `HTTPStatusError`, because both mean the same thing to a caller and naming the narrower one

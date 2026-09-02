@@ -38,7 +38,7 @@ from typing import IO, Protocol, cast
 
 import paramiko
 
-from docker_mcp.exceptions import CapabilityError, DockerMcpError, RemoteFailureError, ToolInputError
+from docker_mcp.exceptions import CapabilityError, RemoteFailureError, ToolInputError
 from docker_mcp._hosts import is_ssh_url
 from docker_mcp.tools._utils import assert_host_writable, stream_to_file
 
@@ -1755,8 +1755,11 @@ _TEARDOWN_ERRORS: tuple[type[BaseException], ...] = (
     # get_dialect() raises CapabilityError now, and _remove_stage_root() reaches it from a finally.
     # Not reachable today - the dialect is validated at session open - but the tuple has to keep
     # backing the promise above rather than the set of types that happened to be raised when it was
-    # written.
-    DockerMcpError,
+    # written. Only that one type: unlike the translation table, where naming a family base is right
+    # because everything deliberate should reach the caller, a swallow-and-continue list wants the
+    # narrowest thing that works. `DockerMcpError` here would quietly eat a `ToolInputError` raised
+    # by mistake during teardown, which is a bug worth seeing.
+    CapabilityError,
 )
 
 

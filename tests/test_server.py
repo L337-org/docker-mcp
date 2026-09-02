@@ -1574,6 +1574,7 @@ def test_the_library_failure_table_orders_narrow_before_broad():
         (subprocess.TimeoutExpired(cmd=["docker", "ps"], timeout=60), "RemoteFailureError"),
         # Transport failures never reach `raise_for_status()`, so listing only `HTTPStatusError`
         # left every registry timeout and connection refusal arriving as a generic crash.
+        (httpx.InvalidURL("not a usable URL"), "ToolInputError"),
         (httpx.ConnectError("connection refused"), "RemoteFailureError"),
         (httpx.ConnectTimeout("timed out"), "RemoteFailureError"),
         (
@@ -1581,7 +1582,7 @@ def test_the_library_failure_table_orders_narrow_before_broad():
             "RemoteFailureError",
         ),
     ],
-    ids=["NotFound", "APIError", "TimeoutExpired", "ConnectError", "ConnectTimeout", "HTTPStatusError"],
+    ids=["NotFound", "APIError", "TimeoutExpired", "InvalidURL", "ConnectError", "ConnectTimeout", "HTTPStatusError"],
 )
 def test_a_library_failure_is_classified_by_the_table(exception, expected):
     from docker_mcp.server import _as_project_failure
