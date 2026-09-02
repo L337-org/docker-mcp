@@ -6,6 +6,7 @@ import pytest
 import requests.exceptions
 from docker.errors import DockerException
 
+from docker_mcp.exceptions import ToolInputError
 from docker_mcp.tools._utils import MAX_PAYLOAD_BYTES
 from docker_mcp.tools.containers import (
     _read_log_tail,
@@ -463,7 +464,7 @@ def test_container_wait_rounds_fractional_timeout_up():
 
 
 def test_container_wait_rejects_negative_timeout():
-    with pytest.raises(ValueError, match="timeout_seconds"):
+    with pytest.raises(ToolInputError, match="timeout_seconds"):
         container_wait("web", timeout_seconds=-1)
 
 
@@ -527,9 +528,9 @@ def test_container_archive_get_raises_when_max_bytes_exceeded():
 def test_container_archive_put_rejects_ambiguous_source(tmp_path):
     src = tmp_path / "payload.tar"
     src.write_bytes(b"archive-bytes")
-    with pytest.raises(ValueError, match="exactly one"):
+    with pytest.raises(ToolInputError, match="exactly one"):
         container_archive_put("web", "/dest")
-    with pytest.raises(ValueError, match="exactly one"):
+    with pytest.raises(ToolInputError, match="exactly one"):
         container_archive_put("web", "/dest", data=b"tar", from_file=str(src))
 
 
@@ -710,7 +711,7 @@ def test_container_wait_healthy_sleep_bounded_by_timeout():
 
 
 def test_container_wait_healthy_rejects_nonpositive_poll_interval():
-    with pytest.raises(ValueError, match="poll_interval"):
+    with pytest.raises(ToolInputError, match="poll_interval"):
         container_wait("web", until="healthy", poll_interval=0)
 
 
@@ -796,12 +797,12 @@ def test_container_wait_log_match_returns_promptly_when_container_exits_unmatche
 
 
 def test_container_wait_log_match_requires_pattern():
-    with pytest.raises(ValueError, match="pattern"):
+    with pytest.raises(ToolInputError, match="pattern"):
         container_wait("web", until="log-match")
 
 
 def test_container_wait_log_match_rejects_nonpositive_poll_interval():
-    with pytest.raises(ValueError, match="poll_interval"):
+    with pytest.raises(ToolInputError, match="poll_interval"):
         container_wait("web", until="log-match", pattern="x", poll_interval=0)
 
 
@@ -827,7 +828,7 @@ def test_read_stats_summary_raises_when_not_running():
     container.attrs = {"State": {"Status": "exited"}}
     with _patch() as mock_client:
         mock_client.return_value.containers.get.return_value = container
-        with pytest.raises(RuntimeError, match="not running"):
+        with pytest.raises(ToolInputError, match="not running"):
             _read_stats_summary("job")
 
 
@@ -869,3 +870,15 @@ def test_summarize_stats_degrades_to_zero_on_empty_snapshot():
     assert summary["cpu_percent"] == 0.0
     assert summary["mem_percent"] == 0.0
     assert summary["blk_read_mb"] == 0.0
+
+
+def test_a_bad_timeout_says_what_is_wrong_on_the_wire(on_the_wire):
+    """`timeout_seconds` is validated unconditionally, before the daemon is touched, so this is a
+    pure caller mistake and the model needs the bound in order to correct it. (`poll_interval` is
+    checked only for the `healthy`/`log-match` modes, which is why this uses the timeout instead.)"""
+    from mcp.server.mcpserver.exceptions import ToolError, UnexpectedToolError
+
+    with pytest.raises(ToolError) as excinfo:
+        on_the_wire("container_wait", {"id_or_name": "x", "timeout_seconds": -1})
+    assert not isinstance(excinfo.value, UnexpectedToolError)
+    assert "timeout_seconds must be >= 0" in str(excinfo.value)

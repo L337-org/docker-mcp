@@ -2,6 +2,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from docker_mcp.exceptions import ToolInputError
 from docker_mcp.tools.images import (
     image_build,
     image_inspect,
@@ -199,7 +200,7 @@ def test_image_import_refuses_a_from_file_path_that_is_not_a_readable_file(tmp_p
 )
 def test_image_import_requires_exactly_one_source(kwargs):
     with _patch() as mock_client:
-        with pytest.raises(ValueError, match="exactly one"):
+        with pytest.raises(ToolInputError, match="exactly one"):
             image_import(**kwargs)
     mock_client.return_value.api.import_image_from_data.assert_not_called()
 
@@ -208,7 +209,7 @@ def test_image_import_refuses_a_tag_without_a_repository():
     # The Engine returns early when `repo` is empty, so a bare tag is silently dropped and the image
     # lands untagged. Refuse instead of importing something the caller did not ask for.
     with _patch() as mock_client:
-        with pytest.raises(ValueError, match="needs a `repository`"):
+        with pytest.raises(ToolInputError, match="needs a `repository`"):
             image_import(data=b"rootfs", tag="v1")
     mock_client.return_value.api.import_image_from_data.assert_not_called()
 
@@ -219,9 +220,9 @@ def test_image_import_refuses_a_blank_repository(blank):
     # Engine's empty-repo early return drops the tag exactly as it does when repository is omitted,
     # so the None-only guard left the silent failure reachable through an empty string.
     with _patch() as mock_client:
-        with pytest.raises(ValueError, match="cannot be blank"):
+        with pytest.raises(ToolInputError, match="cannot be blank"):
             image_import(data=b"rootfs", repository=blank, tag="v1")
-        with pytest.raises(ValueError, match="cannot be blank"):
+        with pytest.raises(ToolInputError, match="cannot be blank"):
             image_import(data=b"rootfs", repository=blank)
     mock_client.return_value.api.import_image_from_data.assert_not_called()
 
@@ -233,7 +234,7 @@ def test_image_import_refuses_a_blank_tag(blank):
     # TagNameOnly, which substitutes `latest`. The caller asked for one tag and would silently get a
     # different one, so it is refused rather than forwarded.
     with _patch() as mock_client:
-        with pytest.raises(ValueError, match="cannot be blank"):
+        with pytest.raises(ToolInputError, match="cannot be blank"):
             image_import(data=b"rootfs", repository="myorg/rootfs", tag=blank)
     mock_client.return_value.api.import_image_from_data.assert_not_called()
 
@@ -332,9 +333,9 @@ def test_image_save_to_dest_path_overwrite_replaces(tmp_path):
 def test_image_load_rejects_ambiguous_source(tmp_path):
     src = tmp_path / "img.tar"
     src.write_bytes(b"tarball-bytes")
-    with pytest.raises(ValueError, match="exactly one"):
+    with pytest.raises(ToolInputError, match="exactly one"):
         image_load()
-    with pytest.raises(ValueError, match="exactly one"):
+    with pytest.raises(ToolInputError, match="exactly one"):
         image_load(data=b"tar", from_file=str(src))
 
 
@@ -350,3 +351,12 @@ def test_image_load_from_file_streams_handle(tmp_path):
     # load() is handed an open binary file object, not the raw bytes.
     passed = mock_client.return_value.images.load.call_args.args[0]
     assert hasattr(passed, "read")
+
+
+def test_an_ambiguous_image_import_lists_the_sources_on_the_wire(on_the_wire):
+    from mcp.server.mcpserver.exceptions import ToolError, UnexpectedToolError
+
+    with pytest.raises(ToolError) as excinfo:
+        on_the_wire("image_import", {"from_file": "/tmp/a.tar", "from_url": "https://example/a.tar"})
+    assert not isinstance(excinfo.value, UnexpectedToolError)
+    assert "exactly one of" in str(excinfo.value)

@@ -2,6 +2,7 @@ from unittest.mock import patch
 
 import pytest
 
+from docker_mcp.exceptions import ToolInputError
 from docker_mcp.tools._cli import CliResult
 from docker_mcp.tools.stack import (
     stack_deploy,
@@ -69,7 +70,7 @@ def test_stack_deploy_does_not_raise_on_non_zero():
 
 
 def test_stack_deploy_requires_a_compose_file():
-    with pytest.raises(ValueError, match="at least one"):
+    with pytest.raises(ToolInputError, match="at least one"):
         stack_deploy("web", compose_files=[])
 
 
@@ -78,7 +79,7 @@ def test_stack_deploy_rejects_invalid_resolve_image():
     # rather than the test being softened to a legal value. `resolve_image` is a Literal, so a
     # caller arriving through MCP is stopped by schema validation before the body runs; this
     # asserts the runtime guard that still covers a direct Python call, which validation never sees.
-    with pytest.raises(ValueError, match="resolve_image"):
+    with pytest.raises(ToolInputError, match="resolve_image"):
         stack_deploy("web", compose_files=["c.yml"], resolve_image="sometimes")  # pyright: ignore[reportArgumentType]
 
 
@@ -175,7 +176,7 @@ def test_stack_rm_detach_false():
 
 
 def test_stack_rm_requires_a_stack_name():
-    with pytest.raises(ValueError, match="at least one"):
+    with pytest.raises(ToolInputError, match="at least one"):
         stack_remove([])
 
 
@@ -240,3 +241,12 @@ def test_stack_uses_the_local_cli_when_it_can():
     remote.assert_not_called()
     staged.assert_not_called()
     assert run.call_args.kwargs["host"] == "prod"
+
+
+def test_a_stack_deploy_with_no_compose_file_says_so_on_the_wire(on_the_wire):
+    from mcp.server.mcpserver.exceptions import ToolError, UnexpectedToolError
+
+    with pytest.raises(ToolError) as excinfo:
+        on_the_wire("stack_deploy", {"name": "s", "compose_files": []})
+    assert not isinstance(excinfo.value, UnexpectedToolError)
+    assert "at least one entry in compose_files" in str(excinfo.value)

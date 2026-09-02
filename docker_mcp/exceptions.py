@@ -36,13 +36,37 @@ class ToolInputError(DockerMcpError):
     """
 
 
-class HostGuardError(DockerMcpError):
+class ToolRefusalError(DockerMcpError):
+    """A well-formed call this server declined on policy grounds.
+
+    Distinct from `ToolInputError` because nothing about the arguments was wrong: changing them is
+    not the remedy, and a caller that reads this should report it rather than retry. The wording
+    reaches the model deliberately - a refusal it cannot read is one it will retry.
+    """
+
+
+class HostGuardError(ToolRefusalError):
     """A call refused by the host guard: an unknown host label, a write to a host marked `(ro)`,
     a destructive call to one marked `(nd)`, or a write that named no host in multi-host mode.
+    """
 
-    Distinct from `ToolInputError` because it is a policy refusal rather than a malformed argument:
-    the call was well-formed and this server declined it. The wording reaches the model, which is
-    the point - a refusal it cannot read is one it will retry.
+
+class RemoteFailureError(DockerMcpError):
+    """The far end failed and said why: a non-zero `docker` exit, an SSH connection that would not
+    open, a registry rate limit, a daemon that cannot be reached.
+
+    Separate from `CapabilityError` because this one may be worth retrying - a 429 and an
+    unreachable daemon both often clear - and because the far end's own text is the useful part, so
+    it is carried through rather than paraphrased.
+    """
+
+
+class CapabilityError(DockerMcpError):
+    """This host or installation cannot do it at all: a missing CLI plugin, no POSIX shell on the
+    remote host, a docker-py without the API the call needs, a feature area switched off.
+
+    Never worth retrying, which is what separates it from `RemoteFailureError`. The message names
+    what is missing so the caller can tell the user rather than route around it.
     """
 
 

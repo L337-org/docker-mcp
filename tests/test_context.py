@@ -2,6 +2,7 @@ from unittest.mock import patch
 
 import pytest
 
+from docker_mcp.exceptions import RemoteFailureError
 from docker_mcp.tools._cli import CliResult
 from docker_mcp.tools.context import (
     context_create,
@@ -68,7 +69,7 @@ def test_context_inspect_handles_bare_object_response():
 
 def test_context_inspect_raises_on_empty_array():
     with patch("docker_mcp.tools.context.run_docker", return_value=_ok("[]")):
-        with pytest.raises(RuntimeError, match="returned no entries"):
+        with pytest.raises(RemoteFailureError, match="returned no entries"):
             context_inspect("remote")
 
 

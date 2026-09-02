@@ -9,6 +9,7 @@ from typing import Any, Literal, TypedDict, cast
 
 import requests.exceptions
 
+from docker_mcp.exceptions import ToolInputError
 from docker_mcp.server import tool
 from docker_mcp.tools._labels import managed_filter, with_provenance
 from docker_mcp.tools._utils import (
@@ -593,7 +594,7 @@ def _read_stats_summary(id_or_name: str, host: str | None = None) -> dict:
     container.reload()
     status = (container.attrs.get("State", {}) or {}).get("Status")
     if status != "running":
-        raise RuntimeError(
+        raise ToolInputError(
             f"Container {id_or_name!r} is not running (status: {status or 'unknown'}); "
             f"resource-usage stats require a running container."
         )
@@ -870,11 +871,11 @@ def container_wait(
                      the container exited without matching.
     """
     if timeout_seconds < 0:
-        raise ValueError(f"timeout_seconds must be >= 0, got {timeout_seconds}.")
+        raise ToolInputError(f"timeout_seconds must be >= 0, got {timeout_seconds}.")
     if until in ("healthy", "log-match") and poll_interval <= 0:
-        raise ValueError(f"poll_interval must be > 0, got {poll_interval}.")
+        raise ToolInputError(f"poll_interval must be > 0, got {poll_interval}.")
     if until == "log-match" and not pattern:
-        raise ValueError("`pattern` is required when until='log-match'.")
+        raise ToolInputError("`pattern` is required when until='log-match'.")
     container = _get_client(host).containers.get(id_or_name)
     start = time.monotonic()
     if until not in ("healthy", "log-match"):
@@ -1041,7 +1042,7 @@ def container_archive_put(
     returns: bool - True if the upload succeeded
     """
     if (data is None) == (from_file is None):
-        raise ValueError("Pass exactly one of `data` (in-band tar bytes) or `from_file` (a server-host path).")
+        raise ToolInputError("Pass exactly one of `data` (in-band tar bytes) or `from_file` (a server-host path).")
     container = _get_client(host).containers.get(id_or_name)
     if data is not None:
         return container.put_archive(path, data)

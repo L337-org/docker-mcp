@@ -1346,13 +1346,6 @@ def test_cli_tool_threads_host_to_run_docker(monkeypatch):
 # ToolError/ResourceError keep their text. These go through `call_tool`, the path a client uses.
 
 
-def _call(name: str, arguments: dict):
-    """Invoke a registered tool the way a client does, returning whatever `call_tool` raises."""
-    import anyio
-
-    return anyio.run(mcp.call_tool, name, arguments)
-
-
 def _call_tool_in_child(hosts: str, tool: str, arguments: dict) -> str:
     """Drive `call_tool` in a child process with `hosts` configured.
 
@@ -1399,22 +1392,26 @@ def test_an_unknown_host_names_the_configured_hosts_on_the_wire():
     assert "unknown host 'staging'" in message
 
 
-def test_a_bug_stays_a_crash_with_its_text_withheld(monkeypatch):
+def test_a_bug_stays_a_crash_with_its_text_withheld(monkeypatch, on_the_wire):
     """The other half of the contract, and why the translation names DockerMcpError and not Exception.
 
     A bug dressed as a deliberate refusal is neither logged with its traceback nor kept off the
     wire, which is exactly what the SDK's classification exists to guarantee.
+
+    `monkeypatch.setattr` is deliberately left at `raising=True`: an earlier version of this test
+    patched `_client_for`, a name `containers.py` does not have, with `raising=False`. That planted
+    nothing, and the test passed only because the real code happened to raise something untranslated
+    - so it asserted the right outcome for the wrong reason and would have kept passing after the
+    behaviour it guards was gone.
     """
     from mcp.server.mcpserver.exceptions import UnexpectedToolError
 
-    _set_multi_host(monkeypatch)
     monkeypatch.setattr(
-        "docker_mcp.tools.containers._client_for",
+        "docker_mcp.tools.containers._get_client",
         MagicMock(side_effect=AttributeError("'NoneType' object has no attribute 'containers'")),
-        raising=False,
     )
     with pytest.raises(UnexpectedToolError) as excinfo:
-        _call("container_list", {"host": "local"})
+        on_the_wire("container_list", {})
     assert "NoneType" not in str(excinfo.value)
 
 

@@ -6,6 +6,7 @@
 
 import json
 
+from docker_mcp.exceptions import RemoteFailureError
 from docker_mcp.server import tool
 from docker_mcp.tools._cli import (
     parse_ndjson,
@@ -52,7 +53,7 @@ def context_inspect(name: str) -> dict:
     # `docker context inspect` always returns a JSON array, even for a single name.
     if isinstance(parsed, list):
         if not parsed:
-            raise RuntimeError(f"`docker context inspect {name}` returned no entries.")
+            raise RemoteFailureError(f"`docker context inspect {name}` returned no entries.")
         return parsed[0]
     return parsed
 

@@ -2,6 +2,7 @@
 
 from typing import cast
 
+from docker_mcp.exceptions import ToolInputError
 from docker_mcp.server import tool
 from docker_mcp.tools._utils import MAX_PAYLOAD_BYTES, drop_none, host_read_path, join_bounded, stream_to_file
 from docker_mcp.tools.system import _get_client
@@ -327,7 +328,7 @@ def image_load(data: bytes | None = None, from_file: str | None = None, host: st
     returns: list - One full inspect payload per loaded image
     """
     if (data is None) == (from_file is None):
-        raise ValueError("Pass exactly one of `data` (in-band tarball bytes) or `from_file` (a server-host path).")
+        raise ToolInputError("Pass exactly one of `data` (in-band tarball bytes) or `from_file` (a server-host path).")
     if data is not None:
         return [i.attrs for i in _get_client(host).images.load(data)]
     path = host_read_path(cast(str, from_file))
@@ -390,7 +391,7 @@ def image_import(
     sources = {"from_file": from_file, "data": data, "from_url": from_url, "from_image": from_image}
     supplied = [name for name, value in sources.items() if value is not None]
     if len(supplied) != 1:
-        raise ValueError(
+        raise ToolInputError(
             "Pass exactly one of `from_file`, `data`, `from_url` or `from_image` "
             f"(got {', '.join(supplied) if supplied else 'none'})."
         )
@@ -401,15 +402,15 @@ def image_import(
     # with RepoTags []), so it is refused rather than read as "no repository": passing one is never
     # meaningful, and treating it as absent would reopen the silent drop through the back door.
     if repository is not None and not repository.strip():
-        raise ValueError("`repository` cannot be blank; omit it entirely to import untagged.")
+        raise ToolInputError("`repository` cannot be blank; omit it entirely to import untagged.")
     # A blank `tag` is the same silent substitution one step further on: `RepoTagReference` tests
     # `tag != ""`, so an empty tag skips the WithTag path and falls through to `TagNameOnly`, which
     # supplies `:latest`. The caller asked for one tag and would get a different one, with no error --
     # so it is refused alongside a blank `repository` rather than left as the asymmetric case.
     if tag is not None and not tag.strip():
-        raise ValueError("`tag` cannot be blank; omit it to accept the daemon's default of `latest`.")
+        raise ToolInputError("`tag` cannot be blank; omit it to accept the daemon's default of `latest`.")
     if tag is not None and repository is None:
-        raise ValueError(
+        raise ToolInputError(
             "`tag` needs a `repository` to attach to; pass `repository`, or omit `tag` to import untagged."
         )
 
