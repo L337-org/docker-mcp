@@ -284,8 +284,8 @@ def swarm_task_list(filters: dict | None = None, host: str | None = None) -> lis
     what is shutting down, or `service` for a single service -- for which `service_ps` is the
     simpler call. Each task carries its full `Spec`, including the `ContainerSpec` (image, command,
     env), so this returns much more per task than the `service-tasks://{id_or_name}` resource's
-    computed rollout summary. Read-only. Requires a swarm manager: any other node raises
-    the daemon's own error.
+    computed rollout summary. Read-only. Requires a swarm manager: on any other node the daemon
+    refuses, and its refusal is what comes back.
 
     args:
         filters - Filter dict; keys: id, name, service, node, label, desired-state

@@ -914,10 +914,10 @@ _LIBRARY_FAILURE_TYPES: tuple[type[BaseException], ...] = tuple(exc for exc, _ i
 def _as_project_failure(exc: BaseException) -> DockerMcpError:
     """The project exception a library failure corresponds to, carrying the library's own message.
 
-    Only called for the types in `_LIBRARY_FAILURE_TYPES`, so the fallback is unreachable rather
-    than a default: a type in that tuple but missing from the table would be a table someone had
-    edited by halves, and returning a bare `DockerMcpError` says so in the message rather than
-    silently classifying it as something it is not.
+    Only called for the types in `_LIBRARY_FAILURE_TYPES`, which is derived from the table above, so
+    the fallback cannot be reached by any edit to the table: adding an entry adds it to both. It
+    exists for the caller that invokes this directly with something outside the table, and names the
+    class in its message rather than silently classifying it as something it is not.
     """
     for library_type, project_type in _LIBRARY_FAILURES:
         if isinstance(exc, library_type):
