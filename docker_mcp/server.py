@@ -7,16 +7,21 @@
 
 import functools
 import inspect
+import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, NoReturn, cast
 
+import docker.errors
+import httpx
 from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.exceptions import ResourceError, ToolError
 from mcp.types import ToolAnnotations
 
 import docker_mcp._hosts as _hosts
 from docker_mcp._env import env_flag, read_env
+from docker_mcp.exceptions import DockerMcpError, HostGuardError, RemoteFailureError, ToolInputError
 
 mcp = MCPServer("docker-mcp-server")
 
@@ -727,7 +732,7 @@ def _host_param_description(name: str, category: ToolCategory) -> str:
 def _raise_read_only(name: str, label: str, category: ToolCategory) -> NoReturn:
     """Refuse a write to a host carrying the per-host (ro) marker (distinct from the
     DOCKER_MCP_SERVER_READONLY switch, which drops write tools from the surface entirely)."""
-    raise RuntimeError(
+    raise HostGuardError(
         f"{name}: host {label!r} is read-only (configured with the (ro) marker); refusing this "
         f"{category.value} operation. For a fully read-only server use DOCKER_MCP_SERVER_READONLY."
     )
@@ -736,7 +741,7 @@ def _raise_read_only(name: str, label: str, category: ToolCategory) -> NoReturn:
 def _raise_non_destructive(name: str, label: str, category: ToolCategory) -> NoReturn:
     """Refuse a DESTRUCTIVE call to a host carrying the per-host (nd) marker (distinct from the
     DOCKER_MCP_SERVER_NO_DESTRUCTIVE switch, which drops destructive tools from the surface entirely)."""
-    raise RuntimeError(
+    raise HostGuardError(
         f"{name}: host {label!r} is non-destructive (configured with the (nd) marker); refusing this "
         f"{category.value} operation. For a fully non-destructive server use DOCKER_MCP_SERVER_NO_DESTRUCTIVE."
     )
@@ -758,14 +763,16 @@ def _enforce_host_guard(name: str, category: ToolCategory, host: str | None) -> 
         # Multi-host: a write must name its target. Single-host: the schema carries no host param to
         # pass, but an (ro)/(nd) default host must still refuse writes/destructive calls.
         if write and _hosts.is_multi():
-            raise RuntimeError(f"{name}: 'host' is required when multiple hosts are configured; choose one of {known}.")
+            raise HostGuardError(
+                f"{name}: 'host' is required when multiple hosts are configured; choose one of {known}."
+            )
         if write and _hosts.is_read_only():
             _raise_read_only(name, _hosts.default().label, category)
         if destructive and _hosts.is_non_destructive():
             _raise_non_destructive(name, _hosts.default().label, category)
         return
     if host not in known:
-        raise RuntimeError(f"{name}: unknown host {host!r}; configured hosts: {known}.")
+        raise HostGuardError(f"{name}: unknown host {host!r}; configured hosts: {known}.")
     if write and _hosts.is_read_only(host):
         _raise_read_only(name, host, category)
     if destructive and _hosts.is_non_destructive(host):
@@ -855,6 +862,120 @@ def _wrap_with_host_guard[F: Callable[..., Any]](func: F, name: str, category: T
     return cast(F, wrapper)  # see the note on the async branch
 
 
+# Set on every wrapper `_translate_failures` builds. `tests/test_server.py` walks the built server
+# and fails any registered tool or resource whose callable lacks it, so a registration that bypasses
+# the registrars is caught wherever it is written, including in a module that does not exist yet.
+TRANSLATES_FAILURES = "docker_mcp_translates_failures"
+
+
+# Failures raised by a library rather than by this code, and the project type whose meaning each
+# one carries. Converting them here rather than at the ~106 call sites that touch the SDK is the
+# whole point: a client only ever sees a message when the exception is a `ToolError`/`ResourceError`,
+# and before this table the daemon's own "No such container: x", a registry's 401, and a CLI timeout
+# all reached the model as `Error executing tool <name>` with the text withheld and a traceback
+# logged at ERROR - the same failure the project-exception translation was written to prevent,
+# left standing for the exceptions this server does not raise itself.
+#
+# Order matters and is load-bearing: `NotFound` subclasses `APIError` subclasses `DockerException`,
+# so the narrower entry has to come first or every missing container reads as a daemon failure. That
+# is the only place a narrow entry earns its keep - everywhere else the base is listed deliberately,
+# because a leaf is only ever the one you happened to think of. `HTTPStatusError` was listed here
+# once and every httpx timeout and connection failure went out generic as a result.
+#
+# So: when adding to this table, name the base of the family unless a subclass genuinely maps to a
+# different project type, and put that subclass first when it does.
+#
+# `docker.errors.APIError` is also an `OSError` (via `requests`), so do not add `OSError` here
+# expecting it to mean "a local file or socket problem": it would capture every daemon error too.
+_LIBRARY_FAILURES: tuple[tuple[type[BaseException], type[DockerMcpError]], ...] = (
+    # The caller named something the daemon does not have: an argument they can correct.
+    (docker.errors.NotFound, ToolInputError),
+    # Anything else the daemon or the SDK reports. Its own text is the useful part, so it travels.
+    (docker.errors.DockerException, RemoteFailureError),
+    # A URL that cannot be formed at all, which here means a caller-supplied registry or reference
+    # that is not usable in one - a fixable argument, and not an `HTTPError` at all (it derives
+    # straight from `Exception`), so it needs its own entry rather than riding the family below.
+    (httpx.InvalidURL, ToolInputError),
+    # Anything httpx reports: a 4xx/5xx from `raise_for_status()`, and equally a connection refused,
+    # a DNS failure or a timeout, which never reach that call at all. The base rather than
+    # `HTTPStatusError`, because both mean the same thing to a caller and naming the narrower one
+    # left every transport failure arriving generic.
+    (httpx.HTTPError, RemoteFailureError),
+    # A CLI call that outran its bound. `run_docker` checks `returncode` itself rather than passing
+    # `check=True`, so `TimeoutExpired` is the only member reached today - the base is named anyway,
+    # for the same reason as above: the leaf is the one you happen to think of while reading the
+    # code that raises it.
+    (subprocess.SubprocessError, RemoteFailureError),
+)
+
+_LIBRARY_FAILURE_TYPES: tuple[type[BaseException], ...] = tuple(exc for exc, _ in _LIBRARY_FAILURES)
+
+
+def _as_project_failure(exc: BaseException) -> DockerMcpError:
+    """The project exception a library failure corresponds to, carrying the library's own message.
+
+    Only called for the types in `_LIBRARY_FAILURE_TYPES`, which is derived from the table above, so
+    the fallback cannot be reached by any edit to the table: adding an entry adds it to both. It
+    exists for the caller that invokes this directly with something outside the table, and names the
+    class in its message rather than silently classifying it as something it is not.
+    """
+    for library_type, project_type in _LIBRARY_FAILURES:
+        if isinstance(exc, library_type):
+            return project_type(str(exc))
+    return DockerMcpError(f"{type(exc).__name__}: {exc}")
+
+
+def _translate_failures[F: Callable[..., Any]](func: F, error_cls: type[ToolError] | type[ResourceError]) -> F:
+    """Re-raise a `DockerMcpError` as the SDK error whose message the client is allowed to see.
+
+    The SDK classifies a failure by type: `ToolError`/`ResourceError` keep their message and log at
+    INFO, and everything else is a crash - the client gets `Error executing tool <name>` or `Error
+    reading resource <uri>`, the original text is withheld, and a traceback is logged at ERROR. So a
+    refusal raised as a bare `RuntimeError` reaches the model saying nothing it can act on.
+
+    Two families are translated and nothing else. `DockerMcpError` - what this code raises
+    deliberately. And the named library failures in `_LIBRARY_FAILURES`, because a daemon rejection,
+    a registry status or a CLI timeout is equally deliberate from the caller's side and its text is
+    equally useful; leaving them out meant the majority of real failures still arrived generic.
+    Never `Exception`: a bug dressed as a deliberate refusal loses its traceback and puts internal
+    text on the wire, which is what the SDK's rule exists to prevent.
+
+    Preserves the signature (the SDK builds the input schema from it) and the sync/async-ness (the
+    SDK decides whether to await by asking `is_async_callable`), the same way `_wrap_with_host_guard`
+    does and for the same reasons.
+    """
+    if inspect.iscoroutinefunction(func):
+
+        @functools.wraps(func)
+        async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
+            try:
+                return await func(*args, **kwargs)
+            except DockerMcpError as exc:
+                raise error_cls(str(exc)) from exc
+            except _LIBRARY_FAILURE_TYPES as exc:
+                raise error_cls(str(_as_project_failure(exc))) from exc
+
+        async_wrapper.__signature__ = inspect.signature(func)  # pyright: ignore[reportAttributeAccessIssue]
+        # After functools.wraps, which copies the wrapped function's __dict__ and would drop this.
+        setattr(async_wrapper, TRANSLATES_FAILURES, True)
+        # cast for the same reason as _wrap_with_host_guard: functools.wraps is opaque to the type
+        # checker, and the signature assigned above is the original's.
+        return cast(F, async_wrapper)
+
+    @functools.wraps(func)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        try:
+            return func(*args, **kwargs)
+        except DockerMcpError as exc:
+            raise error_cls(str(exc)) from exc
+        except _LIBRARY_FAILURE_TYPES as exc:
+            raise error_cls(str(_as_project_failure(exc))) from exc
+
+    wrapper.__signature__ = inspect.signature(func)  # pyright: ignore[reportAttributeAccessIssue]
+    setattr(wrapper, TRANSLATES_FAILURES, True)
+    return cast(F, wrapper)  # see the note on the async branch
+
+
 def tool[F: Callable[..., Any]](**kwargs: Any) -> Callable[[F], F]:
     """
     Register an @mcp.tool with central classification - the drop-in `@tool()` every tool module uses.
@@ -890,7 +1011,13 @@ def tool[F: Callable[..., Any]](**kwargs: Any) -> Callable[[F], F]:
         target = func
         if _has_host_param(func) and _host_guard_needed():
             target = _wrap_with_host_guard(func, name, category)
-        decorated = mcp.tool(annotations=_annotations_for(name, category), **kwargs)(target)
+        # Register the translated wrapper, but leave `target` - the untranslated one - as what this
+        # decorator returns. The translation is a wire concern: a client must be told why a call was
+        # refused, while an internal caller (another tool, or a test) wants the project type it can
+        # branch on. `mcp.tool()` returns its argument unchanged, so registering one callable and
+        # returning the other is the whole of the difference. Translating outermost carries a
+        # host-guard refusal across as well as one raised by the tool body.
+        mcp.tool(annotations=_annotations_for(name, category), **kwargs)(_translate_failures(target, ToolError))
         # Slim the advertised input schema (drop information-free titles, nullable-anyOf null branches,
         # and redundant `additionalProperties: true`), then apply the host-param surgery (enum + required
         # in multi-host, or strip it in single-host). Both reach into MCPServer internals
@@ -904,7 +1031,36 @@ def tool[F: Callable[..., Any]](**kwargs: Any) -> Callable[[F], F]:
         if isinstance(parameters, dict):
             _slim_schema(parameters)
             _apply_host_schema(parameters, name, category)
-        return decorated
+        return target
+
+    return decorator
+
+
+def resource[F: Callable[..., Any]](uri: str, **kwargs: Any) -> Callable[[F], F]:
+    """
+    Register an `@mcp.resource` whose anticipated failures keep their message - the `@resource()`
+    every resource registration uses, decorator or call form.
+
+    The SDK applies the same type rule to a read as to a tool call: a `ResourceError` keeps its
+    message and logs at INFO, and anything else becomes `Error reading resource <uri>` with the text
+    withheld and a traceback logged at ERROR. Without the translation an unusable path, a disabled
+    domain and a bug in this server are indistinguishable to a client, which is a poor answer for a
+    URI it attached as context.
+
+    Like `@tool()`, the translated wrapper is registered while the plain function is returned, so an
+    internal caller still gets the project type. Applies to a template as well as a static resource:
+    the SDK routes both through `read_resource`, and a template's own creation failure is classified
+    the same way.
+
+    args:
+        uri - the resource URI or URI template, passed straight to `mcp.resource`
+        kwargs - passed to `mcp.resource` (name, title, description, mime_type, ...)
+    returns: Callable - a decorator registering the function as a resource
+    """
+
+    def decorator(func: F) -> F:
+        mcp.resource(uri, **kwargs)(_translate_failures(func, ResourceError))
+        return func
 
     return decorator
 

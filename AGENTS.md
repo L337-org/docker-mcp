@@ -122,7 +122,7 @@ Two things about that surface are load-bearing enough to state here:
   router pair asserts the advertised domains equal the registered ones — so this is a "do it up
   front" note, not a silent trap. Full checklist in [CONTRIBUTING.md](CONTRIBUTING.md).
 - **Tool modules import `tool` from `docker_mcp.server`; prompt modules import `prompt`.** Only
-  resource modules import `mcp` directly — doing so in a tool or prompt module is a circular import.
+  resource modules import `resource` — no module imports `mcp` to register with any more.
 
 ## CLI shell-out policy
 
@@ -136,7 +136,7 @@ Never pass `shell=True`, never build paths by string concatenation, never expand
 before adding a CLI-backed tool. It covers the SSH remote-exec fallback (which changes *which host* a
 command runs on), the file-staging session, path-token reconciliation, and the deliberate two-style
 error convention — action tools return the raw result dict and never raise on a non-zero exit, while
-parsed-query tools raise `RuntimeError`. **That split is intentional; do not "unify" it.**
+parsed-query tools raise `RemoteFailureError`. **That split is intentional; do not "unify" it.**
 
 ## Docker SDK Policy
 
@@ -237,6 +237,39 @@ When adding a new create tool that accepts a `labels` dict, route it through `_l
 The centre of this file. Each of these is a rule whose violation produces no error, no failing test
 and no obvious symptom.
 
+- **Raise a `DockerMcpError` subclass for a failure the caller can act on; leave a bare
+  `RuntimeError`/`ValueError` for one that means this server is broken.** The MCP SDK decides what a
+  failure tells the client purely by type: `@tool()` translates `DockerMcpError` into the SDK's
+  `ToolError`, whose message survives, and anything else is reported as `Error executing tool
+  <name>` with the text withheld and a traceback logged. Get this backwards and either a refusal
+  arrives saying nothing actionable, or a bug's internals go on the wire untraced. Never widen the
+  translation to `Exception`.
+- **Pick the subclass by what the caller does next**, since that is the only thing the distinction
+  buys: `ToolInputError` (fix the argument), `ToolRefusalError` (this server declined; do not retry
+  as-is), `RemoteFailureError` (the far end failed and said why; may be transient),
+  `CapabilityError` (this host or install cannot, ever). Each type's docstring in
+  `docker_mcp/exceptions.py` is the authority; a state error that says nothing a caller can use
+  stays a builtin.
+- **A failure raised by a library, not by us, is classified in `_LIBRARY_FAILURES`** (`server.py`).
+  A daemon rejection, a registry status or a CLI timeout is as deliberate from the caller's side as
+  anything this code raises, and its text is the useful part - without the table they reached the
+  model as `Error executing tool <name>` with the explanation withheld. Order in that table is
+  load-bearing: `NotFound` subclasses `APIError` subclasses `DockerException`, so the narrow entry
+  goes first. Do not add `OSError`: `docker.errors.APIError` is one, so it would capture every
+  daemon error along with whatever local problem you meant.
+- **A bare `raise` of any builtin exception must appear in `DELIBERATE_CRASHES`**
+  (`tests/test_server.py`) with the reason its text belongs only in the log. The list is exact, so
+  adding a raise or removing one both fail until it is updated - which is the point: nothing else
+  notices when a refusal is written as a builtin and stops reaching the model. The scan covers every
+  builtin exception rather than a chosen few, because `raise FileNotFoundError("pass from_url
+  instead")` is exactly as invisible as a bare `ValueError` - it named two classes once, and two
+  actionable messages walked past it.
+- **Register every tool through `@tool()` and every resource through `@resource()`**, never
+  `@mcp.tool`/`@mcp.resource` directly. A direct registration
+  returns the right payload and passes every behaviour test, and only stops explaining itself when
+  something fails - so the guard is mechanical:
+  `tests/test_server.py` walks the built server and fails any tool, resource or template whose
+  callable is not translated, including one in a module that does not exist yet.
 - **The `@tool()` decorator must stay generic** (`def tool[F: Callable[..., Any]](...) -> Callable[[F], F]`).
   Annotating it as a bare `Callable` erases the parameter list and silently disables pyright's argument
   checking at *every* tool call site. Flag any loosening, including loosening only the return
@@ -285,7 +318,7 @@ untouched neighbours. Push back on any of these:
    **by exact tool name** - never "the kill tool". Preconditions, side effects and irreversibility must
    be in prose: `readOnlyHint` / `destructiveHint` annotations do not substitute.
 3. **For a CLI-backed tool, the error style is stated** - "does not raise on a non-zero CLI exit,
-   inspect `returncode`/`stderr`" versus "raises `RuntimeError` on CLI failure". Do not let a docstring
+   inspect `returncode`/`stderr`" versus "raises `RemoteFailureError` on CLI failure". Do not let a docstring
    promise "never raises": a missing binary or plugin, or a subprocess timeout, still raises.
 4. **`args:` lines add what the schema cannot carry** - format, accepted values, defaults, units,
    interactions. A line echoing the parameter name ("name - The volume name") is a finding. The type is
@@ -347,7 +380,7 @@ re-proposes these; it has no memory of last time.
   strips `Authorization` on any cross-origin redirect, and a redirect reaches nothing a tool argument
   could not reach directly. Do not propose "hardening" this.
 - **The two CLI error styles are intentional.** Action tools return the raw result dict and never raise
-  on a non-zero exit; parsed-query tools raise `RuntimeError`. `compose_ps` and `compose_config` are
+  on a non-zero exit; parsed-query tools raise `RemoteFailureError`. `compose_ps` and `compose_config` are
   sanctioned hybrids. Do not propose unifying them.
 - **`context.py` is permanently excluded from the SSH remote-exec fallback.** Its tools manage *this*
   host's CLI context registry, which a remote host knows nothing about. This is not an oversight

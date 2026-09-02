@@ -7,13 +7,17 @@ import sys
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import docker.errors
+import httpx
 import pytest
 
 import docker_mcp  # noqa: F401 — imported for its side effect of registering every tool
 import docker_mcp._hosts as _hosts
 from docker_mcp._hosts import parse_registry
+from docker_mcp.exceptions import HostGuardError
 from docker_mcp.server import (
     TOOL_CATEGORIES,
+    TRANSLATES_FAILURES,
     _NO_DOMAIN_TOOLS,
     _SCHEMA_NAME_MAPS,
     ToolCategory,
@@ -133,19 +137,19 @@ def test_guard_allows_read_only_without_host(monkeypatch):
 
 def test_guard_requires_host_for_write(monkeypatch):
     _set_multi_host(monkeypatch)
-    with pytest.raises(RuntimeError, match="'host' is required"):
+    with pytest.raises(HostGuardError, match="'host' is required"):
         _enforce_host_guard("container_remove", ToolCategory.DESTRUCTIVE, None)
 
 
 def test_guard_rejects_unknown_host(monkeypatch):
     _set_multi_host(monkeypatch)
-    with pytest.raises(RuntimeError, match="unknown host 'staging'"):
+    with pytest.raises(HostGuardError, match="unknown host 'staging'"):
         _enforce_host_guard("container_list", ToolCategory.READ_ONLY, "staging")
 
 
 def test_guard_rejects_write_to_read_only_host(monkeypatch):
     _set_multi_host(monkeypatch)  # prod is (ro)
-    with pytest.raises(RuntimeError, match="read-only"):
+    with pytest.raises(HostGuardError, match="read-only"):
         _enforce_host_guard("container_remove", ToolCategory.DESTRUCTIVE, "prod")
 
 
@@ -156,7 +160,7 @@ def test_guard_allows_connection_control_on_read_only_host(monkeypatch):
 
 def test_guard_checks_unknown_host_even_for_connection_control(monkeypatch):
     _set_multi_host(monkeypatch)
-    with pytest.raises(RuntimeError, match="unknown host"):
+    with pytest.raises(HostGuardError, match="unknown host"):
         _enforce_host_guard("system_close", ToolCategory.MUTATING, "typo")
 
 
@@ -167,7 +171,7 @@ def test_guard_allows_mutating_write_to_non_destructive_host(monkeypatch):
 
 def test_guard_rejects_destructive_write_to_non_destructive_host(monkeypatch):
     _set_multi_host(monkeypatch, spec="local=auto, prod=ssh://h(nd)")
-    with pytest.raises(RuntimeError, match="non-destructive"):
+    with pytest.raises(HostGuardError, match="non-destructive"):
         _enforce_host_guard("container_remove", ToolCategory.DESTRUCTIVE, "prod")
 
 
@@ -179,7 +183,7 @@ def test_guard_allows_connection_control_on_non_destructive_host(monkeypatch):
 def test_guard_rejects_destructive_write_to_read_only_and_non_destructive_host(monkeypatch):
     # A host with both markers is refused by (ro) first — it's strictly stronger.
     _set_multi_host(monkeypatch, spec="local=auto, prod=ssh://h(ro)(nd)")
-    with pytest.raises(RuntimeError, match="read-only"):
+    with pytest.raises(HostGuardError, match="read-only"):
         _enforce_host_guard("container_remove", ToolCategory.DESTRUCTIVE, "prod")
 
 
@@ -189,7 +193,7 @@ def test_guard_rejects_destructive_write_to_read_only_and_non_destructive_host(m
 def test_guard_refuses_write_to_single_read_only_host(monkeypatch):
     # One (ro) host: the schema carries no host param to pass, but writes must still be refused.
     _set_single_host(monkeypatch, "ssh://h(ro)")
-    with pytest.raises(RuntimeError, match="read-only"):
+    with pytest.raises(HostGuardError, match="read-only"):
         _enforce_host_guard("container_remove", ToolCategory.DESTRUCTIVE, None)
 
 
@@ -210,7 +214,7 @@ def test_guard_allows_write_on_single_writable_host(monkeypatch):
 
 def test_guard_refuses_destructive_write_to_single_non_destructive_host(monkeypatch):
     _set_single_host(monkeypatch, "ssh://h(nd)")
-    with pytest.raises(RuntimeError, match="non-destructive"):
+    with pytest.raises(HostGuardError, match="non-destructive"):
         _enforce_host_guard("container_remove", ToolCategory.DESTRUCTIVE, None)
 
 
@@ -247,7 +251,7 @@ def test_wrap_preserves_signature_and_name_and_enforces_guard(monkeypatch):
     wrapped = _wrap_with_host_guard(container_remove, "container_remove", ToolCategory.DESTRUCTIVE)
     assert wrapped.__name__ == "container_remove"
     assert inspect.signature(wrapped) == inspect.signature(container_remove)
-    with pytest.raises(RuntimeError, match="'host' is required"):
+    with pytest.raises(HostGuardError, match="'host' is required"):
         wrapped(container_id="abc")  # write without host
     assert wrapped(container_id="abc", host="local") == "removed abc on local"
 
@@ -265,7 +269,7 @@ def test_wrap_guards_an_async_tool(monkeypatch):
     wrapped = _wrap_with_host_guard(container_remove, "container_remove", ToolCategory.DESTRUCTIVE)
     assert inspect.iscoroutinefunction(wrapped)
     assert inspect.signature(wrapped) == inspect.signature(container_remove)
-    with pytest.raises(RuntimeError, match="'host' is required"):
+    with pytest.raises(HostGuardError, match="'host' is required"):
         asyncio.run(wrapped(container_id="abc"))  # write without host
     assert asyncio.run(wrapped(container_id="abc", host="local")) == "removed abc on local"
 
@@ -277,7 +281,7 @@ def test_wrap_enforces_non_destructive_guard(monkeypatch):
         return f"removed {container_id} on {host}"
 
     wrapped = _wrap_with_host_guard(container_remove, "container_remove", ToolCategory.DESTRUCTIVE)
-    with pytest.raises(RuntimeError, match="non-destructive"):
+    with pytest.raises(HostGuardError, match="non-destructive"):
         wrapped(container_id="abc", host="prod")
     assert wrapped(container_id="abc", host="local") == "removed abc on local"
 
@@ -1251,11 +1255,12 @@ def test_single_non_destructive_host_still_strips_host_param_end_to_end():
 def test_single_read_only_host_refuses_write_end_to_end():
     # Proves the guard is actually wrapped onto write tools at import time for a single (ro) host.
     code = (
+        "from docker_mcp.exceptions import HostGuardError\n"
         "from docker_mcp.tools import containers\n"
         "try:\n"
         "    containers.container_stop('x')\n"
         "    print('NOGUARD')\n"
-        "except RuntimeError as e:\n"
+        "except HostGuardError as e:\n"
         "    print('REFUSED' if 'read-only' in str(e) else 'OTHER')\n"
     )
     env = _env_with(["DOCKER_MCP_SERVER_HOSTS=ssh://h(ro)"])
@@ -1268,11 +1273,12 @@ def test_single_read_only_host_refuses_write_end_to_end():
 def test_single_non_destructive_host_refuses_destructive_write_end_to_end():
     # Proves the guard is actually wrapped onto destructive tools at import time for a single (nd) host.
     code = (
+        "from docker_mcp.exceptions import HostGuardError\n"
         "from docker_mcp.tools import containers\n"
         "try:\n"
         "    containers.container_remove('x')\n"
         "    print('NOGUARD')\n"
-        "except RuntimeError as e:\n"
+        "except HostGuardError as e:\n"
         "    print('REFUSED' if 'non-destructive' in str(e) else 'OTHER')\n"
     )
     env = _env_with(["DOCKER_MCP_SERVER_HOSTS=ssh://h(nd)"])
@@ -1333,3 +1339,350 @@ def test_cli_tool_threads_host_to_run_docker(monkeypatch):
     monkeypatch.setattr(stack, "run_docker", fake_run_docker)
     stack.stack_list(host="prod")
     assert captured.get("host") == "prod"
+
+
+# ---------- what a failure says on the wire ----------
+#
+# Everything else in this file calls a tool function directly, which asserts a message no client
+# ever sees: the SDK decides what reaches the caller from the exception's *type*, and only
+# ToolError/ResourceError keep their text. These go through `call_tool`, the path a client uses.
+
+
+def _call_tool_in_child(hosts: str, tool: str, arguments: dict) -> str:
+    """Drive `call_tool` in a child process with `hosts` configured.
+
+    The host guard is wired onto tools at import time from the environment, so an in-process
+    monkeypatch cannot reach an already-registered tool - the same reason the two end-to-end guard
+    tests below shell out. Prints `<exception class>|<message>` for the caller to assert on.
+    """
+    code = (
+        "import anyio, json\n"
+        "from docker_mcp.server import mcp\n"
+        "import docker_mcp\n"
+        "try:\n"
+        f"    anyio.run(mcp.call_tool, {tool!r}, {arguments!r})\n"
+        "    print('NORAISE|')\n"
+        "except Exception as e:\n"
+        "    print(f'{type(e).__name__}|{e}')\n"
+    )
+    env = _env_with([f"DOCKER_MCP_SERVER_HOSTS={hosts}"])
+    return subprocess.run(  # noqa: S603
+        [sys.executable, "-c", code], capture_output=True, text=True, env=env, check=True
+    ).stdout.strip()
+
+
+def test_a_host_guard_refusal_reaches_the_caller_with_its_reason():
+    """A refusal the model cannot read is one it will retry against the same host.
+
+    Asserts the type as well as the text: an `UnexpectedToolError` is logged at ERROR with a
+    traceback and its message withheld, a plain `ToolError` at INFO with the message kept. Matching
+    on the message alone would still pass if the SDK began reporting crashes verbosely, and the log
+    level would silently be wrong.
+    """
+    kind, _, message = _call_tool_in_child(
+        "local=auto, prod=ssh://h(ro)", "container_stop", {"id_or_name": "x", "host": "prod"}
+    ).partition("|")
+    assert kind == "ToolError", f"refusal arrived as {kind}: {message}"
+    assert "read-only" in message and "prod" in message
+
+
+def test_an_unknown_host_names_the_configured_hosts_on_the_wire():
+    kind, _, message = _call_tool_in_child("local=auto, prod=ssh://h", "container_list", {"host": "staging"}).partition(
+        "|"
+    )
+    assert kind == "ToolError", f"refusal arrived as {kind}: {message}"
+    assert "unknown host 'staging'" in message
+
+
+def test_a_bug_stays_a_crash_with_its_text_withheld(monkeypatch, on_the_wire):
+    """The other half of the contract, and why the translation names DockerMcpError and not Exception.
+
+    A bug dressed as a deliberate refusal is neither logged with its traceback nor kept off the
+    wire, which is exactly what the SDK's classification exists to guarantee.
+
+    `monkeypatch.setattr` is deliberately left at `raising=True`: an earlier version of this test
+    patched `_client_for`, a name `containers.py` does not have, with `raising=False`. That planted
+    nothing, and the test passed only because the real code happened to raise something untranslated
+    - so it asserted the right outcome for the wrong reason and would have kept passing after the
+    behaviour it guards was gone.
+    """
+    from mcp.server.mcpserver.exceptions import UnexpectedToolError
+
+    monkeypatch.setattr(
+        "docker_mcp.tools.containers._get_client",
+        MagicMock(side_effect=AttributeError("'NoneType' object has no attribute 'containers'")),
+    )
+    with pytest.raises(UnexpectedToolError) as excinfo:
+        on_the_wire("container_list", {})
+    assert "NoneType" not in str(excinfo.value)
+
+
+def test_every_registered_tool_translates_its_anticipated_failures():
+    """The guard that makes a bypass impossible to miss.
+
+    A tool registered with a bare `@mcp.tool` returns the right payload and passes every behaviour
+    test in this file; it only stops explaining itself when something fails, which no payload
+    assertion can see. So the check is on the built server rather than on the source of the modules
+    that happen to register tools today, and it reaches a module that does not exist yet.
+    """
+    unwrapped = sorted(
+        name for name, tool in _registered_tools().items() if not getattr(tool.fn, TRANSLATES_FAILURES, False)
+    )
+    assert not unwrapped, (
+        f"tools {unwrapped} do not translate DockerMcpError - register through @tool() so a refusal "
+        f"reaches the caller with its reason instead of a bare 'Error executing tool <name>'"
+    )
+
+
+# Every bare `raise ValueError`/`RuntimeError` left in `docker_mcp`, with why it stays one. These
+# say this server is broken or in a state it did not expect: text for the log, not for the model, so
+# the SDK withholding it and logging the traceback is the wanted behaviour. Keyed by function rather
+# than line so ordinary edits do not churn it, and exact rather than a ceiling so removing one is
+# noticed too.
+DELIBERATE_CRASHES = {
+    # An internal guard, not an answer to a caller: the comment at the site reads "no consumer needs
+    # it today", so reaching it means an internal caller passed something unforwardable.
+    ("tools/_cli.py", "_reject_unforwardable"): 2,
+    # The docker CLI emitted something this server cannot parse - our bug or a format change.
+    ("tools/_cli.py", "parse_ndjson"): 1,
+    # Empty argv, negative max_output_bytes: internal misuse of the helper.
+    ("tools/_ssh_proxy.py", "_validate_exec_args"): 2,
+    # "SSH transport is not connected" in three places: a torn-down session or a missing connect.
+    # Two: the transport check above, plus a `TimeoutError` when the probe never reports an exit
+    # status. That one is caught two lines later by this function's own `except OSError` arm
+    # (TimeoutError subclasses OSError) and falls through to WINDOWS, which is the documented
+    # "no POSIX shell here" answer - it never leaves the function.
+    ("tools/_ssh_proxy.py", "detect_remote_dialect"): 2,
+    ("tools/_ssh_proxy.py", "exec_remote"): 1,
+    ("tools/_ssh_proxy.py", "factory"): 1,
+    # `_hosts` validated the URL at startup, so reaching these means a caller skipped `is_ssh_url`.
+    ("tools/_ssh_proxy.py", "parse_ssh_url"): 2,
+    # Negative max_bytes: internal misuse.
+    ("tools/_utils.py", "join_bounded"): 1,
+    # `SystemExit` on a malformed DOCKER_MCP_SERVER_HOSTS, raised at import before any tool is
+    # registered. It ends the process rather than answering a caller; there is no client to tell.
+    ("_hosts.py", "load"): 1,
+    # Every resolved address failed to connect. `connect_ssh_client` catches OSError from this
+    # helper and re-raises it as a RemoteFailureError carrying actionable guidance, so this text
+    # never reaches a client on its own.
+    ("tools/_ssh_proxy.py", "connect_socket_with_family_fallback"): 1,
+}
+
+
+def _raised_builtin(node: ast.AST) -> str | None:
+    """The builtin name a `raise` statement raises, or None.
+
+    Covers both spellings, because they are equivalent at runtime and only one of them was matched
+    to begin with: `raise ValueError("...")` instantiates, `raise ValueError` lets Python do it. A
+    guard that sees only the first is one a future bare `raise ValueError` walks straight past -
+    which is the whole failure mode this check exists to prevent. Attribute forms
+    (`builtins.ValueError`) count too.
+
+    And every builtin exception, not a chosen few: the message withheld from the model is withheld
+    whatever the class is called.
+    """
+    import builtins
+
+    if not isinstance(node, ast.Raise) or node.exc is None:
+        return None
+    target = node.exc.func if isinstance(node.exc, ast.Call) else node.exc
+    if isinstance(target, ast.Name):
+        name = target.id
+    elif isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name) and target.value.id == "builtins":
+        # Only a `builtins.`-qualified attribute. Matching on the attribute name alone counted
+        # `somelib.TimeoutError` as a builtin raise, over-reporting a third-party class that merely
+        # shares a name and forcing a DELIBERATE_CRASHES entry for something this rule never meant.
+        name = target.attr
+    else:
+        return None
+    # Any builtin exception, not a hand-written pair of names. The pair was a copied list and it had
+    # already gone stale: `raise FileNotFoundError("pass from_url instead")` is exactly as invisible
+    # to the model as a bare ValueError, and walked straight past a check written to catch it.
+    # `builtins` is the enumeration, so there is nothing left to keep current.
+    candidate = getattr(builtins, name, None)
+    return name if isinstance(candidate, type) and issubclass(candidate, BaseException) else None
+
+
+def _builtin_raise_sites() -> dict:
+    """Every bare raise of a builtin exception in `docker_mcp`, counted per enclosing function.
+
+    Any builtin, not the two names this once looked for - see `_raised_builtin`.
+    """
+    import ast
+    import collections
+    import pathlib as _pathlib
+
+    root = _pathlib.Path(__file__).resolve().parent.parent / "docker_mcp"
+    counts: collections.Counter = collections.Counter()
+    for path in sorted(root.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        spans = {}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+                for line in range(node.lineno, (node.end_lineno or node.lineno) + 1):
+                    spans[line] = node.name
+        for node in ast.walk(tree):
+            # The isinstance check stays here as well as inside the helper: it is what narrows the
+            # type for `node.lineno` below, which `ast.walk`'s `AST` does not carry.
+            if isinstance(node, ast.Raise) and _raised_builtin(node):
+                counts[(path.relative_to(root).as_posix(), spans.get(node.lineno, "?"))] += 1
+    return dict(counts)
+
+
+def test_the_builtin_raise_scan_sees_both_spellings():
+    """The scan itself, on both forms plus the ones it must not count.
+
+    Tested directly rather than by planting a raise in the package, because the guard below reports
+    a count and a miscount looks identical to a clean tree from outside it.
+    """
+    import ast
+
+    def scan(source: str) -> list:
+        return [name for node in ast.walk(ast.parse(source)) if (name := _raised_builtin(node))]
+
+    assert scan("raise ValueError('x')") == ["ValueError"]
+    assert scan("raise ValueError") == ["ValueError"], "a parenless raise slips past the guard"
+    assert scan("raise RuntimeError") == ["RuntimeError"]
+    assert scan("import builtins\nraise builtins.ValueError('x')") == ["ValueError"]
+    assert scan("import somelib\nraise somelib.TimeoutError('x')") == [], (
+        "a third-party class sharing a builtin name is not a builtin raise"
+    )
+    assert scan("raise ToolInputError('x')") == []
+    assert scan("try:\n    pass\nexcept Exception:\n    raise") == [], "a bare re-raise is not a site"
+
+
+# ---------- library failures on the wire ----------
+
+
+def test_the_library_failure_table_orders_narrow_before_broad():
+    """`NotFound` subclasses `APIError` subclasses `DockerException`.
+
+    Ordering is the whole correctness of the table: put the broad entry first and every missing
+    container is classified as a daemon failure instead of a fixable argument. Asserted against the
+    installed docker SDK rather than from memory, so a hierarchy change fails here.
+    """
+    import docker.errors
+
+    from docker_mcp.server import _LIBRARY_FAILURES
+
+    assert issubclass(docker.errors.NotFound, docker.errors.DockerException), "hierarchy assumption is stale"
+    types = [library_type for library_type, _ in _LIBRARY_FAILURES]
+    for index, library_type in enumerate(types):
+        for later in types[index + 1 :]:
+            assert not issubclass(later, library_type), (
+                f"{later.__name__} subclasses {library_type.__name__} but is listed after it, so it "
+                f"can never match - move the narrower entry first"
+            )
+
+
+@pytest.mark.parametrize(
+    ("exception", "expected"),
+    [
+        (docker.errors.NotFound("No such container: x"), "ToolInputError"),
+        (docker.errors.APIError("500 Server Error: something broke"), "RemoteFailureError"),
+        (subprocess.TimeoutExpired(cmd=["docker", "ps"], timeout=60), "RemoteFailureError"),
+        # Transport failures never reach `raise_for_status()`, so listing only `HTTPStatusError`
+        # left every registry timeout and connection refusal arriving as a generic crash.
+        (httpx.InvalidURL("not a usable URL"), "ToolInputError"),
+        (httpx.ConnectError("connection refused"), "RemoteFailureError"),
+        (httpx.ConnectTimeout("timed out"), "RemoteFailureError"),
+        (
+            httpx.HTTPStatusError("404", request=httpx.Request("GET", "https://x"), response=httpx.Response(404)),
+            "RemoteFailureError",
+        ),
+    ],
+    ids=["NotFound", "APIError", "TimeoutExpired", "InvalidURL", "ConnectError", "ConnectTimeout", "HTTPStatusError"],
+)
+def test_a_library_failure_is_classified_by_the_table(exception, expected):
+    from docker_mcp.server import _as_project_failure
+
+    assert type(_as_project_failure(exception)).__name__ == expected
+
+
+def test_a_daemon_rejection_reaches_the_caller_with_its_own_text(monkeypatch, on_the_wire):
+    """The daemon's message is the useful part, and before the table none of it arrived.
+
+    106 of the tools reach the daemon through docker-py, and every one of them reported
+    `Error executing tool <name>` with the daemon's explanation withheld and a traceback logged at
+    ERROR - the same failure the project-exception translation was written to prevent, left standing
+    for the exceptions this server does not raise itself.
+    """
+    from mcp.server.mcpserver.exceptions import ToolError, UnexpectedToolError
+
+    client = MagicMock()
+    client.containers.get.side_effect = docker.errors.NotFound("404 Client Error: No such container: nope")
+    monkeypatch.setattr("docker_mcp.tools.containers._get_client", MagicMock(return_value=client))
+
+    with pytest.raises(ToolError) as excinfo:
+        on_the_wire("container_inspect", {"id_or_name": "nope"})
+    assert not isinstance(excinfo.value, UnexpectedToolError)
+    assert "No such container: nope" in str(excinfo.value)
+
+
+def test_a_missing_docker_binary_says_how_to_fix_it(monkeypatch, on_the_wire):
+    """The most likely first-run failure there is, and it used to say nothing."""
+    from mcp.server.mcpserver.exceptions import ToolError, UnexpectedToolError
+
+    monkeypatch.setattr("docker_mcp.tools._cli.shutil.which", lambda _binary: None)
+    with pytest.raises(ToolError) as excinfo:
+        on_the_wire("context_list", {})
+    assert not isinstance(excinfo.value, UnexpectedToolError)
+    assert "was not found on PATH" in str(excinfo.value)
+
+
+def test_a_bare_builtin_raise_is_a_deliberate_crash_or_a_mistake():
+    """A new bare `raise ValueError`/`RuntimeError` is almost always the wrong choice now.
+
+    The SDK reports anything that is not a `DockerMcpError` as `Error executing tool <name>` with the
+    text withheld, so a refusal or a bad-argument message written as a builtin reaches the model
+    saying nothing it can act on - and nothing else fails when that happens, which is why this is a
+    test rather than a note. Adding a site means either raising the right `DockerMcpError` subclass
+    or adding it here with the reason it is genuinely a crash.
+    """
+    assert _builtin_raise_sites() == DELIBERATE_CRASHES, (
+        "the bare builtin raises in docker_mcp no longer match DELIBERATE_CRASHES - raise a "
+        "DockerMcpError subclass (see docker_mcp/exceptions.py) so the caller is told why, or add "
+        "the site above with the reason its text belongs only in the log"
+    )
+
+
+def test_every_registered_resource_translates_its_anticipated_failures():
+    """The resource half of the same guard.
+
+    A resource registered with a bare `@mcp.resource` serves the right payload and passes every
+    behaviour test; it only stops explaining itself when a read fails, which no payload assertion
+    can see. Templates are checked alongside static resources because the SDK routes both through
+    `read_resource` and classifies a template's own creation failure the same way.
+    """
+    registry = mcp._resource_manager
+    # getattr, not `.fn`: the SDK's `Resource` base does not declare it - only the function-backed
+    # subclasses do. `test_the_resource_guard_is_reading_a_full_surface` asserts every entry has one,
+    # so a missing `fn` is caught there rather than being silently skipped here.
+    entries = [(str(r.uri), getattr(r, "fn", None)) for r in registry._resources.values()]
+    entries += [(uri, getattr(template, "fn", None)) for uri, template in registry._templates.items()]
+    unwrapped = sorted(uri for uri, fn in entries if not getattr(fn, TRANSLATES_FAILURES, False))
+    assert not unwrapped, (
+        f"resources {unwrapped} do not translate DockerMcpError - register through @resource() so a "
+        f"failed read says why instead of a bare 'Error reading resource <uri>'"
+    )
+
+
+def test_the_resource_guard_is_reading_a_full_surface():
+    """As above: "no bad entries found" is also what an empty registry says."""
+    registry = mcp._resource_manager
+    assert len(registry._resources) >= 3, f"enumerated only {len(registry._resources)} static resources"
+    assert len(registry._templates) >= 1, f"enumerated only {len(registry._templates)} templates"
+    assert all(callable(getattr(r, "fn", None)) for r in registry._resources.values()), "Resource.fn moved"
+    assert all(callable(getattr(t, "fn", None)) for t in registry._templates.values()), "ResourceTemplate.fn moved"
+
+
+def test_the_translation_guard_is_reading_a_full_surface():
+    """ "No bad entries found" is also what an empty list says.
+
+    If the SDK renames `_tool_manager` or stops holding the callable on `.fn`, the check above goes
+    green while checking nothing. This fails instead - the difference between a check that skipped
+    and one that passed.
+    """
+    tools = _registered_tools()
+    assert len(tools) > 100, f"enumerated only {len(tools)} tools; the surface is far larger"
+    assert all(callable(getattr(tool, "fn", None)) for tool in tools.values()), "Tool.fn is no longer the callable"

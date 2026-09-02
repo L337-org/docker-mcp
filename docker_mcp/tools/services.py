@@ -3,6 +3,7 @@
 import time
 from typing import Literal, cast
 
+from docker_mcp.exceptions import ToolInputError
 from docker_mcp.server import tool
 from docker_mcp.tools._labels import managed_filter, with_provenance
 from docker_mcp.tools._utils import MAX_PAYLOAD_BYTES, as_byte_chunks, drop_none, join_bounded
@@ -20,7 +21,13 @@ def _read_service_log_tail(id_or_name: str, tail: int = 200, host: str | None = 
     service = _get_client(host).services.get(id_or_name)
     output = service.logs(stdout=True, stderr=True, follow=False, tail=tail)
 
-    raw = join_bounded(as_byte_chunks(output), MAX_PAYLOAD_BYTES, f"logs of service {id_or_name}")
+    # Fixed cap, as in `_read_bounded_container_logs`: `tail` is the lever the caller has.
+    raw = join_bounded(
+        as_byte_chunks(output),
+        MAX_PAYLOAD_BYTES,
+        f"logs of service {id_or_name}",
+        remedy="Request fewer lines with `tail`.",
+    )
     return raw.decode("utf-8", errors="replace")
 
 
@@ -153,7 +160,7 @@ def service_update(id_or_name: str, updates: dict | None = None, force: bool = F
     returns: bool - True after the update
     """
     if (updates is None) == (not force):
-        raise ValueError("Pass exactly one of `updates` (fields to change) or `force=True` (redeploy unchanged).")
+        raise ToolInputError("Pass exactly one of `updates` (fields to change) or `force=True` (redeploy unchanged).")
     service = _get_client(host).services.get(id_or_name)
     if force:
         service.force_update()
@@ -213,7 +220,7 @@ def service_logs(
     Get a bounded snapshot of a swarm service's logs (never follows).
 
     `follow` is intentionally not exposed: the stream is joined into one string before returning, so
-    following would block forever and grow unbounded. Collection is capped at `max_bytes` (ValueError
+    following would block forever and grow unbounded. Collection is capped at `max_bytes` (ToolInputError
     if exceeded) so a noisy service can't OOM the server. The default is a bounded `tail=200`;
     `tail="all"` returns the whole buffer, which can be huge on long-running services and exceed
     the agent's context - prefer an integer, or `since`, to constrain output. Logs aggregate
@@ -228,7 +235,7 @@ def service_logs(
         since - Show logs since this Unix timestamp
         timestamps - Include timestamps
         tail - Number of lines from the end (default 200), or the literal "all" for everything
-        max_bytes - Abort with ValueError if the buffered logs exceed this many bytes (default 32 MiB)
+        max_bytes - Abort with ToolInputError if the buffered logs exceed this many bytes (default 32 MiB)
     returns: str - Decoded log output
     """
     service = _get_client(host).services.get(id_or_name)
@@ -272,7 +279,7 @@ def service_rollback(id_or_name: str, host: str | None = None) -> dict:
     Roll a swarm service back to its previous spec (the docker `service rollback` equivalent).
 
     Re-applies the service's `PreviousSpec` - the spec from before the most recent `service_update` /
-    `service_scale`. Raises ValueError if the service has no PreviousSpec
+    `service_scale`. Raises ToolInputError if the service has no PreviousSpec
     (it has never been updated, or was already rolled back). The high-level SDK exposes no rollback,
     so this reads the current version and previous spec via the low-level APIClient and submits them
     with the low-level `update_service` API call.
@@ -284,7 +291,7 @@ def service_rollback(id_or_name: str, host: str | None = None) -> dict:
     info = api.inspect_service(id_or_name)
     previous = info.get("PreviousSpec")
     if not previous:
-        raise ValueError(
+        raise ToolInputError(
             f"Service {id_or_name} has no PreviousSpec to roll back to (never updated, or already rolled back)."
         )
     version = info["Version"]["Index"]
@@ -366,11 +373,11 @@ def service_wait(
                      "failed_tasks", "update_state", "waited_seconds"}
     """
     if timeout_seconds < 0:
-        raise ValueError(f"timeout_seconds must be >= 0, got {timeout_seconds}.")
+        raise ToolInputError(f"timeout_seconds must be >= 0, got {timeout_seconds}.")
     if poll_interval <= 0:
-        raise ValueError(f"poll_interval must be > 0, got {poll_interval}.")
+        raise ToolInputError(f"poll_interval must be > 0, got {poll_interval}.")
     if replicas is not None and replicas < 0:
-        raise ValueError(f"replicas must be >= 0, got {replicas}.")
+        raise ToolInputError(f"replicas must be >= 0, got {replicas}.")
     start = time.monotonic()
     deadline = start + timeout_seconds
     while True:

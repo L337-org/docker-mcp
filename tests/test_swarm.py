@@ -2,6 +2,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from docker_mcp.exceptions import RemoteFailureError
 from docker_mcp.tools.swarm import (
     swarm_join_tokens,
     swarm_unlock_key,
@@ -136,7 +137,7 @@ def test_swarm_update_refuses_to_send_an_unguarded_update():
     swarm.attrs = {"Spec": {}}
     with _patch() as mock_client:
         mock_client.return_value.swarm = swarm
-        with pytest.raises(RuntimeError, match="Version.Index"):
+        with pytest.raises(RemoteFailureError, match="Version.Index"):
             swarm_update(rotate_worker_token=True)
     mock_client.return_value.api.update_swarm.assert_not_called()
 

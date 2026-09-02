@@ -3,6 +3,7 @@
 
 import pytest
 
+from docker_mcp.exceptions import RemoteFailureError
 from docker_mcp.tools.context import context_inspect, context_list
 
 
@@ -25,5 +26,5 @@ def test_context_inspect_current_context_returns_endpoint():
 
 
 def test_context_inspect_unknown_raises():
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RemoteFailureError):
         context_inspect("definitely-not-a-real-context-name-xyz123")

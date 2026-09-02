@@ -9,6 +9,7 @@ from typing import Any, Literal, TypedDict, cast
 
 import requests.exceptions
 
+from docker_mcp.exceptions import ToolInputError
 from docker_mcp.server import tool
 from docker_mcp.tools._labels import managed_filter, with_provenance
 from docker_mcp.tools._utils import (
@@ -16,7 +17,7 @@ from docker_mcp.tools._utils import (
     as_byte_chunks,
     close_stream_quietly,
     drop_none,
-    host_read_path,
+    open_host_read_file,
     join_bounded,
     stream_to_file,
 )
@@ -397,13 +398,19 @@ def _read_bounded_container_logs(container: Any, what: str, **log_kwargs: Any) -
     `stream=True` with `follow=False` is what makes the cap effective: docker-py returns a
     generator that terminates at EOF, so `join_bounded` can abort part-way through. Passing
     `stream=False` instead would have docker-py buffer the whole payload before returning, so any
-    cap applied afterwards would measure memory that had already been committed. Raises ValueError
+    cap applied afterwards would measure memory that had already been committed. Raises ToolInputError
     when the cap is hit, matching `service_logs`.
     """
     # as_byte_chunks handles both shapes: docker-py returns a stream for stream=True today, and a
     # whole-payload return would be yielded as one chunk rather than iterated into digit soup.
     output = container.logs(stream=True, follow=False, **log_kwargs)
-    raw = join_bounded(as_byte_chunks(output), MAX_PAYLOAD_BYTES, what)
+    # The cap here is fixed, so the caller cannot raise it; what they can do is ask for less.
+    raw = join_bounded(
+        as_byte_chunks(output),
+        MAX_PAYLOAD_BYTES,
+        what,
+        remedy="Request fewer lines with `tail`, or narrow the window with `since`/`until`.",
+    )
     return raw.decode("utf-8", errors="replace")
 
 
@@ -428,7 +435,7 @@ def container_logs(
     container exits, whichever comes first - so the agent can watch live output without blocking
     forever. `limit_lines`/`timeout_seconds` apply only in follow mode; `until` only in snapshot mode.
 
-    Snapshot mode is capped at 32 MiB and raises ValueError past it, so a noisy container can't
+    Snapshot mode is capped at 32 MiB and raises ToolInputError past it, so a noisy container can't
     exhaust the server's memory; `service_logs` caps the same way and lets the caller raise it.
     Prefer an integer `tail`, or `since`, over `tail="all"` on a long-running container: "all" is
     safe but will abort on the cap rather than returning a partial answer, and a large result can
@@ -449,7 +456,7 @@ def container_logs(
         follow - Follow the live log stream instead of returning a snapshot
         limit_lines - Follow mode: max lines to collect before returning (default 200)
         timeout_seconds - Follow mode: max wall-clock seconds before returning what was collected (default 30)
-    returns: str - Decoded log output (up to `limit_lines` lines in follow mode). Raises ValueError
+    returns: str - Decoded log output (up to `limit_lines` lines in follow mode). Raises ToolInputError
                    in snapshot mode if the logs exceed 32 MiB.
     """
     container = _get_client(host).containers.get(id_or_name)
@@ -585,7 +592,7 @@ def _read_stats_summary(id_or_name: str, host: str | None = None) -> dict:
     """
     Return a computed resource-usage summary for a running container.
 
-    Raises RuntimeError if the container isn't running - there is no live cgroup to sample on a
+    Raises ToolInputError if the container isn't running - there is no live cgroup to sample on a
     stopped container, so the `docker-stats://` resource surfaces a clean message instead of a raw
     daemon error.
     """
@@ -593,7 +600,7 @@ def _read_stats_summary(id_or_name: str, host: str | None = None) -> dict:
     container.reload()
     status = (container.attrs.get("State", {}) or {}).get("Status")
     if status != "running":
-        raise RuntimeError(
+        raise ToolInputError(
             f"Container {id_or_name!r} is not running (status: {status or 'unknown'}); "
             f"resource-usage stats require a running container."
         )
@@ -870,11 +877,11 @@ def container_wait(
                      the container exited without matching.
     """
     if timeout_seconds < 0:
-        raise ValueError(f"timeout_seconds must be >= 0, got {timeout_seconds}.")
+        raise ToolInputError(f"timeout_seconds must be >= 0, got {timeout_seconds}.")
     if until in ("healthy", "log-match") and poll_interval <= 0:
-        raise ValueError(f"poll_interval must be > 0, got {poll_interval}.")
+        raise ToolInputError(f"poll_interval must be > 0, got {poll_interval}.")
     if until == "log-match" and not pattern:
-        raise ValueError("`pattern` is required when until='log-match'.")
+        raise ToolInputError("`pattern` is required when until='log-match'.")
     container = _get_client(host).containers.get(id_or_name)
     start = time.monotonic()
     if until not in ("healthy", "log-match"):
@@ -961,7 +968,7 @@ def container_export(
         id_or_name - The container id or name
         dest_path - Destination path on the server host; omit to return the bytes in band
         overwrite - Replace dest_path if it already exists (default False)
-        max_bytes - In-band mode: abort with ValueError beyond this many bytes (default 32 MiB)
+        max_bytes - In-band mode: abort with ToolInputError beyond this many bytes (default 32 MiB)
     returns: bytes | dict - the tar bytes (in band), or {"path": <resolved path>, "bytes_written": int}
     """
     container = _get_client(host).containers.get(id_or_name)
@@ -984,7 +991,7 @@ def container_archive_get(
     args:
         id_or_name - The container id or name
         path - Path inside the container
-        max_bytes - Abort with ValueError if the archive exceeds this many bytes (defaults to 32 MiB)
+        max_bytes - Abort with ToolInputError if the archive exceeds this many bytes (defaults to 32 MiB)
     returns: dict - Mapping with archive (bytes) and stat (dict) keys
     """
     container = _get_client(host).containers.get(id_or_name)
@@ -1041,10 +1048,9 @@ def container_archive_put(
     returns: bool - True if the upload succeeded
     """
     if (data is None) == (from_file is None):
-        raise ValueError("Pass exactly one of `data` (in-band tar bytes) or `from_file` (a server-host path).")
+        raise ToolInputError("Pass exactly one of `data` (in-band tar bytes) or `from_file` (a server-host path).")
     container = _get_client(host).containers.get(id_or_name)
     if data is not None:
         return container.put_archive(path, data)
-    source = host_read_path(cast(str, from_file))
-    with source.open("rb") as handle:
+    with open_host_read_file(cast(str, from_file)) as handle:
         return container.put_archive(path, handle)

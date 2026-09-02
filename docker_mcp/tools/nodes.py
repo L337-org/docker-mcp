@@ -3,6 +3,7 @@
 import time
 from typing import Literal
 
+from docker_mcp.exceptions import ToolInputError
 from docker_mcp.server import tool
 from docker_mcp.tools._utils import drop_none
 from docker_mcp.tools.system import _get_client
@@ -123,9 +124,9 @@ def node_wait(
     returns: dict - {"node", "until", "met", "timed_out", "state", "availability", "waited_seconds"}
     """
     if timeout_seconds < 0:
-        raise ValueError(f"timeout_seconds must be >= 0, got {timeout_seconds}.")
+        raise ToolInputError(f"timeout_seconds must be >= 0, got {timeout_seconds}.")
     if poll_interval <= 0:
-        raise ValueError(f"poll_interval must be > 0, got {poll_interval}.")
+        raise ToolInputError(f"poll_interval must be > 0, got {poll_interval}.")
     node = _get_client(host).nodes.get(id_or_name)
     start = time.monotonic()
     deadline = start + timeout_seconds

@@ -2,6 +2,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from docker_mcp.exceptions import ToolInputError
 from docker_mcp.tools.nodes import node_inspect, node_list, node_remove, node_update, node_wait
 
 
@@ -121,10 +122,10 @@ def test_node_wait_sleep_bounded_by_timeout():
 
 
 def test_node_wait_rejects_negative_timeout():
-    with pytest.raises(ValueError, match="timeout_seconds"):
+    with pytest.raises(ToolInputError, match="timeout_seconds"):
         node_wait("n1", timeout_seconds=-1)
 
 
 def test_node_wait_rejects_nonpositive_poll_interval():
-    with pytest.raises(ValueError, match="poll_interval"):
+    with pytest.raises(ToolInputError, match="poll_interval"):
         node_wait("n1", poll_interval=0)

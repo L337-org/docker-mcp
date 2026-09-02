@@ -2,6 +2,7 @@ from unittest.mock import patch
 
 import pytest
 
+from docker_mcp.exceptions import ToolInputError
 from docker_mcp.tools._cli import CliResult
 from docker_mcp.tools.scout import (
     _JSON_FORMATS,
@@ -160,9 +161,9 @@ def test_scout_compare_to_env_target():
 
 
 def test_scout_compare_requires_exactly_one_target():
-    with pytest.raises(ValueError, match="exactly one of"):
+    with pytest.raises(ToolInputError, match="exactly one of"):
         scout_compare("org/app:v2")
-    with pytest.raises(ValueError, match="exactly one of"):
+    with pytest.raises(ToolInputError, match="exactly one of"):
         scout_compare("org/app:v2", to="org/app:v1", to_latest=True)
 
 
@@ -250,7 +251,7 @@ def test_scout_compare_refuses_a_local_path_target_on_the_remote_path(tmp_path):
         patch("docker_mcp.tools.scout.should_remote_exec", return_value=True),
         patch("docker_mcp.tools.scout.remote_exec_cli") as remote,
     ):
-        with pytest.raises(ValueError, match="names a path on the host running this MCP server"):
+        with pytest.raises(ToolInputError, match="names a path on the host running this MCP server"):
             scout_compare("org/app:v2", to=str(local_dir), host="prod")
     remote.assert_not_called()
 
@@ -280,10 +281,10 @@ def test_scout_compare_allows_a_local_path_target_when_running_locally(tmp_path)
 
 
 def test_scout_cves_rejects_flag_like_image():
-    with pytest.raises(ValueError, match="parses as a flag"):
+    with pytest.raises(ToolInputError, match="parses as a flag"):
         scout_cves(image="--output=/etc/passwd")
 
 
 def test_scout_compare_rejects_flag_like_image():
-    with pytest.raises(ValueError, match="parses as a flag"):
+    with pytest.raises(ToolInputError, match="parses as a flag"):
         scout_compare(image="-x", to="alpine:3.19")

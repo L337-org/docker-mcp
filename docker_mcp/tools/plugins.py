@@ -5,6 +5,7 @@ import threading
 from docker import auth
 from docker.types.daemon import CancellableStream
 
+from docker_mcp.exceptions import CapabilityError
 from docker_mcp.server import tool
 from docker_mcp.tools._utils import close_stream_quietly, host_read_path
 from docker_mcp.tools.system import _get_client
@@ -114,8 +115,8 @@ def plugin_push(name: str, timeout_seconds: float = 300.0, host: str | None = No
     be enabled. Credentials come from `system_login`, or from `~/.docker/config.json` if the host
     ran `docker login`. Does NOT raise when the registry rejects the push: an authentication or
     quota failure arrives as a final progress record and is surfaced as the `error` key, so check
-    that key rather than assuming success. Raises `RuntimeError` if the installed docker-py is too
-    old to expose the internals below, and `docker.errors.APIError` if the plugin isn't installed.
+    that key rather than assuming success. Raises `CapabilityError` if the installed docker-py is too
+    old to expose the internals below, and reports the daemon's own error if the plugin isn't installed.
 
     Bypasses docker-py's `Plugin.push()`/`APIClient.push_plugin()`, which cannot work: both POST to
     `/plugins/{name}/pull`, a route the Engine does not define (push is `/plugins/{name}/push`), so
@@ -157,7 +158,7 @@ def plugin_push(name: str, timeout_seconds: float = 300.0, host: str | None = No
             )
             if fn is None
         )
-        raise RuntimeError(
+        raise CapabilityError(
             f"the installed docker-py no longer exposes {', '.join(missing)} on APIClient, which "
             "plugin_push needs to reach POST /plugins/{name}/push; push the plugin with "
             "`docker plugin push` until this tool is updated"

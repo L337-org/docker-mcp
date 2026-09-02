@@ -56,6 +56,40 @@ def test_the_declared_mcp_bound_matches_what_the_code_imports():
     )
 
 
+def test_the_declared_mcp_floor_excludes_the_releases_that_withhold_a_refusal_reason():
+    """
+    `server.py` translates `DockerMcpError` into the SDK's `ToolError` so a refusal keeps its
+    wording. That only works from mcp 2.1.0, where the SDK began classifying a failure by type -
+    `ToolError`/`ResourceError` keep their message, everything else is reported as a generic crash.
+    On 2.0.0 the translation is not merely redundant but wrong: that release flattened even a
+    deliberately raised `ResourceError` to `Error reading resource <uri>`, so a resource explains
+    nothing and a `(ro)` host refusal is indistinguishable from a bug.
+
+    Asserted the way the two guards above are - against what the code depends on rather than a
+    number someone must remember. The behaviour is named by `UnexpectedToolError`, which is the
+    class the SDK introduced to carry a withheld crash, and the floor is checked by asking whether
+    the declared requirement still admits the first release that lacks it.
+    """
+    from mcp.server.mcpserver import exceptions as mcp_exceptions
+
+    assert hasattr(mcp_exceptions, "UnexpectedToolError"), (
+        "the installed mcp no longer defines UnexpectedToolError, so it may no longer classify a "
+        "failure by type - revisit _translate_failures in server.py and the declared floor"
+    )
+    assert issubclass(mcp_exceptions.UnexpectedToolError, mcp_exceptions.ToolError), (
+        "UnexpectedToolError no longer subclasses ToolError, so `except ToolError` around a call no "
+        "longer catches a crash - revisit what the wire tests in test_server.py assert"
+    )
+
+    dependencies = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))["project"]["dependencies"]
+    declared = [d for d in dependencies if Requirement(d).name == "mcp"]
+    assert declared, "no direct 'mcp' dependency found in pyproject.toml"
+    assert not _admits(declared[0], "2.0.0"), (
+        f"{declared[0]!r} admits mcp 2.0.0, which flattens a deliberate ResourceError to a generic "
+        "string - a fresh resolve could install it and every refusal would stop saying why"
+    )
+
+
 def test_the_declared_docker_floor_supports_the_kwarg_the_code_passes():
     """
     `_build_default_client` passes `use_context=False` to `docker.from_env()` so docker-py never

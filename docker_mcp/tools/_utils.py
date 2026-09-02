@@ -6,9 +6,10 @@ from collections.abc import Iterable
 from functools import lru_cache
 from importlib.metadata import version as _pkg_version
 from pathlib import Path
-from typing import Any
+from typing import IO, Any
 
 # Alias-aware env lookups, re-exported so tool modules can keep importing them from _utils.
+from docker_mcp.exceptions import ToolInputError
 from docker_mcp._env import env_flag, read_env  # noqa: F401
 
 # Default cap (32 MiB) for tools that buffer a daemon-side byte stream *in band* and return it
@@ -166,7 +167,7 @@ def assert_host_writable(dest_path: str) -> None:
     if not in_container():
         return
     if not _host_backed(Path(dest_path).expanduser()):
-        raise RuntimeError(_unmapped_path_message(Path(dest_path).expanduser(), for_write=True))
+        raise ToolInputError(_unmapped_path_message(Path(dest_path).expanduser(), for_write=True))
 
 
 def host_read_path(file_path: str) -> Path:
@@ -180,8 +181,33 @@ def host_read_path(file_path: str) -> Path:
     """
     path = Path(file_path).expanduser()
     if in_container() and not path.exists() and not _host_backed(path):
-        raise RuntimeError(_unmapped_path_message(path, for_write=False))
+        raise ToolInputError(_unmapped_path_message(path, for_write=False))
     return path
+
+
+def open_host_read_file(file_path: str) -> IO[bytes]:
+    """Open a caller-supplied file for reading, as a `ToolInputError` when it cannot be opened.
+
+    `host_read_path` resolves the path and explains an unmapped one inside a container; this adds the
+    open itself, because a missing file, a directory passed where a file belongs, or a permission
+    denial all raise a builtin `OSError` subclass - which the SDK reports as a crash with the text
+    withheld, leaving the caller nothing to act on for an argument only they control.
+
+    Converting `OSError` wholesale is safe here in a way it is not for writes: every failure mode of
+    opening a named file for reading is something the caller can address by naming a different one.
+
+    :param file_path: the caller's path
+    :returns: IO[bytes] - the open binary handle, for use as a context manager and for handing
+        straight to a docker-py call that wants a binary file-like
+    """
+    path = host_read_path(file_path)
+    try:
+        return path.open("rb")
+    except OSError as exc:
+        raise ToolInputError(
+            f"Cannot read {str(path)!r}: {exc.strerror or exc}. Pass a path to an existing, "
+            f"readable file on the host running this server."
+        ) from exc
 
 
 def classify_host_kernel() -> str:
@@ -257,7 +283,17 @@ def stream_to_file(chunks: Iterable[bytes], dest_path: str, *, overwrite: bool =
     assert_host_writable(dest_path)
     path = Path(dest_path).expanduser()
     if path.exists() and not overwrite:
-        raise FileExistsError(f"{path} already exists; pass overwrite=True to replace it.")
+        raise ToolInputError(f"{path} already exists; pass overwrite=True to replace it.")
+    # Checked rather than caught: `mkstemp` below raises `FileNotFoundError`/`NotADirectoryError`
+    # for a parent that is missing or is a file, which is the caller's path to fix, but it raises
+    # `OSError` for a full or read-only disk too - and that is not the caller's doing. Naming this
+    # case explicitly keeps the message actionable without classifying a disk failure as a bad
+    # argument.
+    if not path.parent.is_dir():
+        raise ToolInputError(
+            f"Cannot write {str(path)!r}: {str(path.parent)!r} is not a directory. Create it first, "
+            f"or choose a dest_path inside one that exists."
+        )
     fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".partial")
     tmp_path = Path(tmp_name)
     written = 0
@@ -307,9 +343,16 @@ def as_byte_chunks(chunks: Iterable | bytes | bytearray | str) -> Iterable[bytes
         close_stream_quietly(chunks)
 
 
-def join_bounded(chunks: Iterable[bytes], max_bytes: int, what: str) -> bytes:
+def join_bounded(chunks: Iterable[bytes], max_bytes: int, what: str, remedy: str | None = None) -> bytes:
     """
-    Concatenate bytes chunks, aborting with ValueError if the running total would exceed max_bytes.
+    Concatenate bytes chunks, aborting with ToolInputError if the running total would exceed
+    max_bytes. A negative `max_bytes` is a caller bug rather than an answer to give a model, and
+    stays a `ValueError`.
+
+    `remedy` is what the message tells the caller to do about it, and it has to be passed by any
+    caller whose own cap is fixed. The default names `max_bytes`, which is right for the tools that
+    expose it as a parameter and useless for the ones that do not - being told to raise something
+    they cannot reach is worse guidance than none, because it reads as actionable.
 
     Wraps the `b"".join(stream)` pattern used by tools that buffer a whole daemon-side
     payload (container export, image save, container archive) so a pathological input can't
@@ -323,9 +366,9 @@ def join_bounded(chunks: Iterable[bytes], max_bytes: int, what: str) -> bytes:
     try:
         for chunk in chunks:
             if len(collected) + len(chunk) > max_bytes:
-                raise ValueError(
-                    f"{what} exceeded max_bytes={max_bytes}; aborted to prevent memory exhaustion. "
-                    f"Raise max_bytes if a larger payload is intended."
+                advice = remedy or "Raise max_bytes if a larger payload is intended."
+                raise ToolInputError(
+                    f"{what} exceeded max_bytes={max_bytes}; aborted to prevent memory exhaustion. {advice}"
                 )
             collected.extend(chunk)
     finally:

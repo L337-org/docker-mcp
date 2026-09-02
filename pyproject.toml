@@ -32,11 +32,15 @@ dependencies = [
     "docker[ssh]>=7.2.0",
     "httpx>=0.28.1",
     # server.py imports MCPServer from mcp.server.mcpserver (mcp 2.0.0 removed the 1.x
-    # mcp.server.fastmcp.FastMCP surface this used to import). No upper cap: unlike that break,
-    # there's no known 3.x incompatibility to guard against, and
-    # tests/test_pyproject_pins.py::test_the_declared_mcp_bound_matches_what_the_code_imports
-    # already fails CI the day an installed mcp stops providing this import path.
-    "mcp>=2.0.0",
+    # mcp.server.fastmcp.FastMCP surface this used to import). Floor 2.1.0: from that release the
+    # SDK reports any exception other than ToolError/ResourceError as a generic crash, and the
+    # registrars translate DockerMcpError into those so a refusal keeps its wording. On 2.0.0 the
+    # translation is not merely unnecessary but wrong - it flattened even a deliberate
+    # ResourceError - so a resource would explain nothing. No upper cap: there's no known 3.x
+    # incompatibility to guard against, and the two guards in
+    # tests/test_pyproject_pins.py fail CI the day an installed mcp stops providing the import path
+    # or the error classification the code relies on.
+    "mcp>=2.1.0",
     # Pulled in transitively by docker, but we import requests.exceptions directly
     # (container_wait catches ReadTimeout), so declare it explicitly.
     "requests>=2.26.0",

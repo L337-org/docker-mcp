@@ -1,5 +1,6 @@
 # library of mcp tools relating to docker swarm
 
+from docker_mcp.exceptions import RemoteFailureError
 from docker_mcp.server import tool
 from docker_mcp.tools._utils import drop_none
 from docker_mcp.tools.system import _get_client
@@ -164,7 +165,7 @@ def swarm_update(
     # `update_swarm(version: int)` in that same stub set.
     version = (swarm.attrs.get("Version") or {}).get("Index")
     if not isinstance(version, int):
-        raise RuntimeError(
+        raise RemoteFailureError(
             "Swarm inspect returned no Version.Index, so the update cannot be version-guarded. "
             "Check `swarm_inspect` - this node may not be a swarm manager."
         )
@@ -283,8 +284,8 @@ def swarm_task_list(filters: dict | None = None, host: str | None = None) -> lis
     what is shutting down, or `service` for a single service -- for which `service_ps` is the
     simpler call. Each task carries its full `Spec`, including the `ContainerSpec` (image, command,
     env), so this returns much more per task than the `service-tasks://{id_or_name}` resource's
-    computed rollout summary. Read-only. Requires a swarm manager: any other node raises
-    `docker.errors.APIError`.
+    computed rollout summary. Read-only. Requires a swarm manager: on any other node the daemon
+    refuses, and its refusal is what comes back.
 
     args:
         filters - Filter dict; keys: id, name, service, node, label, desired-state
@@ -306,7 +307,7 @@ def swarm_task_inspect(id_or_name: str, host: str | None = None) -> dict:
     To reach the container behind a running task, read `Status.ContainerStatus.ContainerID` and pass
     it to `container_inspect` / `container_logs` -- but note the container may be on another node,
     where those tools cannot see it, and `service_logs` aggregates across tasks instead. Read-only.
-    Requires a swarm manager; raises `docker.errors.APIError` if the task does not exist, if a
+    Requires a swarm manager; reports the daemon's own error if the task does not exist, if a
     prefix matches more than one task, or if this node is not a manager.
 
     args:

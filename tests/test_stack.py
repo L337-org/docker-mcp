@@ -2,6 +2,7 @@ from unittest.mock import patch
 
 import pytest
 
+from docker_mcp.exceptions import RemoteFailureError, ToolInputError
 from docker_mcp.tools._cli import CliResult
 from docker_mcp.tools.stack import (
     stack_deploy,
@@ -69,7 +70,7 @@ def test_stack_deploy_does_not_raise_on_non_zero():
 
 
 def test_stack_deploy_requires_a_compose_file():
-    with pytest.raises(ValueError, match="at least one"):
+    with pytest.raises(ToolInputError, match="at least one"):
         stack_deploy("web", compose_files=[])
 
 
@@ -78,12 +79,12 @@ def test_stack_deploy_rejects_invalid_resolve_image():
     # rather than the test being softened to a legal value. `resolve_image` is a Literal, so a
     # caller arriving through MCP is stopped by schema validation before the body runs; this
     # asserts the runtime guard that still covers a direct Python call, which validation never sees.
-    with pytest.raises(ValueError, match="resolve_image"):
+    with pytest.raises(ToolInputError, match="resolve_image"):
         stack_deploy("web", compose_files=["c.yml"], resolve_image="sometimes")  # pyright: ignore[reportArgumentType]
 
 
 def test_stack_deploy_rejects_flag_like_stack_name():
-    with pytest.raises(ValueError, match="flag"):
+    with pytest.raises(ToolInputError, match="flag"):
         stack_deploy("--rm", compose_files=["c.yml"])
 
 
@@ -110,7 +111,7 @@ def test_stack_ls_single_object_wrapped_in_list():
 def test_stack_ls_raises_on_failure():
     with _patch_run() as run:
         run.return_value = _fail("This node is not a swarm manager")
-        with pytest.raises(RuntimeError, match="stack ls"):
+        with pytest.raises(RemoteFailureError, match="stack ls"):
             stack_list()
 
 
@@ -133,7 +134,7 @@ def test_stack_ps_builds_args_with_no_trunc_and_filters():
 def test_stack_ps_raises_on_failure():
     with _patch_run() as run:
         run.return_value = _fail("nothing found in stack: web")
-        with pytest.raises(RuntimeError, match="stack ps"):
+        with pytest.raises(RemoteFailureError, match="stack ps"):
             stack_ps("web")
 
 
@@ -149,7 +150,7 @@ def test_stack_services_builds_args_with_filters():
 
 
 def test_stack_services_rejects_flag_like_name():
-    with pytest.raises(ValueError, match="flag"):
+    with pytest.raises(ToolInputError, match="flag"):
         stack_services("-x")
 
 
@@ -175,12 +176,12 @@ def test_stack_rm_detach_false():
 
 
 def test_stack_rm_requires_a_stack_name():
-    with pytest.raises(ValueError, match="at least one"):
+    with pytest.raises(ToolInputError, match="at least one"):
         stack_remove([])
 
 
 def test_stack_rm_rejects_flag_like_name():
-    with pytest.raises(ValueError, match="flag"):
+    with pytest.raises(ToolInputError, match="flag"):
         stack_remove(["web", "-rf"])
 
 
@@ -240,3 +241,12 @@ def test_stack_uses_the_local_cli_when_it_can():
     remote.assert_not_called()
     staged.assert_not_called()
     assert run.call_args.kwargs["host"] == "prod"
+
+
+def test_a_stack_deploy_with_no_compose_file_says_so_on_the_wire(on_the_wire):
+    from mcp.server.mcpserver.exceptions import ToolError, UnexpectedToolError
+
+    with pytest.raises(ToolError) as excinfo:
+        on_the_wire("stack_deploy", {"name": "s", "compose_files": []})
+    assert not isinstance(excinfo.value, UnexpectedToolError)
+    assert "at least one entry in compose_files" in str(excinfo.value)

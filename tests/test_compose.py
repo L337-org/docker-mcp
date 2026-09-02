@@ -3,6 +3,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from docker_mcp.exceptions import RemoteFailureError, ToolInputError
 from docker_mcp.tools._cli import CliResult
 from docker_mcp.tools.compose import (
     _global_args,
@@ -366,7 +367,7 @@ def test_compose_ls_all_flag():
 
 def test_compose_ls_raises_on_failure():
     with patch("docker_mcp.tools.compose.run_docker", return_value=_fail("daemon unreachable")):
-        with pytest.raises(RuntimeError, match="daemon unreachable"):
+        with pytest.raises(RemoteFailureError, match="daemon unreachable"):
             compose_list()
 
 
@@ -384,7 +385,7 @@ def test_compose_stop_with_timeout_and_services():
 
 
 def test_compose_stop_rejects_flag_like_service():
-    with pytest.raises(ValueError, match="parses as a flag"):
+    with pytest.raises(ToolInputError, match="parses as a flag"):
         compose_stop(services=["--all"])
 
 
@@ -425,7 +426,7 @@ def test_compose_images_single_object_wrapped():
 
 def test_compose_images_raises_on_failure():
     with patch("docker_mcp.tools.compose.run_docker", return_value=_fail("no such project")):
-        with pytest.raises(RuntimeError, match="compose images"):
+        with pytest.raises(RemoteFailureError, match="compose images"):
             compose_images()
 
 
@@ -475,7 +476,7 @@ def test_compose_port_multiline_parses_first_binding_and_lists_all():
 
 def test_compose_port_raises_on_failure():
     with patch("docker_mcp.tools.compose.run_docker", return_value=_fail("no such service")):
-        with pytest.raises(RuntimeError, match="compose port"):
+        with pytest.raises(RemoteFailureError, match="compose port"):
             compose_port("web", 80)
 
 
@@ -493,7 +494,7 @@ def test_compose_wait_builds_args_and_returns_raw():
 
 
 def test_compose_wait_requires_a_service():
-    with pytest.raises(ValueError, match="at least one"):
+    with pytest.raises(ToolInputError, match="at least one"):
         compose_wait([])
 
 
@@ -524,7 +525,7 @@ def test_compose_cp_builds_args_both_positionals():
 
 def test_compose_cp_rejects_stdout_dash_dest():
     # `-` (stdout) starts with '-', so safe_positional blocks it; binary streaming isn't supported here.
-    with pytest.raises(ValueError, match="flag"):
+    with pytest.raises(ToolInputError, match="flag"):
         compose_cp("web:/app/log.txt", "-")
 
 
@@ -754,7 +755,7 @@ def test_compose_cp_remote_refuses_an_existing_local_destination_before_opening_
         patch("docker_mcp.tools.compose.should_remote_exec", return_value=True),
         patch("docker_mcp.tools.compose.remote_cli_session") as session_cm,
     ):
-        with pytest.raises(FileExistsError, match="already exists"):
+        with pytest.raises(ToolInputError, match="already exists"):
             compose_cp("web:/app/log.txt", str(existing), host="prod")
     session_cm.assert_not_called()
 
@@ -803,7 +804,7 @@ def test_compose_cp_remote_raises_when_project_dir_is_unusable(tmp_path):
         patch("docker_mcp.tools.compose.should_remote_exec", return_value=True),
         patch("docker_mcp.tools.compose.remote_cli_session") as session_cm,
     ):
-        with pytest.raises(ValueError, match="not a usable project directory"):
+        with pytest.raises(ToolInputError, match="not a usable project directory"):
             compose_cp(
                 "web:/app/log.txt", str(tmp_path / "out.txt"), project_dir=str(tmp_path / "missing"), host="prod"
             )
@@ -816,7 +817,7 @@ def test_compose_cp_remote_raises_when_the_local_source_is_missing(tmp_path):
         patch("docker_mcp.tools.compose.should_remote_exec", return_value=True),
         patch("docker_mcp.tools.compose.remote_cli_session", _session_cm(session)),
     ):
-        with pytest.raises(ValueError, match="does not exist"):
+        with pytest.raises(ToolInputError, match="does not exist"):
             compose_cp(str(tmp_path / "missing.txt"), "web:/app/log.txt", project_dir=str(tmp_path), host="prod")
 
 

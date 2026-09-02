@@ -18,6 +18,7 @@ import json
 from pathlib import Path
 from typing import Literal
 
+from docker_mcp.exceptions import ToolInputError
 from docker_mcp.server import tool
 from docker_mcp.tools._cli import (
     CliResult,
@@ -49,7 +50,7 @@ def _refuse_local_path_args(candidates: dict[str, str | None]) -> None:
     """
     for name, value in candidates.items():
         if value and Path(value).exists():
-            raise ValueError(
+            raise ToolInputError(
                 f"Refusing to run `docker scout` on the remote host with {name}={value!r}: that names a path on "
                 f"the host running this MCP server, but with no local scout plugin available the command runs "
                 f"on the target host over SSH, where the path means something else (or nothing). Pass an image "
@@ -236,7 +237,7 @@ def scout_compare(
     target. Use it after a rebuild to check the new image against the old (`scout_cves` scans a
     single image).
     Does not raise on a non-zero CLI exit (a missing scout plugin still raises) - inspect
-    `raw.stderr`. Raises ValueError if `to` names a local directory/archive while the call has to run
+    `raw.stderr`. Raises ToolInputError if `to` names a local directory/archive while the call has to run
     on a remote `ssh://` host (no local scout plugin): the file is not staged, so it would resolve
     against that host's filesystem instead.
 
@@ -255,7 +256,7 @@ def scout_compare(
     """
     targets = [bool(to), bool(to_env), bool(to_latest)]
     if sum(targets) != 1:
-        raise ValueError("scout_compare requires exactly one of `to`, `to_env`, or `to_latest=True`")
+        raise ToolInputError("scout_compare requires exactly one of `to`, `to_env`, or `to_latest=True`")
     args: list[str] = ["compare", "--format", format]
     if to is not None:
         args.extend(["--to", to])

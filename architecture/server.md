@@ -12,12 +12,12 @@ The `docker_mcp` package is the entry point. `docker_mcp/__init__.py` defines `m
 
 ## Server singleton (`docker_mcp/server.py`)
 
-Instantiates `MCPServer` (from `mcp.server.mcpserver`), exports the `mcp` object, and exports the `tool` and `prompt` registration helpers. **Tool modules import `tool`; prompt modules import `prompt`** - both gate on `DOCKER_MCP_SERVER_DISABLE` (never import from `mcp` directly in those modules - that would create circular imports). `@mcp.resource()` modules still import `mcp` (plus `is_domain_disabled` / `register_resource_domains` for section gating).
+Instantiates `MCPServer` (from `mcp.server.mcpserver`), exports the `mcp` object, and exports the `tool` and `prompt` registration helpers. **Tool modules import `tool`, prompt modules `prompt`, resource modules `resource`** - never `mcp` itself, which would be a circular import in a tool or prompt module and skips the failure translation everywhere. `tool` and `prompt` gate on `DOCKER_MCP_SERVER_DISABLE`; resource modules take `is_domain_disabled` / `register_resource_domains` alongside, for section gating.
 
 ```python
 from docker_mcp.server import tool  # tool modules
 from docker_mcp.server import prompt  # prompt modules (with domain=...)
-from docker_mcp.server import mcp  # resource modules
+from docker_mcp.server import resource  # resource modules
 ```
 
 `server.py` also owns the central **`TOOL_CATEGORIES`** map (every tool name -> `READ_ONLY` / `MUTATING` / `DESTRUCTIVE`). The `@tool()` decorator uses it to (a) attach `ToolAnnotations` (`title` - mechanically derived from the tool name by `_title_for`, e.g. `container_list` -> "Container List", with a small `_TITLE_ACRONYMS` fixup list so names like `scout_cves`/`scout_sbom` title-case to "Scout CVEs"/"Scout SBOM" rather than "Cves"/"Sbom"; plus `readOnlyHint` / `destructiveHint`, and `idempotentHint` for the prune family) and (b) skip registration entirely under the read-only env switches `DOCKER_MCP_SERVER_READONLY` (only read-only tools) and `DOCKER_MCP_SERVER_NO_DESTRUCTIVE` (everything except destructive). Every registered tool must have a `TOOL_CATEGORIES` entry - `tests/test_server.py` fails if the map and the registered set drift. The `title` annotation exists because some external directories (e.g. the Claude Connectors Directory) mechanically require one on every tool, independent of description quality - see the docstring quality standard in [tool-descriptions.md](tool-descriptions.md), point 2's "annotations don't substitute for prose" is the opposite failure mode, not a contradiction.
@@ -31,6 +31,49 @@ The decorator also records each tool's **domain** - the leaf of its defining mod
 A handful of tools have **no domain at all** - `_NO_DOMAIN_TOOLS` (today `docs_lookup` and `tool_list`) - because their value isn't tied to any single Docker feature area being enabled or disabled. `_domain_for` returns `None` for these, and `None` short-circuits the `_domain_enabled` check entirely, so `DOCKER_MCP_SERVER_DISABLE` can never drop them (not even by their own name). This mirrors `@prompt(domain=None)`'s identical "cross-cutting, always available" semantics for prompts. They still register/deregister normally under `DOCKER_MCP_SERVER_READONLY`/`_NO_DESTRUCTIVE` based on their own category (a domain-less tool should still be `READ_ONLY` for this to matter in practice).
 
 **Server `instructions` router.** `server.py` also builds the MCPServer `instructions` string - the text a client pre-loads into context alongside the server name and tool names, *before* any per-tool schema. For a lazy-loading client (e.g. Claude Code, which fetches tool schemas on demand) that's the main always-in-context surface we control, so it's written as a **router**, not docs: a per-domain one-liner mapping user vocabulary onto the domain keyword a tool search will hit, plus a few tool-selection caveats. It deliberately does not enumerate tools (that's the `docker-mcp://tool-catalog` resource). It's built dynamically by `build_instructions()` from `_DOMAIN_BLURBS`, emitting a domain's line **only when that domain has a registered tool** - so `DOCKER_MCP_SERVER_DISABLE` / `_READONLY` / `_NO_DESTRUCTIVE` are all honoured through the one registration flag, and the router never advertises a domain whose tools didn't register. `finalize_instructions()` (called from `docker_mcp/__init__.py` *after* every tool module imports) writes the result through to `mcp._lowlevel_server.instructions` - MCPServer's `instructions` is a read-only property whose value is read at `run()` time, so a late write propagates to the MCP initialize handshake; the `_lowlevel_server` reach-in is guarded like `_slim_schema`. **A new tool *domain* needs a `_DOMAIN_BLURBS` entry** or the router silently omits it (`tests/test_server.py` checks the router tracks the registered domain set).
+
+**Failure translation.** The SDK classifies a failure by exception type: a `ToolError`/`ResourceError`
+keeps its message and logs at INFO, and anything else is a crash - the client gets `Error executing
+tool <name>` or `Error reading resource <uri>`, the original text is withheld, and a traceback is
+logged at ERROR. So `@tool()` wraps each registration in `_translate_failures`, which re-raises a
+`DockerMcpError` (`docker_mcp/exceptions.py`) as `ToolError` and lets everything else through as the
+crash it is. The pair is the whole contract: a refusal the model cannot read is one it will retry,
+and a bug dressed as a refusal loses its traceback while putting internals on the wire.
+
+The wrapper is registered but **not** returned - `@tool()` hands the module back the untranslated
+callable, because translation is a wire concern. An internal caller wants the project type it can
+branch on; only a client needs the SDK's. It composes outside `_wrap_with_host_guard`, so a `(ro)`
+refusal is carried across too, and it preserves the signature and sync/async-ness for the reasons
+that wrapper already does. `mcp>=2.1.0` is a floor rather than a preference: 2.0.0 flattened even a
+deliberately raised `ResourceError`, so the translation cannot work there.
+
+`@resource()` is the same wrapper with `ResourceError`, and covers templates as well as static
+resources: the SDK routes both through `read_resource` and classifies a template's own creation
+failure identically. It is a floor rather than a preference that this needs `mcp>=2.1.0` - 2.0.0
+flattened even a deliberately raised `ResourceError`, so a resource could not explain itself at all.
+
+**Two families are translated, and the second is the larger one.** `DockerMcpError` covers what this
+code raises deliberately. `_LIBRARY_FAILURES` covers what a library raises through it: a
+`docker.errors.NotFound` for any Docker object the caller named that the daemon does not have - a container, image, network, volume or plugin alike (a fixable argument) - any other
+`DockerException`, any `httpx.HTTPError` from a registry or the docs endpoints (a 4xx/5xx, and
+equally a connection refused or a timeout, which never reach a status check), and any
+`subprocess.SubprocessError` from a CLI call. Converting at this one point rather than at the ~106
+call sites that touch the SDK is the reason the table exists at all; without it the daemon's own
+"No such container" never reached the model, which is most of what a caller actually hits.
+
+Each entry names the **base** of its family, because a leaf is only ever the one whoever wrote the
+entry happened to be reading: `httpx.HTTPStatusError` was listed once, and every registry timeout and
+connection refusal went out generic as a result. `docker.errors.NotFound` is the only narrow entry
+that earns its place, being a fixable argument where the rest of `DockerException` is a far-end
+failure - and because it is narrow, order is load-bearing and it must match first. `OSError` must
+never be added, because `docker.errors.APIError` is an `OSError` via `requests` and would be captured
+wholesale. A test asserts the ordering against
+the installed SDK rather than trusting the hierarchy to stay put.
+
+`TRANSLATES_FAILURES` marks each wrapper so `tests/test_server.py` can walk the built server and fail
+any registration that bypassed `@tool()`/`@resource()`. That check is on the server rather than on
+the source of the modules that register things today, which is what lets it reach a module nobody
+has written yet.
 
 ## Tools package (`docker_mcp/tools/`)
 

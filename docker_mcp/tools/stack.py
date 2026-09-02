@@ -15,6 +15,7 @@
 
 from typing import Literal, get_args
 
+from docker_mcp.exceptions import ToolInputError
 from docker_mcp.server import tool
 from docker_mcp.tools._cli import (
     CliResult,
@@ -138,9 +139,9 @@ def stack_deploy(
     returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
     """
     if not compose_files:
-        raise ValueError("stack_deploy requires at least one entry in compose_files.")
+        raise ToolInputError("stack_deploy requires at least one entry in compose_files.")
     if resolve_image is not None and resolve_image not in _RESOLVE_IMAGE_CHOICES:
-        raise ValueError(f"resolve_image must be one of {sorted(_RESOLVE_IMAGE_CHOICES)}, got {resolve_image!r}.")
+        raise ToolInputError(f"resolve_image must be one of {sorted(_RESOLVE_IMAGE_CHOICES)}, got {resolve_image!r}.")
     args = ["stack", "deploy"]
     for f in compose_files:
         args.extend(["-c", f])
@@ -162,7 +163,7 @@ def stack_list(host: str | None = None) -> list:
 
     Requires the target daemon to be a swarm manager. `compose_list` is the non-swarm equivalent;
     drill into one stack with `stack_services`.
-    Raises RuntimeError if the CLI call fails.
+    Raises RemoteFailureError if the CLI call fails.
 
     returns: list - One dict per stack (name, services count, orchestrator)
     """
@@ -178,7 +179,7 @@ def stack_ps(name: str, no_trunc: bool = False, filters: dict | None = None, hos
 
     Task-level view across every service in the stack (`service_ps` covers one service): where
     each task runs and why it failed. Requires a swarm manager.
-    Raises RuntimeError if the CLI call fails.
+    Raises RemoteFailureError if the CLI call fails.
 
     args:
         name - The stack to list tasks for
@@ -203,7 +204,7 @@ def stack_services(name: str, filters: dict | None = None, host: str | None = No
 
     Service-level rollup (replicas ready per service); use `stack_ps` for individual tasks and
     `service_inspect` for one service's full spec. Requires a swarm manager.
-    Raises RuntimeError if the CLI call fails.
+    Raises RemoteFailureError if the CLI call fails.
 
     args:
         name - The stack to list services for
@@ -237,7 +238,7 @@ def stack_remove(
     returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
     """
     if not names:
-        raise ValueError("stack_remove requires at least one entry in names.")
+        raise ToolInputError("stack_remove requires at least one entry in names.")
     args = ["stack", "rm", f"--detach={'true' if detach else 'false'}"]
     args.extend(safe_positional(name, "stack name") for name in names)
     return _run_stack(args, timeout=timeout_seconds, host=host).to_dict()

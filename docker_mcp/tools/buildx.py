@@ -14,6 +14,7 @@
 
 from pathlib import Path
 
+from docker_mcp.exceptions import ToolInputError
 from docker_mcp.server import tool
 from docker_mcp.tools._cli import (
     CliResult,
@@ -150,7 +151,7 @@ def _refuse_flags_that_resolve_on_the_wrong_host(
         cache_to - `--cache-to` specs
         cache_from - `--cache-from` specs
         ssh - `--ssh` specs
-    raises: RuntimeError - any of the above is present
+    raises: ToolInputError - any of the above is present
     """
     checks = (
         (
@@ -184,14 +185,14 @@ def _refuse_flags_that_resolve_on_the_wrong_host(
             value = _spec_component(spec, key)
             if value is None or (stdout_exempt and value == "-"):
                 continue
-            raise RuntimeError(
+            raise ToolInputError(
                 f"buildx_build cannot honour {flag}={spec!r} against this host: this server has no local "
                 f"buildx plugin, so the build runs on the target host over SSH and {key}={value!r} would "
                 f"resolve on *that* machine - {consequence}, or run the build on a host with a local "
                 f"docker CLI."
             )
     if ssh:
-        raise RuntimeError(
+        raise ToolInputError(
             f"buildx_build cannot honour ssh={ssh!r} against this host: this server has no local buildx plugin, "
             f"so the build runs on the target host over SSH, where `--ssh` reads that host's $SSH_AUTH_SOCK - "
             f"the remote user's agent, not yours (this server does not request agent forwarding). Bake the "
@@ -221,7 +222,7 @@ def _local_dockerfile(file: str | None, *, context_is_local: bool) -> Path | Non
         file - the `file` parameter as given, or None
         context_is_local - whether `context` names an existing local directory
     returns: Path | None - the local path buildx would read, else None
-    raises: ValueError - a relative `file` cannot be resolved (this server's cwd is unavailable)
+    raises: ToolInputError - a relative `file` cannot be resolved (this server's cwd is unavailable)
     """
     if file is None:
         return None
@@ -233,7 +234,7 @@ def _local_dockerfile(file: str | None, *, context_is_local: bool) -> Path | Non
     try:
         return Path.cwd() / path
     except OSError as exc:
-        raise ValueError(
+        raise ToolInputError(
             f"buildx_build cannot resolve file={file!r}: it is relative to this server's working directory, "
             f"which is unavailable ({exc}). Pass an absolute path."
         ) from exc
@@ -332,7 +333,7 @@ def buildx_build(
     `--progress=plain` so output is captured rather than redrawn on a TTY.
     With no local buildx plugin and an `ssh://` target, the build runs on that host: a local `context`
     directory is copied there honouring `.dockerignore`, as are `file`, `build_contexts` and `secret`
-    paths. Raises RuntimeError in that case for `output`/`cache_to` with a filesystem `dest=`,
+    paths. Raises ToolInputError in that case for `output`/`cache_to` with a filesystem `dest=`,
     `cache_from` with a local `src=`, or any `ssh=` - each would resolve on the remote machine, losing
     the output or silently changing the build.
 
@@ -372,14 +373,14 @@ def buildx_build(
     returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
     """
     if context == "-":
-        raise ValueError(
+        raise ToolInputError(
             "buildx_build: context='-' (read a tarball from stdin) is not supported by this "
             "tool because we don't forward stdin to the buildx subprocess - `-` would block "
             "on the MCP server's own stdin. Use a filesystem path or an HTTP/Git URL instead, "
             "or pre-stage the context on disk."
         )
     if push and load:
-        raise ValueError(
+        raise ToolInputError(
             "buildx_build: `push` and `load` are mutually exclusive; --load only works for "
             "single-platform builds loaded into the local image store, --push uploads to a "
             "registry. Pick one (or use `output=` for a custom output spec)."
@@ -484,7 +485,9 @@ def _run_buildx_build_remotely(
         timeout - seconds allowed for the build
         host - configured host label, or None for the default host
     returns: CliResult - the build's outcome, in `run_docker`'s shape
-    raises: RuntimeError - a refused flag (see `_refuse_flags_that_resolve_on_the_wrong_host`)
+    raises:
+        ToolInputError - a refused flag (see `_refuse_flags_that_resolve_on_the_wrong_host`), or a
+                     `file` that cannot be resolved against this server's working directory
     """
     # Before connecting: a refusal should not cost an SSH handshake and a context upload.
     _refuse_flags_that_resolve_on_the_wrong_host(output=output, cache_to=cache_to, cache_from=cache_from, ssh=ssh)
@@ -617,7 +620,7 @@ def buildx_imagetools_inspect(
                     the caller can parse.
     """
     if raw and format is not None:
-        raise ValueError(
+        raise ToolInputError(
             "buildx_imagetools_inspect: `raw` and `format` are mutually exclusive - `raw` "
             "always emits the unmodified manifest JSON, while `format` runs a Go template "
             "against a rendered view. Pick one."
@@ -668,7 +671,7 @@ def buildx_imagetools_create(
     returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
     """
     if not sources and not descriptor_files:
-        raise ValueError("buildx_imagetools_create requires at least one source ref or file")
+        raise ToolInputError("buildx_imagetools_create requires at least one source ref or file")
     args: list[str] = ["imagetools", "create", "--tag", target]
     if append:
         args.append("--append")
@@ -693,7 +696,7 @@ def buildx_list(host: str | None = None) -> list:
 
     Machine-parsed view of every builder; use `buildx_inspect` for one builder's human-readable
     detail and `buildx_use` to switch the default.
-    Raises RuntimeError if the CLI call fails.
+    Raises RemoteFailureError if the CLI call fails.
 
     returns: list - One dict per builder (parsed from `--format '{{json .}}'`).
                     If the captured stdout was truncated by MAX_CLI_OUTPUT_BYTES the
@@ -733,7 +736,7 @@ def buildx_history_inspect(ref: str = "", builder: str | None = None, host: str 
     Returns the full record for one build - duration, materials, attestations, error (if any) -
     for debugging a failed or slow build found via `buildx_history_list`. Requires buildx >=
     v0.13.
-    Raises RuntimeError if the CLI call fails.
+    Raises RemoteFailureError if the CLI call fails.
 
     args:
         ref - Build record ref. Pass the `ref` field from `buildx_history_list` directly - it
@@ -800,7 +803,7 @@ def buildx_du(builder: str | None = None, host: str | None = None) -> list:
     For an exhaustive accounting on a busy builder, run `docker buildx du --format '{{json .}}'`
     on the host directly. Reclaim the cache with `buildx_prune` (`system_df` covers daemon-side
     disk, not builder cache).
-    Raises RuntimeError if the CLI call fails.
+    Raises RemoteFailureError if the CLI call fails.
 
     args: builder - Override the active builder
     returns: list - One dict per cache record (parsed from `--format '{{json .}}'`)
@@ -970,9 +973,9 @@ def buildx_remove(
     returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
     """
     if not name and not all_inactive:
-        raise ValueError("buildx_remove requires either `name` or `all_inactive=True`")
+        raise ToolInputError("buildx_remove requires either `name` or `all_inactive=True`")
     if name and all_inactive:
-        raise ValueError(
+        raise ToolInputError(
             "buildx_remove: `name` and `all_inactive=True` are mutually exclusive - pass `name` to "
             "remove a specific builder, or `all_inactive=True` to sweep every inactive one."
         )

@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 from docker.errors import DockerException
 
+from docker_mcp.exceptions import ToolInputError
 from docker_mcp.tools import _utils
 from docker_mcp.tools._utils import (
     MAX_PAYLOAD_BYTES,
@@ -134,7 +135,7 @@ def test_as_byte_chunks_closes_the_source_when_the_cap_aborts_iteration():
     never end on its own, so only the abort path can close it.
     """
     stream = _FakeDockerStream()
-    with pytest.raises(ValueError, match="exceeded max_bytes"):
+    with pytest.raises(ToolInputError, match="exceeded max_bytes"):
         join_bounded(as_byte_chunks(stream), 2000, "test")
     assert stream.closed is True
 
@@ -162,7 +163,7 @@ def test_join_bounded_at_exact_cap_succeeds():
 
 
 def test_join_bounded_raises_when_cap_exceeded():
-    with pytest.raises(ValueError, match="exceeded max_bytes=4"):
+    with pytest.raises(ToolInputError, match="exceeded max_bytes=4"):
         join_bounded(iter([b"abc", b"de"]), max_bytes=4, what="test")
 
 
@@ -184,7 +185,7 @@ def test_join_bounded_does_not_extend_past_cap():
         consumed.append("big")
         yield b"x" * 1000
 
-    with pytest.raises(ValueError, match="exceeded max_bytes=10"):
+    with pytest.raises(ToolInputError, match="exceeded max_bytes=10"):
         join_bounded(stream(), max_bytes=10, what="test")
     assert consumed == ["big"]
 
@@ -212,7 +213,7 @@ def test_stream_to_file_expands_user(tmp_path, monkeypatch):
 def test_stream_to_file_refuses_existing_without_overwrite(tmp_path):
     dest = tmp_path / "out.bin"
     dest.write_bytes(b"old")
-    with pytest.raises(FileExistsError, match="already exists"):
+    with pytest.raises(ToolInputError, match="already exists"):
         stream_to_file(iter([b"new"]), str(dest))
     assert dest.read_bytes() == b"old"
 
@@ -274,7 +275,7 @@ def test_join_bounded_closes_stream_on_success():
 
 def test_join_bounded_closes_stream_on_abort():
     chunks = _ClosingChunks([b"x" * 10, b"y" * 10])
-    with pytest.raises(ValueError, match="exceeded max_bytes"):
+    with pytest.raises(ToolInputError, match="exceeded max_bytes"):
         join_bounded(chunks, max_bytes=5, what="test")
     assert chunks.closed
 
@@ -391,7 +392,7 @@ def test_assert_host_writable_allows_mapped_path_in_container(monkeypatch):
 def test_assert_host_writable_rejects_unmapped_path_in_container(monkeypatch):
     monkeypatch.setattr(_utils, "in_container", lambda: True)
     monkeypatch.setattr(_utils, "_host_backed", lambda path: False)
-    with pytest.raises(RuntimeError, match="bind-mounted in"):
+    with pytest.raises(ToolInputError, match="bind-mounted in"):
         assert_host_writable("/scratch/img.tar")
 
 
@@ -399,7 +400,7 @@ def test_stream_to_file_guard_blocks_unmapped_write_in_container(monkeypatch, tm
     monkeypatch.setattr(_utils, "in_container", lambda: True)
     monkeypatch.setattr(_utils, "_host_backed", lambda path: False)
     dest = tmp_path / "out.bin"
-    with pytest.raises(RuntimeError, match="lost when the container exits"):
+    with pytest.raises(ToolInputError, match="lost when the container exits"):
         stream_to_file(iter([b"data"]), str(dest))
     assert not dest.exists()  # refused before any bytes were written
 
@@ -424,7 +425,7 @@ def test_host_read_path_existing_file_allowed_in_container(monkeypatch, tmp_path
 def test_host_read_path_missing_unmapped_raises_in_container(monkeypatch, tmp_path):
     monkeypatch.setattr(_utils, "in_container", lambda: True)
     monkeypatch.setattr(_utils, "_host_backed", lambda path: False)
-    with pytest.raises(RuntimeError, match="no such path is visible"):
+    with pytest.raises(ToolInputError, match="no such path is visible"):
         host_read_path(str(tmp_path / "missing.tar"))
 
 
@@ -457,3 +458,67 @@ def test_classify_host_kernel_unknown_without_uname(monkeypatch):
 
     monkeypatch.setattr(_utils.os, "uname", _no_uname)
     assert classify_host_kernel() == "unknown"
+
+
+def test_stream_to_file_refuses_a_destination_whose_parent_is_missing(tmp_path):
+    """`mkstemp` would raise a bare FileNotFoundError, which the SDK withholds from the caller.
+
+    `dest_path` is a caller-controlled argument, so the remedy - create the directory or choose
+    another path - is theirs, and they can only act on it if the message survives.
+    """
+    from docker_mcp.tools._utils import stream_to_file
+
+    missing = tmp_path / "no-such-dir" / "out.tar"
+    with pytest.raises(ToolInputError, match="is not a directory"):
+        stream_to_file([b"x"], str(missing))
+
+
+def test_stream_to_file_refuses_a_parent_that_is_a_file(tmp_path):
+    from docker_mcp.tools._utils import stream_to_file
+
+    a_file = tmp_path / "regular"
+    a_file.write_bytes(b"")
+    with pytest.raises(ToolInputError, match="is not a directory"):
+        stream_to_file([b"x"], str(a_file / "out.tar"))
+
+
+@pytest.mark.parametrize(
+    "make",
+    [
+        pytest.param(lambda base: base / "absent.tar", id="missing"),
+        pytest.param(lambda base: base, id="a-directory"),
+    ],
+)
+def test_open_host_read_file_explains_what_cannot_be_read(tmp_path, make):
+    """A missing file and a directory both raise builtin OSError subclasses from `open`."""
+    from docker_mcp.tools._utils import open_host_read_file
+
+    with pytest.raises(ToolInputError, match="Cannot read"):
+        open_host_read_file(str(make(tmp_path)))
+
+
+def test_open_host_read_file_returns_a_usable_handle(tmp_path):
+    """The guard must not break the case it exists to protect."""
+    from docker_mcp.tools._utils import open_host_read_file
+
+    target = tmp_path / "payload.tar"
+    target.write_bytes(b"contents")
+    with open_host_read_file(str(target)) as handle:
+        assert handle.read() == b"contents"
+
+
+def test_join_bounded_advice_matches_what_the_caller_can_actually_change():
+    """A cap the caller cannot reach must not be described as one they can raise.
+
+    `container_logs` and `service_logs` pass a fixed MAX_PAYLOAD_BYTES, so the default advice -
+    "raise max_bytes" - names a parameter those tools do not expose. Guidance a caller cannot act on
+    is worse than none, because it reads as actionable and sends them looking for a knob.
+    """
+    from docker_mcp.tools._utils import join_bounded
+
+    with pytest.raises(ToolInputError, match="Raise max_bytes"):
+        join_bounded([b"abc"], 1, "a payload")
+
+    with pytest.raises(ToolInputError, match="Request fewer lines") as excinfo:
+        join_bounded([b"abc"], 1, "a payload", remedy="Request fewer lines with `tail`.")
+    assert "Raise max_bytes" not in str(excinfo.value)

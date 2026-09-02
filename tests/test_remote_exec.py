@@ -28,6 +28,7 @@ from typing import cast
 import paramiko
 import pytest
 
+from docker_mcp.exceptions import CapabilityError, RemoteFailureError, ToolInputError
 from docker_mcp.tools._ssh_proxy import (
     PosixDialect,
     _enforce_stage_limits,
@@ -631,7 +632,7 @@ def test_get_dialect_refuses_a_non_posix_host_without_claiming_it_is_windows():
     the refusal must not assert the host *is* Windows — it names the causes instead, and points at the
     log line that records what the host actually reported.
     """
-    with pytest.raises(RuntimeError, match="no supported POSIX shell") as excinfo:
+    with pytest.raises(CapabilityError, match="no supported POSIX shell") as excinfo:
         get_dialect(RemoteDialectKind.WINDOWS)
     message = str(excinfo.value)
     assert "WSL" in message  # the supported alternative a Windows user needs to be told about
@@ -722,7 +723,7 @@ def test_detect_remote_dialect_does_not_hang_on_a_wedged_remote():
 def test_refusal_message_matches_the_allow_list():
     """The message used to name only Linux/macOS/BSD/WSL while the allow-list also accepts SunOS and
     AIX, so a supported-but-unusual host hitting the failure path was told its OS was unsupported."""
-    with pytest.raises(RuntimeError) as excinfo:
+    with pytest.raises(CapabilityError) as excinfo:
         get_dialect(RemoteDialectKind.WINDOWS)
     message = str(excinfo.value).lower()
     for kernel in ("sunos", "aix", "linux", "darwin"):
@@ -855,7 +856,7 @@ def test_exec_remote_raises_timeout_expired_on_the_watchdog_exit_code():
 
 def test_exec_remote_refuses_a_non_posix_dialect_before_running_anything():
     channel = FakeChannel()
-    with pytest.raises(RuntimeError, match="no supported POSIX shell"):
+    with pytest.raises(CapabilityError, match="no supported POSIX shell"):
         exec_remote(
             fake_client(channel),
             ["docker", "ps"],
@@ -916,7 +917,7 @@ def test_run_remote_exec_refuses_a_non_posix_host(monkeypatch):
     fake = FakeSshClient(FakeChannel(stdout=[b""], exit_status=127, exit_ready_immediately=True))
     client = cast(paramiko.SSHClient, fake)
     monkeypatch.setattr("docker_mcp.tools._ssh_proxy.connect_ssh_client", lambda *a, **k: client)
-    with pytest.raises(RuntimeError, match="no supported POSIX shell"):
+    with pytest.raises(CapabilityError, match="no supported POSIX shell"):
         run_remote_exec("ssh://win-host", ["docker", "ps"], max_output_bytes=_CAP, timeout=5)
     assert fake.closed
 
@@ -1210,7 +1211,7 @@ def test_teardown_failure_on_the_success_path_does_not_raise(caplog):
 def test_session_refuses_a_non_posix_remote_before_creating_anything():
     # MINGW is the false positive exit-status-only detection would accept; nothing should be created.
     host = ScriptedHost(uname=b"MINGW64_NT-10.0\n")
-    with pytest.raises(RuntimeError, match="no supported POSIX shell"):
+    with pytest.raises(CapabilityError, match="no supported POSIX shell"):
         with _staging(host):
             pytest.fail("the session body must not run")
     assert not host.ran("mktemp -d")
@@ -1220,7 +1221,7 @@ def test_session_refuses_a_non_posix_remote_before_creating_anything():
 
 def test_session_refuses_when_mktemp_cannot_create_a_directory():
     host = ScriptedHost(failures={"mktemp -d": (b"mktemp: /tmp: read-only file system", 1)})
-    with pytest.raises(RuntimeError, match="Could not create a staging directory"):
+    with pytest.raises(RemoteFailureError, match="Could not create a staging directory"):
         with _staging(host):
             pytest.fail("the session body must not run")
     assert host.sftp_opens == 0
@@ -1237,7 +1238,7 @@ def test_staging_is_refused_when_sftp_cannot_see_the_exec_channels_filesystem():
     the middle; one stat of the directory we just made names the cause instead.
     """
     host = ScriptedHost(sftp=FakeSFTPClient(sees_exec_filesystem=False))
-    with pytest.raises(RuntimeError, match="not looking at the same filesystem") as excinfo:
+    with pytest.raises(CapabilityError, match="not looking at the same filesystem") as excinfo:
         with _staging(host):
             pytest.fail("the session body must not run")
     assert "wsl.exe" in str(excinfo.value)
@@ -1309,7 +1310,7 @@ def test_stage_tree_rejects_a_path_that_is_not_a_directory(tmp_path):
     file_path.write_text("services: {}\n", encoding="utf-8")
     host = ScriptedHost()
     with _staging(host) as session:
-        with pytest.raises(ValueError, match="not a directory"):
+        with pytest.raises(ToolInputError, match="not a directory"):
             session.stage_tree(file_path)
     assert not host.sftp.uploads
 
@@ -1320,7 +1321,7 @@ def test_stage_tree_refuses_an_oversized_tree_with_actionable_guidance(tmp_path,
     (source / "big.bin").write_bytes(b"x" * 4096)
     host = ScriptedHost()
     with _staging(host) as session:
-        with pytest.raises(ValueError, match="past the staging limit") as excinfo:
+        with pytest.raises(ToolInputError, match="past the staging limit") as excinfo:
             session.stage_tree(source)
     message = str(excinfo.value)
     assert "project_dir" in message  # names the way out, not just the limit
@@ -1336,7 +1337,7 @@ def test_stage_tree_refuses_too_many_entries(tmp_path, monkeypatch):
         (source / f"f{index}").write_text("x", encoding="utf-8")
     host = ScriptedHost()
     with _staging(host) as session:
-        with pytest.raises(ValueError, match="past the staging limit"):
+        with pytest.raises(ToolInputError, match="past the staging limit"):
             session.stage_tree(source)
 
 
@@ -1354,7 +1355,7 @@ def test_stage_limits_are_checked_lazily_rather_than_after_a_full_walk(monkeypat
             consumed += 1
             yield f"entry{consumed}"
 
-    with pytest.raises(ValueError, match="past the staging limit"):
+    with pytest.raises(ToolInputError, match="past the staging limit"):
         _enforce_stage_limits(pathlib.Path("/nonexistent"), endless(), what="directory")
     assert consumed <= 5  # stopped as soon as the cap was passed, not "eventually"
 
@@ -1379,9 +1380,9 @@ def test_stage_file_rejects_a_directory_and_an_oversized_file(tmp_path, monkeypa
     big.write_bytes(b"x" * 4096)
     monkeypatch.setattr("docker_mcp.tools._ssh_proxy._MAX_STAGE_BYTES", 1024)
     with _staging(host) as session:
-        with pytest.raises(ValueError, match="not a file"):
+        with pytest.raises(ToolInputError, match="not a file"):
             session.stage_file(tmp_path)
-        with pytest.raises(ValueError, match="past the staging limit"):
+        with pytest.raises(ToolInputError, match="past the staging limit"):
             session.stage_file(big)
     assert not host.sftp.uploads
 
@@ -1440,7 +1441,7 @@ def test_stage_build_context_measures_only_what_dockerignore_includes(tmp_path, 
 def test_stage_build_context_rejects_a_path_that_is_not_a_directory(tmp_path):
     host = ScriptedHost()
     with _staging(host) as session:
-        with pytest.raises(ValueError, match="not a directory"):
+        with pytest.raises(ToolInputError, match="not a directory"):
             session.stage_build_context(tmp_path / "missing")
 
 
@@ -1543,7 +1544,7 @@ def test_missing_docker_py_helpers_fail_only_the_call_that_needs_them(tmp_path, 
     monkeypatch.delattr(docker.utils, "tar")
     host = ScriptedHost()
     with _staging(host) as session:
-        with pytest.raises(RuntimeError, match="does not provide the context-tarring helpers"):
+        with pytest.raises(CapabilityError, match="does not provide the context-tarring helpers"):
             session.stage_build_context(_context(tmp_path, ""))
         # Staging a plain tree does its own tarring, so it keeps working.
         assert session.stage_tree(_project(tmp_path / "p"))
@@ -1619,7 +1620,7 @@ def test_fetch_path_refuses_when_the_intermediate_extraction_path_already_exists
     (tmp_path / "fetch1").mkdir()
     (tmp_path / "fetch1" / "unrelated.txt").write_text("do not touch", encoding="utf-8")
     with _staging(host) as session:
-        with pytest.raises(FileExistsError, match="already exists"):
+        with pytest.raises(ToolInputError, match="already exists"):
             session.fetch_path(remote_path, local_dest)
     assert (tmp_path / "fetch1" / "unrelated.txt").read_text(encoding="utf-8") == "do not touch"
     assert not local_dest.exists()
@@ -1633,7 +1634,7 @@ def test_fetch_path_refuses_an_existing_local_destination(tmp_path):
     local_dest = tmp_path / "already-here.txt"
     local_dest.write_text("existing", encoding="utf-8")
     with _staging(host) as session:
-        with pytest.raises(FileExistsError, match="already exists"):
+        with pytest.raises(ToolInputError, match="already exists"):
             session.fetch_path(remote_path, local_dest)
     assert local_dest.read_text(encoding="utf-8") == "existing"  # untouched
     assert not host.ran(f"test -d {remote_path}")  # refused before ever contacting the remote
@@ -1644,7 +1645,7 @@ def test_fetch_path_refuses_when_local_dest_parent_is_missing(tmp_path):
     remote_path = f"{ScriptedHost._STAGE_ROOT}/fetch1"
     host.sftp.remote_files[remote_path] = b"data"
     with _staging(host) as session:
-        with pytest.raises(ValueError, match="not a directory"):
+        with pytest.raises(ToolInputError, match="not a directory"):
             session.fetch_path(remote_path, tmp_path / "nope" / "out.txt")
 
 
@@ -1663,7 +1664,7 @@ def test_fetch_path_refuses_an_oversized_file(tmp_path, monkeypatch):
     remote_path = f"{ScriptedHost._STAGE_ROOT}/fetch1"
     host.sftp.remote_files[remote_path] = b"this is definitely too big"
     with _staging(host) as session:
-        with pytest.raises(ValueError, match="past the staging limit"):
+        with pytest.raises(ToolInputError, match="past the staging limit"):
             session.fetch_path(remote_path, tmp_path / "out.txt")
 
 
@@ -1672,7 +1673,7 @@ def test_fetch_path_refuses_an_oversized_directory_by_bytes(tmp_path, monkeypatc
     remote_path = f"{ScriptedHost._STAGE_ROOT}/fetch1"
     host = ScriptedHost(directories={remote_path}, remote_content={remote_path: {"big.bin": b"x" * 4096}})
     with _staging(host) as session:
-        with pytest.raises(ValueError, match="past the staging limit"):
+        with pytest.raises(ToolInputError, match="past the staging limit"):
             session.fetch_path(remote_path, tmp_path / "outdir")
     # Refused before extraction, but the remote archive is still cleaned up.
     assert host.ran("rm -rf")
@@ -1685,7 +1686,7 @@ def test_fetch_path_refuses_a_directory_with_too_many_entries(tmp_path, monkeypa
     content = {f"f{i}": b"x" for i in range(5)}
     host = ScriptedHost(directories={remote_path}, remote_content={remote_path: content})
     with _staging(host) as session:
-        with pytest.raises(ValueError, match="past the staging limit"):
+        with pytest.raises(ToolInputError, match="past the staging limit"):
             session.fetch_path(remote_path, tmp_path / "outdir")
     assert not (tmp_path / "outdir").exists()
 

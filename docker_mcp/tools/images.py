@@ -2,8 +2,16 @@
 
 from typing import cast
 
+from docker_mcp.exceptions import ToolInputError
 from docker_mcp.server import tool
-from docker_mcp.tools._utils import MAX_PAYLOAD_BYTES, drop_none, host_read_path, join_bounded, stream_to_file
+from docker_mcp.tools._utils import (
+    MAX_PAYLOAD_BYTES,
+    drop_none,
+    host_read_path,
+    join_bounded,
+    open_host_read_file,
+    stream_to_file,
+)
 from docker_mcp.tools.system import _get_client
 
 
@@ -327,11 +335,10 @@ def image_load(data: bytes | None = None, from_file: str | None = None, host: st
     returns: list - One full inspect payload per loaded image
     """
     if (data is None) == (from_file is None):
-        raise ValueError("Pass exactly one of `data` (in-band tarball bytes) or `from_file` (a server-host path).")
+        raise ToolInputError("Pass exactly one of `data` (in-band tarball bytes) or `from_file` (a server-host path).")
     if data is not None:
         return [i.attrs for i in _get_client(host).images.load(data)]
-    path = host_read_path(cast(str, from_file))
-    with path.open("rb") as handle:
+    with open_host_read_file(cast(str, from_file)) as handle:
         return [i.attrs for i in _get_client(host).images.load(handle)]
 
 
@@ -355,7 +362,7 @@ def image_import(
     came from somewhere else: a `container_export` archive, a distro base tarball, a VM image dump.
     The result has an empty config - no `CMD`/`ENTRYPOINT`/`ENV` - unless you supply `changes`, so an
     imported image is usually not runnable until you set at least a command. Pass exactly one source
-    (`from_file`, `data`, `from_url` or `from_image`); ValueError otherwise. `from_url` and
+    (`from_file`, `data`, `from_url` or `from_image`); ToolInputError otherwise. `from_url` and
     `from_image` are fetched by the *daemon*, `from_file`/`data` are read here and uploaded; a
     `from_file` path that is not a readable file raises rather than being retried as a URL. Unlike
     the other image-creating tools this stamps no provenance labels: the Engine's import call accepts
@@ -365,15 +372,15 @@ def image_import(
         repository - Repository name to give the new image, e.g. "myorg/rootfs"; may include a tag
             (`myorg/rootfs:v1`), and defaults to `:latest` when it does not. Omit to import untagged,
             addressable only by the id in the returned progress (omit it entirely -- a blank string
-            is a ValueError, not a shorthand for untagged). A digest reference is refused by the
+            is a ToolInputError, not a shorthand for untagged). A digest reference is refused by the
             daemon. Required if `tag` is given
         tag - Tag to apply, e.g. "v1". **Overrides** a tag already in `repository` rather than being
             ignored, so passing `repository="myorg/rootfs:v1"` with `tag="v2"` yields `:v2`. Requires
-            `repository` (ValueError without it - the daemon would otherwise silently drop the tag
-            and import untagged). Blank is also a ValueError, not a shorthand for the default: the
+            `repository` (ToolInputError without it - the daemon would otherwise silently drop the tag
+            and import untagged). Blank is also a ToolInputError, not a shorthand for the default: the
             daemon would substitute `latest` without saying so
         from_file - Path to a rootfs tarball on the server host (`~` expanded), read by the server's
-            user; FileNotFoundError if it is not an existing regular file; exactly one source
+            user; refused if it is not an existing regular file; exactly one source
         data - Rootfs tarball contents in band (base64-encoded by MCP, so prefer `from_file` for
             anything but small archives); exactly one source
         from_url - URL the daemon fetches the tarball from; exactly one source
@@ -390,7 +397,7 @@ def image_import(
     sources = {"from_file": from_file, "data": data, "from_url": from_url, "from_image": from_image}
     supplied = [name for name, value in sources.items() if value is not None]
     if len(supplied) != 1:
-        raise ValueError(
+        raise ToolInputError(
             "Pass exactly one of `from_file`, `data`, `from_url` or `from_image` "
             f"(got {', '.join(supplied) if supplied else 'none'})."
         )
@@ -401,15 +408,15 @@ def image_import(
     # with RepoTags []), so it is refused rather than read as "no repository": passing one is never
     # meaningful, and treating it as absent would reopen the silent drop through the back door.
     if repository is not None and not repository.strip():
-        raise ValueError("`repository` cannot be blank; omit it entirely to import untagged.")
+        raise ToolInputError("`repository` cannot be blank; omit it entirely to import untagged.")
     # A blank `tag` is the same silent substitution one step further on: `RepoTagReference` tests
     # `tag != ""`, so an empty tag skips the WithTag path and falls through to `TagNameOnly`, which
     # supplies `:latest`. The caller asked for one tag and would get a different one, with no error --
     # so it is refused alongside a blank `repository` rather than left as the asymmetric case.
     if tag is not None and not tag.strip():
-        raise ValueError("`tag` cannot be blank; omit it to accept the daemon's default of `latest`.")
+        raise ToolInputError("`tag` cannot be blank; omit it to accept the daemon's default of `latest`.")
     if tag is not None and repository is None:
-        raise ValueError(
+        raise ToolInputError(
             "`tag` needs a `repository` to attach to; pass `repository`, or omit `tag` to import untagged."
         )
 
@@ -426,7 +433,7 @@ def image_import(
         # parity and keeps `from_url` the only source that leaves the host.
         path = host_read_path(from_file)
         if not path.is_file():
-            raise FileNotFoundError(
+            raise ToolInputError(
                 f"No such rootfs tarball: {path}. Pass `from_url` to have the daemon fetch a URL, "
                 "or `data` to send the archive in band."
             )
@@ -463,7 +470,7 @@ def image_save(
         dest_path - Destination path on the server host; omit to return the bytes in band
         named - Whether to retain repository/tag names in the saved archive
         overwrite - Replace dest_path if it already exists (default False)
-        max_bytes - In-band mode: abort with ValueError beyond this many bytes (default 32 MiB)
+        max_bytes - In-band mode: abort with ToolInputError beyond this many bytes (default 32 MiB)
     returns: bytes | dict - the tarball bytes (in band), or {"path": <resolved path>, "bytes_written": int}
     """
     image = _get_client(host).images.get(id_or_name)

@@ -65,3 +65,27 @@ def _pin_registry_to_local_daemon(monkeypatch):
     from docker_mcp import _hosts
 
     monkeypatch.setattr(_hosts, "_registry", {"default": _hosts.Host("default", "unix:///var/run/docker.sock")})
+
+
+@pytest.fixture
+def on_the_wire():
+    """Call a registered tool through `call_tool`, the path a client uses.
+
+    Calling the function directly - what nearly every test here does, and rightly for a unit check -
+    cannot see what a *client* is told, because the SDK decides that from the exception's type and
+    only `ToolError`/`ResourceError` keep their message. So a message assertion on a direct call
+    proves nothing about the wire. Use this for the refusals whose wording a caller acts on.
+
+    Whatever `call_tool` raises comes straight back out, so assert on the type as well as the text:
+    a plain `ToolError` is a deliberate failure logged at INFO with its message kept, while an
+    `UnexpectedToolError` is a crash logged at ERROR with the message withheld.
+    """
+
+    def call(name: str, arguments: dict):
+        import anyio
+
+        from docker_mcp.server import mcp
+
+        return anyio.run(mcp.call_tool, name, arguments)
+
+    return call
