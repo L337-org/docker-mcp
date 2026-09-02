@@ -530,3 +530,41 @@ def test_an_unknown_docs_section_tells_the_caller_where_the_list_is(on_the_wire)
         on_the_wire("docs_lookup", {"section": "no-such-section"})
     assert not isinstance(excinfo.value, UnexpectedToolError)
     assert "docker-docs://contents" in str(excinfo.value)
+
+
+def _read(uri: str):
+    """Read a resource the way a client does, returning whatever `read_resource` raises."""
+    import anyio
+
+    from docker_mcp.server import mcp
+
+    return anyio.run(mcp.read_resource, uri)
+
+
+def test_an_unknown_docs_section_says_so_when_read_as_a_resource():
+    """The template path, not the tool path.
+
+    `docker-docs://{section}` is a resource template, which the SDK creates on demand and whose
+    creation failure it classifies exactly as it does a read: a `ResourceError` keeps its message,
+    anything else becomes `Error reading resource <uri>`. Before the registrar there was nothing
+    between an unknown section, a disabled domain and a bug in this server.
+    """
+    from mcp.server.mcpserver.exceptions import ResourceError, UnexpectedResourceError
+
+    with pytest.raises(ResourceError) as excinfo:
+        _read("docker-docs://no-such-section")
+    assert not isinstance(excinfo.value, UnexpectedResourceError)
+    assert "docker-docs://contents" in str(excinfo.value)
+
+
+def test_a_bug_in_a_resource_stays_a_crash_with_its_text_withheld(monkeypatch):
+    """The other half of the contract, on the resource side."""
+    from mcp.server.mcpserver.exceptions import UnexpectedResourceError
+
+    monkeypatch.setattr(
+        "docker_mcp.tools.resources.tool_catalog",
+        MagicMock(side_effect=AttributeError("'NoneType' object has no attribute 'items'")),
+    )
+    with pytest.raises(UnexpectedResourceError) as excinfo:
+        _read("docker-mcp://tool-catalog")
+    assert "NoneType" not in str(excinfo.value)

@@ -7,7 +7,7 @@ import httpx
 
 import docker_mcp._hosts as _hosts
 from docker_mcp.exceptions import CapabilityError, ToolInputError, ToolRefusalError
-from docker_mcp.server import is_domain_disabled, mcp, query_catalog, register_resource_domains, tool, tool_catalog
+from docker_mcp.server import is_domain_disabled, query_catalog, register_resource_domains, resource, tool, tool_catalog
 from docker_mcp.tools._utils import package_version
 from docker_mcp.tools.system import _get_client, host_list
 from docker_mcp.tools.containers import _read_log_tail, _read_stats_summary
@@ -137,7 +137,7 @@ def _section_url(section: str) -> str:
     )
 
 
-@mcp.resource("docker-docs://contents", mime_type="application/json")
+@resource("docker-docs://contents", mime_type="application/json")
 def list_docs_sections() -> str:
     """
     List the available documentation sections.
@@ -178,7 +178,7 @@ def list_docs_sections() -> str:
     )
 
 
-@mcp.resource("docker-mcp://tool-catalog", mime_type="application/json")
+@resource("docker-mcp://tool-catalog", mime_type="application/json")
 def get_tool_catalog() -> str:
     """
     List every tool this server knows about with its domain, mutation category, and whether the
@@ -194,7 +194,7 @@ def get_tool_catalog() -> str:
     return json.dumps(tool_catalog(), indent=2)
 
 
-@mcp.resource("docker-mcp://hosts", mime_type="application/json")
+@resource("docker-mcp://hosts", mime_type="application/json")
 def get_hosts_resource() -> str:
     """
     The Docker hosts configured via DOCKER_MCP_SERVER_HOSTS - the same data as the `host_list` tool:
@@ -336,16 +336,16 @@ def get_host_container_stats_resource(host: str, id_or_name: str) -> str:
 # the default host plus host-qualified (`docker://{host}/...`) variants, disambiguated by path-segment
 # count. The default index emits child URIs matching its own scheme (see `_child_uri`).
 if _hosts.is_multi():
-    mcp.resource("docker:///containers", mime_type="application/json")(list_container_resources)
-    mcp.resource("docker://{host}/containers", mime_type="application/json")(list_host_container_resources)
-    mcp.resource("docker-logs:///{id_or_name}", mime_type="text/plain")(get_container_logs_resource)
-    mcp.resource("docker-logs://{host}/{id_or_name}", mime_type="text/plain")(get_host_container_logs_resource)
-    mcp.resource("docker-stats:///{id_or_name}", mime_type="application/json")(get_container_stats_resource)
-    mcp.resource("docker-stats://{host}/{id_or_name}", mime_type="application/json")(get_host_container_stats_resource)
+    resource("docker:///containers", mime_type="application/json")(list_container_resources)
+    resource("docker://{host}/containers", mime_type="application/json")(list_host_container_resources)
+    resource("docker-logs:///{id_or_name}", mime_type="text/plain")(get_container_logs_resource)
+    resource("docker-logs://{host}/{id_or_name}", mime_type="text/plain")(get_host_container_logs_resource)
+    resource("docker-stats:///{id_or_name}", mime_type="application/json")(get_container_stats_resource)
+    resource("docker-stats://{host}/{id_or_name}", mime_type="application/json")(get_host_container_stats_resource)
 else:
-    mcp.resource("docker://containers", mime_type="application/json")(list_container_resources)
-    mcp.resource("docker-logs://{id_or_name}", mime_type="text/plain")(get_container_logs_resource)
-    mcp.resource("docker-stats://{id_or_name}", mime_type="application/json")(get_container_stats_resource)
+    resource("docker://containers", mime_type="application/json")(list_container_resources)
+    resource("docker-logs://{id_or_name}", mime_type="text/plain")(get_container_logs_resource)
+    resource("docker-stats://{id_or_name}", mime_type="application/json")(get_container_stats_resource)
 
 
 # Service observability resources. Same pattern as the container resources above (domain gate,
@@ -456,16 +456,16 @@ def get_host_service_tasks_resource(host: str, id_or_name: str) -> str:
 
 
 if _hosts.is_multi():
-    mcp.resource("docker:///services", mime_type="application/json")(list_service_resources)
-    mcp.resource("docker://{host}/services", mime_type="application/json")(list_host_service_resources)
-    mcp.resource("service-logs:///{id_or_name}", mime_type="text/plain")(get_service_logs_resource)
-    mcp.resource("service-logs://{host}/{id_or_name}", mime_type="text/plain")(get_host_service_logs_resource)
-    mcp.resource("service-tasks:///{id_or_name}", mime_type="application/json")(get_service_tasks_resource)
-    mcp.resource("service-tasks://{host}/{id_or_name}", mime_type="application/json")(get_host_service_tasks_resource)
+    resource("docker:///services", mime_type="application/json")(list_service_resources)
+    resource("docker://{host}/services", mime_type="application/json")(list_host_service_resources)
+    resource("service-logs:///{id_or_name}", mime_type="text/plain")(get_service_logs_resource)
+    resource("service-logs://{host}/{id_or_name}", mime_type="text/plain")(get_host_service_logs_resource)
+    resource("service-tasks:///{id_or_name}", mime_type="application/json")(get_service_tasks_resource)
+    resource("service-tasks://{host}/{id_or_name}", mime_type="application/json")(get_host_service_tasks_resource)
 else:
-    mcp.resource("docker://services", mime_type="application/json")(list_service_resources)
-    mcp.resource("service-logs://{id_or_name}", mime_type="text/plain")(get_service_logs_resource)
-    mcp.resource("service-tasks://{id_or_name}", mime_type="application/json")(get_service_tasks_resource)
+    resource("docker://services", mime_type="application/json")(list_service_resources)
+    resource("service-logs://{id_or_name}", mime_type="text/plain")(get_service_logs_resource)
+    resource("service-tasks://{id_or_name}", mime_type="application/json")(get_service_tasks_resource)
 
 
 # Node observability resource. Index only (see architecture/server.md for why: a per-node child resource would
@@ -526,13 +526,13 @@ def list_host_node_resources(host: str) -> str:
 
 
 if _hosts.is_multi():
-    mcp.resource("docker:///nodes", mime_type="application/json")(list_node_resources)
-    mcp.resource("docker://{host}/nodes", mime_type="application/json")(list_host_node_resources)
+    resource("docker:///nodes", mime_type="application/json")(list_node_resources)
+    resource("docker://{host}/nodes", mime_type="application/json")(list_host_node_resources)
 else:
-    mcp.resource("docker://nodes", mime_type="application/json")(list_node_resources)
+    resource("docker://nodes", mime_type="application/json")(list_node_resources)
 
 
-@mcp.resource("docker-docs://{section}", mime_type="text/html")
+@resource("docker-docs://{section}", mime_type="text/html")
 def get_docs_section(section: str) -> str:
     """
     Fetch the documentation page for a section.
