@@ -333,7 +333,7 @@ def buildx_build(
     `--progress=plain` so output is captured rather than redrawn on a TTY.
     With no local buildx plugin and an `ssh://` target, the build runs on that host: a local `context`
     directory is copied there honouring `.dockerignore`, as are `file`, `build_contexts` and `secret`
-    paths. Raises CapabilityError in that case for `output`/`cache_to` with a filesystem `dest=`,
+    paths. Raises ToolInputError in that case for `output`/`cache_to` with a filesystem `dest=`,
     `cache_from` with a local `src=`, or any `ssh=` - each would resolve on the remote machine, losing
     the output or silently changing the build.
 
@@ -486,8 +486,8 @@ def _run_buildx_build_remotely(
         host - configured host label, or None for the default host
     returns: CliResult - the build's outcome, in `run_docker`'s shape
     raises:
-        CapabilityError - a refused flag (see `_refuse_flags_that_resolve_on_the_wrong_host`)
-        ToolInputError - a `file` that cannot be resolved against this server's working directory
+        ToolInputError - a refused flag (see `_refuse_flags_that_resolve_on_the_wrong_host`), or a
+                     `file` that cannot be resolved against this server's working directory
     """
     # Before connecting: a refusal should not cost an SSH handshake and a context upload.
     _refuse_flags_that_resolve_on_the_wrong_host(output=output, cache_to=cache_to, cache_from=cache_from, ssh=ssh)
