@@ -54,7 +54,7 @@ flattened even a deliberately raised `ResourceError`, so a resource could not ex
 
 **Two families are translated, and the second is the larger one.** `DockerMcpError` covers what this
 code raises deliberately. `_LIBRARY_FAILURES` covers what a library raises through it: a
-`docker.errors.NotFound` for a container the caller named (a fixable argument), any other
+`docker.errors.NotFound` for any Docker object the caller named that the daemon does not have - a container, image, network, volume or plugin alike (a fixable argument) - any other
 `DockerException`, any `httpx.HTTPError` from a registry or the docs endpoints (a 4xx/5xx, and
 equally a connection refused or a timeout, which never reach a status check), and any
 `subprocess.SubprocessError` from a CLI call. Converting at this one point rather than at the ~106
