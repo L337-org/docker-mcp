@@ -301,7 +301,7 @@ dev = [
 requires-dist = [
     { name = "docker", extras = ["ssh"], specifier = ">=7.2.0" },
     { name = "httpx", specifier = ">=0.28.1" },
-    { name = "mcp", specifier = ">=2.0.0" },
+    { name = "mcp", specifier = ">=2.1.0" },
     { name = "requests", specifier = ">=2.26.0" },
 ]
 

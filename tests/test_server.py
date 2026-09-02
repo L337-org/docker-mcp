@@ -12,8 +12,10 @@ import pytest
 import docker_mcp  # noqa: F401 — imported for its side effect of registering every tool
 import docker_mcp._hosts as _hosts
 from docker_mcp._hosts import parse_registry
+from docker_mcp.exceptions import HostGuardError
 from docker_mcp.server import (
     TOOL_CATEGORIES,
+    TRANSLATES_FAILURES,
     _NO_DOMAIN_TOOLS,
     _SCHEMA_NAME_MAPS,
     ToolCategory,
@@ -133,19 +135,19 @@ def test_guard_allows_read_only_without_host(monkeypatch):
 
 def test_guard_requires_host_for_write(monkeypatch):
     _set_multi_host(monkeypatch)
-    with pytest.raises(RuntimeError, match="'host' is required"):
+    with pytest.raises(HostGuardError, match="'host' is required"):
         _enforce_host_guard("container_remove", ToolCategory.DESTRUCTIVE, None)
 
 
 def test_guard_rejects_unknown_host(monkeypatch):
     _set_multi_host(monkeypatch)
-    with pytest.raises(RuntimeError, match="unknown host 'staging'"):
+    with pytest.raises(HostGuardError, match="unknown host 'staging'"):
         _enforce_host_guard("container_list", ToolCategory.READ_ONLY, "staging")
 
 
 def test_guard_rejects_write_to_read_only_host(monkeypatch):
     _set_multi_host(monkeypatch)  # prod is (ro)
-    with pytest.raises(RuntimeError, match="read-only"):
+    with pytest.raises(HostGuardError, match="read-only"):
         _enforce_host_guard("container_remove", ToolCategory.DESTRUCTIVE, "prod")
 
 
@@ -156,7 +158,7 @@ def test_guard_allows_connection_control_on_read_only_host(monkeypatch):
 
 def test_guard_checks_unknown_host_even_for_connection_control(monkeypatch):
     _set_multi_host(monkeypatch)
-    with pytest.raises(RuntimeError, match="unknown host"):
+    with pytest.raises(HostGuardError, match="unknown host"):
         _enforce_host_guard("system_close", ToolCategory.MUTATING, "typo")
 
 
@@ -167,7 +169,7 @@ def test_guard_allows_mutating_write_to_non_destructive_host(monkeypatch):
 
 def test_guard_rejects_destructive_write_to_non_destructive_host(monkeypatch):
     _set_multi_host(monkeypatch, spec="local=auto, prod=ssh://h(nd)")
-    with pytest.raises(RuntimeError, match="non-destructive"):
+    with pytest.raises(HostGuardError, match="non-destructive"):
         _enforce_host_guard("container_remove", ToolCategory.DESTRUCTIVE, "prod")
 
 
@@ -179,7 +181,7 @@ def test_guard_allows_connection_control_on_non_destructive_host(monkeypatch):
 def test_guard_rejects_destructive_write_to_read_only_and_non_destructive_host(monkeypatch):
     # A host with both markers is refused by (ro) first — it's strictly stronger.
     _set_multi_host(monkeypatch, spec="local=auto, prod=ssh://h(ro)(nd)")
-    with pytest.raises(RuntimeError, match="read-only"):
+    with pytest.raises(HostGuardError, match="read-only"):
         _enforce_host_guard("container_remove", ToolCategory.DESTRUCTIVE, "prod")
 
 
@@ -189,7 +191,7 @@ def test_guard_rejects_destructive_write_to_read_only_and_non_destructive_host(m
 def test_guard_refuses_write_to_single_read_only_host(monkeypatch):
     # One (ro) host: the schema carries no host param to pass, but writes must still be refused.
     _set_single_host(monkeypatch, "ssh://h(ro)")
-    with pytest.raises(RuntimeError, match="read-only"):
+    with pytest.raises(HostGuardError, match="read-only"):
         _enforce_host_guard("container_remove", ToolCategory.DESTRUCTIVE, None)
 
 
@@ -210,7 +212,7 @@ def test_guard_allows_write_on_single_writable_host(monkeypatch):
 
 def test_guard_refuses_destructive_write_to_single_non_destructive_host(monkeypatch):
     _set_single_host(monkeypatch, "ssh://h(nd)")
-    with pytest.raises(RuntimeError, match="non-destructive"):
+    with pytest.raises(HostGuardError, match="non-destructive"):
         _enforce_host_guard("container_remove", ToolCategory.DESTRUCTIVE, None)
 
 
@@ -247,7 +249,7 @@ def test_wrap_preserves_signature_and_name_and_enforces_guard(monkeypatch):
     wrapped = _wrap_with_host_guard(container_remove, "container_remove", ToolCategory.DESTRUCTIVE)
     assert wrapped.__name__ == "container_remove"
     assert inspect.signature(wrapped) == inspect.signature(container_remove)
-    with pytest.raises(RuntimeError, match="'host' is required"):
+    with pytest.raises(HostGuardError, match="'host' is required"):
         wrapped(container_id="abc")  # write without host
     assert wrapped(container_id="abc", host="local") == "removed abc on local"
 
@@ -265,7 +267,7 @@ def test_wrap_guards_an_async_tool(monkeypatch):
     wrapped = _wrap_with_host_guard(container_remove, "container_remove", ToolCategory.DESTRUCTIVE)
     assert inspect.iscoroutinefunction(wrapped)
     assert inspect.signature(wrapped) == inspect.signature(container_remove)
-    with pytest.raises(RuntimeError, match="'host' is required"):
+    with pytest.raises(HostGuardError, match="'host' is required"):
         asyncio.run(wrapped(container_id="abc"))  # write without host
     assert asyncio.run(wrapped(container_id="abc", host="local")) == "removed abc on local"
 
@@ -277,7 +279,7 @@ def test_wrap_enforces_non_destructive_guard(monkeypatch):
         return f"removed {container_id} on {host}"
 
     wrapped = _wrap_with_host_guard(container_remove, "container_remove", ToolCategory.DESTRUCTIVE)
-    with pytest.raises(RuntimeError, match="non-destructive"):
+    with pytest.raises(HostGuardError, match="non-destructive"):
         wrapped(container_id="abc", host="prod")
     assert wrapped(container_id="abc", host="local") == "removed abc on local"
 
@@ -1251,11 +1253,12 @@ def test_single_non_destructive_host_still_strips_host_param_end_to_end():
 def test_single_read_only_host_refuses_write_end_to_end():
     # Proves the guard is actually wrapped onto write tools at import time for a single (ro) host.
     code = (
+        "from docker_mcp.exceptions import HostGuardError\n"
         "from docker_mcp.tools import containers\n"
         "try:\n"
         "    containers.container_stop('x')\n"
         "    print('NOGUARD')\n"
-        "except RuntimeError as e:\n"
+        "except HostGuardError as e:\n"
         "    print('REFUSED' if 'read-only' in str(e) else 'OTHER')\n"
     )
     env = _env_with(["DOCKER_MCP_SERVER_HOSTS=ssh://h(ro)"])
@@ -1268,11 +1271,12 @@ def test_single_read_only_host_refuses_write_end_to_end():
 def test_single_non_destructive_host_refuses_destructive_write_end_to_end():
     # Proves the guard is actually wrapped onto destructive tools at import time for a single (nd) host.
     code = (
+        "from docker_mcp.exceptions import HostGuardError\n"
         "from docker_mcp.tools import containers\n"
         "try:\n"
         "    containers.container_remove('x')\n"
         "    print('NOGUARD')\n"
-        "except RuntimeError as e:\n"
+        "except HostGuardError as e:\n"
         "    print('REFUSED' if 'non-destructive' in str(e) else 'OTHER')\n"
     )
     env = _env_with(["DOCKER_MCP_SERVER_HOSTS=ssh://h(nd)"])
@@ -1333,3 +1337,111 @@ def test_cli_tool_threads_host_to_run_docker(monkeypatch):
     monkeypatch.setattr(stack, "run_docker", fake_run_docker)
     stack.stack_list(host="prod")
     assert captured.get("host") == "prod"
+
+
+# ---------- what a failure says on the wire ----------
+#
+# Everything else in this file calls a tool function directly, which asserts a message no client
+# ever sees: the SDK decides what reaches the caller from the exception's *type*, and only
+# ToolError/ResourceError keep their text. These go through `call_tool`, the path a client uses.
+
+
+def _call(name: str, arguments: dict):
+    """Invoke a registered tool the way a client does, returning whatever `call_tool` raises."""
+    import anyio
+
+    return anyio.run(mcp.call_tool, name, arguments)
+
+
+def _call_tool_in_child(hosts: str, tool: str, arguments: dict) -> str:
+    """Drive `call_tool` in a child process with `hosts` configured.
+
+    The host guard is wired onto tools at import time from the environment, so an in-process
+    monkeypatch cannot reach an already-registered tool - the same reason the two end-to-end guard
+    tests below shell out. Prints `<exception class>|<message>` for the caller to assert on.
+    """
+    code = (
+        "import anyio, json\n"
+        "from docker_mcp.server import mcp\n"
+        "import docker_mcp\n"
+        "try:\n"
+        f"    anyio.run(mcp.call_tool, {tool!r}, {arguments!r})\n"
+        "    print('NORAISE|')\n"
+        "except Exception as e:\n"
+        "    print(f'{type(e).__name__}|{e}')\n"
+    )
+    env = _env_with([f"DOCKER_MCP_SERVER_HOSTS={hosts}"])
+    return subprocess.run(  # noqa: S603
+        [sys.executable, "-c", code], capture_output=True, text=True, env=env, check=True
+    ).stdout.strip()
+
+
+def test_a_host_guard_refusal_reaches_the_caller_with_its_reason():
+    """A refusal the model cannot read is one it will retry against the same host.
+
+    Asserts the type as well as the text: an `UnexpectedToolError` is logged at ERROR with a
+    traceback and its message withheld, a plain `ToolError` at INFO with the message kept. Matching
+    on the message alone would still pass if the SDK began reporting crashes verbosely, and the log
+    level would silently be wrong.
+    """
+    kind, _, message = _call_tool_in_child(
+        "local=auto, prod=ssh://h(ro)", "container_stop", {"id_or_name": "x", "host": "prod"}
+    ).partition("|")
+    assert kind == "ToolError", f"refusal arrived as {kind}: {message}"
+    assert "read-only" in message and "prod" in message
+
+
+def test_an_unknown_host_names_the_configured_hosts_on_the_wire():
+    kind, _, message = _call_tool_in_child("local=auto, prod=ssh://h", "container_list", {"host": "staging"}).partition(
+        "|"
+    )
+    assert kind == "ToolError", f"refusal arrived as {kind}: {message}"
+    assert "unknown host 'staging'" in message
+
+
+def test_a_bug_stays_a_crash_with_its_text_withheld(monkeypatch):
+    """The other half of the contract, and why the translation names DockerMcpError and not Exception.
+
+    A bug dressed as a deliberate refusal is neither logged with its traceback nor kept off the
+    wire, which is exactly what the SDK's classification exists to guarantee.
+    """
+    from mcp.server.mcpserver.exceptions import UnexpectedToolError
+
+    _set_multi_host(monkeypatch)
+    monkeypatch.setattr(
+        "docker_mcp.tools.containers._client_for",
+        MagicMock(side_effect=AttributeError("'NoneType' object has no attribute 'containers'")),
+        raising=False,
+    )
+    with pytest.raises(UnexpectedToolError) as excinfo:
+        _call("container_list", {"host": "local"})
+    assert "NoneType" not in str(excinfo.value)
+
+
+def test_every_registered_tool_translates_its_anticipated_failures():
+    """The guard that makes a bypass impossible to miss.
+
+    A tool registered with a bare `@mcp.tool` returns the right payload and passes every behaviour
+    test in this file; it only stops explaining itself when something fails, which no payload
+    assertion can see. So the check is on the built server rather than on the source of the modules
+    that happen to register tools today, and it reaches a module that does not exist yet.
+    """
+    unwrapped = sorted(
+        name for name, tool in _registered_tools().items() if not getattr(tool.fn, TRANSLATES_FAILURES, False)
+    )
+    assert not unwrapped, (
+        f"tools {unwrapped} do not translate DockerMcpError - register through @tool() so a refusal "
+        f"reaches the caller with its reason instead of a bare 'Error executing tool <name>'"
+    )
+
+
+def test_the_translation_guard_is_reading_a_full_surface():
+    """ "No bad entries found" is also what an empty list says.
+
+    If the SDK renames `_tool_manager` or stops holding the callable on `.fn`, the check above goes
+    green while checking nothing. This fails instead - the difference between a check that skipped
+    and one that passed.
+    """
+    tools = _registered_tools()
+    assert len(tools) > 100, f"enumerated only {len(tools)} tools; the surface is far larger"
+    assert all(callable(getattr(tool, "fn", None)) for tool in tools.values()), "Tool.fn is no longer the callable"

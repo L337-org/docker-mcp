@@ -237,6 +237,19 @@ When adding a new create tool that accepts a `labels` dict, route it through `_l
 The centre of this file. Each of these is a rule whose violation produces no error, no failing test
 and no obvious symptom.
 
+- **Raise a `DockerMcpError` subclass for a failure the caller can act on; leave a bare
+  `RuntimeError`/`ValueError` for one that means this server is broken.** The MCP SDK decides what a
+  failure tells the client purely by type: `@tool()` translates `DockerMcpError` into the SDK's
+  `ToolError`, whose message survives, and anything else is reported as `Error executing tool
+  <name>` with the text withheld and a traceback logged. Get this backwards and either a refusal
+  arrives saying nothing actionable, or a bug's internals go on the wire untraced. Never widen the
+  translation to `Exception`. `docker_mcp/exceptions.py` holds the types.
+- **Register every tool through `@tool()`**, never `@mcp.tool` directly. A direct registration
+  returns the right payload and passes every behaviour test, and only stops explaining itself when
+  something fails - so the guard is mechanical:
+  `tests/test_server.py::test_every_registered_tool_translates_its_anticipated_failures` walks the
+  built server and fails any tool whose callable is not translated, including one in a module that
+  does not exist yet.
 - **The `@tool()` decorator must stay generic** (`def tool[F: Callable[..., Any]](...) -> Callable[[F], F]`).
   Annotating it as a bare `Callable` erases the parameter list and silently disables pyright's argument
   checking at *every* tool call site. Flag any loosening, including loosening only the return

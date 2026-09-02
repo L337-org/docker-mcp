@@ -6,7 +6,8 @@ from unittest.mock import patch
 import pytest
 
 import docker_mcp._hosts as hosts
-from docker_mcp._hosts import Host, HostConfigError, parse_registry
+from docker_mcp._hosts import Host, parse_registry
+from docker_mcp.exceptions import HostConfigError
 
 
 @pytest.fixture(autouse=True)

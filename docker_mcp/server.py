@@ -13,10 +13,12 @@ from enum import Enum
 from typing import Any, NoReturn, cast
 
 from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.exceptions import ResourceError, ToolError
 from mcp.types import ToolAnnotations
 
 import docker_mcp._hosts as _hosts
 from docker_mcp._env import env_flag, read_env
+from docker_mcp.exceptions import DockerMcpError, HostGuardError
 
 mcp = MCPServer("docker-mcp-server")
 
@@ -727,7 +729,7 @@ def _host_param_description(name: str, category: ToolCategory) -> str:
 def _raise_read_only(name: str, label: str, category: ToolCategory) -> NoReturn:
     """Refuse a write to a host carrying the per-host (ro) marker (distinct from the
     DOCKER_MCP_SERVER_READONLY switch, which drops write tools from the surface entirely)."""
-    raise RuntimeError(
+    raise HostGuardError(
         f"{name}: host {label!r} is read-only (configured with the (ro) marker); refusing this "
         f"{category.value} operation. For a fully read-only server use DOCKER_MCP_SERVER_READONLY."
     )
@@ -736,7 +738,7 @@ def _raise_read_only(name: str, label: str, category: ToolCategory) -> NoReturn:
 def _raise_non_destructive(name: str, label: str, category: ToolCategory) -> NoReturn:
     """Refuse a DESTRUCTIVE call to a host carrying the per-host (nd) marker (distinct from the
     DOCKER_MCP_SERVER_NO_DESTRUCTIVE switch, which drops destructive tools from the surface entirely)."""
-    raise RuntimeError(
+    raise HostGuardError(
         f"{name}: host {label!r} is non-destructive (configured with the (nd) marker); refusing this "
         f"{category.value} operation. For a fully non-destructive server use DOCKER_MCP_SERVER_NO_DESTRUCTIVE."
     )
@@ -758,14 +760,16 @@ def _enforce_host_guard(name: str, category: ToolCategory, host: str | None) -> 
         # Multi-host: a write must name its target. Single-host: the schema carries no host param to
         # pass, but an (ro)/(nd) default host must still refuse writes/destructive calls.
         if write and _hosts.is_multi():
-            raise RuntimeError(f"{name}: 'host' is required when multiple hosts are configured; choose one of {known}.")
+            raise HostGuardError(
+                f"{name}: 'host' is required when multiple hosts are configured; choose one of {known}."
+            )
         if write and _hosts.is_read_only():
             _raise_read_only(name, _hosts.default().label, category)
         if destructive and _hosts.is_non_destructive():
             _raise_non_destructive(name, _hosts.default().label, category)
         return
     if host not in known:
-        raise RuntimeError(f"{name}: unknown host {host!r}; configured hosts: {known}.")
+        raise HostGuardError(f"{name}: unknown host {host!r}; configured hosts: {known}.")
     if write and _hosts.is_read_only(host):
         _raise_read_only(name, host, category)
     if destructive and _hosts.is_non_destructive(host):
@@ -855,6 +859,56 @@ def _wrap_with_host_guard[F: Callable[..., Any]](func: F, name: str, category: T
     return cast(F, wrapper)  # see the note on the async branch
 
 
+# Set on every wrapper `_translate_failures` builds. `tests/test_server.py` walks the built server
+# and fails any registered tool or resource whose callable lacks it, so a registration that bypasses
+# the registrars is caught wherever it is written, including in a module that does not exist yet.
+TRANSLATES_FAILURES = "docker_mcp_translates_failures"
+
+
+def _translate_failures[F: Callable[..., Any]](func: F, error_cls: type[ToolError] | type[ResourceError]) -> F:
+    """Re-raise a `DockerMcpError` as the SDK error whose message the client is allowed to see.
+
+    The SDK classifies a failure by type: `ToolError`/`ResourceError` keep their message and log at
+    INFO, and everything else is a crash - the client gets `Error executing tool <name>` or `Error
+    reading resource <uri>`, the original text is withheld, and a traceback is logged at ERROR. So a
+    refusal raised as a bare `RuntimeError` reaches the model saying nothing it can act on.
+
+    Only `DockerMcpError` is translated, never `Exception`: a bug dressed as a deliberate refusal
+    loses its traceback and puts internal text on the wire, which is what the SDK's rule exists to
+    prevent.
+
+    Preserves the signature (the SDK builds the input schema from it) and the sync/async-ness (the
+    SDK decides whether to await by asking `is_async_callable`), the same way `_wrap_with_host_guard`
+    does and for the same reasons.
+    """
+    if inspect.iscoroutinefunction(func):
+
+        @functools.wraps(func)
+        async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
+            try:
+                return await func(*args, **kwargs)
+            except DockerMcpError as exc:
+                raise error_cls(str(exc)) from exc
+
+        async_wrapper.__signature__ = inspect.signature(func)  # pyright: ignore[reportAttributeAccessIssue]
+        # After functools.wraps, which copies the wrapped function's __dict__ and would drop this.
+        setattr(async_wrapper, TRANSLATES_FAILURES, True)
+        # cast for the same reason as _wrap_with_host_guard: functools.wraps is opaque to the type
+        # checker, and the signature assigned above is the original's.
+        return cast(F, async_wrapper)
+
+    @functools.wraps(func)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        try:
+            return func(*args, **kwargs)
+        except DockerMcpError as exc:
+            raise error_cls(str(exc)) from exc
+
+    wrapper.__signature__ = inspect.signature(func)  # pyright: ignore[reportAttributeAccessIssue]
+    setattr(wrapper, TRANSLATES_FAILURES, True)
+    return cast(F, wrapper)  # see the note on the async branch
+
+
 def tool[F: Callable[..., Any]](**kwargs: Any) -> Callable[[F], F]:
     """
     Register an @mcp.tool with central classification - the drop-in `@tool()` every tool module uses.
@@ -890,7 +944,13 @@ def tool[F: Callable[..., Any]](**kwargs: Any) -> Callable[[F], F]:
         target = func
         if _has_host_param(func) and _host_guard_needed():
             target = _wrap_with_host_guard(func, name, category)
-        decorated = mcp.tool(annotations=_annotations_for(name, category), **kwargs)(target)
+        # Register the translated wrapper, but leave `target` - the untranslated one - as what this
+        # decorator returns. The translation is a wire concern: a client must be told why a call was
+        # refused, while an internal caller (another tool, or a test) wants the project type it can
+        # branch on. `mcp.tool()` returns its argument unchanged, so registering one callable and
+        # returning the other is the whole of the difference. Translating outermost carries a
+        # host-guard refusal across as well as one raised by the tool body.
+        mcp.tool(annotations=_annotations_for(name, category), **kwargs)(_translate_failures(target, ToolError))
         # Slim the advertised input schema (drop information-free titles, nullable-anyOf null branches,
         # and redundant `additionalProperties: true`), then apply the host-param surgery (enum + required
         # in multi-host, or strip it in single-host). Both reach into MCPServer internals
@@ -904,7 +964,7 @@ def tool[F: Callable[..., Any]](**kwargs: Any) -> Callable[[F], F]:
         if isinstance(parameters, dict):
             _slim_schema(parameters)
             _apply_host_schema(parameters, name, category)
-        return decorated
+        return target
 
     return decorator
 
