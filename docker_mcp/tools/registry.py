@@ -396,7 +396,7 @@ def _origin_of(url: str) -> tuple[str, str, int | None]:
     the integer 0, so `port or default` would quietly rewrite `https://host:0/` into the scheme
     default and let it compare equal to an origin it is not.
 
-    Raises ToolInputError on an unparseable or out-of-range port (`:99999`, `:abc`). `urlparse` itself
+    Raises a bare `ValueError` on an unparseable or out-of-range port (`:99999`, `:abc`). `urlparse` itself
     returns cleanly for those - it leaves the port in `netloc` - and the error comes from reading the
     `ParseResult.port` property here. Callers handling untrusted input must convert it: see
     `_validate_hub_next`.

@@ -485,7 +485,9 @@ def _run_buildx_build_remotely(
         timeout - seconds allowed for the build
         host - configured host label, or None for the default host
     returns: CliResult - the build's outcome, in `run_docker`'s shape
-    raises: RemoteFailureError - a refused flag (see `_refuse_flags_that_resolve_on_the_wrong_host`)
+    raises:
+        CapabilityError - a refused flag (see `_refuse_flags_that_resolve_on_the_wrong_host`)
+        ToolInputError - a `file` that cannot be resolved against this server's working directory
     """
     # Before connecting: a refusal should not cost an SSH handshake and a context upload.
     _refuse_flags_that_resolve_on_the_wrong_host(output=output, cache_to=cache_to, cache_from=cache_from, ssh=ssh)

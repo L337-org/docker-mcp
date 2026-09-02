@@ -1118,7 +1118,8 @@ def run_remote_exec(
         cwd - remote directory to run in
     returns: RemoteExecResult - exit status plus captured (possibly truncated) stdout/stderr bytes
     raises:
-        CapabilityError - connection failure (with guidance), or a non-POSIX remote
+        RemoteFailureError - the connection could not be opened (with guidance)
+        CapabilityError - the remote is not POSIX
         subprocess.TimeoutExpired - the command exceeded `timeout`
     """
     # Validate before connecting: opening (and authenticating) an SSH session only to reject the
@@ -1815,8 +1816,10 @@ def remote_staging_session(docker_host: str, *, timeout: float | None = None) ->
                   bookkeeping commands use their own bounds, and each `exec` takes its own timeout
     returns: Iterator[RemoteStagingSession] - the session, valid inside the `with` block only
     raises:
-        CapabilityError - connection failure, a non-POSIX remote, no writable remote temp dir, or an
-                       SFTP subsystem that cannot see the exec channel's filesystem
+        RemoteFailureError - the connection could not be opened, or the remote could not create a
+                       writable temp directory
+        CapabilityError - a non-POSIX remote, or an SFTP subsystem that cannot see the exec
+                       channel's filesystem
     """
     ssh_client = connect_ssh_client(docker_host, timeout=timeout)
     sftp: paramiko.SFTPClient | None = None

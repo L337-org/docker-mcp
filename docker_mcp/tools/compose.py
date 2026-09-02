@@ -900,7 +900,7 @@ def compose_cp(
     difference: a container->host copy is refused with `FileExistsError` if the local destination already
     exists, since only this host (not the remote one) knows that. `unix://`/`tcp://`+TLS hosts with no
     local plugin are not covered by this fallback (no shell to run the CLI on) and still raise
-    `ToolInputError` - use `container_archive_put` (host to container) or `container_archive_get_to_file`
+    `CapabilityError` - use `container_archive_put` (host to container) or `container_archive_get_to_file`
     (container to host) there instead; both talk to the daemon directly and need no local CLI
     (`compose_ps` gives you the container name).
 

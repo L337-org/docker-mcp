@@ -356,8 +356,10 @@ def remote_exec_cli(
         extra_env - must be None/empty: the child's environment is the remote login shell's
     returns: CliResult - exit status, decoded stdout/stderr, and whether the byte cap truncated them
     raises:
-        ToolInputError - `stdin` or `extra_env` was supplied
-        CapabilityError - `host` is not an ssh:// host, the connection failed, or the remote is not POSIX
+        ValueError - `stdin` or `extra_env` was supplied (an internal guard: no caller needs either,
+                     so its text stays in the log rather than reaching the model)
+        CapabilityError - `host` is not an ssh:// host, or the remote is not POSIX
+        RemoteFailureError - the SSH connection could not be opened
         subprocess.TimeoutExpired - the command exceeded `timeout`
     """
     _reject_unforwardable(stdin, extra_env)
@@ -416,10 +418,12 @@ def remote_stage_and_exec(
         extra_env - must be None/empty: the child's environment is the remote login shell's
     returns: CliResult - exit status, decoded stdout/stderr, and whether the byte cap truncated them
     raises:
-        ToolInputError - `cwd` is not a directory (when `stage_cwd`), the payload exceeds the staging
-                     limits, or `stdin`/`extra_env` was supplied
-        CapabilityError - `host` is not an ssh:// host, the connection failed, the remote is not POSIX, or
-                       staging failed (including an SFTP subsystem on a different filesystem)
+        ToolInputError - `cwd` is not a directory (when `stage_cwd`), or the payload exceeds the
+                     staging limits
+        ValueError - `stdin`/`extra_env` was supplied (an internal guard; see `remote_exec_cli`)
+        CapabilityError - `host` is not an ssh:// host, this server's own working directory is gone,
+                       the remote is not POSIX, or its SFTP subsystem sees a different filesystem
+        RemoteFailureError - the SSH connection could not be opened, or staging failed remotely
         subprocess.TimeoutExpired - the command exceeded `timeout`
     """
     _reject_unforwardable(stdin, extra_env)
@@ -497,7 +501,9 @@ def remote_cli_session(host: str | None, *, timeout: float) -> Iterator[RemoteSt
         host - configured host label, or None for the default host; must resolve to an ssh:// URL
         timeout - bound on the SSH handshake and dialect probe
     returns: Iterator[RemoteStagingSession] - the session, valid inside the `with` block only
-    raises: CapabilityError - not an ssh:// host, connection failure, non-POSIX remote, or staging setup
+    raises:
+        CapabilityError - not an ssh:// host, a non-POSIX remote, or an unusable SFTP subsystem
+        RemoteFailureError - the connection could not be opened, or staging setup failed remotely
     """
     with remote_staging_session(_ssh_url_for(host, []), timeout=timeout) as session:
         yield session
