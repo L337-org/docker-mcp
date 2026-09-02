@@ -32,6 +32,25 @@ A handful of tools have **no domain at all** - `_NO_DOMAIN_TOOLS` (today `docs_l
 
 **Server `instructions` router.** `server.py` also builds the MCPServer `instructions` string - the text a client pre-loads into context alongside the server name and tool names, *before* any per-tool schema. For a lazy-loading client (e.g. Claude Code, which fetches tool schemas on demand) that's the main always-in-context surface we control, so it's written as a **router**, not docs: a per-domain one-liner mapping user vocabulary onto the domain keyword a tool search will hit, plus a few tool-selection caveats. It deliberately does not enumerate tools (that's the `docker-mcp://tool-catalog` resource). It's built dynamically by `build_instructions()` from `_DOMAIN_BLURBS`, emitting a domain's line **only when that domain has a registered tool** - so `DOCKER_MCP_SERVER_DISABLE` / `_READONLY` / `_NO_DESTRUCTIVE` are all honoured through the one registration flag, and the router never advertises a domain whose tools didn't register. `finalize_instructions()` (called from `docker_mcp/__init__.py` *after* every tool module imports) writes the result through to `mcp._lowlevel_server.instructions` - MCPServer's `instructions` is a read-only property whose value is read at `run()` time, so a late write propagates to the MCP initialize handshake; the `_lowlevel_server` reach-in is guarded like `_slim_schema`. **A new tool *domain* needs a `_DOMAIN_BLURBS` entry** or the router silently omits it (`tests/test_server.py` checks the router tracks the registered domain set).
 
+**Failure translation.** The SDK classifies a failure by exception type: a `ToolError`/`ResourceError`
+keeps its message and logs at INFO, and anything else is a crash - the client gets `Error executing
+tool <name>` or `Error reading resource <uri>`, the original text is withheld, and a traceback is
+logged at ERROR. So `@tool()` wraps each registration in `_translate_failures`, which re-raises a
+`DockerMcpError` (`docker_mcp/exceptions.py`) as `ToolError` and lets everything else through as the
+crash it is. The pair is the whole contract: a refusal the model cannot read is one it will retry,
+and a bug dressed as a refusal loses its traceback while putting internals on the wire.
+
+The wrapper is registered but **not** returned - `@tool()` hands the module back the untranslated
+callable, because translation is a wire concern. An internal caller wants the project type it can
+branch on; only a client needs the SDK's. It composes outside `_wrap_with_host_guard`, so a `(ro)`
+refusal is carried across too, and it preserves the signature and sync/async-ness for the reasons
+that wrapper already does. `mcp>=2.1.0` is a floor rather than a preference: 2.0.0 flattened even a
+deliberately raised `ResourceError`, so the translation cannot work there.
+
+`TRANSLATES_FAILURES` marks each wrapper so `tests/test_server.py` can walk the built server and fail
+any registration that bypassed `@tool()`. That check is on the server rather than on the source of
+the modules that register tools today, which is what lets it reach a module nobody has written yet.
+
 ## Tools package (`docker_mcp/tools/`)
 
 Each file maps to one Docker SDK domain (or, for CLI-only and registry-only features, one Docker feature area) and contains `@tool()` decorated functions. `docker_mcp/tools/__init__.py` imports all public modules with `*` so `docker_mcp/__init__.py` only needs `from docker_mcp import tools`. Underscore-prefixed modules (`_cli.py`, `_utils.py`) are private helpers and stay out of the star-import.

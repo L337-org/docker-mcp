@@ -19,6 +19,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import NoReturn
 
+from docker_mcp.exceptions import HostConfigError
+
 from docker_mcp._env import read_env, scrub_unresolved_env
 
 # Internal label for the single synthesized host built when DOCKER_MCP_SERVER_HOSTS is unset or a bare
@@ -31,10 +33,6 @@ _DEFAULT_LABEL = "default"
 _VALID_LABEL = re.compile(r"[A-Za-z0-9_.-]+")
 _URL_SCHEMES = ("unix://", "tcp://", "ssh://", "npipe://")
 _TRAILING_MARKER = re.compile(r"\(([^)]*)\)\s*$")
-
-
-class HostConfigError(Exception):
-    """A malformed DOCKER_MCP_SERVER_HOSTS value. load() turns this into a stderr line + exit(1)."""
 
 
 def is_ssh_url(url: str | None) -> bool:
