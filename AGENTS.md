@@ -136,7 +136,7 @@ Never pass `shell=True`, never build paths by string concatenation, never expand
 before adding a CLI-backed tool. It covers the SSH remote-exec fallback (which changes *which host* a
 command runs on), the file-staging session, path-token reconciliation, and the deliberate two-style
 error convention — action tools return the raw result dict and never raise on a non-zero exit, while
-parsed-query tools raise `RuntimeError`. **That split is intentional; do not "unify" it.**
+parsed-query tools raise `RemoteFailureError`. **That split is intentional; do not "unify" it.**
 
 ## Docker SDK Policy
 
@@ -308,7 +308,7 @@ untouched neighbours. Push back on any of these:
    **by exact tool name** - never "the kill tool". Preconditions, side effects and irreversibility must
    be in prose: `readOnlyHint` / `destructiveHint` annotations do not substitute.
 3. **For a CLI-backed tool, the error style is stated** - "does not raise on a non-zero CLI exit,
-   inspect `returncode`/`stderr`" versus "raises `RuntimeError` on CLI failure". Do not let a docstring
+   inspect `returncode`/`stderr`" versus "raises `RemoteFailureError` on CLI failure". Do not let a docstring
    promise "never raises": a missing binary or plugin, or a subprocess timeout, still raises.
 4. **`args:` lines add what the schema cannot carry** - format, accepted values, defaults, units,
    interactions. A line echoing the parameter name ("name - The volume name") is a finding. The type is

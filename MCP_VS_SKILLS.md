@@ -46,7 +46,7 @@ We have no commercial interest in either. Both are MIT-licensed and free.
 | **Runtime auditability** | `tool-catalog` resource reports exactly what is registered | None |
 | **Updates** | Version-pinned via `uvx`/image tag | Manual re-download; goes stale silently |
 | **Trim the surface to fit the job** | `DOCKER_MCP_SERVER_DISABLE` drops whole domains; read-only / no-destructive drop categories - **and the router and prompts shrink with them** | Not really - the router is one file, though you can delete reference files you'll never use |
-| **Token cost, eager client, idle** | **~49,200** at full surface; **~19,500** trimmed to a triage-shaped config. Add up to ~2,400 for a client that also loads prompts, resources and resource templates | **~140** |
+| **Token cost, eager client, idle** | **~49,500** at full surface; **~19,500** trimmed to a triage-shaped config. Add up to ~2,400 for a client that also loads prompts, resources and resource templates | **~140** |
 | **Token cost, lazy client, idle** | ~1,200 full; ~530 trimmed | ~140 |
 | **Token cost, typical task** | **~1,600-2,700** (lazy) | ~5,500-7,800 |
 | **Failure mode** | Server can fail to start / resolve deps | Cannot fail to "start"; a wrong command just errors |
@@ -193,17 +193,17 @@ The range between the loosest and tightest usable configuration is wide:
 
 | Config | Tools | Eager idle | Lazy idle |
 |---|---|---|---|
-| Full whack: everything enabled | 164 | 49,200 | 1,223 |
-| Read-only, all domains | 76 | 20,688 | 927 |
-| **Triage config** (below) | **64** | **19,465** | **526** |
-| Core only: `containers` + `system` | 37 | 11,039 | 391 |
-| Floor: core, read-only | 16 | 5,046 | 321 |
+| Full whack: everything enabled | 164 | 49,501 | 1,223 |
+| Read-only, all domains | 76 | 20,721 | 927 |
+| **Triage config** (below) | **64** | **19,482** | **526** |
+| Core only: `containers` + `system` | 37 | 11,047 | 391 |
+| Floor: core, read-only | 16 | 5,052 | 321 |
 
 The eager column is **tools plus the router**: what every eager client pays. Prompts, resources and
 resource templates are counted separately, because each is fetched by a separate call and only by a
 client that supports it - see [Idle](#idle---loaded-but-not-used).
 
-**On an eager client that spread is 5,046 to 49,200 tokens, roughly 9.8x**, which makes trimming
+**On an eager client that spread is 5,052 to 49,501 tokens, roughly 9.8x**, which makes trimming
 the single biggest lever available to you. **On a lazy client the same spread is 321 to 1,223: the
 whole saving is around 900 tokens**, so there is little to gain from trimming for footprint alone.
 On a lazy client, configure the surface for safety or clarity and treat any context saving as
@@ -232,12 +232,12 @@ config and restart, whereas the skill always has every recipe available at no id
 | Always in context | all 164 tool defs + router | 64 tool defs + router | router + tool names | name + description |
 | | 48,586 (tools) | 19,150 (tools) | 647 (router) | 136 |
 | | 647 (router) | 315 (router) | 576 (names) | |
-| **Floor - every eager client** | **~49,200 tok** | **~19,500 tok** | **~1,200 tok** | **~140 tok** |
+| **Floor - every eager client** | **~49,500 tok** | **~19,500 tok** | **~1,200 tok** | **~140 tok** |
 | *plus, for a client that loads them:* | | | | |
 | prompts | +1,113 (30) | +596 (16) | - | - |
 | resources | +739 (6) | +739 (6) | - | - |
 | resource templates | +554 (5) | +554 (5) | - | - |
-| **Ceiling - all of them** | **~51,600 tok** | **~21,400 tok** | **~1,200 tok** | **~140 tok** |
+| **Ceiling - all of them** | **~51,900 tok** | **~21,400 tok** | **~1,200 tok** | **~140 tok** |
 
 "Triage config" here and below means the `DOCKER_MCP_SERVER_DISABLE` line in
 [Configuring the server down](#the-triage-config): `containers`, `images`, `networks`, `volumes`
@@ -247,10 +247,10 @@ and `system` kept, the other twelve domains dropped.
 calls - `tools/list`, `prompts/list`, `resources/list` and `resources/templates/list` - and a
 client pays only for the ones it implements. Every eager client fetches tools, so that plus the
 router is the floor; the other three are conditional. At full surface they come to ~2,400 tokens,
-5% of that configuration's 49,200-token floor. They do not shrink the way the tools do when you
+5% of that configuration's 49,501-token floor. They do not shrink the way the tools do when you
 trim, though - resources and resource templates do not shrink at all - so in the tightest
 configuration in the table above (*Floor: core, read-only*) they are ~1,760 tokens against a
-5,046-token floor, or **35%**. That is why, on a trimmed server, your client's feature support
+5,052-token floor, or **35%**. That is why, on a trimmed server, your client's feature support
 matters more than some of the config switches. Quoting a single blended total would state a figure
 for a client we have not identified, so both ends are given and the figures elsewhere in this
 document use the floor.
@@ -261,7 +261,7 @@ its own attachment picker. So treat the conditional rows as an upper bound on wh
 charged for. Settling it needs an instrumented client, not more arithmetic.
 
 This is still the skill's strongest result. On a client that eagerly loads every tool, the server
-at full surface costs roughly **49,200 tokens of every conversation** whether or not Docker comes
+at full surface costs roughly **49,500 tokens of every conversation** whether or not Docker comes
 up - around a third of a 128k window before you have said anything. Trimming to the triage config
 cuts that to ~19,500 - a large and genuine saving, though still around 140 times what the skill
 costs to sit installed.
@@ -273,21 +273,21 @@ narrows to something most people would not notice either way.
 
 | Task | MCP (lazy, full) | MCP (lazy, triage cfg) | MCP (eager, full) | MCP (eager, triage cfg) | Skill |
 |---|---|---|---|---|---|
-| List containers (one-off) | 1,571 | **874** | 49,200 | 19,465 | 5,549 |
-| Triage a crashed container | 2,728 | **2,031** | 49,200 | 19,465 | 7,812 |
-| Bring up a Compose project | 2,666 | n/a¹ | 49,200 | n/a¹ | 6,489 |
+| List containers (one-off) | 1,571 | **874** | 49,501 | 19,482 | 5,549 |
+| Triage a crashed container | 2,732 | **2,035** | 49,501 | 19,482 | 7,812 |
+| Bring up a Compose project | 2,666 | n/a¹ | 49,501 | n/a¹ | 6,489 |
 
 ¹ Compose is disabled in the triage config (`containers`, `images`, `networks`, `volumes`,
 `system` only), which is the point: a trimmed surface is trimmed for a purpose, and a task outside
 it needs a different one.
 
 **Here the result reverses, and the MCP server wins on a lazy client.** A tool definition is small
-- median 258 tokens, range 117-1,245 - so fetching the five tools a triage needs costs ~1,500 on
+- median 258 tokens, range 117-1,246 - so fetching the five tools a triage needs costs ~1,500 on
 top of the ~1,200 baseline (or ~530 trimmed). The skill has to load its router (3,009) plus a
 domain reference (~1,900) plus often a workflow (~2,300), because prose cannot be fetched a
 paragraph at a time.
 
-Note the eager+trimmed column never beats the skill on these tasks - 19,465 against 5,549-7,812 -
+Note the eager+trimmed column never beats the skill on these tasks - 19,482 against 5,549-7,812 -
 but it is the difference between "too expensive to leave installed" and "fine". If you are on an
 eager client and want the server, disabling the domains you do not use is the single highest-value
 change available.
@@ -339,7 +339,7 @@ workflow file at once; in practice a task touches one or two.
 - Cheaper per task on a lazy client.
 - **The surface is configurable.** Disable the domains you do not use and the tools, prompts *and*
   router shrink together - a triage-shaped config is 64 tools and ~19,500 eager tokens instead of
-  164 and ~49,200. The skill has no equivalent lever beyond deleting reference files by hand.
+  164 and ~49,500. The skill has no equivalent lever beyond deleting reference files by hand.
 - Auditable at runtime - one resource reports exactly which tools are registered under the current
   configuration, so you can confirm what a given config actually exposes rather than inferring it.
 
@@ -361,7 +361,7 @@ Three situations where the answer is clear, and they are mostly about the client
 Docker work:
 
 - **Occasional Docker use from an eager-loading client, Claude Desktop being the common case.**
-  Use the skill. Paying ~49,200 tokens of every conversation for a capability you reach for once a
+  Use the skill. Paying ~49,500 tokens of every conversation for a capability you reach for once a
   fortnight is a bad trade, and ~140 is not. This is the skill's strongest case by a distance, and
   it is worth being clear that **it is a case created by the client, not by the skill being
   better**. If and when Claude Desktop moves to lazy loading, the idle cost drops to ~1,200 and
