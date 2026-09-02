@@ -325,8 +325,9 @@ def load() -> None:
 
 
 def resolve(host: str | None) -> Host:
-    """The Host for a label, or the default (first entry) when host is None. Raises KeyError naming the
-    configured labels for an unknown label."""
+    """The Host for a label, or the default (first entry) when host is None. Raises HostGuardError
+    naming the configured labels for an unknown label - a refusal the caller is meant to read, since
+    a resource read reaches no host guard and this is the only place a typo can be named."""
     if host is None:
         return default()
     try:

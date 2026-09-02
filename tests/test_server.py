@@ -1498,7 +1498,10 @@ def _raised_builtin(node: ast.AST) -> str | None:
 
 
 def _builtin_raise_sites() -> dict:
-    """Every `raise ValueError`/`RuntimeError` in `docker_mcp`, counted per enclosing function."""
+    """Every bare raise of a builtin exception in `docker_mcp`, counted per enclosing function.
+
+    Any builtin, not the two names this once looked for - see `_raised_builtin`.
+    """
     import ast
     import collections
     import pathlib as _pathlib

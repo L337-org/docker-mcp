@@ -31,8 +31,11 @@ class ToolInputError(DockerMcpError):
     """An argument a caller can correct: unknown, malformed, out of range, or a required
     combination not supplied.
 
-    Never for a value the Docker daemon rejected - that is the daemon's answer to a legal call, and
-    it carries its own error.
+    Includes a daemon `NotFound`, which `_LIBRARY_FAILURES` maps here: the caller named a container
+    or image that does not exist, and the remedy is a different argument. This docstring used to say
+    the opposite - that a daemon rejection "carries its own error" and so was never this type - which
+    stopped being true the moment the SDK began withholding the text of anything it did not
+    recognise as deliberate. Other daemon failures are `RemoteFailureError`.
     """
 
 

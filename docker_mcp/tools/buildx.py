@@ -151,7 +151,7 @@ def _refuse_flags_that_resolve_on_the_wrong_host(
         cache_to - `--cache-to` specs
         cache_from - `--cache-from` specs
         ssh - `--ssh` specs
-    raises: CapabilityError - any of the above is present
+    raises: ToolInputError - any of the above is present
     """
     checks = (
         (
