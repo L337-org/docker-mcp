@@ -4,7 +4,14 @@ from typing import cast
 
 from docker_mcp.exceptions import ToolInputError
 from docker_mcp.server import tool
-from docker_mcp.tools._utils import MAX_PAYLOAD_BYTES, drop_none, host_read_path, join_bounded, stream_to_file
+from docker_mcp.tools._utils import (
+    MAX_PAYLOAD_BYTES,
+    drop_none,
+    host_read_path,
+    join_bounded,
+    open_host_read_file,
+    stream_to_file,
+)
 from docker_mcp.tools.system import _get_client
 
 
@@ -331,8 +338,7 @@ def image_load(data: bytes | None = None, from_file: str | None = None, host: st
         raise ToolInputError("Pass exactly one of `data` (in-band tarball bytes) or `from_file` (a server-host path).")
     if data is not None:
         return [i.attrs for i in _get_client(host).images.load(data)]
-    path = host_read_path(cast(str, from_file))
-    with path.open("rb") as handle:
+    with open_host_read_file(cast(str, from_file)) as handle:
         return [i.attrs for i in _get_client(host).images.load(handle)]
 
 

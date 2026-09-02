@@ -458,3 +458,50 @@ def test_classify_host_kernel_unknown_without_uname(monkeypatch):
 
     monkeypatch.setattr(_utils.os, "uname", _no_uname)
     assert classify_host_kernel() == "unknown"
+
+
+def test_stream_to_file_refuses_a_destination_whose_parent_is_missing(tmp_path):
+    """`mkstemp` would raise a bare FileNotFoundError, which the SDK withholds from the caller.
+
+    `dest_path` is a caller-controlled argument, so the remedy - create the directory or choose
+    another path - is theirs, and they can only act on it if the message survives.
+    """
+    from docker_mcp.tools._utils import stream_to_file
+
+    missing = tmp_path / "no-such-dir" / "out.tar"
+    with pytest.raises(ToolInputError, match="is not a directory"):
+        stream_to_file([b"x"], str(missing))
+
+
+def test_stream_to_file_refuses_a_parent_that_is_a_file(tmp_path):
+    from docker_mcp.tools._utils import stream_to_file
+
+    a_file = tmp_path / "regular"
+    a_file.write_bytes(b"")
+    with pytest.raises(ToolInputError, match="is not a directory"):
+        stream_to_file([b"x"], str(a_file / "out.tar"))
+
+
+@pytest.mark.parametrize(
+    "make",
+    [
+        pytest.param(lambda base: base / "absent.tar", id="missing"),
+        pytest.param(lambda base: base, id="a-directory"),
+    ],
+)
+def test_open_host_read_file_explains_what_cannot_be_read(tmp_path, make):
+    """A missing file and a directory both raise builtin OSError subclasses from `open`."""
+    from docker_mcp.tools._utils import open_host_read_file
+
+    with pytest.raises(ToolInputError, match="Cannot read"):
+        open_host_read_file(str(make(tmp_path)))
+
+
+def test_open_host_read_file_returns_a_usable_handle(tmp_path):
+    """The guard must not break the case it exists to protect."""
+    from docker_mcp.tools._utils import open_host_read_file
+
+    target = tmp_path / "payload.tar"
+    target.write_bytes(b"contents")
+    with open_host_read_file(str(target)) as handle:
+        assert handle.read() == b"contents"

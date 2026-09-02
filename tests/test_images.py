@@ -360,3 +360,14 @@ def test_an_ambiguous_image_import_lists_the_sources_on_the_wire(on_the_wire):
         on_the_wire("image_import", {"from_file": "/tmp/a.tar", "from_url": "https://example/a.tar"})
     assert not isinstance(excinfo.value, UnexpectedToolError)
     assert "exactly one of" in str(excinfo.value)
+
+
+def test_an_unreadable_from_file_reaches_the_caller_on_the_wire(tmp_path, on_the_wire):
+    """The whole point of the conversion: `from_file` is the caller's argument, so a path they got
+    wrong has to come back saying so rather than as a generic crash."""
+    from mcp.server.mcpserver.exceptions import ToolError, UnexpectedToolError
+
+    with pytest.raises(ToolError) as excinfo:
+        on_the_wire("image_load", {"from_file": str(tmp_path / "no-such-file.tar")})
+    assert not isinstance(excinfo.value, UnexpectedToolError)
+    assert "Cannot read" in str(excinfo.value)

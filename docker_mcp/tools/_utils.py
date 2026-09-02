@@ -185,6 +185,30 @@ def host_read_path(file_path: str) -> Path:
     return path
 
 
+def open_host_read_file(file_path: str):
+    """Open a caller-supplied file for reading, as a `ToolInputError` when it cannot be opened.
+
+    `host_read_path` resolves the path and explains an unmapped one inside a container; this adds the
+    open itself, because a missing file, a directory passed where a file belongs, or a permission
+    denial all raise a builtin `OSError` subclass - which the SDK reports as a crash with the text
+    withheld, leaving the caller nothing to act on for an argument only they control.
+
+    Converting `OSError` wholesale is safe here in a way it is not for writes: every failure mode of
+    opening a named file for reading is something the caller can address by naming a different one.
+
+    :param file_path: the caller's path
+    :returns: the open binary handle, for use as a context manager
+    """
+    path = host_read_path(file_path)
+    try:
+        return path.open("rb")
+    except OSError as exc:
+        raise ToolInputError(
+            f"Cannot read {str(path)!r}: {exc.strerror or exc}. Pass a path to an existing, "
+            f"readable file on the host running this server."
+        ) from exc
+
+
 def classify_host_kernel() -> str:
     """
     Best-effort host-OS classification from the shared kernel string (containers share the host
@@ -259,6 +283,16 @@ def stream_to_file(chunks: Iterable[bytes], dest_path: str, *, overwrite: bool =
     path = Path(dest_path).expanduser()
     if path.exists() and not overwrite:
         raise ToolInputError(f"{path} already exists; pass overwrite=True to replace it.")
+    # Checked rather than caught: `mkstemp` below raises `FileNotFoundError`/`NotADirectoryError`
+    # for a parent that is missing or is a file, which is the caller's path to fix, but it raises
+    # `OSError` for a full or read-only disk too - and that is not the caller's doing. Naming this
+    # case explicitly keeps the message actionable without classifying a disk failure as a bad
+    # argument.
+    if not path.parent.is_dir():
+        raise ToolInputError(
+            f"Cannot write {str(path)!r}: {str(path.parent)!r} is not a directory. Create it first, "
+            f"or choose a dest_path inside one that exists."
+        )
     fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".partial")
     tmp_path = Path(tmp_name)
     written = 0

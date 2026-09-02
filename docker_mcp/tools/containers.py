@@ -17,7 +17,7 @@ from docker_mcp.tools._utils import (
     as_byte_chunks,
     close_stream_quietly,
     drop_none,
-    host_read_path,
+    open_host_read_file,
     join_bounded,
     stream_to_file,
 )
@@ -1046,6 +1046,5 @@ def container_archive_put(
     container = _get_client(host).containers.get(id_or_name)
     if data is not None:
         return container.put_archive(path, data)
-    source = host_read_path(cast(str, from_file))
-    with source.open("rb") as handle:
+    with open_host_read_file(cast(str, from_file)) as handle:
         return container.put_archive(path, handle)
