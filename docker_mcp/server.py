@@ -877,7 +877,13 @@ TRANSLATES_FAILURES = "docker_mcp_translates_failures"
 # left standing for the exceptions this server does not raise itself.
 #
 # Order matters and is load-bearing: `NotFound` subclasses `APIError` subclasses `DockerException`,
-# so the narrower entry has to come first or every missing container reads as a daemon failure.
+# so the narrower entry has to come first or every missing container reads as a daemon failure. That
+# is the only place a narrow entry earns its keep - everywhere else the base is listed deliberately,
+# because a leaf is only ever the one you happened to think of. `HTTPStatusError` was listed here
+# once and every httpx timeout and connection failure went out generic as a result.
+#
+# So: when adding to this table, name the base of the family unless a subclass genuinely maps to a
+# different project type, and put that subclass first when it does.
 #
 # `docker.errors.APIError` is also an `OSError` (via `requests`), so do not add `OSError` here
 # expecting it to mean "a local file or socket problem": it would capture every daemon error too.
@@ -886,10 +892,14 @@ _LIBRARY_FAILURES: tuple[tuple[type[BaseException], type[DockerMcpError]], ...] 
     (docker.errors.NotFound, ToolInputError),
     # Anything else the daemon or the SDK reports. Its own text is the useful part, so it travels.
     (docker.errors.DockerException, RemoteFailureError),
-    # A registry or docs endpoint answering 4xx/5xx - `raise_for_status()` on our HTTP calls.
-    (httpx.HTTPStatusError, RemoteFailureError),
-    # A CLI call that outran its bound; the message names the command and the timeout to raise.
-    (subprocess.TimeoutExpired, RemoteFailureError),
+    # Anything httpx reports: a 4xx/5xx from `raise_for_status()`, and equally a connection refused,
+    # a DNS failure or a timeout, which never reach that call at all. The base rather than
+    # `HTTPStatusError`, because both mean the same thing to a caller and naming the narrower one
+    # left every transport failure arriving generic.
+    (httpx.HTTPError, RemoteFailureError),
+    # A CLI call that outran its bound, or exited non-zero under `check=True`. The base for the same
+    # reason: the leaf is the one you happen to think of while reading the code that raises it.
+    (subprocess.SubprocessError, RemoteFailureError),
 )
 
 _LIBRARY_FAILURE_TYPES: tuple[type[BaseException], ...] = tuple(exc for exc, _ in _LIBRARY_FAILURES)

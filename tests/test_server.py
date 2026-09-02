@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import docker.errors
+import httpx
 import pytest
 
 import docker_mcp  # noqa: F401 — imported for its side effect of registering every tool
@@ -1568,8 +1569,16 @@ def test_the_library_failure_table_orders_narrow_before_broad():
         (docker.errors.NotFound("No such container: x"), "ToolInputError"),
         (docker.errors.APIError("500 Server Error: something broke"), "RemoteFailureError"),
         (subprocess.TimeoutExpired(cmd=["docker", "ps"], timeout=60), "RemoteFailureError"),
+        # Transport failures never reach `raise_for_status()`, so listing only `HTTPStatusError`
+        # left every registry timeout and connection refusal arriving as a generic crash.
+        (httpx.ConnectError("connection refused"), "RemoteFailureError"),
+        (httpx.ConnectTimeout("timed out"), "RemoteFailureError"),
+        (
+            httpx.HTTPStatusError("404", request=httpx.Request("GET", "https://x"), response=httpx.Response(404)),
+            "RemoteFailureError",
+        ),
     ],
-    ids=["NotFound", "APIError", "TimeoutExpired"],
+    ids=["NotFound", "APIError", "TimeoutExpired", "ConnectError", "ConnectTimeout", "HTTPStatusError"],
 )
 def test_a_library_failure_is_classified_by_the_table(exception, expected):
     from docker_mcp.server import _as_project_failure
