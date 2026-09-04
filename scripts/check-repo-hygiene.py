@@ -113,9 +113,8 @@ def read_text(path, root=None):
     Every read that expects text goes through here, deliberately - the two exceptions are named
     below. Review found the same defect three separate times: a read that could raise OSError or
     UnicodeDecodeError and escape as a traceback rather than the exit-2 "cannot evaluate" this
-    script promises. Patching each site as it was reported was clearly not going to converge. One funnel means a read
-    added
-    later cannot reintroduce it.
+    script promises. Patching each site as it was reported was not converging, so this is one
+    funnel instead, and a read added later cannot reintroduce it.
 
     args:
         path: the file to read.
