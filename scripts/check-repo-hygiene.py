@@ -66,11 +66,6 @@ GENERATED_END = "<!-- END GENERATED -->"
 # routing check with nothing to route is a check that cannot fail.
 DETAIL_DIRECTORIES = ("architecture", "schema")
 
-# Routed in the dangling direction only, per DK.13.16: the generator owning this directory
-# reports a file it did not write and deliberately leaves it unrouted, so an unrouted file here
-# is an accepted exemption rather than a finding.  A route to a *missing* file is still a
-# finding, because that reads as authoritative and resolves to nothing.
-GENERATOR_OWNED = (".agents/policy",)
 
 # --- public-repository leaks (SK.9.1) -----------------------------------------------------
 #
@@ -95,7 +90,7 @@ NOT_A_TRACKER_KEY = re.compile(r"\b(?:ISO-\d+|RFC-\d+|SHA-\d+|UTF-\d+|AES-\d+|PE
 # prompt whose whole purpose is forbidding such links - the guard firing on the instruction not
 # to do the thing - and so did requiring only a slash after the host, because the same prompt
 # says "an atlassian.net/wiki link".
-INTERNAL_LINK = re.compile(r"https?://[^\s)\"']*atlassian\.net|/wiki/spaces/")
+INTERNAL_LINK = re.compile(r"(?:https?://[^\s)\"'/?#]*atlassian\.net(?![A-Za-z0-9-]))|/wiki/spaces/")
 
 # --- CI job bounds (GB.3.5) ---------------------------------------------------------------
 MIN_TIMEOUT_MINUTES = 1
@@ -110,14 +105,14 @@ class CannotEvaluate(Exception):
     """The scan could not be trusted, so exit 2 rather than reporting a clean run."""
 
 
-def verify_own_digest(root):
+def verify_own_digest():
     """Fail if this copy of the script no longer matches the recorded digest.
 
     The point is not integrity against an attacker - anyone who can edit the script can edit
     the digest.  It is that a well-meaning local fix to one copy stops being invisible.
 
-    args:
-        root: repository root.
+    Takes no repository root: the digest sits beside this file wherever this file is, which is
+    what lets a moved or vendored copy still check itself.
 
     returns:
         Nothing; raises CannotEvaluate if the digest is missing or does not match.
@@ -162,13 +157,16 @@ def tracked_text_files(root):
             [git, "-C", str(root), "ls-files", "-z"],
             capture_output=True,
             check=True,
-            text=True,
             timeout=60,
         )
     except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
         raise CannotEvaluate(f"cannot list tracked files with git: {exc}") from exc
 
-    paths = [root / name for name in listing.stdout.split("\0") if name and pathlib.Path(name).name != SELF]
+    # Decoded explicitly with replacement rather than by text=True, which raises on a byte
+    # sequence the locale cannot decode - a path in an unexpected encoding would crash the scan
+    # instead of being reported (SU.6.6).
+    names = listing.stdout.decode("utf-8", errors="replace")
+    paths = [root / name for name in names.split("\0") if name and pathlib.Path(name).name != SELF]
     return sorted(p for p in paths if is_searchable_text(p))
 
 
@@ -226,6 +224,10 @@ def workflow_jobs(root, files):
             document = yaml.safe_load(path.read_text(encoding="utf-8"))
         except yaml.YAMLError as exc:
             raise CannotEvaluate(f"{relative} is not valid YAML: {exc}") from exc
+        except (OSError, UnicodeDecodeError) as exc:
+            # A workflow that cannot be read is exactly the case exit 2 exists for: letting it
+            # raise would report a traceback rather than which workflow could not be examined.
+            raise CannotEvaluate(f"{relative} could not be read: {exc}") from exc
         if not isinstance(document, dict):
             raise CannotEvaluate(f"{relative} does not parse as a YAML mapping")
         declared = document.get("jobs")
@@ -555,7 +557,7 @@ def main():
     """
     root = pathlib.Path(__file__).resolve().parent.parent
     try:
-        verify_own_digest(root)
+        verify_own_digest()
         files = tracked_text_files(root)
         results = [(label, check(root, files)) for label, check in CHECKS]
     except CannotEvaluate as exc:
