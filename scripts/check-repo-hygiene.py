@@ -30,7 +30,13 @@ workflows are wrong" and "I could not look at them" are different answers, and c
 sends a reader looking for the wrong thing.
 """
 
-from __future__ import annotations
+__author__ = "Gavin Lucas"
+__copyright__ = "Copyright (C) 2026 Gavin Lucas"
+__license__ = "MIT"
+
+# No `from __future__ import annotations` here, deliberately. Nothing in this file is annotated,
+# so it buys nothing - and a __future__ import must precede every other statement, which would
+# force the header block below it and out of the position the convention puts it in.
 
 import hashlib
 import pathlib
@@ -78,13 +84,18 @@ TRACKER_KEY = re.compile(r"\b[A-Z]{2,10}-\d+\b(?!\.\d)")
 # evidenced exceptions rather than a way to quiet a genuine hit.
 NOT_A_TRACKER_KEY = re.compile(r"\b(?:ISO-\d+|RFC-\d+|SHA-\d+|UTF-\d+|AES-\d+|PEP-\d+|CVE-\d+|SMETS-\d+|FLEX-\d+)\b")
 
-# The rule is "no link to the wiki", not "no mention of the hostname".  Matching the bare
-# substring flagged a routine prompt whose whole purpose is forbidding such links - the guard
-# firing on the instruction not to do the thing - and so did requiring only a slash after the
-# host, because the same prompt says "an atlassian.net/wiki link".  So a scheme is required,
-# or a wiki path.  A scheme-less Jira URL is not matched here and need not be: the tracker key
-# inside it is, by the check above.
-WIKI_LINK = re.compile(r"https?://[^\s)\"']*atlassian\.net|/wiki/spaces/")
+# Any link into the internal Atlassian site, not only a wiki one.  Review asked whether this
+# should require a /wiki/ path, since the name said "wiki link" while the pattern also matched a
+# Jira /browse/ URL.  Widened the name rather than narrowing the pattern: a Jira board URL
+# carrying no issue key - .../jira/software/projects/X/boards/1 - would otherwise slip past both
+# this and the tracker-key check, and it is exactly as much of a leak.  A /browse/ link may now
+# be reported twice, once here and once as its issue key.  That redundancy is the cheaper error.
+#
+# A URL shape is required, not the bare hostname.  Matching the substring flagged a routine
+# prompt whose whole purpose is forbidding such links - the guard firing on the instruction not
+# to do the thing - and so did requiring only a slash after the host, because the same prompt
+# says "an atlassian.net/wiki link".
+INTERNAL_LINK = re.compile(r"https?://[^\s)\"']*atlassian\.net|/wiki/spaces/")
 
 # --- CI job bounds (GB.3.5) ---------------------------------------------------------------
 MIN_TIMEOUT_MINUTES = 1
@@ -255,7 +266,7 @@ def check_the_scan_is_real(root, files):
 
 
 def check_no_internal_references(root, files):
-    """No tracker key or internal wiki link in a public repository (SK.9.1).
+    """No tracker key or internal Atlassian link in a public repository (SK.9.1).
 
     Both are leaks and both are dead references to anyone reading the repository, including
     whoever reads generated release notes.  Describe the work instead; the issue carries the
@@ -276,8 +287,8 @@ def check_no_internal_references(root, files):
                 span = match.group(0)
                 if not NOT_A_TRACKER_KEY.search(span):
                     findings.append(f"{relative}:{number}: tracker key {span}")
-            for match in WIKI_LINK.finditer(line):
-                findings.append(f"{relative}:{number}: internal wiki link ({match.group(0)[:48]})")
+            for match in INTERNAL_LINK.finditer(line):
+                findings.append(f"{relative}:{number}: internal Atlassian link ({match.group(0)[:48]})")
     return findings
 
 
