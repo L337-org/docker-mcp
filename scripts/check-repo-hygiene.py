@@ -131,8 +131,8 @@ def verify_own_digest():
         )
 
 
-def tracked_text_files(root):
-    """Every text file git tracks, as absolute paths.
+def tracked_paths(root):
+    """Every file git tracks, as absolute paths, with no filtering by content.
 
     Deliberately not a filesystem walk: that would sweep in build output and a developer's own
     gitignored configuration, which may hold real credentials and is none of this check's
@@ -166,8 +166,25 @@ def tracked_text_files(root):
     # sequence the locale cannot decode - a path in an unexpected encoding would crash the scan
     # instead of being reported (SU.6.6).
     names = listing.stdout.decode("utf-8", errors="replace")
-    paths = [root / name for name in names.split("\0") if name and pathlib.Path(name).name != SELF]
-    return sorted(p for p in paths if is_searchable_text(p))
+    return sorted(root / name for name in names.split("\0") if name and pathlib.Path(name).name != SELF)
+
+
+def searchable_text_files(paths):
+    """The subset of `paths` that can be read as text and searched.
+
+    Kept separate from the listing itself, deliberately. An earlier version filtered inside
+    `tracked_paths` and the workflow scan drew from the filtered set - so a workflow file that
+    was not readable UTF-8 was dropped before it ever reached the YAML parse, and the timeout
+    checks silently stopped covering it. Whether a file is searchable prose and whether it is a
+    workflow the bounds checks must see are different questions.
+
+    args:
+        paths: candidate paths.
+
+    returns:
+        A list of the searchable ones, in the order given.
+    """
+    return [p for p in paths if is_searchable_text(p)]
 
 
 def is_searchable_text(path):
@@ -197,7 +214,7 @@ def is_searchable_text(path):
     return True
 
 
-def workflow_jobs(root, files):
+def workflow_jobs(root, tracked):
     """Every CI job, as `(repo-relative path, job id, job body)`.
 
     Sourced from the tracked listing rather than a glob, for the same reason: an untracked
@@ -213,7 +230,7 @@ def workflow_jobs(root, files):
     import yaml
 
     directory = root / ".github" / "workflows"
-    workflows = [p for p in files if p.parent == directory and p.suffix in (".yml", ".yaml")]
+    workflows = [p for p in tracked if p.parent == directory and p.suffix in (".yml", ".yaml")]
     if not workflows:
         raise CannotEvaluate("no tracked workflow files found, so the CI checks would verify nothing")
 
@@ -242,7 +259,7 @@ def workflow_jobs(root, files):
     return jobs
 
 
-def check_the_scan_is_real(root, files):
+def check_the_scan_is_real(root, tracked, files):
     """The listing found a plausible repository, not an empty glob.
 
     args:
@@ -267,7 +284,7 @@ def check_the_scan_is_real(root, files):
     return []
 
 
-def check_no_internal_references(root, files):
+def check_no_internal_references(root, tracked, files):
     """No tracker key or internal Atlassian link in a public repository (SK.9.1).
 
     Both are leaks and both are dead references to anyone reading the repository, including
@@ -294,7 +311,7 @@ def check_no_internal_references(root, files):
     return findings
 
 
-def check_ci_jobs_are_bounded(root, files):
+def check_ci_jobs_are_bounded(root, tracked, files):
     """Every CI job declares a timeout, and every timeout is a real bound (GB.3.5).
 
     A job without one inherits the platform's six-hour default.  The cost is not the wasted
@@ -322,7 +339,7 @@ def check_ci_jobs_are_bounded(root, files):
         A list of findings.
     """
     findings = []
-    for relative, name, body in workflow_jobs(root, files):
+    for relative, name, body in workflow_jobs(root, tracked):
         minutes = body.get("timeout-minutes")
         if minutes is None:
             findings.append(
@@ -390,7 +407,7 @@ def routed_paths(text):
     return out
 
 
-def check_the_instruction_layer(root, files):
+def check_the_instruction_layer(root, tracked, files):
     """The shared instruction file exists, and its pointers are only pointers (NP.1.3).
 
     None of these files is inheritable from an org-wide defaults repository, so a per-repository
@@ -478,7 +495,7 @@ def pointer_findings(root, pointer):
     return findings
 
 
-def check_the_detail_layer_routing(root, files):
+def check_the_detail_layer_routing(root, tracked, files):
     """The detail layer and the router agree, in both directions.
 
     An unrouted detail file is invisible - nothing else would ever surface it.  A route to a
@@ -558,8 +575,9 @@ def main():
     root = pathlib.Path(__file__).resolve().parent.parent
     try:
         verify_own_digest()
-        files = tracked_text_files(root)
-        results = [(label, check(root, files)) for label, check in CHECKS]
+        tracked = tracked_paths(root)
+        files = searchable_text_files(tracked)
+        results = [(label, check(root, tracked, files)) for label, check in CHECKS]
     except CannotEvaluate as exc:
         print(f"check-repo-hygiene: cannot evaluate - {exc}", file=sys.stderr)
         return 2
