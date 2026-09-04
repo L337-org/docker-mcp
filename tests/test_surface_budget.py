@@ -22,12 +22,11 @@ to be asked once, in a pull request, rather than never.
 
 import asyncio
 import json
-import os
 from dataclasses import dataclass
 from typing import Any
 
 import docker_mcp.tools  # noqa: F401 - importing registers the surface
-from docker_mcp.server import mcp
+from docker_mcp.server import DISABLED_DOMAINS, NO_DESTRUCTIVE, READONLY, mcp
 
 # Measured at the time of writing, with roughly two per cent of headroom: enough that ordinary
 # rewording does not trip the gate, little enough that real growth does.
@@ -38,14 +37,31 @@ MAX_RESOURCE_WIRE_BYTES = 6_400  # 6,180, resources and templates together
 MAX_INSTRUCTIONS_BYTES = 2_900  # 2,749
 MAX_TOTAL_WIRE_BYTES = 248_000  # 243,104
 
-# Registration is gated at import time, so a switch set in the environment shrinks the surface
-# and every budget below would pass while measuring something else entirely.
-REGISTRATION_SWITCHES = (
-    "DOCKER_MCP_SERVER_READONLY",
-    "DOCKER_MCP_SERVER_NO_DESTRUCTIVE",
-    "DOCKER_MCP_SERVER_DISABLE",
-    "DOCKER_MCP_SERVER_ALLOW_SELF_TERMINATE",
-)
+# Registration is gated at import time, so a switch in effect when `docker_mcp.server` was
+# imported shrinks the surface, and every budget below would pass while measuring something
+# else entirely. These are the values the server derived, not the environment they came from:
+# `env_flag` treats "0" as off, so reading the raw variable would disagree with the server
+# about what is actually in effect and fail on a setting that changed nothing.
+#
+# DOCKER_MCP_SERVER_ALLOW_SELF_TERMINATE is deliberately not here. It is read at call time to
+# bypass the self-termination guard and registers nothing, so it cannot shrink the surface.
+
+
+def _registration_switches_in_effect() -> list[str]:
+    """Name every import-time registration switch the server has in effect, as the server sees it.
+
+    Returns:
+        list[str]: one entry per switch that is on, empty when the whole surface registered.
+    """
+    in_effect = []
+    if READONLY:
+        in_effect.append("DOCKER_MCP_SERVER_READONLY")
+    if NO_DESTRUCTIVE:
+        in_effect.append("DOCKER_MCP_SERVER_NO_DESTRUCTIVE")
+    if DISABLED_DOMAINS:
+        in_effect.append(f"DOCKER_MCP_SERVER_DISABLE={','.join(sorted(DISABLED_DOMAINS))}")
+    return in_effect
+
 
 # Floors, not exact counts. An exact count would fail on every new tool, which the byte budgets
 # already price; these only answer "am I looking at the full surface?".
@@ -107,11 +123,11 @@ def test_the_measured_surface_is_the_whole_surface() -> None:
     the failure surfaces here with the reason attached instead of as an inexplicably comfortable
     set of byte counts.
     """
-    set_switches = [name for name in REGISTRATION_SWITCHES if os.environ.get(name)]
-    assert not set_switches, (
-        f"{', '.join(set_switches)} is set at test time, which conftest is supposed to have "
-        f"cleared before docker_mcp.server was imported. The surface is now smaller than the "
-        f"one these ceilings describe, so every budget below is measuring a fragment"
+    in_effect = _registration_switches_in_effect()
+    assert not in_effect, (
+        f"{', '.join(in_effect)} was in effect when docker_mcp.server was imported, which "
+        f"conftest is supposed to have prevented. The surface is now smaller than the one "
+        f"these ceilings describe, so every budget below is measuring a fragment"
     )
 
     tools, prompts, resources = _surface().counts
