@@ -51,6 +51,8 @@ jobs:
     # versions at that tag disagree with it — before anything publishes.
     name: Release preflight
     runs-on: ubuntu-latest
+    # Tag and version assertions only, no build.
+    timeout-minutes: 10
     outputs:
       tag: ${{ steps.resolve.outputs.tag }}
       version: ${{ steps.resolve.outputs.version }}
@@ -136,6 +138,8 @@ jobs:
     # trusted publisher on PyPI must name THIS workflow file (publish.yaml); see the header.
     name: Build and publish to PyPI
     runs-on: ubuntu-latest
+    # An sdist and wheel build, then one upload.
+    timeout-minutes: 15
     needs: [preflight]
     permissions:
       contents: read
@@ -178,6 +182,8 @@ jobs:
     # read/write-only token with 403).
     name: Publish ${{ matrix.variant }} image
     runs-on: ubuntu-latest
+    # The longest job here: both variants for linux/amd64 and linux/arm64 under QEMU.
+    timeout-minutes: 45
     needs: [preflight]
     permissions:
       contents: read
@@ -278,6 +284,8 @@ jobs:
     # are gated on the DOCKERHUB_* secrets, so nothing runs when they're unset.
     name: Sync Docker Hub description
     runs-on: ubuntu-latest
+    # One API call against Docker Hub.
+    timeout-minutes: 10
     needs: [preflight, images]
     env:
       DOCKERHUB_USER: ${{ secrets.DOCKERHUB_USER }}
@@ -308,6 +316,8 @@ jobs:
     # are preinstalled on ubuntu runners; the mcpb CLI runs via `npx @anthropic-ai/mcpb`.
     name: Pack and attach .mcpb
     runs-on: ubuntu-latest
+    # Pack the bundle and attach it to the release.
+    timeout-minutes: 15
     needs: [preflight]
     permissions:
       contents: write  # upload the .mcpb as a release asset
@@ -369,6 +379,8 @@ jobs:
     # so the published SHA-256 is verifiable by anyone rebuilding from source.
     name: Pack and attach the agent skill
     runs-on: ubuntu-latest
+    # Pack the skill archive and attach it to the release.
+    timeout-minutes: 15
     needs: [preflight]
     permissions:
       contents: write  # upload the archives as release assets
@@ -423,6 +435,8 @@ jobs:
     # Authentication is GitHub OIDC (no stored secret).
     name: Publish to MCP Registry
     runs-on: ubuntu-latest
+    # Stamp server.json, install a pinned publisher, publish.
+    timeout-minutes: 15
     needs: [preflight, pypi, images, mcpb]
     permissions:
       contents: read
@@ -529,6 +543,8 @@ jobs:
     # silently. Each check retries briefly (5 x 15s) to absorb CDN/index lag.
     name: Verify release convergence
     runs-on: ubuntu-latest
+    # Five external checks, each retrying up to five times.
+    timeout-minutes: 20
     # `skill` is listed explicitly: it hangs off `preflight` alone and is not in `registry`'s
     # needs (the registry entry does not reference the skill archives), so without it here verify
     # could run while the skill job is still packing and report a missing asset.
@@ -633,6 +649,8 @@ jobs:
     # anything in the needs chain failed. Silent on cancellation.
     name: File failure issue
     runs-on: ubuntu-latest
+    # Files or updates a single issue.
+    timeout-minutes: 10
     needs: [preflight, pypi, images, dockerhub-description, mcpb, skill, registry, verify]
     if: failure()
     permissions:

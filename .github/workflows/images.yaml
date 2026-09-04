@@ -32,6 +32,8 @@ jobs:
     # Build each variant for amd64, load it locally, and emit its size to the job summary. amd64-only
     # here keeps it fast (load can't take a multi-arch result); cross-arch is covered by the smoke job.
     runs-on: ubuntu-latest
+    # 1.3 min observed max across recent runs.
+    timeout-minutes: 15
     name: Build & measure (${{ matrix.variant }})
     strategy:
       fail-fast: false
@@ -79,6 +81,8 @@ jobs:
     # Confirm the Dockerfile cross-builds for arm64 too (the published images must be multi-arch).
     # Build only — no load (a multi-arch result can't be loaded into the local docker) and no push.
     runs-on: ubuntu-latest
+    # 2.2 min observed max; the cross-arch build under QEMU is the variable part.
+    timeout-minutes: 20
     name: Cross-arch build smoke (full)
     steps:
       - name: Check out source repository

@@ -16,6 +16,8 @@ jobs:
   analyze:
     name: Analyze
     runs-on: ubuntu-latest
+    # 1.4 min observed max, but CodeQL scales with the codebase rather than with the diff.
+    timeout-minutes: 20
     permissions:
       actions: read
       contents: read
