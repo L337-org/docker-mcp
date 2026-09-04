@@ -36,6 +36,8 @@ jobs:
   resolve-crossplatform:
     name: Cross-platform wheel resolution
     runs-on: ubuntu-latest
+    # 0.1 min observed max - a dependency resolve, no build.
+    timeout-minutes: 10
     steps:
       - name: Check out source repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -135,6 +137,8 @@ jobs:
   notify:
     name: File failure issue
     runs-on: ubuntu-latest
+    # Files or updates a single issue.
+    timeout-minutes: 10
     needs: [resolve-crossplatform, install-smoke]
     # PR failures are visible on the PR itself; the issue stream is for unattended runs.
     if: failure() && github.event_name != 'pull_request'
