@@ -96,19 +96,29 @@ def workflow_jobs(root):
 def timeout_problem(relative, name, body):
     """Why this job's timeout is unacceptable, or `None` if it is fine.
 
-    A `${{ }}` expression is refused even though Actions accepts one, because its value is
-    unknowable here: a timeout resolving to 360 at run time would satisfy any static bound while
-    leaving the job effectively unbounded.  Nothing here needs an expression, so the bound stays
-    real; if something ever does, that is a deliberate change to make here rather than to work
-    around.
+    What is required is that the bound be KNOWABLE AT REVIEW TIME, which is not the same as
+        requiring a YAML number.
 
-    args:
-        relative: workflow path, for the message.
-        name: job id, for the message.
-        body: the parsed job mapping.
+        A quoted digit string is accepted and coerced, deliberately.  GitHub documents this key as
+        accepting the github, needs, strategy, matrix, vars and inputs contexts, and an expression
+        is a string - so the field is coerced rather than strictly typed, which makes
+        `timeout-minutes: "15"` a job genuinely bounded at fifteen minutes.  Refusing it would fail
+        a correctly-bounded job, and an over-broad guard is one someone eventually switches off
+        wholesale, which costs more than it ever caught.
 
-    returns:
-        A string describing the problem, or `None`.
+        A `${{ }}` expression is refused for the opposite reason.  It is equally legal, but its
+        value cannot be known here: one resolving to 360 at run time would satisfy any static bound
+        while leaving the job effectively unbounded.  Nothing here needs an expression, so the
+        bound stays real; if something ever does, that is a deliberate change to make here rather
+        than to work around.
+
+        args:
+            relative: workflow path, for the message.
+            name: job id, for the message.
+            body: the parsed job mapping.
+
+        returns:
+            A string describing the problem, or `None`.
     """
     minutes = body.get("timeout-minutes")
     if minutes is None:
@@ -121,9 +131,10 @@ def timeout_problem(relative, name, body):
     if isinstance(minutes, str):
         if not re.fullmatch(r"\s*\d+\s*", minutes):
             return (
-                f"{relative}:{name} has timeout-minutes: {minutes!r}, which is not a literal "
-                f"number.  An expression is valid Actions, but its value cannot be checked "
-                f"here, so the bound would stop meaning anything"
+                f"{relative}:{name} has timeout-minutes: {minutes!r}, whose value cannot be "
+                f"known at review time.  An expression is valid Actions, but one resolving to "
+                f"360 at run time would satisfy this bound while leaving the job unbounded.  A "
+                f"quoted number is accepted; this is not"
             )
         minutes = int(minutes)
     if not isinstance(minutes, int):
