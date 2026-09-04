@@ -98,28 +98,32 @@ def timeout_problem(relative, name, body):
     """Why this job's timeout is unacceptable, or `None` if it is fine.
 
     What is required is that the bound be KNOWABLE AT REVIEW TIME, which is not the same as
-        requiring a YAML number.
+    requiring a YAML number.
 
-        A quoted digit string is accepted and coerced, deliberately.  GitHub documents this key as
-        accepting the github, needs, strategy, matrix, vars and inputs contexts, and an expression
-        is a string - so the field is coerced rather than strictly typed, which makes
-        `timeout-minutes: "15"` a job genuinely bounded at fifteen minutes.  Refusing it would fail
-        a correctly-bounded job, and an over-broad guard is one someone eventually switches off
-        wholesale, which costs more than it ever caught.
+    A quoted digit string is accepted and coerced, deliberately.  GitHub documents this key as
+    accepting the github, needs, strategy, matrix, vars and inputs contexts, and an expression
+    is a string - so the field is coerced rather than strictly typed, which makes
+    `timeout-minutes: "15"` a job genuinely bounded at fifteen minutes.  Refusing it would fail
+    a correctly-bounded job, and an over-broad guard is one someone eventually switches off
+    wholesale, which costs more than it ever caught.
 
-        A `${{ }}` expression is refused for the opposite reason.  It is equally legal, but its
-        value cannot be known here: one resolving to 360 at run time would satisfy any static bound
-        while leaving the job effectively unbounded.  Nothing here needs an expression, so the
-        bound stays real; if something ever does, that is a deliberate change to make here rather
-        than to work around.
+    A `${{ }}` expression is refused for the opposite reason.  It is equally legal, but its
+    value cannot be known here: one resolving to 360 at run time would satisfy any static bound
+    while leaving the job effectively unbounded.
 
-        args:
-            relative: workflow path, for the message.
-            name: job id, for the message.
-            body: the parsed job mapping.
+    Everything else that is not a whole number is refused as simply invalid, and says so.  The
+    three cases are kept apart because collapsing them misdescribes the fix: `15.0` and `"15m"`
+    are not expressions whose value is unknown, they are values Actions will not accept, and
+    telling someone their literal is "unknowable at review time" sends them looking for an
+    expression that is not there.
 
-        returns:
-            A string describing the problem, or `None`.
+    args:
+        relative: workflow path, for the message.
+        name: job id, for the message.
+        body: the parsed job mapping.
+
+    returns:
+        A string describing the problem, or `None`.
     """
     minutes = body.get("timeout-minutes")
     if minutes is None:
@@ -127,19 +131,28 @@ def timeout_problem(relative, name, body):
             f"{relative}:{name} declares no timeout-minutes, so it inherits the six-hour "
             f"platform default and can hold the concurrency group"
         )
+    # Checked before int, because bool is a subclass of it and `true` is not five minutes.
     if isinstance(minutes, bool):
         return f"{relative}:{name} has timeout-minutes: {minutes!r}, which is a boolean"
     if isinstance(minutes, str):
-        if not re.fullmatch(r"\s*\d+\s*", minutes):
+        if "${{" in minutes:
             return (
                 f"{relative}:{name} has timeout-minutes: {minutes!r}, whose value cannot be "
                 f"known at review time.  An expression is valid Actions, but one resolving to "
-                f"360 at run time would satisfy this bound while leaving the job unbounded.  A "
-                f"quoted number is accepted; this is not"
+                f"360 at run time would satisfy this bound while leaving the job unbounded"
+            )
+        if not re.fullmatch(r"\s*\d+\s*", minutes):
+            return (
+                f"{relative}:{name} has timeout-minutes: {minutes!r}, which is not a whole "
+                f'number of minutes.  A quoted number such as "15" is accepted; this is not '
+                f"a value Actions will take"
             )
         minutes = int(minutes)
     if not isinstance(minutes, int):
-        return f"{relative}:{name} has timeout-minutes: {minutes!r}, which is not a number"
+        return (
+            f"{relative}:{name} has timeout-minutes: {minutes!r}, which is not a whole number "
+            f"of minutes.  Actions takes an integer here"
+        )
     if not MIN_MINUTES <= minutes <= MAX_MINUTES:
         return (
             f"{relative}:{name} has timeout-minutes: {minutes}, outside {MIN_MINUTES}-"
