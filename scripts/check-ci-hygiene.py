@@ -46,8 +46,9 @@ WORKFLOWS = pathlib.Path(".github/workflows")
 def workflow_jobs(root):
     """Every job in every workflow file, as `(path, job id, job body)`.
 
-    A workflow whose top level is not a mapping, or which declares no jobs, is reported rather
-    than skipped: an unparseable workflow is a finding, not an absence of one.
+    A workflow that cannot be read, does not parse, has a non-mapping top level, or declares no
+    jobs is reported rather than skipped: an unexaminable workflow is a finding, not an absence
+    of one.
 
     args:
         root: repository root to scan under.
@@ -69,6 +70,13 @@ def workflow_jobs(root):
             document = yaml.safe_load(path.read_text(encoding="utf-8"))
         except yaml.YAMLError as exc:
             problems.append(f"{relative} is not valid YAML: {exc}")
+            continue
+        except (OSError, UnicodeDecodeError) as exc:
+            # A file that cannot be read is a finding, not a crash. Letting it raise would
+            # abort the whole scan on the first bad file, reporting a traceback instead of
+            # which workflow could not be checked - and leaving the remaining files
+            # unexamined, which is the outcome this script exists to prevent.
+            problems.append(f"{relative} could not be read: {exc}")
             continue
         if not isinstance(document, dict):
             problems.append(f"{relative} does not parse as a mapping")
