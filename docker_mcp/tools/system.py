@@ -1,3 +1,5 @@
+"""System tools: ping, version, info, disk usage, login, and the configured host list."""
+
 # library of mcp tools relating to the system domain: daemon info/auth and client connection control
 
 import ipaddress

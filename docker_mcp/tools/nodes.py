@@ -1,3 +1,5 @@
+"""Swarm node tools: inspect, list, update, remove and wait for readiness."""
+
 # library of mcp tools relating to swarm node management
 
 import time

@@ -1,3 +1,5 @@
+"""Compose tools: bringing a project up and down, and inspecting what it is running."""
+
 # library of mcp tools for Docker Compose v2.
 #
 # Compose v2 is a Go CLI plugin (not part of the Docker Engine HTTP API), so these

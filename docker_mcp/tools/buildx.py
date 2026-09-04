@@ -1,3 +1,5 @@
+"""BuildKit tools: builds, bakes, imagetools inspection and creation, and build history."""
+
 # library of mcp tools for `docker buildx`.
 #
 # Buildx is a CLI plugin layered on BuildKit; it covers multi-platform builds, modern

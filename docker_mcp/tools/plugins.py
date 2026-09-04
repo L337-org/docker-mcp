@@ -1,3 +1,5 @@
+"""Plugin tools: install, enable, configure, push and remove."""
+
 # library of mcp tools relating to plugin management
 
 import threading

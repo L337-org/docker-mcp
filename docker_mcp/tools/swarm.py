@@ -1,3 +1,5 @@
+"""Swarm cluster tools: init, join, leave, update, and unlock-key handling."""
+
 # library of mcp tools relating to docker swarm
 
 from docker_mcp.exceptions import RemoteFailureError

@@ -1,3 +1,5 @@
+"""Swarm service tools: create, inspect, update, scale, remove and read logs."""
+
 # library of mcp tools relating to swarm service management
 
 import time

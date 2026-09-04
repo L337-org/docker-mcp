@@ -1,3 +1,5 @@
+"""Volume tools: create, inspect, list, prune and remove."""
+
 # library of mcp tools relating to volume management
 
 from docker_mcp.server import tool

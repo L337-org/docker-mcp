@@ -1,3 +1,5 @@
+"""Docker Scout tools: CVEs, quickview, recommendations, comparison and SBOM."""
+
 # library of mcp tools for `docker scout`.
 #
 # Scout is a CLI plugin that talks to Docker's vulnerability database. Most operations

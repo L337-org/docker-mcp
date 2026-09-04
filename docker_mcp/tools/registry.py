@@ -1,3 +1,5 @@
+"""Registry tools: tags, manifests, image configs, and Docker Hub lookups."""
+
 # library of mcp tools for OCI registries and Docker Hub.
 #
 # These tools talk to registry HTTPS APIs directly, not to a Docker daemon, so

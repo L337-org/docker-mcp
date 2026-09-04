@@ -416,6 +416,34 @@ re-proposes these; it has no memory of last time.
     identifier it refers to.
   - **"dialog"** for a UI dialog box, which is the standard technical term in British usage too.
 
+## Docstrings: two conventions, and which is which
+
+**Advertised docstrings keep the format documented above** - a `@tool()`, `@prompt()` or
+`@resource()` docstring is the description a client loads and a model reads, so `CS.6.14` hands
+it to the AI-consumer rules rather than to the Python docstring convention. It wants what the
+schema cannot already carry; an `Args:` block duplicates what the annotation already sends in
+`inputSchema`, and that duplication is paid for on every session. `pyproject.toml`'s ruff
+`ignore-decorators` exempts all 199 of them, and
+`tests/test_server.py::test_the_docstring_exemption_names_the_decorators_in_use` fails if a
+rename or a move ever makes that exemption stop matching.
+
+**Everything else is Google style** - `Args:` and `Returns:`, capitalised - which is `CS.6.12`'s
+format for Python, enforced by ruff's pydocstyle rules rather than by review.
+
+Most back-end docstrings are not there yet, and the `ignore` list in `pyproject.toml` holds
+exactly the rules that still fail, largest first. Take one entry off at a time and fix what it
+names in the same change; do not add to it. Every other D rule is enforced from now, so nothing
+that passes today can regress.
+
+**`D405` is the entry with a consequence outside this repository.** The lowercase
+`args:`/`returns:` style leaked from the advertised convention into back-end code, and
+`scripts/check-repo-hygiene.py` - vendored byte-identically into four repositories - is written
+in it. `claude-routines` and `apt` exclude that file from the docstring rules entirely until
+`D405` clears here. Clearing it means converting the script in all four copies together and
+regenerating the digest they share.
+
+Tests are exempt: a test's name is its documentation.
+
 <!-- BEGIN GENERATED -->
 ## Read these when they apply
 

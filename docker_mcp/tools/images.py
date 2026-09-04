@@ -1,3 +1,5 @@
+"""Image tools: build, pull, push, inspect, tag, prune and registry lookups."""
+
 # library of mcp tools relating to image management
 
 from typing import cast

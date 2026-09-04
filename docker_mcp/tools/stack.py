@@ -1,3 +1,5 @@
+"""Swarm stack tools: deploy, list, remove, and inspect a stack's tasks and services."""
+
 # library of mcp tools for Docker stacks (Compose-on-Swarm).
 #
 # `docker stack` deploys a Compose file to a swarm as a set of services. It is part of the core

@@ -1,3 +1,5 @@
+"""Network tools: create, inspect, list, prune, remove, connect and disconnect."""
+
 # library of mcp tools relating to network management
 
 from typing import Literal

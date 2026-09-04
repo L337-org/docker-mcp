@@ -1,3 +1,5 @@
+"""The advertised prompts: guided workflows a client offers rather than tools a model calls."""
+
 # library of mcp prompt templates that guide the agent through common docker workflows
 
 import docker_mcp._hosts as _hosts

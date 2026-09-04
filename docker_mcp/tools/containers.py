@@ -1,3 +1,5 @@
+"""Container tools: the lifecycle, plus exec, logs, stats and file transfer."""
+
 # library of mcp tools relating to container management
 
 import math

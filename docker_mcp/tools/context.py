@@ -1,3 +1,5 @@
+"""Docker context tools: list, inspect, create, switch and remove."""
+
 # library of mcp tools for managing docker CLI contexts.
 #
 # Docker contexts are a CLI-only feature - the Docker Engine HTTP API (and

@@ -1,3 +1,5 @@
+"""The advertised resources: the tool catalog, the host list and the documentation sections."""
+
 # library of mcp resources for viewing docker SDK and CLI-feature documentation
 
 import json
