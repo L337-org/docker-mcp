@@ -20,6 +20,27 @@ concurrency:
 # Jobs
 jobs:
 
+  repo-hygiene:
+    # Conventions every repository in this organisation shares, checked by a script that is
+    # byte-identical in each of them and verifies itself against a recorded digest. Editing one
+    # copy fails this job; divergence between copies is watched separately, on a schedule,
+    # because nothing inside one repository could ever see the others.
+    #
+    # Needs no project install: the script carries its own PEP 723 dependency header.
+    runs-on: [ubuntu-latest]
+    name: Repository hygiene
+    # 3s observed - a git listing, a YAML parse of the workflows, and some regexes.
+    timeout-minutes: 5
+    steps:
+      - name: Check out source repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+
+      - name: Repository conventions hold
+        run: uv run scripts/check-repo-hygiene.py
+
   action-pins:
     # Ported from L337-org/apt's job of the same name, which is the org's reference
     # implementation, and kept identical in logic to it and to send-to-influx's copy - three
@@ -74,28 +95,6 @@ jobs:
           fi
           echo "All action references are pinned to commit SHAs."
 
-  ci-hygiene:
-    # Every CI job must declare a timeout: without one it inherits the platform's six-hour
-    # default, and a hang then holds the concurrency group and silently discards the runs
-    # queued behind it. Fifteen jobs here had none, across five workflow files, which a
-    # per-file check would have missed - premerge.yaml was already fully covered.
-    #
-    # Needs no `uv sync`: the script carries its own PEP 723 dependency header, so `uv run`
-    # builds a throwaway environment for it. That is deliberate - the same guard is wanted in
-    # repositories with no pytest to hang it off, and this way vendoring it is a file copy.
-    runs-on: [ubuntu-latest]
-    name: Every CI job is bounded
-    # 11ms observed to install pyyaml plus a parse of six small files.
-    timeout-minutes: 5
-    steps:
-      - name: Check out source repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Set up uv
-        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
-
-      - name: Every CI job declares a usable timeout
-        run: uv run scripts/check-ci-hygiene.py
 
   fresh-resolve-import:
     # Answers a question `uv sync --locked` (used by every other job here) cannot: would a
