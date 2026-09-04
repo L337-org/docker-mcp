@@ -107,6 +107,29 @@ class CannotEvaluate(Exception):
     """The scan could not be trusted, so exit 2 rather than reporting a clean run."""
 
 
+def read_text(path, root=None):
+    """Read a file as UTF-8, turning any failure into CannotEvaluate.
+
+    Every read in this script goes through here, deliberately. Review found the same defect
+    three separate times - a read that could raise OSError or UnicodeDecodeError and escape as a
+    traceback rather than the exit-2 "cannot evaluate" this script promises - and patching each
+    site as it was reported was clearly not going to converge. One funnel means a read added
+    later cannot reintroduce it.
+
+    args:
+        path: the file to read.
+        root: repository root, so the message names a relative path when it can.
+
+    returns:
+        The file's contents as text.
+    """
+    try:
+        return path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        name = path.relative_to(root) if root and root in path.parents else path.name
+        raise CannotEvaluate(f"{name} could not be read: {exc}") from exc
+
+
 def verify_own_digest():
     """Fail if this copy of the script no longer matches the recorded digest.
 
@@ -123,7 +146,7 @@ def verify_own_digest():
     recorded = script.with_suffix(".sha256")
     if not recorded.is_file():
         raise CannotEvaluate(f"{recorded.name} is missing, so this copy cannot be shown to match the others")
-    tokens = recorded.read_text(encoding="utf-8").split()
+    tokens = read_text(recorded).split()
     if not tokens:
         raise CannotEvaluate(f"{recorded.name} is empty, so there is no digest to check against")
     want = tokens[0].strip()
@@ -248,13 +271,9 @@ def workflow_jobs(root, tracked):
     for path in workflows:
         relative = path.relative_to(root)
         try:
-            document = yaml.safe_load(path.read_text(encoding="utf-8"))
+            document = yaml.safe_load(read_text(path, root))
         except yaml.YAMLError as exc:
             raise CannotEvaluate(f"{relative} is not valid YAML: {exc}") from exc
-        except (OSError, UnicodeDecodeError) as exc:
-            # A workflow that cannot be read is exactly the case exit 2 exists for: letting it
-            # raise would report a traceback rather than which workflow could not be examined.
-            raise CannotEvaluate(f"{relative} could not be read: {exc}") from exc
         if not isinstance(document, dict):
             raise CannotEvaluate(f"{relative} does not parse as a YAML mapping")
         declared = document.get("jobs")
@@ -311,7 +330,14 @@ def check_no_internal_references(root, tracked, files):
     findings = []
     for path in files:
         relative = path.relative_to(root)
-        for number, line in enumerate(path.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
+        # errors="replace" here and not via read_text(): this scan searches prose for patterns,
+        # and one undecodable byte in one file should not abort the whole run. A file that
+        # cannot be opened at all is still a hard failure, below.
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError as exc:
+            raise CannotEvaluate(f"{relative} could not be read: {exc}") from exc
+        for number, line in enumerate(text.splitlines(), 1):
             for match in TRACKER_KEY.finditer(line):
                 span = match.group(0)
                 if not NOT_A_TRACKER_KEY.search(span):
@@ -441,7 +467,7 @@ def check_the_instruction_layer(root, tracked, files):
     if not shared_path.is_file():
         raise CannotEvaluate(f"no {SHARED_INSTRUCTION_FILE}, so there is no instruction layer to check")
 
-    shared = shared_path.read_text(encoding="utf-8")
+    shared = read_text(shared_path, root)
     for sentinel in (GENERATED_START, GENERATED_END):
         if sentinel not in shared:
             findings.append(f"{SHARED_INSTRUCTION_FILE} is missing {sentinel!r}")
@@ -472,7 +498,7 @@ def pointer_findings(root, pointer):
     if not path.is_file():
         return [f"{pointer} does not exist, so nothing routes that tool to {SHARED_INSTRUCTION_FILE}"]
 
-    body = path.read_text(encoding="utf-8")
+    body = read_text(path, root)
     findings = []
     if SHARED_INSTRUCTION_FILE not in body:
         findings.append(f"{pointer} no longer references {SHARED_INSTRUCTION_FILE}")
@@ -527,7 +553,7 @@ def check_the_detail_layer_routing(root, tracked, files):
         A list of findings.
     """
     shared_path = root / SHARED_INSTRUCTION_FILE
-    routed = routed_paths(shared_path.read_text(encoding="utf-8"))
+    routed = routed_paths(read_text(shared_path, root))
 
     present = [d for d in DETAIL_DIRECTORIES if (root / d).is_dir()]
     if not present:
