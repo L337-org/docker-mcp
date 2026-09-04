@@ -110,10 +110,11 @@ class CannotEvaluate(Exception):
 def read_text(path, root=None):
     """Read a file as UTF-8, turning any failure into CannotEvaluate.
 
-    Every read in this script goes through here, deliberately. Review found the same defect
-    three separate times - a read that could raise OSError or UnicodeDecodeError and escape as a
-    traceback rather than the exit-2 "cannot evaluate" this script promises - and patching each
-    site as it was reported was clearly not going to converge. One funnel means a read added
+    Every read that expects text goes through here, deliberately - the two exceptions are named
+    below. Review found the same defect three separate times: a read that could raise OSError or
+    UnicodeDecodeError and escape as a traceback rather than the exit-2 "cannot evaluate" this
+    script promises. Patching each site as it was reported was clearly not going to converge. One funnel means a read
+    added
     later cannot reintroduce it.
 
     args:
@@ -123,6 +124,11 @@ def read_text(path, root=None):
     returns:
         The file's contents as text.
     """
+    # The two deliberate exceptions, so this docstring cannot drift from the code:
+    # is_searchable_text() reads bytes to decide whether a file is text at all, where a decode
+    # failure is the answer rather than an error; and check_no_internal_references() reads with
+    # errors="replace", because it searches prose for patterns and one undecodable byte should
+    # not abort the whole run.
     try:
         return path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as exc:
@@ -150,7 +156,10 @@ def verify_own_digest():
     if not tokens:
         raise CannotEvaluate(f"{recorded.name} is empty, so there is no digest to check against")
     want = tokens[0].strip()
-    got = hashlib.sha256(script.read_bytes()).hexdigest()
+    try:
+        got = hashlib.sha256(script.read_bytes()).hexdigest()
+    except OSError as exc:
+        raise CannotEvaluate(f"{script.name} could not be read to check its digest: {exc}") from exc
     if got != want:
         raise CannotEvaluate(
             f"{script.name} does not match {recorded.name}: expected {want[:12]}, got "
@@ -293,7 +302,9 @@ def check_the_scan_is_real(root, tracked, files):
 
     args:
         root: repository root.
-        files: the tracked text files.
+        tracked: every tracked path. Unused here, and kept for the uniform signature every
+            check in CHECKS is called with - renaming it would make one of five differ.
+        files: the searchable-text subset.
 
     returns:
         A list of findings; raises CannotEvaluate when the listing itself is wrong.
@@ -322,7 +333,8 @@ def check_no_internal_references(root, tracked, files):
 
     args:
         root: repository root.
-        files: the tracked text files.
+        tracked: every tracked path, unfiltered.
+        files: the searchable-text subset.
 
     returns:
         A list of findings.
@@ -369,7 +381,8 @@ def check_ci_jobs_are_bounded(root, tracked, files):
 
     args:
         root: repository root.
-        files: the tracked text files.
+        tracked: every tracked path, unfiltered.
+        files: the searchable-text subset.
 
     returns:
         A list of findings.
@@ -439,7 +452,16 @@ def routed_paths(text):
         # removeprefix, never lstrip: lstrip("./") strips dots and slashes as a character set
         # and turns ".agents/policy/x.md" into "agents/policy/x.md", which then reports every
         # file as both unrouted and dangling.
-        out.add(target.removeprefix("./"))
+        target = target.removeprefix("./")
+        # An absolute path, or one climbing out of the tree, is not a route this can honour.
+        # Keeping it would let a link resolve to a file outside the repository and so make a
+        # broken route look valid - the opposite of what the dangling check is for. Dropped
+        # rather than reported: a router pointing outside the repository is a different problem
+        # from the two this check exists to find, and flagging it here would be over-broad.
+        candidate = pathlib.PurePosixPath(target)
+        if candidate.is_absolute() or ".." in candidate.parts:
+            continue
+        out.add(str(candidate))
     return out
 
 
@@ -457,7 +479,8 @@ def check_the_instruction_layer(root, tracked, files):
 
     args:
         root: repository root.
-        files: the tracked text files.
+        tracked: every tracked path, unfiltered.
+        files: the searchable-text subset.
 
     returns:
         A list of findings.
@@ -547,7 +570,8 @@ def check_the_detail_layer_routing(root, tracked, files):
 
     args:
         root: repository root.
-        files: the tracked text files.
+        tracked: every tracked path, unfiltered.
+        files: the searchable-text subset.
 
     returns:
         A list of findings.
