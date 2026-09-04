@@ -86,11 +86,18 @@ NOT_A_TRACKER_KEY = re.compile(r"\b(?:ISO-\d+|RFC-\d+|SHA-\d+|UTF-\d+|AES-\d+|PE
 # this and the tracker-key check, and it is exactly as much of a leak.  A /browse/ link may now
 # be reported twice, once here and once as its issue key.  That redundancy is the cheaper error.
 #
+# The URL alternative consumes the rest of the URL, so a full wiki link is reported once rather
+# than twice - the host branch and the /wiki/spaces/ branch would otherwise both match adjacent
+# non-overlapping parts of the same link. The bare /wiki/spaces/ branch then only fires on a
+# path with no host before it.
+#
 # A URL shape is required, not the bare hostname.  Matching the substring flagged a routine
 # prompt whose whole purpose is forbidding such links - the guard firing on the instruction not
 # to do the thing - and so did requiring only a slash after the host, because the same prompt
 # says "an atlassian.net/wiki link".
-INTERNAL_LINK = re.compile(r"(?:https?://(?:[^\s)\"'/?#]*\.)?atlassian\.net(?![A-Za-z0-9-]|\.[A-Za-z]))|/wiki/spaces/")
+INTERNAL_LINK = re.compile(
+    r"(?:https?://(?:[^\s)\"'/?#]*\.)?atlassian\.net(?![A-Za-z0-9-]|\.[A-Za-z])[^\s)\"\']*)|/wiki/spaces/"
+)
 
 # --- CI job bounds (GB.3.5) ---------------------------------------------------------------
 MIN_TIMEOUT_MINUTES = 1
