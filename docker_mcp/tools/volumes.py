@@ -1,4 +1,4 @@
-"""Volume tools: create, inspect, list, prune and remove."""
+"""Tools for volumes: container storage that outlives the container."""
 
 # library of mcp tools relating to volume management
 

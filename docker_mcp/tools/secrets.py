@@ -1,4 +1,4 @@
-"""Swarm secret tools: create, inspect, list and remove."""
+"""Tools for Swarm secrets."""
 
 # library of mcp tools relating to swarm secrets management
 

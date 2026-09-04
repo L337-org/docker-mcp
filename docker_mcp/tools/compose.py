@@ -1,4 +1,4 @@
-"""Compose tools: bringing a project up and down, and inspecting what it is running."""
+"""Tools for Compose projects: their lifecycle, and inspecting what one is running."""
 
 # library of mcp tools for Docker Compose v2.
 #

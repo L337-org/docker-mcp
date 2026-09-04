@@ -1,4 +1,4 @@
-"""Swarm stack tools: deploy, list, remove, and inspect a stack's tasks and services."""
+"""Tools for Swarm stacks: a Compose file deployed as a set of services."""
 
 # library of mcp tools for Docker stacks (Compose-on-Swarm).
 #

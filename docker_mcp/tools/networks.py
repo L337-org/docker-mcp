@@ -1,4 +1,4 @@
-"""Network tools: create, inspect, list, prune, remove, connect and disconnect."""
+"""Tools for networks, and for attaching containers to them."""
 
 # library of mcp tools relating to network management
 

@@ -1,4 +1,5 @@
-"""BuildKit tools: builds, bakes, imagetools inspection and creation, and build history."""
+"""Tools for BuildKit: building and baking images, inspecting and creating multi-platform
+manifests, and managing builder instances and their history."""
 
 # library of mcp tools for `docker buildx`.
 #

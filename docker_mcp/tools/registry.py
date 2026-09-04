@@ -1,4 +1,4 @@
-"""Registry tools: tags, manifests, image configs, and Docker Hub lookups."""
+"""Tools for registries: what a registry holds, without pulling it."""
 
 # library of mcp tools for OCI registries and Docker Hub.
 #

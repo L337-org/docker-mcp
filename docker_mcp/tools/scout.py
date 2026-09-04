@@ -1,4 +1,4 @@
-"""Docker Scout tools: CVEs, quickview, recommendations, comparison and SBOM."""
+"""Tools for Docker Scout: what is wrong with an image, and what to do about it."""
 
 # library of mcp tools for `docker scout`.
 #

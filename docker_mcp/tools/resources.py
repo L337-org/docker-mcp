@@ -1,4 +1,4 @@
-"""The advertised resources: the tool catalog, the host list and the documentation sections."""
+"""The advertised resources: read-only documents a client fetches by URI rather than calling."""
 
 # library of mcp resources for viewing docker SDK and CLI-feature documentation
 

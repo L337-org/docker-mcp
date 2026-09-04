@@ -1,4 +1,4 @@
-"""Swarm service tools: create, inspect, update, scale, remove and read logs."""
+"""Tools for Swarm services: their lifecycle, scaling, and the tasks they produce."""
 
 # library of mcp tools relating to swarm service management
 

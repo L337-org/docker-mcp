@@ -1,4 +1,4 @@
-"""Swarm node tools: inspect, list, update, remove and wait for readiness."""
+"""Tools for Swarm nodes: the machines a cluster schedules onto."""
 
 # library of mcp tools relating to swarm node management
 

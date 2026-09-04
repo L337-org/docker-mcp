@@ -1,4 +1,5 @@
-"""The advertised prompts: guided workflows a client offers rather than tools a model calls."""
+"""The advertised prompts: guided workflows a client offers a user, rather than tools a model
+calls on its own."""
 
 # library of mcp prompt templates that guide the agent through common docker workflows
 

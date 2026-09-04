@@ -1711,7 +1711,9 @@ def test_the_docstring_exemption_names_the_decorators_in_use() -> None:
     bare = {path.rsplit(".", 1)[-1] for path in exempt}
 
     used: set[str] = set()
-    for module in sorted((root / "docker_mcp" / "tools").glob("*.py")):
+    # The whole package, not just tools/. A registration added anywhere else would otherwise
+    # drift out of the exemption with nothing saying so - which is the failure this test is for.
+    for module in sorted((root / "docker_mcp").rglob("*.py")):
         tree = ast.parse(module.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
             if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):

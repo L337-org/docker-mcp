@@ -1,4 +1,7 @@
-"""System tools: ping, version, info, disk usage, login, and the configured host list."""
+"""Tools for the daemon itself, and for this server's view of it.
+
+What the daemon is and what it holds, the registry credentials it uses, and which of the
+configured hosts are reachable from here."""
 
 # library of mcp tools relating to the system domain: daemon info/auth and client connection control
 

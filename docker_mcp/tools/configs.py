@@ -1,4 +1,4 @@
-"""Swarm config tools: create, inspect, list and remove."""
+"""Tools for Swarm configs."""
 
 # library of mcp tools relating to swarm config management
 
