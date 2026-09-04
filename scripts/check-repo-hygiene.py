@@ -242,13 +242,19 @@ def is_searchable_text(path):
         return False
     try:
         data = path.read_bytes()
-    except OSError:
-        return False
+    except OSError as exc:
+        # Not "this is not text": a tracked file that cannot be opened would silently leave the
+        # scan, and a run could then report clean while covering less than it appeared to -
+        # exactly the failure this script exists to catch. Whether it is text is unknown, so
+        # the honest answer is that the scan cannot be trusted.
+        raise CannotEvaluate(f"{path.name} is tracked but could not be read: {exc}") from exc
     if b"\0" in data:
         return False
     try:
         data.decode("utf-8")
     except UnicodeDecodeError:
+        # A decode failure genuinely answers the question: this is not searchable text, and
+        # excluding it is correct rather than a loss of coverage.
         return False
     return True
 
