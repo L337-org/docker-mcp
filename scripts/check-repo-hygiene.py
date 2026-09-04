@@ -53,7 +53,9 @@ import sys
 # main module being read?" - stay in that repository's own tests, where they can name files
 # that only exist there.
 MIN_TRACKED_FILES = 20
-UNIVERSAL_FILES = ("README.md", "AGENTS.md", "CLAUDE.md", "copilot-instructions.md")
+# Repository-relative, not basenames: a templates/README.md would otherwise satisfy the README.md
+# requirement while the root one was missing, which is the guard answering the wrong question.
+UNIVERSAL_FILES = ("README.md", "AGENTS.md", "CLAUDE.md", ".github/copilot-instructions.md")
 
 # --- the instruction-file layer (NP.1.3) --------------------------------------------------
 SHARED_INSTRUCTION_FILE = "AGENTS.md"
@@ -331,7 +333,7 @@ def check_the_scan_is_real(root, tracked, files):
     # tracked but not decodable would otherwise be reported as missing from the listing, which
     # is untrue and sends the reader looking in the wrong place; letting it through here means
     # the read that needs it fails instead, naming the file and the decode error.
-    names = {p.name for p in tracked}
+    names = {str(p.relative_to(root)) for p in tracked}
     absent = [f for f in UNIVERSAL_FILES if f not in names]
     if absent:
         raise CannotEvaluate(
