@@ -1,3 +1,5 @@
+"""Tools for registries: what a registry holds, without pulling it."""
+
 # library of mcp tools for OCI registries and Docker Hub.
 #
 # These tools talk to registry HTTPS APIs directly, not to a Docker daemon, so

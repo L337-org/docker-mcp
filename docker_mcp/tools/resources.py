@@ -1,3 +1,5 @@
+"""The advertised resources: read-only documents a client fetches by URI rather than calling."""
+
 # library of mcp resources for viewing docker SDK and CLI-feature documentation
 
 import json

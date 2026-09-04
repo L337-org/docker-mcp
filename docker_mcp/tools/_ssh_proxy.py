@@ -793,7 +793,7 @@ class PosixDialect:
         return ["tar", "-cf", archive, "-C", parent or "/", name]
 
     def join_path(self, *parts: str) -> str:
-        """
+        r"""
         Join remote path components with the remote separator.
 
         `posixpath`, not `os.path`: the separator belongs to the *remote* host, and a server running

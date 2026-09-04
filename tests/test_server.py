@@ -1686,3 +1686,57 @@ def test_the_translation_guard_is_reading_a_full_surface():
     tools = _registered_tools()
     assert len(tools) > 100, f"enumerated only {len(tools)} tools; the surface is far larger"
     assert all(callable(getattr(tool, "fn", None)) for tool in tools.values()), "Tool.fn is no longer the callable"
+
+
+def test_the_docstring_exemption_names_the_decorators_in_use() -> None:
+    """The docstring rules must keep skipping every advertised registration.
+
+    A tool, prompt or resource docstring is the advertised interface a client loads and a model
+    reads, so CS.6.14 hands it to the AI-consumer rules rather than to the docstring convention:
+    it wants what the schema cannot already carry, and an `Args:` block duplicates what the
+    schema has - paid for on every session that loads the surface.
+
+    pyproject.toml exempts them by fully-qualified decorator path, and a path goes stale
+    silently. Move or rename `tool` and 199 advertised descriptions fall under D417 with nothing
+    saying so. Asserts both directions: every decorator actually in use is named, and the count
+    is floored so a scan finding nothing cannot pass.
+    """
+    import ast
+    import tomllib
+
+    root = Path(__file__).resolve().parent.parent
+    config = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+    exempt = config["tool"]["ruff"]["lint"]["pydocstyle"]["ignore-decorators"]
+    # ruff matches the fully-qualified path; the call site uses the bare name it imported.
+    bare = {path.rsplit(".", 1)[-1] for path in exempt}
+
+    used: set[str] = set()
+    # The whole package, not just tools/. A registration added anywhere else would otherwise
+    # drift out of the exemption with nothing saying so - which is the failure this test is for.
+    for module in sorted((root / "docker_mcp").rglob("*.py")):
+        tree = ast.parse(module.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+                continue
+            for decorator in node.decorator_list:
+                source = ast.unparse(decorator)
+                name = source.split("(")[0].split(".")[-1].lstrip("@")
+                if name in {"tool", "prompt", "resource"}:
+                    used.add(name)
+
+    assert len(used) >= 3, f"only found {sorted(used)} in use, so this check is not seeing the surface"
+    missing = sorted(used - bare)
+    assert not missing, (
+        f"pyproject.toml's ignore-decorators does not cover {missing}, so those advertised "
+        f"docstrings would fall under the docstring convention. It names {sorted(bare)}."
+    )
+
+    # And the qualified paths must actually resolve, or ruff silently matches nothing.
+    import importlib
+
+    for path in exempt:
+        module_name, _, attribute = path.rpartition(".")
+        assert hasattr(importlib.import_module(module_name), attribute), (
+            f"ignore-decorators names {path!r}, which does not exist - ruff would match nothing "
+            f"and every advertised docstring would fall under the convention"
+        )

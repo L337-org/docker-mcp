@@ -1,3 +1,5 @@
+"""Tools for volumes: container storage that outlives the container."""
+
 # library of mcp tools relating to volume management
 
 from docker_mcp.server import tool

@@ -1,3 +1,5 @@
+"""Tools for Engine plugins: installing them, and controlling whether they are enabled."""
+
 # library of mcp tools relating to plugin management
 
 import threading

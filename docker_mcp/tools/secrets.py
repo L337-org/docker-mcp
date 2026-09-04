@@ -1,3 +1,5 @@
+"""Tools for Swarm secrets."""
+
 # library of mcp tools relating to swarm secrets management
 
 from docker_mcp.server import tool

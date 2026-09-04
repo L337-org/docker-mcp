@@ -1,3 +1,9 @@
+"""The MCP server itself: the registration decorators, the tool catalog and the shared plumbing.
+
+`tool`, `prompt` and `resource` here are what every module in `tools/` decorates with, and what
+`pyproject.toml`'s ruff `ignore-decorators` names - an advertised docstring is governed by the
+AI-consumer rules rather than by the docstring convention."""
+
 # MCP server singleton plus the central tool-registration helper.
 #
 # Tool modules import `tool` from here (never `mcp` directly) and decorate with `@tool()`.
@@ -656,9 +662,10 @@ _SCHEMA_NAME_MAPS = frozenset(
 
 
 def _slim_schema(node: Any) -> None:
-    """
-    Recursively slim a JSON Schema in place, dropping annotations the client already has (or that
-    only restate a default). All three transforms are display-only - call-time validation runs off
+    """Slim a JSON Schema in place, dropping annotations the client already has.
+
+    Applied recursively, and to annotations that only restate a default. All three transforms
+    are display-only - call-time validation runs off
     the tool's separate `fn_metadata`, so none changes behavior - and were measured to be
     information-free, together ~18% of the advertised schema tokens:
 

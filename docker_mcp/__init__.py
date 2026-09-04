@@ -1,4 +1,4 @@
-"""MCP server for managing Docker resources and searching Docker documentation"""
+"""MCP server for managing Docker resources and searching Docker documentation."""
 
 from docker_mcp.server import mcp, finalize_instructions
 from docker_mcp import _hosts
@@ -16,9 +16,7 @@ finalize_instructions()
 
 
 def main():
-    """
-    Main function to run the MCP server.
-    """
+    """Run the MCP server."""
     import sys
 
     # Exit-fast version report, so the published package can be smoke-tested (the weekly canary

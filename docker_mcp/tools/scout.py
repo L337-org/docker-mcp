@@ -1,3 +1,5 @@
+"""Tools for Docker Scout: what is wrong with an image, and what to do about it."""
+
 # library of mcp tools for `docker scout`.
 #
 # Scout is a CLI plugin that talks to Docker's vulnerability database. Most operations
