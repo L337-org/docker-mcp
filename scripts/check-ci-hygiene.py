@@ -17,7 +17,8 @@ shape here and another shape there is one that drifts.  The PEP 723 header means
 file copy.
 
 Run it with `uv run scripts/check-ci-hygiene.py`.  Exit status is 0 when every job passes, 1 when
-any does not, and 2 when the scan found nothing to check - see below for why that is not 0.
+any does not, and 2 when the scan could not be trusted because too few jobs were discovered - see below
+for why that is not 0, and not 1 either.
 """
 
 from __future__ import annotations
@@ -151,26 +152,38 @@ def main():
     """Report every job whose timeout is missing or unusable.
 
     returns:
-        A process exit status: 0 clean, 1 findings, 2 the scan itself is broken.
+        A process exit status: 0 clean, 1 findings, 2 the scan itself cannot be trusted.
     """
     root = pathlib.Path(__file__).resolve().parent.parent
     jobs, problems = workflow_jobs(root)
 
-    if len(jobs) < MIN_JOBS_EXPECTED and not problems:
-        print(
-            f"check-ci-hygiene: found only {len(jobs)} job(s), expected at least "
-            f"{MIN_JOBS_EXPECTED} - discovery is broken rather than the workflows being clean",
-            file=sys.stderr,
-        )
-        return 2
-
-    findings = [problem for problem in problems]
+    findings = list(problems)
     findings += [
         problem for relative, name, body in jobs if (problem := timeout_problem(relative, name, body)) is not None
     ]
 
+    # Too few jobs discovered means this run cannot be trusted, whatever else it found - so
+    # the decision is made independently of the findings rather than after them.  An earlier
+    # version gated this on `not problems`, which got the one case it most needed to catch
+    # exactly wrong: a missing or unreadable .github/workflows lands in `problems`, so it
+    # exited 1 and reported "the workflows are wrong" when the truth was "I could not look at
+    # them".  Telling those two apart is the entire reason exit 2 exists.  The problems are
+    # still printed, because which file could not be read is the actionable part.
+    if len(jobs) < MIN_JOBS_EXPECTED:
+        print(
+            f"check-ci-hygiene: found only {len(jobs)} job(s), expected at least "
+            f"{MIN_JOBS_EXPECTED} - the scan is broken rather than the workflows being clean",
+            file=sys.stderr,
+        )
+        for finding in findings:
+            print(f"  - {finding}", file=sys.stderr)
+        return 2
+
     if findings:
-        print(f"check-ci-hygiene: {len(findings)} finding(s) across {len(jobs)} job(s):", file=sys.stderr)
+        print(
+            f"check-ci-hygiene: {len(findings)} finding(s) across {len(jobs)} job(s):",
+            file=sys.stderr,
+        )
         for finding in findings:
             print(f"  - {finding}", file=sys.stderr)
         return 1
