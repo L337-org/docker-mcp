@@ -90,7 +90,7 @@ NOT_A_TRACKER_KEY = re.compile(r"\b(?:ISO-\d+|RFC-\d+|SHA-\d+|UTF-\d+|AES-\d+|PE
 # prompt whose whole purpose is forbidding such links - the guard firing on the instruction not
 # to do the thing - and so did requiring only a slash after the host, because the same prompt
 # says "an atlassian.net/wiki link".
-INTERNAL_LINK = re.compile(r"(?:https?://[^\s)\"'/?#]*atlassian\.net(?![A-Za-z0-9-]))|/wiki/spaces/")
+INTERNAL_LINK = re.compile(r"(?:https?://(?:[^\s)\"'/?#]*\.)?atlassian\.net(?![A-Za-z0-9-]|\.[A-Za-z]))|/wiki/spaces/")
 
 # --- CI job bounds (GB.3.5) ---------------------------------------------------------------
 MIN_TIMEOUT_MINUTES = 1
@@ -98,7 +98,9 @@ MAX_TIMEOUT_MINUTES = 60
 
 BINARY_SUFFIXES = (".png", ".jpg", ".jpeg", ".gif", ".ico", ".pdf", ".gz", ".zip", ".deb", ".whl")
 
-SELF = pathlib.Path(__file__).name
+# Compared as a resolved path, not a basename: another file of the same name elsewhere in a
+# repository would otherwise be dropped from the scan without anything saying so.
+SELF = pathlib.Path(__file__).resolve()
 
 
 class CannotEvaluate(Exception):
@@ -166,7 +168,8 @@ def tracked_paths(root):
     # sequence the locale cannot decode - a path in an unexpected encoding would crash the scan
     # instead of being reported (SU.6.6).
     names = listing.stdout.decode("utf-8", errors="replace")
-    return sorted(root / name for name in names.split("\0") if name and pathlib.Path(name).name != SELF)
+    candidates = (root / name for name in names.split("\0") if name)
+    return sorted(p for p in candidates if p.resolve() != SELF)
 
 
 def searchable_text_files(paths):
