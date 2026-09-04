@@ -123,7 +123,10 @@ def verify_own_digest():
     recorded = script.with_suffix(".sha256")
     if not recorded.is_file():
         raise CannotEvaluate(f"{recorded.name} is missing, so this copy cannot be shown to match the others")
-    want = recorded.read_text(encoding="utf-8").split()[0].strip()
+    tokens = recorded.read_text(encoding="utf-8").split()
+    if not tokens:
+        raise CannotEvaluate(f"{recorded.name} is empty, so there is no digest to check against")
+    want = tokens[0].strip()
     got = hashlib.sha256(script.read_bytes()).hexdigest()
     if got != want:
         raise CannotEvaluate(
@@ -164,10 +167,12 @@ def tracked_paths(root):
     except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
         raise CannotEvaluate(f"cannot list tracked files with git: {exc}") from exc
 
-    # Decoded explicitly with replacement rather than by text=True, which raises on a byte
-    # sequence the locale cannot decode - a path in an unexpected encoding would crash the scan
-    # instead of being reported (SU.6.6).
-    names = listing.stdout.decode("utf-8", errors="replace")
+    # Decoded explicitly rather than by text=True, which raises on a byte sequence the locale
+    # cannot decode - the scan would crash instead of reporting (SU.6.6). surrogateescape rather
+    # than replace: a path is bytes, and a replacement character produces a name that no longer
+    # opens, so a file with an unusual path would be listed and then silently unreadable.
+    # surrogateescape round-trips, which is what Python's own filesystem APIs use.
+    names = listing.stdout.decode("utf-8", errors="surrogateescape")
     candidates = (root / name for name in names.split("\0") if name)
     return sorted(p for p in candidates if p.resolve() != SELF)
 
@@ -225,7 +230,9 @@ def workflow_jobs(root, tracked):
 
     args:
         root: repository root.
-        files: the tracked text files.
+        tracked: every tracked path, unfiltered - deliberately not the searchable-text subset,
+            because a workflow that is not readable text must still be reported rather than
+            quietly dropped from the bounds checks.
 
     returns:
         A list of triples.
@@ -592,7 +599,10 @@ def main():
             print(f"  [{label}] {finding}", file=sys.stderr)
         return 1
 
-    print(f"check-repo-hygiene: {len(CHECKS)} check(s) passed over {len(files)} tracked files")
+    print(
+        f"check-repo-hygiene: {len(CHECKS)} check(s) passed over {len(files)} searchable "
+        f"file(s) of {len(tracked)} tracked"
+    )
     return 0
 
 
