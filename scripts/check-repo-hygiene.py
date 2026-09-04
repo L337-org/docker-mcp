@@ -301,9 +301,10 @@ def check_the_scan_is_real(root, tracked, files):
 
     args:
         root: repository root.
-        tracked: every tracked path. Unused here, and kept for the uniform signature every
-            check in CHECKS is called with - renaming it would make one of five differ.
-        files: the searchable-text subset.
+        tracked: every tracked path. The sentinel check below uses this rather than the
+            filtered list, so an unreadable universal file is reported as unreadable rather
+            than as absent.
+        files: the searchable-text subset, used for the size floor.
 
     returns:
         A list of findings; raises CannotEvaluate when the listing itself is wrong.
@@ -313,7 +314,11 @@ def check_the_scan_is_real(root, tracked, files):
             f"only {len(files)} tracked text file(s) found, expected at least "
             f"{MIN_TRACKED_FILES} - the listing is wrong rather than the repository being small"
         )
-    names = {p.name for p in files}
+    # Checked against the git listing, not the searchable subset. A universal file that is
+    # tracked but not decodable would otherwise be reported as missing from the listing, which
+    # is untrue and sends the reader looking in the wrong place; letting it through here means
+    # the read that needs it fails instead, naming the file and the decode error.
+    names = {p.name for p in tracked}
     absent = [f for f in UNIVERSAL_FILES if f not in names]
     if absent:
         raise CannotEvaluate(
