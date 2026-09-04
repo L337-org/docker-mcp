@@ -1,3 +1,5 @@
+"""Tools for Swarm configs."""
+
 # library of mcp tools relating to swarm config management
 
 from docker_mcp.server import tool

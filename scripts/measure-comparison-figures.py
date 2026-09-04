@@ -6,7 +6,7 @@
 # [tool.uv.sources]
 # docker-mcp-server = { path = "../", editable = true }
 # ///
-"""Regenerate every measured figure quoted in `MCP_VS_SKILLS.md`.
+r"""Regenerate every measured figure quoted in `MCP_VS_SKILLS.md`.
 
 Run it from anywhere with `uv run scripts/measure-comparison-figures.py` (add `--json` for the
 machine-readable form).  `uv` builds a throwaway environment from the header above, installing the

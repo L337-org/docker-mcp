@@ -24,6 +24,10 @@ _when changing module structure, public surface, docstrings, generated files, de
 - **DK.13.11** A reviewer-facing mirror SHOULD carry a deliberate-do-not-flag section recording decisions already taken, which otherwise generate the same false positive on every pull request.
 - **DK.13.12** You MUST NOT add an item to a reviewer mirror that CI already guarantees; the test is not whether it is true or important but whether the guard already exists, because spending attention on an item that always passes trains readers to skim.
 - **DK.13.13** Where a mechanical guard is only a heuristic, the residual it cannot catch MUST sit next to that guard rather than in the mirror.
+- **DK.13.14** Where condensing moves rules into a detail layer, every file in that layer MUST be reachable from the router and every path the router names MUST exist; a file nothing routes to is invisible, and a route to nothing reads as authoritative and resolves to nothing.
+- **DK.13.15** Membership of that check MUST be decided by directory rather than by which documents the instruction files link to, which drags in the readme, the security policy and the code of conduct.
+- **DK.13.16** An unrouted file that the generator owning the directory has reported MUST be an accepted exemption rather than a failure, because that file is deliberately left unrouted.
+- **DK.13.17** Where an item is omitted from a reviewer mirror because a guard already covers it, that guard MUST be named where the item would have been, so that removing the guard leaves a reference to something that no longer exists rather than silence.
 - **DK.14.1** You MUST NOT decide extraction on size; two tests both have to pass.
 - **DK.14.2** First, the trigger MUST be recognisable before the rule is needed, because an on-demand file is read only when something in context says to read it.
 - **DK.14.3** Anything governing how every turn is conducted MUST stay resident whatever it costs, as MUST a fallback whose trigger is the absence of an applicable rule.
@@ -46,6 +50,9 @@ _when changing module structure, public surface, docstrings, generated files, de
 - **CS.6.9** Every module MUST have a module-level docstring saying what it owns; this is the part most often missing and what a generator uses to build the top level.
 - **CS.6.10** Where the language supports executable examples you SHOULD prefer them and run them in the test suite, because an executed example cannot rot silently and an illustrative one eventually lies.
 - **CS.6.11** A docstring MUST NOT carry change history, author names, dates or issue references.
+- **CS.6.12** For Python the docstring format MUST be Google style, enforced through the linter's own convention setting rather than by review.
+- **CS.6.13** Where a project introduces a language for which a standard docstring format has not yet been established, it SHOULD decide one and record it on a policy page, so that the next project inherits the decision rather than making it again.
+- **CS.6.14** Where a docstring is itself an advertised interface - a tool, prompt or resource description - the AI-consumer rules govern it instead of the rules in this group, because a structured parameter block there duplicates what the schema already carries and is paid for on every session.
 - **CS.10.1** A generated artefact that a build consumes MUST carry a header stating that it is generated and what regenerates it; do-not-edit alone says someone made a mistake but not how to do what they were trying to do.
 - **CS.10.2** A generated file SHOULD be excluded from formatting and lint gates, since the generator owns its style and a formatter would otherwise fight it on every run.
 - **CS.10.3** Where the generator is not public, or the artefact plays no part in the build, you MUST NOT name the generator and MUST NOT declare the file generated at all.
@@ -99,4 +106,8 @@ _when changing module structure, public surface, docstrings, generated files, de
 - **AC.6.1** Every factual claim in a description MUST be verified against the primary source - the actual library or API documentation, or the installed artefact - because the consumer relies on it without being able to check it, so an unverified claim ships into something with no way to notice.
 - **AC.7.1** Where the product can be reduced, the reduction MUST remove capabilities from the advertised surface entirely, MUST apply consistently across every kind of exposed object, and MUST be inspectable at runtime.
 - **AC.7.2** A capability MUST NOT be registered and then refuse when called, because that leaks its own existence and invites a bypass.
+- **AC.8.1** A model-facing parameter MUST NOT be given a deprecation window or a transitional alias, because the consumer fetches the schema at the start of every session and holds no stored copy, so the alias costs context on every session to cover a window shorter than one conversation.
+- **AC.8.2** Before adding an alias anywhere you MUST ask whether the caller persists; where it does, the ordinary deprecation rules apply unchanged, because this is an exception for one kind of consumer rather than a relaxation of them.
+- **AC.9.1** A parameter typed as a sequence MUST have its type checked at the boundary, because a string satisfies that type and iterates per character, so a single value arrives as a list of letters and fails somewhere unrelated.
+- **AC.9.2** A boundary rejection MUST raise the project's own parameter error naming the parameter and what was expected, rather than letting the value travel further in.
 

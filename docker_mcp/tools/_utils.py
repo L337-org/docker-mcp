@@ -83,7 +83,7 @@ def in_container() -> bool:
 
 
 def _unescape_mountinfo_field(field: str) -> str:
-    """Decode the octal escapes the kernel applies to mountinfo path fields (space/tab/newline/\\)."""
+    r"""Decode the octal escapes the kernel applies to mountinfo path fields (space/tab/newline/\\)."""
     return field.replace("\\040", " ").replace("\\011", "\t").replace("\\012", "\n").replace("\\134", "\\")
 
 

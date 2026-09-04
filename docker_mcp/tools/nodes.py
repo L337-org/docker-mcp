@@ -1,3 +1,5 @@
+"""Tools for Swarm nodes: the machines a cluster schedules onto."""
+
 # library of mcp tools relating to swarm node management
 
 import time

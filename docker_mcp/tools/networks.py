@@ -1,3 +1,5 @@
+"""Tools for networks, and for attaching containers to them."""
+
 # library of mcp tools relating to network management
 
 from typing import Literal

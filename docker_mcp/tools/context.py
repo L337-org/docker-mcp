@@ -1,3 +1,5 @@
+"""Tools for Docker contexts: the named endpoints a client can switch between."""
+
 # library of mcp tools for managing docker CLI contexts.
 #
 # Docker contexts are a CLI-only feature - the Docker Engine HTTP API (and
