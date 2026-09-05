@@ -64,12 +64,12 @@ def _run_buildx(
     target could be the very flag a scan looks for. Explicit values need no such assumption.
 
     Args:
-        args - the buildx argv, without the leading `buildx`
-        cwd - working directory for the command, or None for the server's own
-        timeout - seconds allowed for the command
-        host - configured host label, or None for the default host
-        path_values - values in `args` naming local paths to reconcile with the remote host
-        stage_cwd - True when the subcommand reads files from `cwd` (bake), so it is copied over
+        args: the buildx argv, without the leading `buildx`
+        cwd: working directory for the command, or None for the server's own
+        timeout: seconds allowed for the command
+        host: configured host label, or None for the default host
+        path_values: values in `args` naming local paths to reconcile with the remote host
+        stage_cwd: True when the subcommand reads files from `cwd` (bake), so it is copied over
     returns: CliResult - the same shape from either backend
     """
     if should_remote_exec(host, plugin="buildx"):
@@ -102,8 +102,8 @@ def _spec_component(spec: str, key: str) -> str | None:
     rather than approximate.
 
     Args:
-        spec - one spec value, e.g. "type=local,dest=out" or "id=npmrc,src=/home/u/.npmrc"
-        key - the component to read, e.g. "dest"
+        spec: one spec value, e.g. "type=local,dest=out" or "id=npmrc,src=/home/u/.npmrc"
+        key: the component to read, e.g. "dest"
     returns: str | None - the component's value, or None when the spec does not carry it
     """
     for component in spec.split(","):
@@ -117,9 +117,9 @@ def _replace_spec_component(spec: str, key: str, new_value: str) -> str:
     """Rewrite one `key=` component of a buildx spec, leaving the rest of it untouched.
 
     Args:
-        spec - the spec value to rewrite
-        key - the component to replace, e.g. "src"
-        new_value - the replacement value
+        spec: the spec value to rewrite
+        key: the component to replace, e.g. "src"
+        new_value: the replacement value
     returns: str - the rewritten spec
     """
     parts = []
@@ -149,10 +149,10 @@ def _refuse_flags_that_resolve_on_the_wrong_host(
     flags is refused whatever its value.
 
     Args:
-        output - `--output` specs
-        cache_to - `--cache-to` specs
-        cache_from - `--cache-from` specs
-        ssh - `--ssh` specs
+        output: `--output` specs
+        cache_to: `--cache-to` specs
+        cache_from: `--cache-from` specs
+        ssh: `--ssh` specs
     raises: ToolInputError - any of the above is present
     """
     checks = (
@@ -220,8 +220,8 @@ def _local_dockerfile(file: str | None, *, context_is_local: bool) -> Path | Non
       this server's working directory, silently building something else.
 
     Args:
-        file - the `file` parameter as given, or None
-        context_is_local - whether `context` names an existing local directory
+        file: the `file` parameter as given, or None
+        context_is_local: whether `context` names an existing local directory
     returns: Path | None - the local path buildx would read, else None
     raises: ToolInputError - a relative `file` cannot be resolved (this server's cwd is unavailable)
     """
@@ -249,9 +249,9 @@ def _replace_flag_value(args: list[str], flag: str, new_value: str) -> None:
     to equal it cannot be caught by accident.
 
     Args:
-        args - the argv to modify in place
-        flag - the flag whose value to replace, e.g. "--file"
-        new_value - the replacement
+        args: the argv to modify in place
+        flag: the flag whose value to replace, e.g. "--file"
+        new_value: the replacement
     """
     for index, token in enumerate(args):
         if token == flag and index + 1 < len(args):
@@ -267,10 +267,10 @@ def _stage_composite_paths(session: RemoteStagingSession, args: list[str], flag:
     inputs are copied.
 
     Args:
-        session - the open staging session
-        args - the argv to modify in place
-        flag - the repeatable flag to walk, e.g. "--secret"
-        key - the component holding a path; "" means the whole value after `name=`
+        session: the open staging session
+        args: the argv to modify in place
+        flag: the repeatable flag to walk, e.g. "--secret"
+        key: the component holding a path; "" means the whole value after `name=`
     """
     for index, token in enumerate(args):
         if token != flag or index + 1 >= len(args):
@@ -476,12 +476,15 @@ def _run_buildx_build_remotely(
     context, is copied on its own and pointed at the same way.
 
     Args:
-        args - the fully-built buildx argv, ending with the context positional
-        context - the context as the caller gave it
-        file - the `file` parameter as the caller gave it
-        output/cache_to/cache_from/ssh - checked for effects that would land on the wrong machine
-        timeout - seconds allowed for the build
-        host - configured host label, or None for the default host
+        args: the fully-built buildx argv, ending with the context positional
+        context: the context as the caller gave it
+        file: the `file` parameter as the caller gave it
+        output: checked for effects that would land on the wrong machine.
+        cache_to: checked for effects that would land on the wrong machine.
+        cache_from: checked for effects that would land on the wrong machine.
+        ssh: checked for effects that would land on the wrong machine.
+        timeout: seconds allowed for the build
+        host: configured host label, or None for the default host
     returns: CliResult - the build's outcome, in `run_docker`'s shape
     raises:
         ToolInputError - a refused flag (see `_refuse_flags_that_resolve_on_the_wrong_host`), or a

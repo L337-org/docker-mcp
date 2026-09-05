@@ -293,14 +293,14 @@ def get_container_logs_resource(id_or_name: str) -> str:
     return _read_log_tail(id_or_name)
 
 
-def get_host_container_logs_resource(host: str, id_or_name: str) -> str:
+def get_host_container_logs_resource(host: str, id_or_name: str) -> str:  # noqa: D417 - advertised; see the docstring marker
     """Read a bounded log tail for a container on a named host (host-qualified docker-logs variant).
 
     args:
         host - Configured host label (from the docker-mcp://hosts resource)
         id_or_name - The container id or name (from that host's index)
     returns: str - The decoded recent log tail
-    """  # noqa: D405 - advertised description; CS.6.14 keeps the lowercase house style
+    """  # noqa: D405 - advertised description; CS.6.14 governs it, not the Python rules
     _require_containers_domain()
     return _read_log_tail(id_or_name, host=host)
 
@@ -319,14 +319,14 @@ def get_container_stats_resource(id_or_name: str) -> str:
     return json.dumps(_read_stats_summary(id_or_name), indent=2)
 
 
-def get_host_container_stats_resource(host: str, id_or_name: str) -> str:
+def get_host_container_stats_resource(host: str, id_or_name: str) -> str:  # noqa: D417 - advertised; see the docstring marker
     """Resource-usage summary for a running container on a named host (host-qualified docker-stats variant).
 
     args:
         host - Configured host label (from the docker-mcp://hosts resource)
         id_or_name - The container id or name (from that host's index)
     returns: str - JSON usage summary (same shape as docker-stats://{id_or_name})
-    """  # noqa: D405 - advertised description; CS.6.14 keeps the lowercase house style
+    """  # noqa: D405 - advertised description; CS.6.14 governs it, not the Python rules
     _require_containers_domain()
     return json.dumps(_read_stats_summary(id_or_name, host=host), indent=2)
 
@@ -410,14 +410,14 @@ def get_service_logs_resource(id_or_name: str) -> str:
     return _read_service_log_tail(id_or_name)
 
 
-def get_host_service_logs_resource(host: str, id_or_name: str) -> str:
+def get_host_service_logs_resource(host: str, id_or_name: str) -> str:  # noqa: D417 - advertised; see the docstring marker
     """Read a bounded log tail for a swarm service on a named host (host-qualified service-logs variant).
 
     args:
         host - Configured host label (from the docker-mcp://hosts resource)
         id_or_name - The service id or name (from that host's index)
     returns: str - The decoded recent log tail
-    """  # noqa: D405 - advertised description; CS.6.14 keeps the lowercase house style
+    """  # noqa: D405 - advertised description; CS.6.14 governs it, not the Python rules
     _require_services_domain()
     return _read_service_log_tail(id_or_name, host=host)
 
@@ -436,14 +436,14 @@ def get_service_tasks_resource(id_or_name: str) -> str:
     return json.dumps(_read_service_task_summary(id_or_name), indent=2)
 
 
-def get_host_service_tasks_resource(host: str, id_or_name: str) -> str:
+def get_host_service_tasks_resource(host: str, id_or_name: str) -> str:  # noqa: D417 - advertised; see the docstring marker
     """Task/rollout status summary for a swarm service on a named host (host-qualified variant).
 
     args:
         host - Configured host label (from the docker-mcp://hosts resource)
         id_or_name - The service id or name (from that host's index)
     returns: str - JSON summary (same shape as service-tasks://{id_or_name})
-    """  # noqa: D405 - advertised description; CS.6.14 keeps the lowercase house style
+    """  # noqa: D405 - advertised description; CS.6.14 governs it, not the Python rules
     _require_services_domain()
     return json.dumps(_read_service_task_summary(id_or_name, host=host), indent=2)
 

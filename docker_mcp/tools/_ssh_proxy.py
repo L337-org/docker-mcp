@@ -454,9 +454,9 @@ def _validate_exec_args(argv: Sequence[str], timeout: float, max_output_bytes: i
     worse failure than a clear error.
 
     Args:
-        argv - the remote command, used only for the exception's message
-        timeout - the caller's timeout; must be positive
-        max_output_bytes - the retention cap; must not be negative
+        argv: the remote command, used only for the exception's message
+        timeout: the caller's timeout; must be positive
+        max_output_bytes: the retention cap; must not be negative
     raises:
         subprocess.TimeoutExpired - `timeout` is zero or negative
         ValueError - `max_output_bytes` is negative (a caller bug with no local analogue)
@@ -499,9 +499,9 @@ def _is_remote_timeout(returncode: int, elapsed: float, timeout: float) -> bool:
     *every* sentinel exit. Comparing against the sleep the watchdog actually performs closes both.
 
     Args:
-        returncode - the exit status the remote wrapper reported
-        elapsed - seconds from issuing the command to it completing
-        timeout - the caller's timeout for the command
+        returncode: the exit status the remote wrapper reported
+        elapsed: seconds from issuing the command to it completing
+        timeout: the caller's timeout for the command
     returns: bool - True only when the status is the sentinel and the watchdog could actually have fired
     """
     if returncode != _REMOTE_TIMEOUT_EXIT_CODE:
@@ -671,9 +671,9 @@ class PosixDialect:
         either way; the window is microseconds wide.
 
         Args:
-            argv - the remote command as an argv list; joined with shell quoting, never concatenated
-            timeout - seconds before the remote watchdog kills the command (rounded up, floor 1s)
-            cwd - remote directory to run in; a failure to enter it exits 127 without running argv
+            argv: the remote command as an argv list; joined with shell quoting, never concatenated
+            timeout: seconds before the remote watchdog kills the command (rounded up, floor 1s)
+            cwd: remote directory to run in; a failure to enter it exits 127 without running argv
         returns: str - a complete `sh -c '...'` command string for `Channel.exec_command`
         """
         seconds = _watchdog_sleep_seconds(timeout)
@@ -753,8 +753,8 @@ class PosixDialect:
         every POSIX `tar` offers, so the uploader does not compress (see `_upload_and_extract`).
 
         Args:
-            archive - absolute remote path of the uploaded tar
-            dest - absolute remote directory to unpack into; must already exist
+            archive: absolute remote path of the uploaded tar
+            dest: absolute remote directory to unpack into; must already exist
         returns: list[str] - argv for the extraction
         """
         return ["tar", "-xf", archive, "-C", dest]
@@ -769,8 +769,8 @@ class PosixDialect:
         on the fetching side assumes `gzip`.
 
         Args:
-            source - absolute remote path (file or directory) to pack
-            archive - absolute remote path to write the tar to
+            source: absolute remote path (file or directory) to pack
+            archive: absolute remote path to write the tar to
         returns: list[str] - argv for the archive creation
         """
         parent, name = posixpath.split(source)
@@ -851,9 +851,9 @@ def detect_remote_dialect(
     re-probes on every call nor needs a restart after a remote change.
 
     Args:
-        ssh_client - an already-connected client for the host being probed
-        cache_key - identity to cache under; pass the host's DOCKER_HOST URL
-        timeout - seconds to bound the probe (channel reads and the exit-status wait alike), capped
+        ssh_client: an already-connected client for the host being probed
+        cache_key: identity to cache under; pass the host's DOCKER_HOST URL
+        timeout: seconds to bound the probe (channel reads and the exit-status wait alike), capped
                   at _CONNECT_TIMEOUT_CAP_SECONDS; None falls back to that cap rather than being
                   unbounded, since an unbounded probe can hang detection outright
     returns: RemoteDialectKind - POSIX when `uname -s` names a known POSIX kernel, else WINDOWS
@@ -962,11 +962,11 @@ def _drain_exec_channel(
     this path return as soon as the command is genuinely done.
 
     Args:
-        channel - a channel with the command already exec'd
-        max_output_bytes - per-stream cap on retained bytes; excess is read and dropped
-        deadline - monotonic time after which we abandon the channel
-        argv - the remote argv, for the TimeoutExpired message
-        timeout - the caller's timeout, for the TimeoutExpired message
+        channel: a channel with the command already exec'd
+        max_output_bytes: per-stream cap on retained bytes; excess is read and dropped
+        deadline: monotonic time after which we abandon the channel
+        argv: the remote argv, for the TimeoutExpired message
+        timeout: the caller's timeout, for the TimeoutExpired message
     returns: tuple[bytes, bytes, bool] - (stdout, stderr, truncated)
     raises: subprocess.TimeoutExpired - if `deadline` passes before the command ends
     """
@@ -1035,12 +1035,12 @@ def exec_remote(
     deadline, which only fires if the watchdog never ran at all.
 
     Args:
-        ssh_client - an already-connected client for the target host
-        argv - the remote command as an argv list, including the binary (e.g. ["docker", "ps"])
-        max_output_bytes - per-stream cap on retained output; the rest is drained and dropped
-        timeout - seconds the remote watchdog allows the command before killing it
-        cwd - remote directory to run in; entering it is part of the wrapped command
-        dialect - the host's detected dialect; a non-POSIX one is refused by `get_dialect`
+        ssh_client: an already-connected client for the target host
+        argv: the remote command as an argv list, including the binary (e.g. ["docker", "ps"])
+        max_output_bytes: per-stream cap on retained output; the rest is drained and dropped
+        timeout: seconds the remote watchdog allows the command before killing it
+        cwd: remote directory to run in; entering it is part of the wrapped command
+        dialect: the host's detected dialect; a non-POSIX one is refused by `get_dialect`
     returns: RemoteExecResult - exit status plus captured (possibly truncated) stdout/stderr bytes
     raises:
         RuntimeError - the transport is gone
@@ -1089,11 +1089,11 @@ def run_remote_exec(
     per-call teardown matches how `ssh_proxy_for_docker_host` already behaves.
 
     Args:
-        docker_host - the host's resolved DOCKER_HOST value, starting with 'ssh://'
-        argv - the remote command as an argv list, including the binary
-        max_output_bytes - per-stream cap on retained output
-        timeout - seconds the remote watchdog allows the command; also bounds the SSH handshake
-        cwd - remote directory to run in
+        docker_host: the host's resolved DOCKER_HOST value, starting with 'ssh://'
+        argv: the remote command as an argv list, including the binary
+        max_output_bytes: per-stream cap on retained output
+        timeout: seconds the remote watchdog allows the command; also bounds the SSH handshake
+        cwd: remote directory to run in
     returns: RemoteExecResult - exit status plus captured (possibly truncated) stdout/stderr bytes
     raises:
         RemoteFailureError - the connection could not be opened (with guidance)
@@ -1151,9 +1151,9 @@ def _enforce_stage_limits(root: Path, entries: Iterator[str] | Sequence[str], *,
     read error, and the tar step will surface the real one.
 
     Args:
-        root - the directory the entries are relative to
-        entries - relative paths to account for; a generator is consumed lazily, which is the point
-        what - noun for the message, e.g. "directory" or "build context"
+        root: the directory the entries are relative to
+        entries: relative paths to account for; a generator is consumed lazily, which is the point
+        what: noun for the message, e.g. "directory" or "build context"
     raises: ToolInputError - the payload exceeds `_MAX_STAGE_BYTES` or `_MAX_STAGE_FILES`
     """
     total = 0
@@ -1329,9 +1329,9 @@ class RemoteStagingSession:
         these are our own steps, and a caller cannot do anything useful with a half-staged directory.
 
         Args:
-            argv - the command to run on the remote host
-            timeout - seconds allowed
-            what - infinitive phrase for the error message, e.g. "unpack the staged archive"
+            argv: the command to run on the remote host
+            timeout: seconds allowed
+            what: infinitive phrase for the error message, e.g. "unpack the staged archive"
         returns: RemoteExecResult - the successful result
         raises: RemoteFailureError - the command exited non-zero
         """
@@ -1353,9 +1353,9 @@ class RemoteStagingSession:
         temp dir for the rest of the session is worth avoiding.
 
         Args:
-            archive - a rewound tar
-            destination - remote directory to unpack into
-            archive_path - remote path to upload the tar to
+            archive: a rewound tar
+            destination: remote directory to unpack into
+            archive_path: remote path to upload the tar to
         raises: RemoteFailureError - the upload or the extraction failed
         """
         self._sftp.putfo(archive, archive_path, confirm=True)
@@ -1436,8 +1436,8 @@ class RemoteStagingSession:
         at all: stage it with `stage_file` and point `-f` at the result.
 
         Args:
-            context_dir - the build context root; `~` is expanded
-            dockerfile - path to the Dockerfile relative to the context, or None for the default
+            context_dir: the build context root; `~` is expanded
+            dockerfile: path to the Dockerfile relative to the context, or None for the default
         returns: str - the remote directory holding the unpacked context
         raises:
             ToolInputError - `context_dir` is not a directory, or the included set exceeds the limits
@@ -1579,8 +1579,8 @@ class RemoteStagingSession:
         overwriting something already there.
 
         Args:
-            remote_path - absolute remote path a command wrote to (typically a `reserve_path` result)
-            local_dest - local path to create; refused if it already exists
+            remote_path: absolute remote path a command wrote to (typically a `reserve_path` result)
+            local_dest: local path to create; refused if it already exists
         raises:
             ToolInputError - `local_dest` already exists
             ToolInputError - `local_dest`'s parent is not a directory, or the fetched payload exceeds the
@@ -1619,10 +1619,10 @@ class RemoteStagingSession:
         `stage_*` call just returned.
 
         Args:
-            argv - the remote command, including the binary
-            timeout - seconds the remote watchdog allows the command
-            max_output_bytes - per-stream cap on retained output
-            cwd - remote directory to run in
+            argv: the remote command, including the binary
+            timeout: seconds the remote watchdog allows the command
+            max_output_bytes: per-stream cap on retained output
+            cwd: remote directory to run in
         returns: RemoteExecResult - exit status plus captured (possibly truncated) output
         raises:
             RuntimeError - the transport is gone
@@ -1642,9 +1642,9 @@ def _make_stage_root(ssh_client: paramiko.SSHClient, dialect_kind: RemoteDialect
     """Create the session's private temp directory on the remote host and return its path.
 
     Args:
-        ssh_client - an already-connected client for the host
-        dialect_kind - the host's detected dialect
-        docker_host - the host's URL, for the error message
+        ssh_client: an already-connected client for the host
+        dialect_kind: the host's detected dialect
+        docker_host: the host's URL, for the error message
     returns: str - the absolute remote path of the new directory
     raises: RemoteFailureError - the remote could not create a temp directory, or named it unusably
     """
@@ -1681,9 +1681,9 @@ def _verify_shared_filesystem(sftp: paramiko.SFTPClient, root: str, docker_host:
     so refusing it outright would give up capability for nothing.
 
     Args:
-        sftp - the session's SFTP client
-        root - the directory created over the exec channel
-        docker_host - the host's URL, for the error message
+        sftp: the session's SFTP client
+        root: the directory created over the exec channel
+        docker_host: the host's URL, for the error message
     raises: CapabilityError - SFTP cannot see `root`
     """
     try:
@@ -1730,10 +1730,10 @@ def _remove_stage_root(
     to run `rm` on, which is why the directory carries the project name and 0700 mode.
 
     Args:
-        ssh_client - the session's client, still connected
-        dialect_kind - the host's detected dialect
-        root - the directory to remove
-        docker_host - the host's URL, for the log line
+        ssh_client: the session's client, still connected
+        dialect_kind: the host's detected dialect
+        root: the directory to remove
+        docker_host: the host's URL, for the log line
     """
     try:
         result = exec_remote(
@@ -1774,8 +1774,8 @@ def remote_staging_session(docker_host: str, *, timeout: float | None = None) ->
     exception - nothing is left to run `rm` on - which is inherent rather than handled.
 
     Args:
-        docker_host - the host's resolved DOCKER_HOST value, starting with 'ssh://'
-        timeout - seconds bounding the SSH handshake and the dialect probe; the session's own
+        docker_host: the host's resolved DOCKER_HOST value, starting with 'ssh://'
+        timeout: seconds bounding the SSH handshake and the dialect probe; the session's own
                   bookkeeping commands use their own bounds, and each `exec` takes its own timeout
     returns: Iterator[RemoteStagingSession] - the session, valid inside the `with` block only
     raises:

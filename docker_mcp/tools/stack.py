@@ -67,11 +67,11 @@ def _run_stack(
     is None, whereas a query with no `cwd` needs no staging at all.
 
     Args:
-        args - the full docker argv, beginning with `stack`
-        timeout - seconds allowed for the command
-        host - configured host label, or None for the default host
-        cwd - working directory for resolving relative paths, or None for the server's own
-        stage_cwd - True for a subcommand that reads local files, so that directory is copied over
+        args: the full docker argv, beginning with `stack`
+        timeout: seconds allowed for the command
+        host: configured host label, or None for the default host
+        cwd: working directory for resolving relative paths, or None for the server's own
+        stage_cwd: True for a subcommand that reads local files, so that directory is copied over
     returns: CliResult - the same shape from either backend
     """
     if should_remote_exec(host, plugin=None):

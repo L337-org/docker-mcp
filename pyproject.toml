@@ -75,10 +75,9 @@ line-length = 120
 # (security; gives the S603/S310 noqas in _cli.py / resources.py teeth), UP = pyupgrade.
 select = ["E", "F", "B", "S", "UP", "D"]
 
-# The D entries are a backlog, not a decision: each names a docstring rule this code does not
-# satisfy yet. Every other D rule is enforced, so nothing already passing can regress. An entry
-# is removed only by the change that fixes what it names.
-ignore = ["D417"]
+# No docstring rule is ignored: the whole of pydocstyle's Google convention is enforced. The
+# advertised MCP surface is exempt instead, through ignore-decorators below.
+ignore = []
 
 [tool.ruff.lint.pydocstyle]
 # CS.6.12: Google is the docstring format for Python, enforced here rather than by review.

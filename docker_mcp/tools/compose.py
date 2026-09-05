@@ -100,11 +100,11 @@ def _run_compose(subcommand_args: list[str], *, cwd: str | None, timeout: float,
     """Run `docker compose <args...>`, staging the working directory when the CLI has to run remotely.
 
     Args:
-        subcommand_args - the compose argv, without the leading `compose`
-        cwd - the project directory, or None for the server's own working directory (which is what
+        subcommand_args: the compose argv, without the leading `compose`
+        cwd: the project directory, or None for the server's own working directory (which is what
               gets staged in the remote case, matching what the local subprocess would use)
-        timeout - seconds allowed for the command
-        host - configured host label, or None for the default host
+        timeout: seconds allowed for the command
+        host: configured host label, or None for the default host
     returns: CliResult - the same shape from either backend
     """
     if should_remote_exec(host, plugin="compose"):

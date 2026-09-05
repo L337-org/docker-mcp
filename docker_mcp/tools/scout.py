@@ -69,10 +69,10 @@ def _run_scout(
     """Run `docker scout <args...>`, locally or - with no usable local plugin - on the ssh:// host itself.
 
     Args:
-        args - the scout subcommand argv, without the leading `scout`
-        timeout - seconds allowed for the call (also bounds the SSH handshake on the remote path)
-        host - configured host label, or None for the default host
-        local_path_args - `{param: value}` pairs that may name a local path; each is refused on the
+        args: the scout subcommand argv, without the leading `scout`
+        timeout: seconds allowed for the call (also bounds the SSH handshake on the remote path)
+        host: configured host label, or None for the default host
+        local_path_args: `{param: value}` pairs that may name a local path; each is refused on the
                           remote path if it exists here (see `_refuse_local_path_args`)
     returns: CliResult - the same shape from either backend
     """

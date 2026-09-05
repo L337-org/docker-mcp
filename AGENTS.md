@@ -440,9 +440,13 @@ advertised surface directly - `list_resource_templates()` is a separate call fro
 **Everything else is Google style** - `Args:` and `Returns:`, capitalised - which is `CS.6.12`'s
 format for Python, enforced by ruff's pydocstyle rules rather than by review.
 
-Most back-end docstrings are not there yet, and the `ignore` list in `pyproject.toml` holds
-exactly the rules that still fail. An entry comes off only in the change that fixes everything it
-names; never add to it. Every other D rule is enforced, so nothing that passes today can regress.
+Every docstring rule is enforced - `pyproject.toml` ignores none of them - so there is no backlog
+to work through and nothing to add to. A rule that fails is a change to make, not an entry to park.
+
+**Parameters are documented `name: description`, not `name - description`.** The dash is the
+advertised surface's separator and it had leaked into back-end code, where ruff reads it as no
+description at all: 142 parameters across 42 functions were documented and reported as
+undocumented, which is why D417 looked like the largest entry in the backlog and was the smallest.
 
 **`scripts/check-repo-hygiene.py` is vendored byte-identically into four repositories** and
 self-verifies against a digest they share, so any change to it lands in all four at once with the
