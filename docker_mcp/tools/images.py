@@ -1,5 +1,6 @@
-"""Tools for images: producing them, moving them between daemon and registry, and inspecting
-what is held locally.
+"""Tools for images.
+
+Producing them, moving them between daemon and registry, and inspecting what is held locally.
 """
 
 # library of mcp tools relating to image management

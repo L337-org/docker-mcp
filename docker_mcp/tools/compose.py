@@ -771,13 +771,15 @@ def compose_top(
 
 
 def _split_cp_arg(arg: str) -> tuple[str, str]:
-    """Split a `compose cp` SRC/DEST argument into `(service, path)`, mirroring `docker compose cp`'s own
-    `splitCpArg` (verified against docker/compose's `pkg/compose/cp.go`, which is byte-for-byte the
-    same algorithm plain `docker cp` uses): an absolute local path is never a container reference;
-    otherwise the text before the first `:` is the service name, unless it starts with `.` (an
-    explicit relative local path like `./file:name.txt`). `os.path.isabs` - rather than hand-rolling
-    the Windows drive-letter check `splitCpArg` needs - already reflects *this* host's own platform,
-    which is exactly what "is this a local path" needs to mean here.
+    """Split a `compose cp` SRC/DEST argument into `(service, path)`.
+
+    Mirrors `docker compose cp`'s own `splitCpArg`, verified against docker/compose's
+    `pkg/compose/cp.go`, which is byte-for-byte the same algorithm plain `docker cp` uses: an
+    absolute local path is never a container reference; otherwise the text before the first `:` is
+    the service name, unless it starts with `.` (an explicit relative local path like
+    `./file:name.txt`). `os.path.isabs` - rather than hand-rolling the Windows drive-letter check
+    `splitCpArg` needs - already reflects *this* host's own platform, which is exactly what "is this
+    a local path" needs to mean here.
 
     Used only to decide which side needs staging/fetching for the remote-exec fallback below; the
     real CLI, local or remote, still does its own parsing of the literal argv either way.

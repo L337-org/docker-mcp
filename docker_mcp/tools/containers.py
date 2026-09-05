@@ -1,5 +1,6 @@
-"""Tools for containers: their lifecycle, and reaching inside a running one for logs,
-execution, stats and files.
+"""Tools for containers.
+
+Their lifecycle, and reaching inside a running one for logs, execution, stats and files.
 """
 
 # library of mcp tools relating to container management

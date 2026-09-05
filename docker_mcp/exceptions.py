@@ -27,15 +27,16 @@ class DockerMcpError(Exception):
 
 
 class ToolInputError(DockerMcpError):
-    """An argument a caller can correct: unknown, malformed, out of range, or a required
-    combination not supplied.
+    """An argument a caller can correct.
+
+    Unknown, malformed, out of range, or a required combination not supplied.
 
     Includes a daemon `NotFound`, which `_LIBRARY_FAILURES` maps here: the caller named a Docker
     object the daemon does not have - a container, image, network, volume, plugin, service or any
-    other type docker-py reports this way - and the remedy is a different argument. This docstring used to say
-    the opposite - that a daemon rejection "carries its own error" and so was never this type - which
-    stopped being true the moment the SDK began withholding the text of anything it did not
-    recognise as deliberate. Other daemon failures are `RemoteFailureError`.
+    other type docker-py reports this way - and the remedy is a different argument. A daemon
+    rejection belongs here rather than being left to carry its own error, because the SDK withholds
+    the text of anything it does not recognise as deliberate. Other daemon failures are
+    `RemoteFailureError`.
     """
 
 
@@ -49,14 +50,18 @@ class ToolRefusalError(DockerMcpError):
 
 
 class HostGuardError(ToolRefusalError):
-    """A call refused by the host guard: an unknown host label, a write to a host marked `(ro)`,
-    a destructive call to one marked `(nd)`, or a write that named no host in multi-host mode.
+    """A call refused by the host guard.
+
+    An unknown host label, a write to a host marked `(ro)`, a destructive call to one marked
+    `(nd)`, or a write that named no host in multi-host mode.
     """
 
 
 class RemoteFailureError(DockerMcpError):
-    """The far end failed and said why: a non-zero `docker` exit, an SSH connection that would not
-    open, a registry rate limit, a daemon that cannot be reached.
+    """The far end failed and said why.
+
+    A non-zero `docker` exit, an SSH connection that would not open, a registry rate limit, a
+    daemon that cannot be reached.
 
     Separate from `CapabilityError` because this one may be worth retrying - a 429 and an
     unreachable daemon both often clear - and because the far end's own text is the useful part, so
@@ -65,8 +70,10 @@ class RemoteFailureError(DockerMcpError):
 
 
 class CapabilityError(DockerMcpError):
-    """This host or installation cannot do it at all: a missing CLI plugin, no POSIX shell on the
-    remote host, a docker-py without the API the call needs, a feature area switched off.
+    """This host or installation cannot do it at all.
+
+    A missing CLI plugin, no POSIX shell on the remote host, a docker-py without the API the call
+    needs, a feature area switched off.
 
     Never worth retrying, which is what separates it from `RemoteFailureError`. The message names
     what is missing so the caller can tell the user rather than route around it.
@@ -74,8 +81,9 @@ class CapabilityError(DockerMcpError):
 
 
 class HostConfigError(DockerMcpError):
-    """A malformed `DOCKER_MCP_SERVER_HOSTS` value. `_hosts.load()` turns this into a stderr line
-    and `exit(1)`.
+    """A malformed `DOCKER_MCP_SERVER_HOSTS` value.
+
+    `_hosts.load()` turns this into a stderr line and `exit(1)`.
 
     Raised before any tool is registered, so it never reaches a client; it subclasses the base for
     one exception hierarchy rather than because it is translated.

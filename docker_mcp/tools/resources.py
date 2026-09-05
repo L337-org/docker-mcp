@@ -224,8 +224,10 @@ def _require_containers_domain() -> None:
 
 
 def _child_uri(scheme: str, ref: str, host: str | None) -> str:
-    """The child logs/stats URI matching the index's host context: host-qualified when an index is
-    host-scoped, else empty-authority (multi-host default) or bare (single-host).
+    """The child logs/stats URI matching the index's host context.
+
+    Host-qualified when an index is host-scoped, else empty-authority (multi-host default) or bare
+    (single-host).
     """
     if host is not None:
         return f"{scheme}://{host}/{ref}"

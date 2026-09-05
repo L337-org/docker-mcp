@@ -78,9 +78,11 @@ def _detect_self_container_id(client: docker.DockerClient) -> str | None:
 
 
 def _self_host() -> Host | None:
-    """The host the server's own container runs on = the first configured host on a local transport
-    (unix:// / npipe:// or the platform default). Self-detection and the self-termination guard key off
-    this; a remote-only config returns None, leaving the guard inert (our container can't be on a remote).
+    """The host the server's own container runs on.
+
+    The first configured host on a local transport (unix://, npipe://, or the platform default).
+    Self-detection and the self-termination guard key off this; a remote-only config returns None,
+    leaving the guard inert, because our container cannot be on a remote.
     """
     for host in _host_registry().values():
         if host.url is None or host.url.startswith(("unix://", "npipe://")):
@@ -124,12 +126,14 @@ def _close_client_quietly(client: docker.DockerClient) -> None:
 
 
 def _ensure_ssh_port(url: str) -> str:
-    """Work around a docker-py bug for an `ssh://` URL with no explicit port: `docker.utils.parse_host()`
-    hardcodes port 22 into the URL *before* `SSHHTTPAdapter._create_paramiko_client` ever runs, so that
-    adapter's own `~/.ssh/config` `Port` fallback (which only fires while the port is still unset) never
-    triggers - a non-22 `Port` in `~/.ssh/config` is silently ignored. We splice in the configured port
-    ourselves first, reusing the exact `~/.ssh/config` lookup `_ssh_proxy.parse_ssh_url` already does for
-    the CLI-backed tools, so both tool families honor a non-default SSH port the same way.
+    """Work around a docker-py bug for an `ssh://` URL with no explicit port.
+
+    `docker.utils.parse_host()` hardcodes port 22 into the URL *before*
+    `SSHHTTPAdapter._create_paramiko_client` ever runs, so that adapter's own `~/.ssh/config` `Port`
+    fallback (which only fires while the port is still unset) never triggers - a non-22 `Port` in
+    `~/.ssh/config` is silently ignored. We splice in the configured port ourselves first, reusing
+    the exact `~/.ssh/config` lookup `_ssh_proxy.parse_ssh_url` already does for the CLI-backed
+    tools, so both tool families honor a non-default SSH port the same way.
 
     args: url: str - a DOCKER_HOST/host URL; only `ssh://` URLs with no explicit port are affected
     returns: str - `url` unchanged, or with the `~/.ssh/config` port spliced into the netloc
@@ -252,9 +256,11 @@ def _build_default_client() -> docker.DockerClient:
 
 
 def _tls_from_dir(cert_dir: str) -> docker.TLSConfig:
-    """A TLSConfig from Docker's conventional certs in `cert_dir`. Always verifies the daemon against
-    `ca.pem`; presents a client cert (mutual TLS) only when both `cert.pem` and `key.pem` are present,
-    else verifies the daemon only (e.g. a self-signed daemon pinned via `ca.pem`, with no client auth).
+    """A TLSConfig from Docker's conventional certs in `cert_dir`.
+
+    Always verifies the daemon against `ca.pem`; presents a client cert (mutual TLS) only when both
+    `cert.pem` and `key.pem` are present, else verifies the daemon only (e.g. a self-signed daemon
+    pinned via `ca.pem`, with no client auth).
     """
     directory = Path(cert_dir)
     cert, key = directory / "cert.pem", directory / "key.pem"
@@ -263,8 +269,10 @@ def _tls_from_dir(cert_dir: str) -> docker.TLSConfig:
 
 
 def _tls_config_for(host: Host) -> docker.TLSConfig | None:
-    """Per-host TLS, tiered: the host's own `(tls=<dir>)` cert dir, else the global DOCKER_CERT_PATH /
-    DOCKER_TLS_VERIFY env (mirroring from_env), else plaintext (None).
+    """Per-host TLS, tiered.
+
+    The host's own `(tls=<dir>)` cert dir, else the global DOCKER_CERT_PATH / DOCKER_TLS_VERIFY env
+    (mirroring from_env), else plaintext (None).
     """
     if host.cert_dir:
         return _tls_from_dir(host.cert_dir)
@@ -621,8 +629,10 @@ def _connection_help(exc: BaseException, host: Host | None) -> str:
 
 
 def _host_tag(host: Host) -> str:
-    """A host's label with brief `(ro, remote)`/`(nd, remote)` annotations, for the boot roster of
-    the other hosts. `nd` only shows when `ro` is absent, since `ro` already implies it.
+    """A host's label with brief `(ro, remote)` / `(nd, remote)` annotations.
+
+    For the boot roster of the other hosts. `nd` only shows when `ro` is absent, since `ro` already
+    implies it.
     """
     tags = []
     if host.read_only:
@@ -635,8 +645,10 @@ def _host_tag(host: Host) -> str:
 
 
 def _connection_summary(client: docker.DockerClient, host: Host) -> str:
-    """One-line confirmation of the default daemon reached, the self-guard status, and a no-connect
-    roster of the other configured hosts (so boot shows the topology without dialing them).
+    """One-line confirmation of the daemon reached and the hosts configured.
+
+    Names the default daemon, the self-guard status, and a no-connect roster of the other configured
+    hosts, so boot shows the topology without dialing them.
     """
     try:
         details = client.info()

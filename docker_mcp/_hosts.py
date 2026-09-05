@@ -103,8 +103,10 @@ def _context_host(name: str) -> str | None:
 
 
 def resolve_local() -> str | None:
-    """The platform-local daemon socket - first existing well-known location, Docker Desktop / rootless
-    first. Context-bypassing by design: `local` means the machine's own socket, never wherever a CLI
+    """The platform-local daemon socket.
+
+    The first existing well-known location, Docker Desktop and rootless first. Context-bypassing by
+    design: `local` means the machine's own socket, never wherever a CLI
     context happens to point. Returns None to let from_env() apply its platform default (e.g. the
     Windows named pipe, which has nothing to probe on disk) - which is context-free because that call
     goes through `system._from_env_no_context`.
@@ -130,9 +132,11 @@ def resolve_local() -> str | None:
 
 
 def resolve_auto() -> str | None:
-    """The daemon a context-aware `docker` with no DOCKER_HOST would use: the active CLI context's
-    endpoint (DOCKER_CONTEXT / config.json currentContext -> its meta.json Host), else the local-socket
-    probe. Returns None to let from_env() apply its own platform default.
+    """The daemon a context-aware `docker` with no DOCKER_HOST would use.
+
+    The active CLI context's endpoint (DOCKER_CONTEXT / config.json currentContext -> its meta.json
+    Host), else the local-socket probe. Returns None to let from_env() apply its own platform
+    default.
 
     We resolve the context ourselves rather than delegating. docker-py's from_env() was context-blind
     until 7.2.0 and now does its own resolution, but we keep ours and switch theirs off (see
@@ -155,9 +159,11 @@ def _fail(message: str) -> NoReturn:
 
 
 def _parse_markers(text: str, context: str) -> tuple[str, bool, bool, str | None]:
-    """Strip trailing (ro)/(nd)/(tls=<dir>) markers (any order, case-insensitive) off an endpoint
-    string, returning (endpoint, read_only, non_destructive, cert_dir). (ro) and (nd) may combine
-    with no error - (ro) is strictly stronger and wins at enforcement time (see server.py).
+    """Strip trailing (ro)/(nd)/(tls=<dir>) markers off an endpoint string.
+
+    Markers may appear in any order and are case-insensitive; returns (endpoint, read_only,
+    non_destructive, cert_dir). (ro) and (nd) may combine with no error - (ro) is strictly stronger
+    and wins at enforcement time (see server.py).
     """
     read_only = False
     non_destructive = False
@@ -189,8 +195,10 @@ def _readable(path: Path) -> bool:
 
 
 def _validate_cert_dir(label: str, cert_dir: str) -> None:
-    """Fail-fast on a malformed tcp+TLS cert dir (a misparsed TLS config must never silently leave a
-    daemon connection unencrypted or misconfigured).
+    """Fail-fast on a malformed tcp+TLS cert dir.
+
+    A misparsed TLS config must never silently leave a daemon connection unencrypted or
+    misconfigured.
 
     `ca.pem` is always required - the daemon is always verified against it (this is encryption + server
     authentication, never opportunistic encryption). The client cert is optional but paired: provide
@@ -297,8 +305,10 @@ def _notify_docker_host_ignored() -> None:
 
 
 def load() -> None:
-    """Parse DOCKER_MCP_SERVER_HOSTS and pin the registry. Call once at startup, before the tool modules
-    import (the @tool() decorator and resources read the registry at registration time).
+    """Parse DOCKER_MCP_SERVER_HOSTS and pin the registry.
+
+    Call once at startup, before the tool modules import - the @tool() decorator and resources read
+    the registry at registration time.
 
     Scrubs unresolved `${...}` placeholders first so an mcpb blank field resolves to the default host
     rather than fail-fast. A malformed value prints one stderr line and exits non-zero - a misparsed
@@ -319,9 +329,11 @@ def load() -> None:
 
 
 def resolve(host: str | None) -> Host:
-    """The Host for a label, or the default (first entry) when host is None. Raises HostGuardError
-    naming the configured labels for an unknown label - a refusal the caller is meant to read, since
-    a resource read reaches no host guard and this is the only place a typo can be named.
+    """The Host for a label, or the default (first entry) when host is None.
+
+    Raises HostGuardError naming the configured labels for an unknown label - a refusal the caller
+    is meant to read, since a resource read reaches no host guard and this is the only place a typo
+    can be named.
     """
     if host is None:
         return default()

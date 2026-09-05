@@ -396,8 +396,9 @@ def _pump_duplex(conn: socket.socket, stream: BidirectionalStream) -> None:
 
 @contextlib.contextmanager
 def ssh_proxy_for_docker_host(docker_host: str, *, timeout: float | None = None) -> Iterator[SshDialStdioProxy]:
-    """Connect to an ssh:// DOCKER_HOST via paramiko and run a per-call local TCP proxy for the
-    `with` block's duration.
+    """Connect to an ssh:// DOCKER_HOST and run a local TCP proxy for the `with` block.
+
+    Uses paramiko for the connection and starts the proxy per call.
 
     Intended for `_cli.py:run_docker`: point the CLI subprocess's DOCKER_HOST at
     `tcp://127.0.0.1:<proxy.port>` for the duration of the `with` block so it authenticates through
