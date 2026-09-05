@@ -293,7 +293,7 @@ def get_container_logs_resource(id_or_name: str) -> str:
     return _read_log_tail(id_or_name)
 
 
-def get_host_container_logs_resource(host: str, id_or_name: str) -> str:  # noqa: D417 - advertised; see the docstring marker
+def get_host_container_logs_resource(host: str, id_or_name: str) -> str:  # noqa: D417
     """Read a bounded log tail for a container on a named host (host-qualified docker-logs variant).
 
     args:
@@ -319,7 +319,7 @@ def get_container_stats_resource(id_or_name: str) -> str:
     return json.dumps(_read_stats_summary(id_or_name), indent=2)
 
 
-def get_host_container_stats_resource(host: str, id_or_name: str) -> str:  # noqa: D417 - advertised; see the docstring marker
+def get_host_container_stats_resource(host: str, id_or_name: str) -> str:  # noqa: D417
     """Resource-usage summary for a running container on a named host (host-qualified docker-stats variant).
 
     args:
@@ -410,7 +410,7 @@ def get_service_logs_resource(id_or_name: str) -> str:
     return _read_service_log_tail(id_or_name)
 
 
-def get_host_service_logs_resource(host: str, id_or_name: str) -> str:  # noqa: D417 - advertised; see the docstring marker
+def get_host_service_logs_resource(host: str, id_or_name: str) -> str:  # noqa: D417
     """Read a bounded log tail for a swarm service on a named host (host-qualified service-logs variant).
 
     args:
@@ -436,7 +436,7 @@ def get_service_tasks_resource(id_or_name: str) -> str:
     return json.dumps(_read_service_task_summary(id_or_name), indent=2)
 
 
-def get_host_service_tasks_resource(host: str, id_or_name: str) -> str:  # noqa: D417 - advertised; see the docstring marker
+def get_host_service_tasks_resource(host: str, id_or_name: str) -> str:  # noqa: D417
     """Task/rollout status summary for a swarm service on a named host (host-qualified variant).
 
     args:
