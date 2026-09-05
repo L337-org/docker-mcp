@@ -433,9 +433,9 @@ because each takes two URIs or sits behind a multi-host branch, and those docstr
 advertised while being invisible to the exemption - and to the test above, which cannot see a
 registration that uses no decorator. The four host-qualified templates carry `# noqa: D405` for
 that reason, and the marker goes **after the closing quotes**: anywhere inside the docstring and
-it becomes part of the description a client reads. Before trusting an exemption here, check the advertised surface
-directly - `list_resource_templates()` is a separate call from `list_resources()`, and a check
-that omits it reports identical while a whole category moves.
+it becomes part of the description a client reads. Before trusting an exemption here, check the
+advertised surface directly - `list_resource_templates()` is a separate call from
+`list_resources()`, and a check that omits it reports identical while a whole category moves.
 
 **Everything else is Google style** - `Args:` and `Returns:`, capitalised - which is `CS.6.12`'s
 format for Python, enforced by ruff's pydocstyle rules rather than by review.
