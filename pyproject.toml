@@ -97,7 +97,6 @@ convention = "google"
 ignore-decorators = [
     "docker_mcp.server.tool",
     "docker_mcp.server.prompt",
-    "docker_mcp.server.resource",
 ]
 
 [tool.ruff.lint.per-file-ignores]

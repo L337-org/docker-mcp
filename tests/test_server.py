@@ -1689,17 +1689,28 @@ def test_the_translation_guard_is_reading_a_full_surface():
 
 
 def test_the_docstring_exemption_names_the_decorators_in_use() -> None:
-    """The docstring rules must keep skipping every advertised registration.
+    """The docstring rules must keep skipping the registrations that advertise a schema.
 
-    A tool, prompt or resource docstring is the advertised interface a client loads and a model
-    reads, so CS.6.14 hands it to the AI-consumer rules rather than to the docstring convention:
-    it wants what the schema cannot already carry, and an `Args:` block duplicates what the
-    schema has - paid for on every session that loads the surface.
+    CS.6.14 hands an advertised docstring to the AI-consumer rules rather than to the docstring
+    convention, on the grounds that an `Args:` block duplicates what the schema already carries
+    and is paid for on every session that loads the surface. That argument holds only where
+    there is a schema to duplicate:
 
-    pyproject.toml exempts them by fully-qualified decorator path, and a path goes stale
-    silently. Move or rename `tool` and 199 advertised descriptions fall under D417 with nothing
-    saying so. Asserts both directions: every decorator actually in use is named, and the count
-    is floored so a scan finding nothing cannot pass.
+    - a **tool** advertises `input_schema` carrying every parameter's type, so it is exempt
+    - a **prompt** advertises `arguments` carrying each name and whether it is required, so it
+      is exempt
+    - a **resource** advertises `uri_template`, `name`, `description` and `mime_type`, and
+      nothing about its parameters at all - so there is no duplication to avoid, and its
+      docstrings follow the ordinary convention like any other code
+
+    `resource` is therefore asserted *absent* below. It was exempt once, which cost four `noqa`
+    markers on the functions ruff happened to notice, and those four were not a category: a
+    one-parameter resource fits `args: name - desc` on one line, which ruff never reads as a
+    section, while a two-parameter one does not. Having two parameters is what earned the marker.
+
+    pyproject.toml exempts by fully-qualified decorator path, and a path goes stale silently:
+    move or rename `tool` and every advertised description falls under D417 with nothing saying
+    so. Asserts both directions, plus a floor so a scan finding nothing cannot pass.
     """
     import ast
     import tomllib
@@ -1725,10 +1736,16 @@ def test_the_docstring_exemption_names_the_decorators_in_use() -> None:
                     used.add(name)
 
     assert len(used) >= 3, f"only found {sorted(used)} in use, so this check is not seeing the surface"
-    missing = sorted(used - bare)
+    schema_carrying = {"tool", "prompt"} & used
+    missing = sorted(schema_carrying - bare)
     assert not missing, (
         f"pyproject.toml's ignore-decorators does not cover {missing}, so those advertised "
         f"docstrings would fall under the docstring convention. It names {sorted(bare)}."
+    )
+    assert "resource" not in bare, (
+        "ignore-decorators names `resource`, but a resource advertises no schema for its "
+        "parameters, so there is nothing for a docstring to duplicate and the exemption buys "
+        "nothing. Resource docstrings follow the ordinary convention."
     )
 
     # And the qualified paths must actually resolve, or ruff silently matches nothing.
