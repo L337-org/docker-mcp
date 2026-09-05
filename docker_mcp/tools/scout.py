@@ -68,7 +68,7 @@ def _run_scout(
 ) -> CliResult:
     """Run `docker scout <args...>`, locally or - with no usable local plugin - on the ssh:// host itself.
 
-    args:
+    Args:
         args - the scout subcommand argv, without the leading `scout`
         timeout - seconds allowed for the call (also bounds the SSH handshake on the remote path)
         host - configured host label, or None for the default host

@@ -66,7 +66,7 @@ def _run_stack(
     `stack_deploy` reads local files, and it needs the *server's* working directory staged when `cwd`
     is None, whereas a query with no `cwd` needs no staging at all.
 
-    args:
+    Args:
         args - the full docker argv, beginning with `stack`
         timeout - seconds allowed for the command
         host - configured host label, or None for the default host

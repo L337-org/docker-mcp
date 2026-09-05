@@ -125,11 +125,11 @@ def read_text(path, root=None):
     script promises. Patching each site as it was reported was not converging, so this is one
     funnel instead, and a read added later cannot reintroduce it.
 
-    args:
+    Args:
         path: the file to read.
         root: repository root, so the message names a relative path when it can.
 
-    returns:
+    Returns:
         The file's contents as text.
     """
     # The two deliberate exceptions, so this docstring cannot drift from the code:
@@ -153,7 +153,7 @@ def verify_own_digest():
     Takes no repository root: the digest sits beside this file wherever this file is, which is
     what lets a moved or vendored copy still check itself.
 
-    returns:
+    Returns:
         Nothing; raises CannotEvaluate if the digest is missing or does not match.
     """
     script = pathlib.Path(__file__).resolve()
@@ -185,10 +185,10 @@ def tracked_paths(root):
     most likely to carry a leaked tracker key - maintainer scripts, CODEOWNERS - have no
     extension at all.
 
-    args:
+    Args:
         root: repository root.
 
-    returns:
+    Returns:
         A sorted list of paths.
     """
     # Resolved by lookup rather than hardcoded: git's path differs per platform and per
@@ -226,10 +226,10 @@ def searchable_text_files(paths):
     checks silently stopped covering it. Whether a file is searchable prose and whether it is a
     workflow the bounds checks must see are different questions.
 
-    args:
+    Args:
         paths: candidate paths.
 
-    returns:
+    Returns:
         A list of the searchable ones, in the order given.
     """
     return [p for p in paths if is_searchable_text(p)]
@@ -241,10 +241,10 @@ def is_searchable_text(path):
     Sniffed rather than inferred from the name, so a file with no extension - every maintainer
     script here - is covered, and a future binary asset cannot break the scan.
 
-    args:
+    Args:
         path: the file to test.
 
-    returns:
+    Returns:
         True when the file is readable UTF-8 text with no NUL bytes.
     """
     if not path.is_file() or path.suffix.lower() in BINARY_SUFFIXES:
@@ -274,13 +274,13 @@ def workflow_jobs(root, tracked):
     Sourced from the tracked listing rather than a glob, for the same reason: an untracked
     workflow a developer left lying about is not part of the repository.
 
-    args:
+    Args:
         root: repository root.
         tracked: every tracked path, unfiltered - deliberately not the searchable-text subset,
             because a workflow that is not readable text must still be reported rather than
             quietly dropped from the bounds checks.
 
-    returns:
+    Returns:
         A list of triples.
     """
     import yaml
@@ -314,14 +314,14 @@ def workflow_jobs(root, tracked):
 def check_the_scan_is_real(root, tracked, files):
     """The listing found a plausible repository, not an empty glob.
 
-    args:
+    Args:
         root: repository root.
         tracked: every tracked path. The sentinel check below uses this rather than the
             filtered list, so an unreadable universal file is reported as unreadable rather
             than as absent.
         files: the searchable-text subset, used for the size floor.
 
-    returns:
+    Returns:
         A list of findings; raises CannotEvaluate when the listing itself is wrong.
     """
     if len(files) < MIN_TRACKED_FILES:
@@ -350,12 +350,12 @@ def check_no_internal_references(root, tracked, files):
     whoever reads generated release notes.  Describe the work instead; the issue carries the
     link in the other direction.
 
-    args:
+    Args:
         root: repository root.
         tracked: every tracked path, unfiltered.
         files: the searchable-text subset.
 
-    returns:
+    Returns:
         A list of findings.
     """
     findings = []
@@ -398,12 +398,12 @@ def check_ci_jobs_are_bounded(root, tracked, files):
     says so, because telling someone their literal is "unknowable" sends them looking for an
     expression that is not there.
 
-    args:
+    Args:
         root: repository root.
         tracked: every tracked path, unfiltered.
         files: the searchable-text subset.
 
-    returns:
+    Returns:
         A list of findings.
     """
     findings = []
@@ -457,10 +457,10 @@ ROUTED_LINK = re.compile(r"\[[^\]]*\]\(([^)]+)\)|`([^`]+\.md)`")
 def routed_paths(text):
     """Every local .md path a router points at, normalised to repository-relative.
 
-    args:
+    Args:
         text: the router's contents.
 
-    returns:
+    Returns:
         A set of repository-relative paths.
     """
     out = set()
@@ -496,12 +496,12 @@ def check_the_instruction_layer(root, tracked, files):
     three spaces before a `##`, and prose needs no heading at all.  The promise is "a pointer and
     nothing else", so that is what is checked, inside the generated block as well as outside it.
 
-    args:
+    Args:
         root: repository root.
         tracked: every tracked path, unfiltered.
         files: the searchable-text subset.
 
-    returns:
+    Returns:
         A list of findings.
     """
     findings = []
@@ -529,11 +529,11 @@ def pointer_findings(root, pointer):
     pointer and nothing else", so that is what is checked - inside the generated block as well
     as outside it, since content added inside would otherwise satisfy an outside-only check.
 
-    args:
+    Args:
         root: repository root.
         pointer: repository-relative path of the pointer file.
 
-    returns:
+    Returns:
         A list of findings.
     """
     path = root / pointer
@@ -587,12 +587,12 @@ def check_the_detail_layer_routing(root, tracked, files):
     that owns that directory reports a file it did not write and deliberately leaves it
     unrouted, so an unrouted file there is an accepted exemption rather than a failure.
 
-    args:
+    Args:
         root: repository root.
         tracked: every tracked path, unfiltered.
         files: the searchable-text subset.
 
-    returns:
+    Returns:
         A list of findings.
     """
     shared_path = root / SHARED_INSTRUCTION_FILE
@@ -648,7 +648,7 @@ CHECKS = (
 def main():
     """Run every check over the repository this script sits in.
 
-    returns:
+    Returns:
         A process exit status: 0 clean, 1 findings, 2 the scan cannot be trusted.
     """
     root = pathlib.Path(__file__).resolve().parent.parent

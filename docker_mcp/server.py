@@ -378,7 +378,7 @@ def query_catalog(
     aggregate through `hidden_by_configuration`, so the configuration stays auditable without naming
     the tools it removed.
 
-    args:
+    Args:
         domain - Exact domain name to restrict to, or None for every domain
         category - Exact category value ("read_only"/"mutating"/"destructive"), or None for all
         keyword - Case-insensitive substring matched against name, summary and parameter names
@@ -1061,7 +1061,7 @@ def resource[F: Callable[..., Any]](uri: str, **kwargs: Any) -> Callable[[F], F]
     the SDK routes both through `read_resource`, and a template's own creation failure is classified
     the same way.
 
-    args:
+    Args:
         uri - the resource URI or URI template, passed straight to `mcp.resource`
         kwargs - passed to `mcp.resource` (name, title, description, mime_type, ...)
     returns: Callable - a decorator registering the function as a resource

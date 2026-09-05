@@ -96,7 +96,7 @@ def connect_socket_with_family_fallback(hostname: str, port: int, timeout: float
     handed to `paramiko.SSHClient.connect(sock=..., ...)`, which skips its own resolution/connect loop
     entirely once a socket is already supplied.
 
-    args:
+    Args:
         hostname: str - the target to resolve; a literal IP is accepted too (single result, no fallback)
         port: int - the target port
         timeout: float | None - per-attempt connect timeout in seconds; None waits indefinitely
@@ -203,7 +203,7 @@ def connect_ssh_client(docker_host: str, *, timeout: float | None = None) -> par
     A connection failure (auth, unknown host key, unreachable host) is re-raised as a `RemoteFailureError`
     with actionable guidance rather than a bare paramiko/socket exception.
 
-    args:
+    Args:
         docker_host: str - a DOCKER_HOST value starting with 'ssh://'
         timeout: float | None - seconds to bound the connect/banner/auth phases (capped at
                  _CONNECT_TIMEOUT_CAP_SECONDS); None means paramiko's own (unbounded) defaults
@@ -404,7 +404,7 @@ def ssh_proxy_for_docker_host(docker_host: str, *, timeout: float | None = None)
     this same paramiko connection instead of shelling out to the system `ssh` client. Both the SSH
     connection and the local listener are guaranteed to be torn down on the way out, success or not.
 
-    args:
+    Args:
         docker_host: str - a DOCKER_HOST value starting with 'ssh://'
         timeout: float | None - forwarded to `connect_ssh_client` to bound the connect/banner/auth
                  phases; see that function's docstring
@@ -452,7 +452,7 @@ def _validate_exec_args(argv: Sequence[str], timeout: float, max_output_bytes: i
     would actually execute where the local backend refused it. Silently running more than asked is a
     worse failure than a clear error.
 
-    args:
+    Args:
         argv - the remote command, used only for the exception's message
         timeout - the caller's timeout; must be positive
         max_output_bytes - the retention cap; must not be negative
@@ -497,7 +497,7 @@ def _is_remote_timeout(returncode: int, elapsed: float, timeout: float) -> bool:
     sentinel exit at 30.5s, and at `timeout=0.1` the raw threshold goes negative and would misattribute
     *every* sentinel exit. Comparing against the sleep the watchdog actually performs closes both.
 
-    args:
+    Args:
         returncode - the exit status the remote wrapper reported
         elapsed - seconds from issuing the command to it completing
         timeout - the caller's timeout for the command
@@ -669,7 +669,7 @@ class PosixDialect:
         A command that exits on its own at the exact instant the watchdog fires may be attributed
         either way; the window is microseconds wide.
 
-        args:
+        Args:
             argv - the remote command as an argv list; joined with shell quoting, never concatenated
             timeout - seconds before the remote watchdog kills the command (rounded up, floor 1s)
             cwd - remote directory to run in; a failure to enter it exits 127 without running argv
@@ -751,7 +751,7 @@ class PosixDialect:
         Uncompressed tar only: `-z` autodetection is a GNU/bsdtar extension rather than something
         every POSIX `tar` offers, so the uploader does not compress (see `_upload_and_extract`).
 
-        args:
+        Args:
             archive - absolute remote path of the uploaded tar
             dest - absolute remote directory to unpack into; must already exist
         returns: list[str] - argv for the extraction
@@ -767,7 +767,7 @@ class PosixDialect:
         the caller's real destination. Uncompressed for the same reason `_tar_local_tree` is: nothing
         on the fetching side assumes `gzip`.
 
-        args:
+        Args:
             source - absolute remote path (file or directory) to pack
             archive - absolute remote path to write the tar to
         returns: list[str] - argv for the archive creation
@@ -849,7 +849,7 @@ def detect_remote_dialect(
     Cached per host with a short TTL (mirroring `_cli.has_plugin`), so a long-lived server neither
     re-probes on every call nor needs a restart after a remote change.
 
-    args:
+    Args:
         ssh_client - an already-connected client for the host being probed
         cache_key - identity to cache under; pass the host's DOCKER_HOST URL
         timeout - seconds to bound the probe (channel reads and the exit-status wait alike), capped
@@ -960,7 +960,7 @@ def _drain_exec_channel(
     blocks exactly this way locally, since it *does* wait for EOF). Keying on the exit status makes
     this path return as soon as the command is genuinely done.
 
-    args:
+    Args:
         channel - a channel with the command already exec'd
         max_output_bytes - per-stream cap on retained bytes; excess is read and dropped
         deadline - monotonic time after which we abandon the channel
@@ -1033,7 +1033,7 @@ def exec_remote(
     remote watchdog's own kill (reported as `_REMOTE_TIMEOUT_EXIT_CODE`) and the local grace
     deadline, which only fires if the watchdog never ran at all.
 
-    args:
+    Args:
         ssh_client - an already-connected client for the target host
         argv - the remote command as an argv list, including the binary (e.g. ["docker", "ps"])
         max_output_bytes - per-stream cap on retained output; the rest is drained and dropped
@@ -1087,7 +1087,7 @@ def run_remote_exec(
     the reference-only buildx/stack subcommands): there is nothing to keep a session open for, and
     per-call teardown matches how `ssh_proxy_for_docker_host` already behaves.
 
-    args:
+    Args:
         docker_host - the host's resolved DOCKER_HOST value, starting with 'ssh://'
         argv - the remote command as an argv list, including the binary
         max_output_bytes - per-stream cap on retained output
@@ -1149,7 +1149,7 @@ def _enforce_stage_limits(root: Path, entries: Iterator[str] | Sequence[str], *,
     cannot be stat'd is counted but contributes no bytes: it is not this function's job to report a
     read error, and the tar step will surface the real one.
 
-    args:
+    Args:
         root - the directory the entries are relative to
         entries - relative paths to account for; a generator is consumed lazily, which is the point
         what - noun for the message, e.g. "directory" or "build context"
@@ -1327,7 +1327,7 @@ class RemoteStagingSession:
         Unlike `exec` - which runs the *caller's* docker command and reports failure in the result -
         these are our own steps, and a caller cannot do anything useful with a half-staged directory.
 
-        args:
+        Args:
             argv - the command to run on the remote host
             timeout - seconds allowed
             what - infinitive phrase for the error message, e.g. "unpack the staged archive"
@@ -1351,7 +1351,7 @@ class RemoteStagingSession:
         the session teardown would collect it anyway, but two copies of a large tree in the remote
         temp dir for the rest of the session is worth avoiding.
 
-        args:
+        Args:
             archive - a rewound tar
             destination - remote directory to unpack into
             archive_path - remote path to upload the tar to
@@ -1434,7 +1434,7 @@ class RemoteStagingSession:
         - the same negation docker-py applies. A Dockerfile *outside* the context is not a context file
         at all: stage it with `stage_file` and point `-f` at the result.
 
-        args:
+        Args:
             context_dir - the build context root; `~` is expanded
             dockerfile - path to the Dockerfile relative to the context, or None for the default
         returns: str - the remote directory holding the unpacked context
@@ -1577,7 +1577,7 @@ class RemoteStagingSession:
         command started from a clean slate, so this does too rather than merging into or silently
         overwriting something already there.
 
-        args:
+        Args:
             remote_path - absolute remote path a command wrote to (typically a `reserve_path` result)
             local_dest - local path to create; refused if it already exists
         raises:
@@ -1617,7 +1617,7 @@ class RemoteStagingSession:
         expiry) without a second handshake, and `cwd` here is a *remote* path - typically one a
         `stage_*` call just returned.
 
-        args:
+        Args:
             argv - the remote command, including the binary
             timeout - seconds the remote watchdog allows the command
             max_output_bytes - per-stream cap on retained output
@@ -1640,7 +1640,7 @@ class RemoteStagingSession:
 def _make_stage_root(ssh_client: paramiko.SSHClient, dialect_kind: RemoteDialectKind, docker_host: str) -> str:
     """Create the session's private temp directory on the remote host and return its path.
 
-    args:
+    Args:
         ssh_client - an already-connected client for the host
         dialect_kind - the host's detected dialect
         docker_host - the host's URL, for the error message
@@ -1679,7 +1679,7 @@ def _verify_shared_filesystem(sftp: paramiko.SFTPClient, root: str, docker_host:
     Scoped to staging on purpose: exec-only calls touch no SFTP and keep working against such a host,
     so refusing it outright would give up capability for nothing.
 
-    args:
+    Args:
         sftp - the session's SFTP client
         root - the directory created over the exec channel
         docker_host - the host's URL, for the error message
@@ -1728,7 +1728,7 @@ def _remove_stage_root(
     on it if we say so. The one case this cannot cover is a dropped transport: there is no channel left
     to run `rm` on, which is why the directory carries the project name and 0700 mode.
 
-    args:
+    Args:
         ssh_client - the session's client, still connected
         dialect_kind - the host's detected dialect
         root - the directory to remove
@@ -1772,7 +1772,7 @@ def remote_staging_session(docker_host: str, *, timeout: float | None = None) ->
     path, so success, an exception and a timeout all remove the directory. A hard transport drop is the
     exception - nothing is left to run `rm` on - which is inherent rather than handled.
 
-    args:
+    Args:
         docker_host - the host's resolved DOCKER_HOST value, starting with 'ssh://'
         timeout - seconds bounding the SSH handshake and the dialect probe; the session's own
                   bookkeeping commands use their own bounds, and each `exec` takes its own timeout

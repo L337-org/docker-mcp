@@ -61,7 +61,7 @@ def _run_buildx(
     than recovered by scanning the argv: `buildx_bake` appends caller-supplied target names, so a
     target could be the very flag a scan looks for. Explicit values need no such assumption.
 
-    args:
+    Args:
         args - the buildx argv, without the leading `buildx`
         cwd - working directory for the command, or None for the server's own
         timeout - seconds allowed for the command
@@ -99,7 +99,7 @@ def _spec_component(spec: str, key: str) -> str | None:
     expressed in that syntax at all (buildx has the same limitation), so splitting on commas is exact
     rather than approximate.
 
-    args:
+    Args:
         spec - one spec value, e.g. "type=local,dest=out" or "id=npmrc,src=/home/u/.npmrc"
         key - the component to read, e.g. "dest"
     returns: str | None - the component's value, or None when the spec does not carry it
@@ -114,7 +114,7 @@ def _spec_component(spec: str, key: str) -> str | None:
 def _replace_spec_component(spec: str, key: str, new_value: str) -> str:
     """Rewrite one `key=` component of a buildx spec, leaving the rest of it untouched.
 
-    args:
+    Args:
         spec - the spec value to rewrite
         key - the component to replace, e.g. "src"
         new_value - the replacement value
@@ -146,7 +146,7 @@ def _refuse_flags_that_resolve_on_the_wrong_host(
     exporter allow-list is needed here. A cache has no stdout form, so any `dest=`/`src=` on the cache
     flags is refused whatever its value.
 
-    args:
+    Args:
         output - `--output` specs
         cache_to - `--cache-to` specs
         cache_from - `--cache-from` specs
@@ -217,7 +217,7 @@ def _local_dockerfile(file: str | None, *, context_is_local: bool) -> Path | Non
       it must be left alone - resolving it locally could stage a same-named file that happens to sit in
       this server's working directory, silently building something else.
 
-    args:
+    Args:
         file - the `file` parameter as given, or None
         context_is_local - whether `context` names an existing local directory
     returns: Path | None - the local path buildx would read, else None
@@ -246,7 +246,7 @@ def _replace_flag_value(args: list[str], flag: str, new_value: str) -> None:
     because of where it sits in the argv this module just built, so an unrelated argument that happens
     to equal it cannot be caught by accident.
 
-    args:
+    Args:
         args - the argv to modify in place
         flag - the flag whose value to replace, e.g. "--file"
         new_value - the replacement
@@ -264,7 +264,7 @@ def _stage_composite_paths(session: RemoteStagingSession, args: list[str], flag:
     an existing local path (an image ref, a URL, `env=`) is left exactly as it was, so only real local
     inputs are copied.
 
-    args:
+    Args:
         session - the open staging session
         args - the argv to modify in place
         flag - the repeatable flag to walk, e.g. "--secret"
@@ -473,7 +473,7 @@ def _run_buildx_build_remotely(
     therefore becomes an absolute path under the staged copy; one outside the context, or beside a URL
     context, is copied on its own and pointed at the same way.
 
-    args:
+    Args:
         args - the fully-built buildx argv, ending with the context positional
         context - the context as the caller gave it
         file - the `file` parameter as the caller gave it
