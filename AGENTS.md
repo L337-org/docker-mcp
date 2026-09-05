@@ -430,7 +430,7 @@ rename or a move ever makes that exemption stop matching.
 **Only tools are exempt, and that is deliberate.** The exemption exists because an `Args:` entry
 naming a type duplicates the schema, so it holds only where a docstring is advertised *and* a
 schema carries the same facts. A tool is the only one: its docstring is the description and its
-`input_schema` carries every parameter's type. A prompt takes its description from
+`inputSchema` carries every parameter's type. A prompt takes its description from
 `@prompt(description=...)`, so its docstring reaches no client at all. A resource advertises
 nothing about its parameters. Both follow the ordinary convention, and
 `tests/test_server.py::test_the_docstring_exemption_names_the_decorators_in_use` fails if either

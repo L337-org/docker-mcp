@@ -76,24 +76,27 @@ line-length = 120
 select = ["E", "F", "B", "S", "UP", "D"]
 
 # No docstring rule is ignored blanket-wide: the whole of pydocstyle's Google convention applies,
-# and the two things it does not reach - the advertised MCP surface and tests - are exempted by
-# name below, through ignore-decorators and per-file-ignores respectively.
+# and the two things it does not reach - tool docstrings and tests - are exempted by name below,
+# through ignore-decorators and per-file-ignores respectively.
 ignore = []
 
 [tool.ruff.lint.pydocstyle]
 # CS.6.12: Google is the docstring format for Python, enforced here rather than by review.
 convention = "google"
 
-# The advertised MCP surface is NOT covered by these rules. A tool, prompt or resource
-# docstring is the interface a client loads and a model reads, so CS.6.14 hands it to the
-# AI-consumer rules instead: it wants what the schema cannot already carry, and a structured
-# parameter block duplicates what the schema has - paid for on every session that loads it.
-# Applying D417 to one would make it worse.
+# Tool docstrings are NOT covered by these rules. A tool docstring is the description a client
+# loads and a model reads, and the `inputSchema` sent alongside it already carries every
+# parameter's type - so CS.6.14 hands it to the AI-consumer rules instead, where an `Args:` block
+# would duplicate the schema and be paid for on every session that loads the surface.
+#
+# Prompts and resources are deliberately absent. A prompt's description comes from
+# `@prompt(description=...)` and a resource advertises nothing about its parameters, so neither
+# docstring reaches a client and there is nothing to trade off.
 #
 # Fully-qualified paths through the module the decorator is imported FROM, which is what ruff
-# matches - not the bare name the call site uses. tests/test_server.py asserts these still name
-# the decorators actually in use, because a rename would silently pull 199 advertised
-# descriptions into rules that are wrong for them.
+# matches - not the bare name the call site uses. tests/test_server.py asserts this list against
+# the decorators actually in use, so a rename cannot silently pull the advertised descriptions
+# into rules that are wrong for them, and neither dead entry can come back.
 ignore-decorators = [
     "docker_mcp.server.tool",
 ]

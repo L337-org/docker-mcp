@@ -1696,7 +1696,7 @@ def test_the_docstring_exemption_names_the_decorators_in_use() -> None:
     and is paid for on every session that loads the surface. That argument holds only where
     there is a schema to duplicate:
 
-    - a **tool** advertises its docstring as the description *and* an `input_schema` carrying
+    - a **tool** advertises its docstring as the description *and* an `inputSchema` carrying
       every parameter's type, so an `Args:` entry naming a type duplicates the schema. Exempt.
     - a **prompt** takes its advertised description from `@prompt(description=...)`, so its
       docstring reaches no client at all and there is nothing to trade off. Not exempt.
