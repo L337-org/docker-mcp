@@ -1742,10 +1742,15 @@ def test_the_docstring_exemption_names_the_decorators_in_use() -> None:
         f"docstrings would fall under the docstring convention. It names {sorted(bare)}."
     )
     for kind, why in (
-        ("prompt", "a prompt's advertised description comes from `@prompt(description=...)`, so its "
-                   "docstring reaches no client"),
-        ("resource", "a resource advertises no schema for its parameters, so there is nothing for a "
-                     "docstring to duplicate"),
+        (
+            "prompt",
+            "a prompt's advertised description comes from `@prompt(description=...)`, so its "
+            "docstring reaches no client",
+        ),
+        (
+            "resource",
+            "a resource advertises no schema for its parameters, so there is nothing for a docstring to duplicate",
+        ),
     ):
         assert kind not in bare, (
             f"ignore-decorators names `{kind}`, but {why} - the exemption buys nothing and its "
