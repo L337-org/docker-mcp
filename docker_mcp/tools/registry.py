@@ -40,7 +40,9 @@ _MAX_TAG_PAGES = 50  # cap on registry/Hub pagination follow-through
 
 
 def _env_credentials(username: str | None, password: str | None) -> tuple[str | None, str | None]:
-    """Fall back to DOCKER_MCP_SERVER_REGISTRY_USERNAME / DOCKER_MCP_SERVER_REGISTRY_PASSWORD when no
+    """Fall back to the registry credential environment variables.
+
+    Uses DOCKER_MCP_SERVER_REGISTRY_USERNAME and DOCKER_MCP_SERVER_REGISTRY_PASSWORD when no
     explicit credentials are passed.
 
     Setting credentials in the server's environment keeps them out of tool arguments, which many
@@ -284,8 +286,10 @@ _MAX_RESPONSE_BYTES = 16 * 1024 * 1024  # 16 MiB
 
 
 def _read_capped_response(resp: httpx.Response, url: str) -> httpx.Response:
-    """Read a streamed response's body into memory bounded by `_MAX_RESPONSE_BYTES`, returning a
-    fully-read `httpx.Response` so callers keep using `.json()` / `.text` / `.headers` unchanged.
+    """Read a streamed response's body into memory, bounded by `_MAX_RESPONSE_BYTES`.
+
+    Returns a fully-read `httpx.Response` so callers keep using `.json()`, `.text` and `.headers`
+    unchanged.
     """
     chunks: list[bytes] = []
     total = 0
@@ -310,9 +314,11 @@ def _get_with_retry_policy(
     params: dict[str, str] | None = None,
     auth: tuple[str, str] | None = None,
 ) -> httpx.Response:
-    """GET that applies the project's transient-failure retry policy, retrying in a single loop so a
-    5xx blip after a 429 retry (or vice versa) is still absorbed rather than bubbling up. The body is
-    streamed and read bounded by `_MAX_RESPONSE_BYTES` (registries are untrusted; see `_read_capped_response`).
+    """GET that applies the project's transient-failure retry policy.
+
+    Retries in a single loop so a 5xx blip after a 429 retry (or vice versa) is still absorbed
+    rather than bubbling up. The body is streamed and read bounded by `_MAX_RESPONSE_BYTES`
+    (registries are untrusted; see `_read_capped_response`).
 
     - On a transient 5xx (502/503/504): retry up to `_TRANSIENT_MAX_RETRIES` times with a short
       backoff (honoring `Retry-After` when present, capped at the threshold). If it still fails,
@@ -355,8 +361,10 @@ def _registry_get(
     accept: str | None = None,
     timeout: float,
 ) -> httpx.Response:
-    """GET https://<registry>/<path>, transparently handling a Bearer 401 challenge, 429 rate
-    limits, and transient 5xx retries (see `_get_with_retry_policy`).
+    """GET https://<registry>/<path>.
+
+    Transparently handles a Bearer 401 challenge, 429 rate limits, and transient 5xx retries (see
+    `_get_with_retry_policy`).
     """
     url = f"https://{registry}{path}"
     headers: dict[str, str] = {"User-Agent": _USER_AGENT}

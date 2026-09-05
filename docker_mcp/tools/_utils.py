@@ -205,8 +205,10 @@ def open_host_read_file(file_path: str) -> IO[bytes]:
 
 
 def classify_host_kernel() -> str:
-    """Best-effort host-OS classification from the shared kernel string (containers share the host
-    kernel), used to tailor socket-mount hints when the daemon is unreachable.
+    """Best-effort host-OS classification from the shared kernel string.
+
+    Containers share the host kernel, so this tailors socket-mount hints when the daemon is
+    unreachable.
 
     Returns 'wsl2' (Windows/WSL2), 'docker-desktop' (LinuxKit VM - usually macOS), 'linux' (a native
     Linux daemon), or 'unknown' when os.uname() is unavailable (non-POSIX).
@@ -333,9 +335,10 @@ def as_byte_chunks(chunks: Iterable | bytes | bytearray | str) -> Iterable[bytes
 
 
 def join_bounded(chunks: Iterable[bytes], max_bytes: int, what: str, remedy: str | None = None) -> bytes:
-    """Concatenate bytes chunks, aborting with ToolInputError if the running total would exceed
-    max_bytes. A negative `max_bytes` is a caller bug rather than an answer to give a model, and
-    stays a `ValueError`.
+    """Concatenate bytes chunks, aborting if the running total would exceed max_bytes.
+
+    Aborts with ToolInputError. A negative `max_bytes` is a caller bug rather than an answer to
+    give a model, and stays a `ValueError`.
 
     `remedy` is what the message tells the caller to do about it, and it has to be passed by any
     caller whose own cap is fixed. The default names `max_bytes`, which is right for the tools that
