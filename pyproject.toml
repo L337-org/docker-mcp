@@ -75,8 +75,9 @@ line-length = 120
 # (security; gives the S603/S310 noqas in _cli.py / resources.py teeth), UP = pyupgrade.
 select = ["E", "F", "B", "S", "UP", "D"]
 
-# No docstring rule is ignored: the whole of pydocstyle's Google convention is enforced. The
-# advertised MCP surface is exempt instead, through ignore-decorators below.
+# No docstring rule is ignored blanket-wide: the whole of pydocstyle's Google convention applies,
+# and the two things it does not reach - the advertised MCP surface and tests - are exempted by
+# name below, through ignore-decorators and per-file-ignores respectively.
 ignore = []
 
 [tool.ruff.lint.pydocstyle]

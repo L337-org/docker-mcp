@@ -440,8 +440,9 @@ advertised surface directly - `list_resource_templates()` is a separate call fro
 **Everything else is Google style** - `Args:` and `Returns:`, capitalised - which is `CS.6.12`'s
 format for Python, enforced by ruff's pydocstyle rules rather than by review.
 
-Every docstring rule is enforced - `pyproject.toml` ignores none of them - so there is no backlog
+No docstring rule is ignored - `pyproject.toml`'s `ignore` list is empty - so there is no backlog
 to work through and nothing to add to. A rule that fails is a change to make, not an entry to park.
+The MCP surface and tests are exempt by name rather than by rule, as described above and below.
 
 **Parameters are documented `name: description`, not `name - description`.** The dash is the
 advertised surface's separator and it had leaked into back-end code, where ruff reads it as no
