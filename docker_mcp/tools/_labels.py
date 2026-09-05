@@ -30,8 +30,7 @@ MANAGED_FILTER = f"{MANAGED_LABEL}=true"
 
 
 def provenance_labels(created_by: str) -> dict[str, str]:
-    """
-    The MCP-provenance label set for a resource this server creates, or {} when stamping is disabled.
+    """The MCP-provenance label set for a resource this server creates, or {} when stamping is disabled.
 
     `created_by` is the @tool name (e.g. "container_run") recorded in the `.tool` label.
     """
@@ -46,8 +45,7 @@ def provenance_labels(created_by: str) -> dict[str, str]:
 
 
 def with_provenance(labels: dict | list | None, created_by: str) -> dict[str, str] | None:
-    """
-    Merge caller-supplied labels with the provenance set.
+    """Merge caller-supplied labels with the provenance set.
 
     Accepts the shapes the Docker SDK accepts for `labels` - a dict, a list of bare names (treated
     as empty values), or None. A caller dict wins on any key collision (the caller's value
@@ -68,8 +66,7 @@ def with_provenance(labels: dict | list | None, created_by: str) -> dict[str, st
 
 
 def managed_filter(filters: dict | None) -> dict:
-    """
-    Return a copy of `filters` with the managed-by-us label filter added (for `managed_only=True`).
+    """Return a copy of `filters` with the managed-by-us label filter added (for `managed_only=True`).
 
     Preserves any label filter the caller already set by combining into a list rather than clobbering.
     """

@@ -34,8 +34,7 @@ def _read_service_log_tail(id_or_name: str, tail: int = 200, host: str | None = 
 
 
 def _read_service_task_summary(id_or_name: str, host: str | None = None) -> dict:
-    """
-    Return a computed task/rollout status summary for a swarm service.
+    """Return a computed task/rollout status summary for a swarm service.
 
     Reproduces what the `audit_swarm_health` prompt already does by hand: counts tasks whose
     *desired* state is "running" by their actual `Status.State`, compares the count against the

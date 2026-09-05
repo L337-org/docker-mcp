@@ -42,8 +42,7 @@ Severity = Literal["critical", "high", "medium", "low", "unspecified"]
 
 
 def _refuse_local_path_args(candidates: dict[str, str | None]) -> None:
-    """
-    Refuse a parameter that names an existing *local* path when the call is about to run remotely.
+    """Refuse a parameter that names an existing *local* path when the call is about to run remotely.
 
     Only reached on the remote-exec path. Existence is the test rather than the value's shape, because
     an image reference and a relative path are not distinguishable by syntax (`org/app:v1` contains a
@@ -67,8 +66,7 @@ def _run_scout(
     host: str | None = None,
     local_path_args: dict[str, str | None] | None = None,
 ) -> CliResult:
-    """
-    Run `docker scout <args...>`, locally or - with no usable local plugin - on the ssh:// host itself.
+    """Run `docker scout <args...>`, locally or - with no usable local plugin - on the ssh:// host itself.
 
     args:
         args - the scout subcommand argv, without the leading `scout`

@@ -36,8 +36,7 @@ _TRAILING_MARKER = re.compile(r"\(([^)]*)\)\s*$")
 
 
 def is_ssh_url(url: str | None) -> bool:
-    """
-    Whether a daemon URL uses the ssh:// transport.
+    """Whether a daemon URL uses the ssh:// transport.
 
     One shared spelling of a check several call sites need (the CLI shell-out's proxy rewrite, the
     remote-exec fallback's eligibility test, connection help, self-host detection) - some of which
@@ -52,8 +51,7 @@ def is_ssh_url(url: str | None) -> bool:
 
 @dataclass(frozen=True)
 class Host:
-    """
-    One configured daemon.
+    """One configured daemon.
 
     `url` is the resolved concrete daemon URL, or None to let docker-py's from_env() apply its own
     platform default (e.g. the Windows named pipe). `cert_dir` is a tcp+TLS cert directory (`ca.pem`
@@ -105,8 +103,7 @@ def _context_host(name: str) -> str | None:
 
 
 def resolve_local() -> str | None:
-    """
-    The platform-local daemon socket - first existing well-known location, Docker Desktop / rootless
+    """The platform-local daemon socket - first existing well-known location, Docker Desktop / rootless
     first. Context-bypassing by design: `local` means the machine's own socket, never wherever a CLI
     context happens to point. Returns None to let from_env() apply its platform default (e.g. the
     Windows named pipe, which has nothing to probe on disk) - which is context-free because that call
@@ -133,8 +130,7 @@ def resolve_local() -> str | None:
 
 
 def resolve_auto() -> str | None:
-    """
-    The daemon a context-aware `docker` with no DOCKER_HOST would use: the active CLI context's
+    """The daemon a context-aware `docker` with no DOCKER_HOST would use: the active CLI context's
     endpoint (DOCKER_CONTEXT / config.json currentContext -> its meta.json Host), else the local-socket
     probe. Returns None to let from_env() apply its own platform default.
 
@@ -161,7 +157,8 @@ def _fail(message: str) -> NoReturn:
 def _parse_markers(text: str, context: str) -> tuple[str, bool, bool, str | None]:
     """Strip trailing (ro)/(nd)/(tls=<dir>) markers (any order, case-insensitive) off an endpoint
     string, returning (endpoint, read_only, non_destructive, cert_dir). (ro) and (nd) may combine
-    with no error - (ro) is strictly stronger and wins at enforcement time (see server.py)."""
+    with no error - (ro) is strictly stronger and wins at enforcement time (see server.py).
+    """
     read_only = False
     non_destructive = False
     cert_dir: str | None = None
@@ -192,8 +189,7 @@ def _readable(path: Path) -> bool:
 
 
 def _validate_cert_dir(label: str, cert_dir: str) -> None:
-    """
-    Fail-fast on a malformed tcp+TLS cert dir (a misparsed TLS config must never silently leave a
+    """Fail-fast on a malformed tcp+TLS cert dir (a misparsed TLS config must never silently leave a
     daemon connection unencrypted or misconfigured).
 
     `ca.pem` is always required - the daemon is always verified against it (this is encryption + server
@@ -249,8 +245,7 @@ def _legacy_host() -> Host:
 
 
 def parse_registry(raw: str | None) -> dict[str, Host]:
-    """
-    Parse DOCKER_MCP_SERVER_HOSTS into an ordered {label: Host} (first entry = default).
+    """Parse DOCKER_MCP_SERVER_HOSTS into an ordered {label: Host} (first entry = default).
 
     Unset/empty -> a single synthesized host from DOCKER_HOST/auto. A value with no '=' is the bare
     single-host shorthand (the whole value is one endpoint). Otherwise it is a comma-separated
@@ -302,8 +297,7 @@ def _notify_docker_host_ignored() -> None:
 
 
 def load() -> None:
-    """
-    Parse DOCKER_MCP_SERVER_HOSTS and pin the registry. Call once at startup, before the tool modules
+    """Parse DOCKER_MCP_SERVER_HOSTS and pin the registry. Call once at startup, before the tool modules
     import (the @tool() decorator and resources read the registry at registration time).
 
     Scrubs unresolved `${...}` placeholders first so an mcpb blank field resolves to the default host
@@ -327,7 +321,8 @@ def load() -> None:
 def resolve(host: str | None) -> Host:
     """The Host for a label, or the default (first entry) when host is None. Raises HostGuardError
     naming the configured labels for an unknown label - a refusal the caller is meant to read, since
-    a resource read reaches no host guard and this is the only place a typo can be named."""
+    a resource read reaches no host guard and this is the only place a typo can be named.
+    """
     if host is None:
         return default()
     try:

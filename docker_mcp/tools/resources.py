@@ -225,7 +225,8 @@ def _require_containers_domain() -> None:
 
 def _child_uri(scheme: str, ref: str, host: str | None) -> str:
     """The child logs/stats URI matching the index's host context: host-qualified when an index is
-    host-scoped, else empty-authority (multi-host default) or bare (single-host)."""
+    host-scoped, else empty-authority (multi-host default) or bare (single-host).
+    """
     if host is not None:
         return f"{scheme}://{host}/{ref}"
     return f"{scheme}:///{ref}" if _hosts.is_multi() else f"{scheme}://{ref}"
@@ -253,8 +254,7 @@ def _render_index(host: str | None) -> str:
 
 
 def list_container_resources() -> str:
-    """
-    Index every container with the resource URIs for reading its logs and live stats.
+    """Index every container with the resource URIs for reading its logs and live stats.
 
     Lists all containers (running and stopped). Each entry carries a `logs` URI (readable in any
     state - useful for diagnosing why a container exited) and, for running containers only, a `stats`
@@ -267,8 +267,7 @@ def list_container_resources() -> str:
 
 
 def list_host_container_resources(host: str) -> str:
-    """
-    Index every container on a named host (the host-qualified container index).
+    """Index every container on a named host (the host-qualified container index).
 
     Same shape as the default container index, but the child logs/stats URIs stay on `host` so
     following them reads the same daemon.
@@ -280,8 +279,7 @@ def list_host_container_resources(host: str) -> str:
 
 
 def get_container_logs_resource(id_or_name: str) -> str:
-    """
-    Read a bounded tail of a container's combined stdout/stderr logs.
+    """Read a bounded tail of a container's combined stdout/stderr logs.
 
     Works on running and stopped containers, so it can surface why a container exited. The read is
     capped to a recent tail so it can't flood the agent's context.
@@ -294,8 +292,7 @@ def get_container_logs_resource(id_or_name: str) -> str:
 
 
 def get_host_container_logs_resource(host: str, id_or_name: str) -> str:
-    """
-    Read a bounded log tail for a container on a named host (host-qualified docker-logs variant).
+    """Read a bounded log tail for a container on a named host (host-qualified docker-logs variant).
 
     args:
         host - Configured host label (from the docker-mcp://hosts resource)
@@ -307,8 +304,7 @@ def get_host_container_logs_resource(host: str, id_or_name: str) -> str:
 
 
 def get_container_stats_resource(id_or_name: str) -> str:
-    """
-    Read a computed resource-usage summary for a running container.
+    """Read a computed resource-usage summary for a running container.
 
     Returns a small summary (CPU %, memory used/limit/%, network and block I/O) derived from a single
     stats snapshot. Raises if the container isn't running, since stats require a live cgroup.
@@ -322,8 +318,7 @@ def get_container_stats_resource(id_or_name: str) -> str:
 
 
 def get_host_container_stats_resource(host: str, id_or_name: str) -> str:
-    """
-    Resource-usage summary for a running container on a named host (host-qualified docker-stats variant).
+    """Resource-usage summary for a running container on a named host (host-qualified docker-stats variant).
 
     args:
         host - Configured host label (from the docker-mcp://hosts resource)
@@ -387,8 +382,7 @@ def _render_services_index(host: str | None) -> str:
 
 
 def list_service_resources() -> str:
-    """
-    Index every swarm service with the resource URIs for reading its logs and task/rollout status.
+    """Index every swarm service with the resource URIs for reading its logs and task/rollout status.
 
     returns: str - JSON object {"services": [{id, name, image, mode, desired_replicas, logs, tasks}, ...]}
     """
@@ -396,8 +390,7 @@ def list_service_resources() -> str:
 
 
 def list_host_service_resources(host: str) -> str:
-    """
-    Index every swarm service on a named host (the host-qualified service index).
+    """Index every swarm service on a named host (the host-qualified service index).
 
     args: host - Configured host label (from the docker-mcp://hosts resource)
     returns: str - JSON object {"services": [...]}
@@ -406,8 +399,7 @@ def list_host_service_resources(host: str) -> str:
 
 
 def get_service_logs_resource(id_or_name: str) -> str:
-    """
-    Read a bounded tail of a swarm service's combined stdout/stderr logs.
+    """Read a bounded tail of a swarm service's combined stdout/stderr logs.
 
     args: id_or_name - The service id or name (from the service index)
     returns: str - The decoded recent log tail
@@ -417,8 +409,7 @@ def get_service_logs_resource(id_or_name: str) -> str:
 
 
 def get_host_service_logs_resource(host: str, id_or_name: str) -> str:
-    """
-    Read a bounded log tail for a swarm service on a named host (host-qualified service-logs variant).
+    """Read a bounded log tail for a swarm service on a named host (host-qualified service-logs variant).
 
     args:
         host - Configured host label (from the docker-mcp://hosts resource)
@@ -430,8 +421,7 @@ def get_host_service_logs_resource(host: str, id_or_name: str) -> str:
 
 
 def get_service_tasks_resource(id_or_name: str) -> str:
-    """
-    Read a computed task/rollout status summary for a swarm service.
+    """Read a computed task/rollout status summary for a swarm service.
 
     Returns running vs. desired task counts, any failing tasks (id, node, error), and the current
     rolling-update state if one is in progress - the "is this service OK right now" signal, since a
@@ -445,8 +435,7 @@ def get_service_tasks_resource(id_or_name: str) -> str:
 
 
 def get_host_service_tasks_resource(host: str, id_or_name: str) -> str:
-    """
-    Task/rollout status summary for a swarm service on a named host (host-qualified variant).
+    """Task/rollout status summary for a swarm service on a named host (host-qualified variant).
 
     args:
         host - Configured host label (from the docker-mcp://hosts resource)
@@ -506,8 +495,7 @@ def _render_nodes_index(host: str | None) -> str:
 
 
 def list_node_resources() -> str:
-    """
-    Index every swarm node with its state, availability, role, and (for managers) reachability.
+    """Index every swarm node with its state, availability, role, and (for managers) reachability.
 
     Index only - no per-node child resource. Watch this to notice a node flapping between
     ready/down, or an unexpected availability/role change, without re-querying `node_list`.
@@ -518,8 +506,7 @@ def list_node_resources() -> str:
 
 
 def list_host_node_resources(host: str) -> str:
-    """
-    Index every swarm node on a named host (the host-qualified node index).
+    """Index every swarm node on a named host (the host-qualified node index).
 
     args: host - Configured host label (from the docker-mcp://hosts resource)
     returns: str - JSON object {"nodes": [...]}

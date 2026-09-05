@@ -3,7 +3,8 @@ manifest.json. The bundle is a `uv`-type extension: the host's managed uv resolv
 declared in pyproject.toml and runs this file, which hands off to the same `main()` as the console
 scripts and `python -m docker_mcp`. Kept at the bundle root (not reusing docker_mcp/__main__.py) so
 `import docker_mcp` resolves whether the host installs the project into the uv env or just runs this
-script from the bundle root."""
+script from the bundle root.
+"""
 
 from docker_mcp import main
 
