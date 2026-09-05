@@ -21,12 +21,14 @@ def secret_create(
     stay readable, use `config_create` instead. Created secrets are stamped with provenance
     labels.
 
-    args:
-        name - Name for the secret (unique within the swarm)
-        data - The secret payload (max 500 KB; must be empty when driver is set)
-        labels - Labels to set on the secret
-        driver - Optional secret-driver config for values held in an external store
-    returns: dict - The created secret's attrs (ID and Spec metadata; never the payload)
+    Args:
+        name: Name for the secret (unique within the swarm)
+        data: The secret payload (max 500 KB; must be empty when driver is set)
+        labels: Labels to set on the secret
+        driver: Optional secret-driver config for values held in an external store
+
+    Returns:
+        dict: The created secret's attrs (ID and Spec metadata; never the payload)
     """
     kwargs: dict = {
         "name": name,
@@ -47,8 +49,11 @@ def secret_inspect(id_or_name: str, host: str | None = None) -> dict:
     contents. To see which services reference it, inspect each service's spec via
     `service_inspect` (there is no server-side filter for "services using this secret").
 
-    args: id_or_name - The secret id or name
-    returns: dict - The secret's attrs, excluding the actual secret data
+    Args:
+        id_or_name: The secret id or name
+
+    Returns:
+        dict: The secret's attrs, excluding the actual secret data
     """
     return _get_client(host).secrets.get(id_or_name).attrs
 
@@ -62,8 +67,11 @@ def secret_list(filters: dict | None = None, host: str | None = None) -> list:
     labels, timestamps). Valid filter keys: `id`, `name`, `names`, `label` (key or
     key=value).
 
-    args: filters - Narrow the list; omit to return every secret
-    returns: list - A list of secret attrs dicts (data-free)
+    Args:
+        filters: Narrow the list; omit to return every secret
+
+    Returns:
+        list: A list of secret attrs dicts (data-free)
     """
     return [s.attrs for s in _get_client(host).secrets.list(**drop_none(filters=filters))]
 
@@ -79,8 +87,11 @@ def secret_remove(id_or_name: str, host: str | None = None) -> bool:
     services that mount the secret before removing it (service filters do not support
     filtering by secret reference).
 
-    args: id_or_name - The secret id or name to remove
-    returns: bool - True after removal
+    Args:
+        id_or_name: The secret id or name to remove
+
+    Returns:
+        bool: True after removal
     """
     _get_client(host).secrets.get(id_or_name).remove()
     return True

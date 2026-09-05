@@ -66,30 +66,32 @@ def image_build(
     to mistake for a context-relative name. `buildx_build`'s `--file` resolves differently again
     (against the CLI's working directory) - see its docstring.
 
-    args:
-        path - Build context directory path on the server host
-        tag - Name and optional tag in "name:tag" format to apply to the built image
-        quiet - Suppress verbose build output (final image id still returned)
-        nocache - Ignore the layer cache and rebuild all layers
-        rm - Remove intermediate containers on success (default True)
-        pull - Always pull a newer version of each FROM base image before building
-        forcerm - Remove intermediate containers even on build failure
-        dockerfile - Dockerfile filename relative to path (default: "Dockerfile"); an absolute path
-            or one containing ".." reads that file from the server host instead of the context
-        buildargs - Build-time variables passed as `--build-arg`; dict of str to str
-        container_limits - Resource limits for the build container, e.g. {"memory": 134217728}
-        shmsize - Size of /dev/shm in bytes for build steps that need shared memory
-        labels - Labels to set on the resulting image (dict of str to str)
-        cache_from - List of image references to use as layer cache sources
-        target - Stop at this named build stage (multi-stage Dockerfiles)
-        network_mode - Network mode for RUN instructions during build (e.g. "host", "none")
-        squash - Squash all new layers into one (experimental; requires daemon flag)
-        extra_hosts - Additional /etc/hosts entries during build; dict of hostname to IP
-        platform - Target platform, e.g. "linux/amd64" (single platform only; use buildx for multi)
-        isolation - Isolation technology, passed to the daemon as given; platform-dependent, so not
-                      validated here (Windows documents "default", "process", "hyperv")
-        use_config_proxy - Forward proxy env vars from Docker client config to build
-    returns: dict - The built image's full inspect payload (as `docker inspect`)
+    Args:
+        path: Build context directory path on the server host
+        tag: Name and optional tag in "name:tag" format to apply to the built image
+        quiet: Suppress verbose build output (final image id still returned)
+        nocache: Ignore the layer cache and rebuild all layers
+        rm: Remove intermediate containers on success (default True)
+        pull: Always pull a newer version of each FROM base image before building
+        forcerm: Remove intermediate containers even on build failure
+        dockerfile: Dockerfile filename relative to path (default: "Dockerfile"); an absolute path or one containing
+            ".." reads that file from the server host instead of the context
+        buildargs: Build-time variables passed as `--build-arg`; dict of str to str
+        container_limits: Resource limits for the build container, e.g. {"memory": 134217728}
+        shmsize: Size of /dev/shm in bytes for build steps that need shared memory
+        labels: Labels to set on the resulting image (dict of str to str)
+        cache_from: List of image references to use as layer cache sources
+        target: Stop at this named build stage (multi-stage Dockerfiles)
+        network_mode: Network mode for RUN instructions during build (e.g. "host", "none")
+        squash: Squash all new layers into one (experimental; requires daemon flag)
+        extra_hosts: Additional /etc/hosts entries during build; dict of hostname to IP
+        platform: Target platform, e.g. "linux/amd64" (single platform only; use buildx for multi)
+        isolation: Isolation technology, passed to the daemon as given; platform-dependent, so not validated here
+            (Windows documents "default", "process", "hyperv")
+        use_config_proxy: Forward proxy env vars from Docker client config to build
+
+    Returns:
+        dict: The built image's full inspect payload (as `docker inspect`)
     """
     kwargs: dict = {
         "quiet": quiet,
@@ -131,8 +133,11 @@ def image_inspect(id_or_name: str, host: str | None = None) -> dict:
     for a remote image's manifest without pulling it use `image_registry_data` or
     `registry_manifest`.
 
-    args: id_or_name - Image name (with optional tag/digest) or id
-    returns: dict - Full image inspect attrs (equivalent to `docker inspect` on an image)
+    Args:
+        id_or_name: Image name (with optional tag/digest) or id
+
+    Returns:
+        dict: Full image inspect attrs (equivalent to `docker inspect` on an image)
     """
     return _get_client(host).images.get(id_or_name).attrs
 
@@ -149,11 +154,12 @@ def image_registry_data(repository: str, auth_config: dict | None = None, host: 
     `docker login` on the host so the `docker` module reuses credentials cached in
     `~/.docker/config.json`, and leave `auth_config` unset.
 
-    args:
-        repository - Image reference
-        auth_config - Optional registry authentication config
-    returns: dict - {"Descriptor", "Platforms"} - the OCI descriptor and the platforms available
-        for the reference
+    Args:
+        repository: Image reference
+        auth_config: Optional registry authentication config
+
+    Returns:
+        dict: {"Descriptor", "Platforms"} - the OCI descriptor and the platforms available for the reference
     """
     return _get_client(host).images.get_registry_data(repository, auth_config=auth_config).attrs
 
@@ -169,12 +175,14 @@ def image_list(
     to find images on Docker Hub. Dangling (untagged) build leftovers show with
     filters={"dangling": True}.
 
-    args:
-        repository - Only show images of this repository
-        all - Show intermediate image layers
-        filters - Filter by attributes (label, dangling, before, since, etc.)
-    returns: list - One summary dict per image ({"Id", "RepoTags", "RepoDigests", "Created",
-        "Size", "Labels", ...}); use `image_inspect` for a full inspect payload
+    Args:
+        repository: Only show images of this repository
+        all: Show intermediate image layers
+        filters: Filter by attributes (label, dangling, before, since, etc.)
+
+    Returns:
+        list: One summary dict per image ({"Id", "RepoTags", "RepoDigests", "Created", "Size", "Labels", ...}); use
+            `image_inspect` for a full inspect payload
     """
     return [i.attrs for i in _get_client(host).images.list(name=repository, all=all, filters=filters)]
 
@@ -194,12 +202,14 @@ def image_pull(
     Use `image_load` for tarballs, and `registry_manifest` / `image_registry_data` to inspect a
     remote image without pulling it.
 
-    args:
-        repository - The image repository
-        tag - The image tag (ignored when all_tags=True)
-        all_tags - Pull all tags from the repository
-        platform - Platform in os/arch format
-    returns: dict | list - Pulled image attrs (or a list of attrs if all_tags=True)
+    Args:
+        repository: The image repository
+        tag: The image tag (ignored when all_tags=True)
+        all_tags: Pull all tags from the repository
+        platform: Platform in os/arch format
+
+    Returns:
+        dict | list: Pulled image attrs (or a list of attrs if all_tags=True)
     """
     result = _get_client(host).images.pull(repository, tag=tag, all_tags=all_tags, platform=platform)
     if isinstance(result, list):
@@ -222,11 +232,13 @@ def image_push(
     `docker login` on the host so the `docker` module reuses credentials cached in
     `~/.docker/config.json`, and leave `auth_config` unset.
 
-    args:
-        repository - The image repository
-        tag - The tag to push
-        auth_config - Optional registry authentication config
-    returns: str - Push output as a string
+    Args:
+        repository: The image repository
+        tag: The tag to push
+        auth_config: Optional registry authentication config
+
+    Returns:
+        str: Push output as a string
     """
     output = _get_client(host).images.push(repository, tag=tag, stream=False, auth_config=auth_config, decode=False)
     if isinstance(output, bytes):
@@ -245,11 +257,13 @@ def image_remove(id_or_name: str, force: bool = False, noprune: bool = False, ho
     otherwise be removed as a side-effect; leave False unless you need to preserve
     the parent layers for another purpose.
 
-    args:
-        id_or_name - Image name (with optional tag/digest) or id to remove
-        force - Remove even if referenced by stopped containers or multiple tags
-        noprune - Do not delete untagged intermediate parent layers
-    returns: bool - True after removal completes
+    Args:
+        id_or_name: Image name (with optional tag/digest) or id to remove
+        force: Remove even if referenced by stopped containers or multiple tags
+        noprune: Do not delete untagged intermediate parent layers
+
+    Returns:
+        bool: True after removal completes
     """
     _get_client(host).images.remove(image=id_or_name, force=force, noprune=noprune)
     return True
@@ -263,12 +277,13 @@ def image_search(term: str, limit: int | None = None, host: str | None = None) -
     Searches Docker Hub only - not GHCR, ECR, or other registries. For listing tags on a
     specific image from any OCI registry use `registry_tags` instead.
 
-    args:
-        term - Search keyword, e.g. "nginx" or "python"
-        limit - Maximum number of results to return (Docker Hub default is 25)
-    returns: list - Result dicts: {"name", "description", "star_count", "is_official",
-        "is_automated"} - `is_automated` is deprecated in the Engine API and is always false, so
-        rank on `star_count`/`is_official` instead
+    Args:
+        term: Search keyword, e.g. "nginx" or "python"
+        limit: Maximum number of results to return (Docker Hub default is 25)
+
+    Returns:
+        list: Result dicts: {"name", "description", "star_count", "is_official", "is_automated"} - `is_automated` is
+            deprecated in the Engine API and is always false, so rank on `star_count`/`is_official` instead
     """
     return _get_client(host).images.search(term=term, limit=limit)
 
@@ -284,8 +299,11 @@ def image_prune(filters: dict | None = None, host: str | None = None) -> dict:
     "true"/"false"), `until` (RFC3339 timestamp or duration like "24h"), `label`
     (key or key=value). Use `system_df` first to see how much space is reclaimable.
 
-    args: filters - Narrow which images to remove; omit to remove dangling images only
-    returns: dict - {"ImagesDeleted": [...], "SpaceReclaimed": <bytes>}
+    Args:
+        filters: Narrow which images to remove; omit to remove dangling images only
+
+    Returns:
+        dict: {"ImagesDeleted": [...], "SpaceReclaimed": <bytes>}
     """
     return _get_client(host).images.prune(filters=filters)
 
@@ -310,15 +328,17 @@ def image_prune_builds(
     `keep_storage`, or `all` needs v1.39+ and raises `InvalidVersion` on an older daemon - omit all
     three to prune with the daemon's own defaults.
 
-    args:
-        filters - Narrow which cache records to remove, e.g. {"until": "24h"} (a duration or
-            timestamp relative to the daemon's clock); also accepts `id`, `parent`, `type`,
-            `description`, `inuse`, `shared`, `private`; omit to let the daemon prune unused cache
-        keep_storage - Bytes of cache to keep, e.g. 5368709120 for 5 GiB; omit for no floor. The
-            Engine renamed this `reserved-space` at API v1.48 and still honors the old name; the
-            newer `max-used-space`/`min-free-space` ceilings are reachable only via `buildx_prune`
-        all - Remove all types of build cache, not just the unused records
-    returns: dict - {"CachesDeleted": [...], "SpaceReclaimed": <bytes>}
+    Args:
+        filters: Narrow which cache records to remove, e.g. {"until": "24h"} (a duration or timestamp relative to the
+            daemon's clock); also accepts `id`, `parent`, `type`, `description`, `inuse`, `shared`, `private`; omit to
+            let the daemon prune unused cache
+        keep_storage: Bytes of cache to keep, e.g. 5368709120 for 5 GiB; omit for no floor. The Engine renamed this
+            `reserved-space` at API v1.48 and still honors the old name; the newer `max-used-space`/`min-free-space`
+            ceilings are reachable only via `buildx_prune`
+        all: Remove all types of build cache, not just the unused records
+
+    Returns:
+        dict: {"CachesDeleted": [...], "SpaceReclaimed": <bytes>}
     """
     return _get_client(host).images.prune_builds(**drop_none(filters=filters, keep_storage=keep_storage, all=all))
 
@@ -334,10 +354,12 @@ def image_load(data: bytes | None = None, from_file: str | None = None, host: st
     streamed straight to the daemon - preferred for anything but small images, since in-band bytes are
     base64-encoded by MCP). `from_file` is read by the server's user; `~` is expanded.
 
-    args:
-        data - Tarball contents; exactly one of data/from_file
-        from_file - Path to a tarball produced by `docker save` / `image_save`; exactly one of data/from_file
-    returns: list - One full inspect payload per loaded image
+    Args:
+        data: Tarball contents; exactly one of data/from_file
+        from_file: Path to a tarball produced by `docker save` / `image_save`; exactly one of data/from_file
+
+    Returns:
+        list: One full inspect payload per loaded image
     """
     if (data is None) == (from_file is None):
         raise ToolInputError("Pass exactly one of `data` (in-band tarball bytes) or `from_file` (a server-host path).")
@@ -373,31 +395,29 @@ def image_import(
     the other image-creating tools this stamps no provenance labels: the Engine's import call accepts
     no labels field, and `changes` does not cover `LABEL`.
 
-    args:
-        repository - Repository name to give the new image, e.g. "myorg/rootfs"; may include a tag
-            (`myorg/rootfs:v1`), and defaults to `:latest` when it does not. Omit to import untagged,
-            addressable only by the id in the returned progress (omit it entirely -- a blank string
-            is a ToolInputError, not a shorthand for untagged). A digest reference is refused by the
-            daemon. Required if `tag` is given
-        tag - Tag to apply, e.g. "v1". **Overrides** a tag already in `repository` rather than being
-            ignored, so passing `repository="myorg/rootfs:v1"` with `tag="v2"` yields `:v2`. Requires
-            `repository` (ToolInputError without it - the daemon would otherwise silently drop the tag
-            and import untagged). Blank is also a ToolInputError, not a shorthand for the default: the
-            daemon would substitute `latest` without saying so
-        from_file - Path to a rootfs tarball on the server host (`~` expanded), read by the server's
-            user; refused if it is not an existing regular file; exactly one source
-        data - Rootfs tarball contents in band (base64-encoded by MCP, so prefer `from_file` for
-            anything but small archives); exactly one source
-        from_url - URL the daemon fetches the tarball from; exactly one source
-        from_image - Name of an existing image to import from, like a Dockerfile `FROM`; exactly one
-            source
-        changes - Dockerfile instructions applied to the new image, e.g. ['CMD ["/bin/sh"]']; only
-            CMD, ENTRYPOINT, ENV, EXPOSE, ONBUILD, USER, VOLUME and WORKDIR are supported. Parsed
-            as real Dockerfile syntax, so shell form is wrapped exactly as a Dockerfile would wrap
-            it (`CMD /bin/sh` is stored as `["/bin/sh","-c","/bin/sh"]`) - use the exec form
-            `CMD ["/bin/sh"]` to store a bare argv
-    returns: str - The daemon's raw newline-delimited JSON progress records; the final record carries
-        the new image id as its `status`
+    Args:
+        repository: Repository name to give the new image, e.g. "myorg/rootfs"; may include a tag (`myorg/rootfs:v1`),
+            and defaults to `:latest` when it does not. Omit to import untagged, addressable only by the id in the
+            returned progress (omit it entirely -- a blank string is a ToolInputError, not a shorthand for untagged). A
+            digest reference is refused by the daemon. Required if `tag` is given
+        tag: Tag to apply, e.g. "v1". **Overrides** a tag already in `repository` rather than being ignored, so passing
+            `repository="myorg/rootfs:v1"` with `tag="v2"` yields `:v2`. Requires `repository` (ToolInputError without
+            it - the daemon would otherwise silently drop the tag and import untagged). Blank is also a ToolInputError,
+            not a shorthand for the default: the daemon would substitute `latest` without saying so
+        from_file: Path to a rootfs tarball on the server host (`~` expanded), read by the server's user; refused if it
+            is not an existing regular file; exactly one source
+        data: Rootfs tarball contents in band (base64-encoded by MCP, so prefer `from_file` for anything but small
+            archives); exactly one source
+        from_url: URL the daemon fetches the tarball from; exactly one source
+        from_image: Name of an existing image to import from, like a Dockerfile `FROM`; exactly one source
+        changes: Dockerfile instructions applied to the new image, e.g. ['CMD ["/bin/sh"]']; only CMD, ENTRYPOINT, ENV,
+            EXPOSE, ONBUILD, USER, VOLUME and WORKDIR are supported. Parsed as real Dockerfile syntax, so shell form is
+            wrapped exactly as a Dockerfile would wrap it (`CMD /bin/sh` is stored as `["/bin/sh","-c","/bin/sh"]`) -
+            use the exec form `CMD ["/bin/sh"]` to store a bare argv
+
+    Returns:
+        str: The daemon's raw newline-delimited JSON progress records; the final record carries the new image id as its
+            `status`
     """
     sources = {"from_file": from_file, "data": data, "from_url": from_url, "from_image": from_image}
     supplied = [name for name, value in sources.items() if value is not None]
@@ -470,13 +490,15 @@ def image_save(
     (default 32 MiB) because MCP base64-encodes them - a fallback for when no writable host path
     exists (e.g. a containerized server without a bind mount).
 
-    args:
-        id_or_name - Image name or id
-        dest_path - Destination path on the server host; omit to return the bytes in band
-        named - Whether to retain repository/tag names in the saved archive
-        overwrite - Replace dest_path if it already exists (default False)
-        max_bytes - In-band mode: abort with ToolInputError beyond this many bytes (default 32 MiB)
-    returns: bytes | dict - the tarball bytes (in band), or {"path": <resolved path>, "bytes_written": int}
+    Args:
+        id_or_name: Image name or id
+        dest_path: Destination path on the server host; omit to return the bytes in band
+        named: Whether to retain repository/tag names in the saved archive
+        overwrite: Replace dest_path if it already exists (default False)
+        max_bytes: In-band mode: abort with ToolInputError beyond this many bytes (default 32 MiB)
+
+    Returns:
+        bytes | dict: the tarball bytes (in band), or {"path": <resolved path>, "bytes_written": int}
     """
     image = _get_client(host).images.get(id_or_name)
     if dest_path is None:
@@ -496,12 +518,14 @@ def image_tag(
     the registry-qualified name, then `image_push`. `image_remove` on a tag merely untags while
     other names remain.
 
-    args:
-        id_or_name - The source image name or id
-        repository - Target repository name (registry-qualified for pushing, e.g. "ghcr.io/o/r")
-        tag - Optional tag for the new image (default "latest")
-        force - Force the tag
-    returns: bool - True if the image was tagged
+    Args:
+        id_or_name: The source image name or id
+        repository: Target repository name (registry-qualified for pushing, e.g. "ghcr.io/o/r")
+        tag: Optional tag for the new image (default "latest")
+        force: Force the tag
+
+    Returns:
+        bool: True if the image was tagged
     """
     image = _get_client(host).images.get(id_or_name)
     return image.tag(repository, tag=tag, force=force)
@@ -518,7 +542,10 @@ def image_history(id_or_name: str, host: str | None = None) -> list:
     COPY), `Size` (bytes added by that layer), and `Comment`. For full image metadata use
     `image_inspect` instead.
 
-    args: id_or_name - Image name (with optional tag/digest) or id
-    returns: list - Layer history entries, newest first
+    Args:
+        id_or_name: Image name (with optional tag/digest) or id
+
+    Returns:
+        list: Layer history entries, newest first
     """
     return _get_client(host).images.get(id_or_name).history()

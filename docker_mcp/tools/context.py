@@ -30,7 +30,8 @@ def context_list() -> list:
     Use `context_inspect` for one context's full config and `context_use` to switch.
     Raises RemoteFailureError if the CLI call fails.
 
-    returns: list - One dict per context with at least name, description, dockerEndpoint, and current
+    Returns:
+        list: One dict per context with at least name, description, dockerEndpoint, and current
     """
     result = run_docker(["context", "ls", "--format", "{{json .}}"])
     raise_on_cli_failure(result, "context ls")
@@ -45,9 +46,11 @@ def context_inspect(name: str) -> dict:
     Full endpoint/TLS detail for one context; `context_list` gives the one-line summary of all.
     Raises RemoteFailureError if the CLI call fails.
 
-    args: name - Context name (use the `Name` field from `context_list`)
-    returns: dict - The parsed `docker context inspect` entry (keys include "Name" and
-        "Endpoints" with the daemon URL)
+    Args:
+        name: Context name (use the `Name` field from `context_list`)
+
+    Returns:
+        dict: The parsed `docker context inspect` entry (keys include "Name" and "Endpoints" with the daemon URL)
     """
     result = run_docker(["context", "inspect", safe_positional(name, "context name")])
     raise_on_cli_failure(result, "context inspect")
@@ -79,16 +82,18 @@ def context_create(
     raise ToolInputError before running anything if `docker_host` or a TLS path contains a comma, which
     would inject extra keys (including `skip-tls-verify`) into the endpoint spec.
 
-    args:
-        name - Name for the new context (must not already exist)
-        docker_host - Daemon URL, e.g. "tcp://10.0.0.5:2376" or "unix:///var/run/docker.sock"; no commas
-        description - Optional human description shown in `context ls`
-        tls_ca - Path on the local host to the CA cert (for TLS daemons); no commas
-        tls_cert - Path on the local host to the client cert; no commas
-        tls_key - Path on the local host to the client key; no commas
-        skip_tls_verify - Disable TLS verification (insecure; for testing only). The only way to set
-            it: it cannot be smuggled through `docker_host`
-    returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
+    Args:
+        name: Name for the new context (must not already exist)
+        docker_host: Daemon URL, e.g. "tcp://10.0.0.5:2376" or "unix:///var/run/docker.sock"; no commas
+        description: Optional human description shown in `context ls`
+        tls_ca: Path on the local host to the CA cert (for TLS daemons); no commas
+        tls_cert: Path on the local host to the client cert; no commas
+        tls_key: Path on the local host to the client key; no commas
+        skip_tls_verify: Disable TLS verification (insecure; for testing only). The only way to set it: it cannot be
+            smuggled through `docker_host`
+
+    Returns:
+        dict: {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
     """
     # Every interpolated value is comma-checked: the `--docker` spec separates keys by comma, so a
     # comma in any of these would append a key the caller never passed - `skip-tls-verify=true`
@@ -118,8 +123,11 @@ def context_use(name: str) -> dict:
     DOCKER_HOST / DOCKER_CONTEXT. Create contexts with `context_create`; list them with
     `context_list`.
 
-    args: name - Existing context name to set as default
-    returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
+    Args:
+        name: Existing context name to set as default
+
+    Returns:
+        dict: {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
     """
     return run_docker(["context", "use", safe_positional(name, "context name")]).to_dict()
 
@@ -133,10 +141,12 @@ def context_remove(name: str, force: bool = False) -> dict:
     current context needs force=True (or `context_use` another first).
     Does not raise on a non-zero CLI exit - inspect `returncode`/`stderr` in the result.
 
-    args:
-        name - Context name to remove
-        force - Force removal even if the context is the current one
-    returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
+    Args:
+        name: Context name to remove
+        force: Force removal even if the context is the current one
+
+    Returns:
+        dict: {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
     """
     args = ["context", "rm", safe_positional(name, "context name")]
     if force:

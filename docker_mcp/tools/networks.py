@@ -33,18 +33,20 @@ def network_create(
     (find them later via `network_list(managed_only=True)`). A duplicate `name` is always rejected,
     so creating is not idempotent - check `network_list` first when the network may already exist.
 
-    args:
-        name - The name of the network
-        driver - Driver name (daemon default `bridge`; `overlay` for swarm scope)
-        options - Driver-specific options dict
-        ipam - IPAM configuration as a dict (engine shape: {"Driver", "Config": [{"Subnet", "Gateway", ...}]})
-        internal - Restrict external access
-        labels - Labels to set on the network
-        enable_ipv6 - Enable IPv6 networking
-        attachable - Allow standalone containers to attach (swarm overlay networks)
-        scope - Network scope; the driver picks a sensible default when omitted
-        ingress - Make this an ingress network for swarm routing-mesh
-    returns: dict - The created network's attrs (Id, Name, Driver, Scope, IPAM)
+    Args:
+        name: The name of the network
+        driver: Driver name (daemon default `bridge`; `overlay` for swarm scope)
+        options: Driver-specific options dict
+        ipam: IPAM configuration as a dict (engine shape: {"Driver", "Config": [{"Subnet", "Gateway", ...}]})
+        internal: Restrict external access
+        labels: Labels to set on the network
+        enable_ipv6: Enable IPv6 networking
+        attachable: Allow standalone containers to attach (swarm overlay networks)
+        scope: Network scope; the driver picks a sensible default when omitted
+        ingress: Make this an ingress network for swarm routing-mesh
+
+    Returns:
+        dict: The created network's attrs (Id, Name, Driver, Scope, IPAM)
     """
     # No `check_duplicate`: the Engine removed `CheckDuplicate` from NetworkCreateRequest at API
     # v1.44 and now rejects a duplicate name unconditionally (moby's postNetworkCreate errors on a
@@ -77,8 +79,11 @@ def network_inspect(id_or_name: str, host: str | None = None) -> dict:
     networks use `network_list` instead - its default (non-`greedy`) response omits the
     per-network `Containers` detail for speed.
 
-    args: id_or_name - The network id or name
-    returns: dict - Full network inspect attrs (equivalent to `docker network inspect`)
+    Args:
+        id_or_name: The network id or name
+
+    Returns:
+        dict: Full network inspect attrs (equivalent to `docker network inspect`)
     """
     return _get_client(host).networks.get(id_or_name).attrs
 
@@ -101,15 +106,17 @@ def network_list(
     individually (adds the connected-containers detail that `network_inspect` returns, at
     the cost of one extra daemon call per network) - leave it False for a fast summary list.
 
-    args:
-        names - Filter by exact network names
-        ids - Filter by exact network ids
-        filters - Additional server-side filters; see description for valid keys
-        greedy - Fetch extended per-network details (including connected containers)
-        managed_only - Only return networks created by this MCP server (filters on the
-                             docker-mcp-server.managed label); combines with any `filters` given
-    returns: list - One dict ({"Id", "Name", "Driver", "Scope", ...}) per network: summary attrs
-        by default, full inspect attrs (adding "Containers") when greedy=True
+    Args:
+        names: Filter by exact network names
+        ids: Filter by exact network ids
+        filters: Additional server-side filters; see description for valid keys
+        greedy: Fetch extended per-network details (including connected containers)
+        managed_only: Only return networks created by this MCP server (filters on the docker-mcp-server.managed label);
+            combines with any `filters` given
+
+    Returns:
+        list: One dict ({"Id", "Name", "Driver", "Scope", ...}) per network: summary attrs by default, full inspect
+            attrs (adding "Containers") when greedy=True
     """
     if managed_only:
         filters = managed_filter(filters)
@@ -127,8 +134,11 @@ def network_prune(filters: dict | None = None, host: str | None = None) -> dict:
     duration - removes networks created before that point), `label` (key or key=value). Use
     `network_remove` to delete one specific network instead.
 
-    args: filters - Narrow which networks to remove; omit to remove all unused custom networks
-    returns: dict - {"NetworksDeleted": [...]}
+    Args:
+        filters: Narrow which networks to remove; omit to remove all unused custom networks
+
+    Returns:
+        dict: {"NetworksDeleted": [...]}
     """
     return _get_client(host).networks.prune(filters=filters)
 
@@ -143,8 +153,11 @@ def network_remove(id_or_name: str, host: str | None = None) -> bool:
     and return an error regardless of attachment state. For bulk cleanup of every unused
     custom network at once use `network_prune` instead.
 
-    args: id_or_name - The network id or name
-    returns: bool - True after removal
+    Args:
+        id_or_name: The network id or name
+
+    Returns:
+        bool: True after removal
     """
     _get_client(host).networks.get(id_or_name).remove()
     return True
@@ -172,16 +185,18 @@ def network_connect(
     `links` is a legacy feature (deprecated; prefer DNS aliases). Use `network_disconnect`
     to undo.
 
-    args:
-        id_or_name - Network id or name to connect the container to
-        container - Container id or name to attach
-        aliases - Additional DNS names for this container within the network
-        links - Legacy container links (deprecated)
-        ipv4_address - Static IPv4 address to assign on this network
-        ipv6_address - Static IPv6 address to assign on this network
-        link_local_ips - Link-local IP addresses to assign
-        driver_opt - Driver-specific endpoint options
-    returns: bool - True after the container is connected
+    Args:
+        id_or_name: Network id or name to connect the container to
+        container: Container id or name to attach
+        aliases: Additional DNS names for this container within the network
+        links: Legacy container links (deprecated)
+        ipv4_address: Static IPv4 address to assign on this network
+        ipv6_address: Static IPv6 address to assign on this network
+        link_local_ips: Link-local IP addresses to assign
+        driver_opt: Driver-specific endpoint options
+
+    Returns:
+        bool: True after the container is connected
     """
     network = _get_client(host).networks.get(id_or_name)
     network.connect(
@@ -205,11 +220,13 @@ def network_disconnect(id_or_name: str, container: str, force: bool = False, hos
     (the reverse of `network_connect`). A network with connected containers cannot be deleted, so
     disconnect them before `network_remove`.
 
-    args:
-        id_or_name - The network id or name
-        container - The container id or name to disconnect
-        force - Force the disconnect; use to clear a stale endpoint (e.g. from a deleted container)
-    returns: bool - True after the container is disconnected
+    Args:
+        id_or_name: The network id or name
+        container: The container id or name to disconnect
+        force: Force the disconnect; use to clear a stale endpoint (e.g. from a deleted container)
+
+    Returns:
+        bool: True after the container is disconnected
     """
     network = _get_client(host).networks.get(id_or_name)
     network.disconnect(container, force=force)

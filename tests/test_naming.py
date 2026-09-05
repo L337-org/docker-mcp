@@ -126,13 +126,31 @@ _PARAM_EXCEPTIONS = {
     ("buildx_bake", "files"),  # bake files are HCL/compose *bake* definitions, not compose files
 }
 
-# Matches both the block form ("    param - desc") and the one-line form ("args: param - desc").
-_ARG_LINE = re.compile(r"^\s*(?:args:\s*)?(?P<param>\w+) - (?P<desc>.+)$")
+# Google style: an entry under `Args:` is "    param: desc" or "    param (type): desc".
+_ARG_LINE = re.compile(r"^\s+(?P<param>\w+)(?:\s*\([^)]*\))?: (?P<desc>.+)$")
+# Any other section header ends the args block. `Returns:` and `Raises:` entries have the same
+# shape as a parameter - "dict: ..." and "ToolInputError: ..." both match _ARG_LINE - so a scan
+# that does not stop here reports a return type as a documented parameter.
+_SECTION = re.compile(r"^\s*(Args|Returns|Raises|Yields|Note|Notes|Example|Examples):\s*$")
 
 
 def _documented_params(func):
-    """Parse `param - description` lines out of a tool docstring's args block."""
+    """Yield the (param, description) pairs from a tool docstring's `Args:` section.
+
+    Args:
+        func: the tool function whose docstring to read.
+
+    Yields:
+        tuple: one (parameter name, description) per documented parameter.
+    """
+    in_args = False
     for line in (func.__doc__ or "").splitlines():
+        header = _SECTION.match(line)
+        if header:
+            in_args = header.group(1) == "Args"
+            continue
+        if not in_args:
+            continue
         match = _ARG_LINE.match(line)
         if match:
             yield match.group("param"), match.group("desc")

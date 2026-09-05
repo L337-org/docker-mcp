@@ -34,20 +34,22 @@ def swarm_init(
     require the unlock key (`swarm_unlock_key`) on every manager restart - store that key
     securely immediately, since it is only shown once autolock is enabled.
 
-    args:
-        advertise_addr - Externally reachable address advertised to other nodes
-        listen_addr - Listen address used for inter-manager communication
-        force_new_cluster - Force a new single-node cluster from this node's current state
-                             (disaster recovery when a majority of managers is lost)
-        default_addr_pool - IP address pools for swarm overlay networks
-        subnet_size - Subnet size for the IP pool
-        data_path_addr - Address to use for data path traffic
-        data_path_port - Port number for data path traffic
-        name - Name of the swarm
-        labels - Labels to set on the swarm
-        autolock_managers - Require the unlock key after every manager restart
-        log_driver - Default log driver configuration
-    returns: str - The node id of the newly created swarm manager
+    Args:
+        advertise_addr: Externally reachable address advertised to other nodes
+        listen_addr: Listen address used for inter-manager communication
+        force_new_cluster: Force a new single-node cluster from this node's current state (disaster recovery when a
+            majority of managers is lost)
+        default_addr_pool: IP address pools for swarm overlay networks
+        subnet_size: Subnet size for the IP pool
+        data_path_addr: Address to use for data path traffic
+        data_path_port: Port number for data path traffic
+        name: Name of the swarm
+        labels: Labels to set on the swarm
+        autolock_managers: Require the unlock key after every manager restart
+        log_driver: Default log driver configuration
+
+    Returns:
+        str: The node id of the newly created swarm manager
     """
     kwargs: dict = {
         "listen_addr": listen_addr,
@@ -86,14 +88,15 @@ def swarm_join(
     (otherwise it is auto-detected from the interface used to reach `remote_addrs`); it must
     be reachable by every other node in the swarm.
 
-    args:
-        remote_addrs - Address(es) of existing swarm managers to connect to
-        join_token - The worker or manager join token (from `swarm_join_tokens`) - determines
-                     the role this node joins as
-        listen_addr - Listen address for inter-manager communication
-        advertise_addr - Externally reachable address advertised to other nodes
-        data_path_addr - Address to use for data path traffic
-    returns: bool - True after the engine joins the swarm
+    Args:
+        remote_addrs: Address(es) of existing swarm managers to connect to
+        join_token: The worker or manager join token (from `swarm_join_tokens`) - determines the role this node joins as
+        listen_addr: Listen address for inter-manager communication
+        advertise_addr: Externally reachable address advertised to other nodes
+        data_path_addr: Address to use for data path traffic
+
+    Returns:
+        bool: True after the engine joins the swarm
     """
     kwargs: dict = {
         "remote_addrs": remote_addrs,
@@ -113,8 +116,11 @@ def swarm_leave(force: bool = False, host: str | None = None) -> bool:
     without force=True, since leaving can break raft quorum. The departed node lingers as "down"
     in `node_list` until a manager runs `node_remove`.
 
-    args: force - Force leave even if the node is a manager
-    returns: bool - True after leaving the swarm
+    Args:
+        force: Force leave even if the node is a manager
+
+    Returns:
+        bool: True after leaving the swarm
     """
     return _get_client(host).swarm.leave(force=force)
 
@@ -142,16 +148,17 @@ def swarm_update(
     first and resubmits it, merging `updates` over it - omitting `updates` therefore changes
     nothing but the requested rotation.
 
-    args:
-        rotate_worker_token - Issue a new worker join token, invalidating the current one
-        rotate_manager_token - Issue a new manager join token, invalidating the current one
-        rotate_manager_unlock_key - Issue a new autolock unlock key for manager restart
-        updates - Engine SwarmSpec fields to change, merged over the current spec one top-level
-            key at a time, so a named block is replaced whole rather than field by field: keys are
-            "Name", "Labels", "Orchestration", "Raft", "Dispatcher", "CAConfig",
-            "EncryptionConfig" and "TaskDefaults", e.g. {"EncryptionConfig": {"AutoLockManagers":
-            True}} to turn manager autolock on. Read the current blocks from `swarm_inspect`
-    returns: bool - True after the update completes
+    Args:
+        rotate_worker_token: Issue a new worker join token, invalidating the current one
+        rotate_manager_token: Issue a new manager join token, invalidating the current one
+        rotate_manager_unlock_key: Issue a new autolock unlock key for manager restart
+        updates: Engine SwarmSpec fields to change, merged over the current spec one top-level key at a time, so a named
+            block is replaced whole rather than field by field: keys are "Name", "Labels", "Orchestration", "Raft",
+            "Dispatcher", "CAConfig", "EncryptionConfig" and "TaskDefaults", e.g. {"EncryptionConfig":
+            {"AutoLockManagers": True}} to turn manager autolock on. Read the current blocks from `swarm_inspect`
+
+    Returns:
+        bool: True after the update completes
     """
     client = _get_client(host)
     swarm = client.swarm
@@ -198,7 +205,8 @@ def swarm_inspect(host: str | None = None) -> dict:
     Works on a manager node only. Cluster-level configuration - for per-node state use
     `node_list`; for the tokens new nodes need, `swarm_join_tokens`.
 
-    returns: dict - The swarm's attrs, as returned by the daemon's swarm inspect endpoint
+    Returns:
+        dict: The swarm's attrs, as returned by the daemon's swarm inspect endpoint
     """
     swarm = _get_client(host).swarm
     swarm.reload()
@@ -218,8 +226,11 @@ def swarm_unlock(key: str, host: str | None = None) -> bool:
     own key while locked; other unlocked managers in the swarm can still serve the key.
     Once unlocked the manager resumes automatically.
 
-    args: key - The swarm unlock key (from `swarm_unlock_key`)
-    returns: bool - True after the swarm is unlocked
+    Args:
+        key: The swarm unlock key (from `swarm_unlock_key`)
+
+    Returns:
+        bool: True after the swarm is unlocked
     """
     return _get_client(host).swarm.unlock(key)
 
@@ -235,7 +246,8 @@ def swarm_unlock_key(host: str | None = None) -> dict:
     this one. Feed the result's key to `swarm_unlock` to unlock a manager after restart.
     Treat the key as a sensitive credential.
 
-    returns: dict - {"UnlockKey": <the current unlock key>}
+    Returns:
+        dict: {"UnlockKey": <the current unlock key>}
     """
     return _get_client(host).swarm.get_unlock_key()
 
@@ -256,7 +268,8 @@ def swarm_join_tokens(host: str | None = None) -> dict:
     holding the manager token can join as a manager); treat the result as sensitive and avoid logging
     it. Reads `swarm.attrs["JoinTokens"]` after a reload, so it always reflects the current tokens.
 
-    returns: dict - {"Worker": <worker join token>, "Manager": <manager join token>}
+    Returns:
+        dict: {"Worker": <worker join token>, "Manager": <manager join token>}
     """
     swarm = _get_client(host).swarm
     swarm.reload()
@@ -289,11 +302,13 @@ def swarm_task_list(filters: dict | None = None, host: str | None = None) -> lis
     computed rollout summary. Read-only. Requires a swarm manager: on any other node the daemon
     refuses, and its refusal is what comes back.
 
-    args:
-        filters - Filter dict; keys: id, name, service, node, label, desired-state
-            (running|shutdown|accepted); omit for every task in the cluster
-    returns: list - One full task document per task (ID, ServiceID, NodeID, Slot, Spec, Status,
-        DesiredState), the same shape `service_ps` returns
+    Args:
+        filters: Filter dict; keys: id, name, service, node, label, desired-state (running|shutdown|accepted); omit for
+            every task in the cluster
+
+    Returns:
+        list: One full task document per task (ID, ServiceID, NodeID, Slot, Spec, Status, DesiredState), the same shape
+            `service_ps` returns
     """
     return _get_client(host).api.tasks(filters=filters)
 
@@ -312,13 +327,14 @@ def swarm_task_inspect(id_or_name: str, host: str | None = None) -> dict:
     Requires a swarm manager; reports the daemon's own error if the task does not exist, if a
     prefix matches more than one task, or if this node is not a manager.
 
-    args:
-        id_or_name - The task id, an unambiguous id prefix, or the task's full name -- which is the
-            container-name form `<service>.<slot>.<taskid>` (`<service>.<nodeid>.<taskid>` for a
-            global service), NOT the shorter `<service>.<slot>` that `docker service ps` prints in
-            its NAME column, which does not resolve. The daemon tries full id, then full name, then
-            prefix, and rejects an ambiguous prefix rather than picking a match
-    returns: dict - Full task inspect payload, as `docker inspect --type task`. Carries no name
-        field of its own; compose one from `ServiceID`/`Slot` if you need it
+    Args:
+        id_or_name: The task id, an unambiguous id prefix, or the task's full name -- which is the container-name form
+            `<service>.<slot>.<taskid>` (`<service>.<nodeid>.<taskid>` for a global service), NOT the shorter
+            `<service>.<slot>` that `docker service ps` prints in its NAME column, which does not resolve. The daemon
+            tries full id, then full name, then prefix, and rejects an ambiguous prefix rather than picking a match
+
+    Returns:
+        dict: Full task inspect payload, as `docker inspect --type task`. Carries no name field of its own; compose one
+            from `ServiceID`/`Slot` if you need it
     """
     return _get_client(host).api.inspect_task(id_or_name)

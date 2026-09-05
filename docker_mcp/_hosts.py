@@ -43,8 +43,11 @@ def is_ssh_url(url: str | None) -> bool:
     hold a `Host` and some only a resolved DOCKER_HOST string, which is why this takes the string and
     `Host.is_ssh` wraps it rather than the other way round.
 
-    args: url - a daemon URL, or None for "the platform default" (never ssh)
-    returns: bool - True for an ssh:// URL
+    Args:
+        url: a daemon URL, or None for "the platform default" (never ssh)
+
+    Returns:
+        bool: True for an ssh:// URL
     """
     return bool(url) and url.startswith("ssh://")
 

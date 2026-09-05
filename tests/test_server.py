@@ -1689,17 +1689,27 @@ def test_the_translation_guard_is_reading_a_full_surface():
 
 
 def test_the_docstring_exemption_names_the_decorators_in_use() -> None:
-    """The docstring rules must keep skipping every advertised registration.
+    """The docstring rules must keep skipping the registrations that advertise a schema.
 
-    A tool, prompt or resource docstring is the advertised interface a client loads and a model
-    reads, so CS.6.14 hands it to the AI-consumer rules rather than to the docstring convention:
-    it wants what the schema cannot already carry, and an `Args:` block duplicates what the
-    schema has - paid for on every session that loads the surface.
+    CS.6.14 hands an advertised docstring to the AI-consumer rules rather than to the docstring
+    convention, on the grounds that an `Args:` block duplicates what the schema already carries
+    and is paid for on every session that loads the surface. That argument holds only where
+    there is a schema to duplicate:
 
-    pyproject.toml exempts them by fully-qualified decorator path, and a path goes stale
-    silently. Move or rename `tool` and 199 advertised descriptions fall under D417 with nothing
-    saying so. Asserts both directions: every decorator actually in use is named, and the count
-    is floored so a scan finding nothing cannot pass.
+    - a **tool** advertises its docstring as the description *and* an `inputSchema` carrying
+      every parameter's type, so an `Args:` entry naming a type duplicates the schema. Exempt.
+    - a **prompt** takes its advertised description from `@prompt(description=...)`, so its
+      docstring reaches no client at all and there is nothing to trade off. Not exempt.
+    - a **resource** advertises `uri_template`, `name`, `description` and `mime_type`, and
+      nothing about its parameters, so there is no duplication to avoid. Not exempt.
+
+    `prompt` and `resource` are therefore asserted *absent* below. Each was exempt once on the
+    assumption that "advertised" was the test; the test is actually whether a schema would be
+    duplicated, and only a tool has one.
+
+    pyproject.toml exempts by fully-qualified decorator path, and a path goes stale silently:
+    move or rename `tool` and every advertised description falls under D417 with nothing saying
+    so. Asserts both directions, plus a floor so a scan finding nothing cannot pass.
     """
     import ast
     import tomllib
@@ -1725,11 +1735,27 @@ def test_the_docstring_exemption_names_the_decorators_in_use() -> None:
                     used.add(name)
 
     assert len(used) >= 3, f"only found {sorted(used)} in use, so this check is not seeing the surface"
-    missing = sorted(used - bare)
+    schema_carrying = {"tool"} & used
+    missing = sorted(schema_carrying - bare)
     assert not missing, (
         f"pyproject.toml's ignore-decorators does not cover {missing}, so those advertised "
         f"docstrings would fall under the docstring convention. It names {sorted(bare)}."
     )
+    for kind, why in (
+        (
+            "prompt",
+            "a prompt's advertised description comes from `@prompt(description=...)`, so its "
+            "docstring reaches no client",
+        ),
+        (
+            "resource",
+            "a resource advertises no schema for its parameters, so there is nothing for a docstring to duplicate",
+        ),
+    ):
+        assert kind not in bare, (
+            f"ignore-decorators names `{kind}`, but {why} - the exemption buys nothing and its "
+            f"docstrings follow the ordinary convention."
+        )
 
     # And the qualified paths must actually resolve, or ruff silently matches nothing.
     import importlib

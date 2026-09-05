@@ -69,12 +69,14 @@ def _run_scout(
     """Run `docker scout <args...>`, locally or - with no usable local plugin - on the ssh:// host itself.
 
     Args:
-        args - the scout subcommand argv, without the leading `scout`
-        timeout - seconds allowed for the call (also bounds the SSH handshake on the remote path)
-        host - configured host label, or None for the default host
-        local_path_args - `{param: value}` pairs that may name a local path; each is refused on the
+        args: the scout subcommand argv, without the leading `scout`
+        timeout: seconds allowed for the call (also bounds the SSH handshake on the remote path)
+        host: configured host label, or None for the default host
+        local_path_args: `{param: value}` pairs that may name a local path; each is refused on the
                           remote path if it exists here (see `_refuse_local_path_args`)
-    returns: CliResult - the same shape from either backend
+
+    Returns:
+        CliResult: the same shape from either backend
     """
     if should_remote_exec(host, plugin="scout"):
         _refuse_local_path_args(local_path_args or {})
@@ -123,17 +125,18 @@ def scout_cves(
     Does not raise on a non-zero CLI exit (a missing scout plugin still raises) - inspect
     `raw.stderr`.
 
-    args:
-        image - Image reference (a tag or a digest)
-        only_fixed - Only report CVEs with a fixed version available
-        only_severity - Filter to these severities (omit for all)
-        ignore_base - Exclude CVEs introduced by the base image
-        format - Parsed into `result` as JSON: "sarif" (default, the standard vulnerability-report
-            schema), "spdx", "gitlab", "sbom". Returned verbatim as text: "packages" (Scout's own
-            default, grouped by package), "markdown". There is no plain "json" for this subcommand
-        platform - Platform of the image to analyze, e.g. "linux/amd64"
-    returns: dict - {"format": <format>, "result": <parsed-json-or-raw-text>,
-                     "raw": <CliResult dict>}
+    Args:
+        image: Image reference (a tag or a digest)
+        only_fixed: Only report CVEs with a fixed version available
+        only_severity: Filter to these severities (omit for all)
+        ignore_base: Exclude CVEs introduced by the base image
+        format: Parsed into `result` as JSON: "sarif" (default, the standard vulnerability-report schema), "spdx",
+            "gitlab", "sbom". Returned verbatim as text: "packages" (Scout's own default, grouped by package),
+            "markdown". There is no plain "json" for this subcommand
+        platform: Platform of the image to analyze, e.g. "linux/amd64"
+
+    Returns:
+        dict: {"format": <format>, "result": <parsed-json-or-raw-text>, "raw": <CliResult dict>}
     """
     args: list[str] = ["cves", "--format", format]
     if only_fixed:
@@ -162,10 +165,12 @@ def scout_quickview(image: str, platform: str | None = None, host: str | None = 
     Does not raise on a non-zero CLI exit (a missing scout plugin still raises) - inspect
     `raw.stderr`.
 
-    args:
-        image - Image reference
-        platform - Platform of the image to analyze, e.g. "linux/amd64"
-    returns: dict - {"result": <rendered text>, "raw": <CliResult dict>}
+    Args:
+        image: Image reference
+        platform: Platform of the image to analyze, e.g. "linux/amd64"
+
+    Returns:
+        dict: {"result": <rendered text>, "raw": <CliResult dict>}
     """
     args: list[str] = ["quickview"]
     if platform is not None:
@@ -196,13 +201,15 @@ def scout_recommendations(
     Does not raise on a non-zero CLI exit (a missing scout plugin still raises) - inspect
     `raw.stderr`.
 
-    args:
-        image - Image reference
-        only_refresh - Only show "refresh" recommendations (same major/minor)
-        only_update - Only show "update" recommendations (newer minor/major)
-        tag - Restrict to suggestions matching this tag pattern
-        platform - Platform of the image to analyze
-    returns: dict - {"result": <rendered text>, "raw": <CliResult dict>}
+    Args:
+        image: Image reference
+        only_refresh: Only show "refresh" recommendations (same major/minor)
+        only_update: Only show "update" recommendations (newer minor/major)
+        tag: Restrict to suggestions matching this tag pattern
+        platform: Platform of the image to analyze
+
+    Returns:
+        dict: {"result": <rendered text>, "raw": <CliResult dict>}
     """
     args: list[str] = ["recommendations"]
     if only_refresh:
@@ -241,18 +248,19 @@ def scout_compare(
     on a remote `ssh://` host (no local scout plugin): the file is not staged, so it would resolve
     against that host's filesystem instead.
 
-    args:
-        image - The new / candidate image reference
-        to - Compare against this image reference, directory, or archive (a local directory/archive
-                      only when the CLI runs on this host - see above)
-        to_env - Compare against an image associated with this Scout environment
-        to_latest - Compare against the latest scan of `image`
-        only_severity - Filter to these severities (omit for all)
-        ignore_unchanged - Exclude unchanged packages from the diff
-        format - Output format; only "json" (the default) is parsed into `result`
-        platform - Platform of the image to analyze
-    returns: dict - {"format": <format>, "result": <parsed-json-or-raw-text>,
-                     "raw": <CliResult dict>}
+    Args:
+        image: The new / candidate image reference
+        to: Compare against this image reference, directory, or archive (a local directory/archive only when the CLI
+            runs on this host - see above)
+        to_env: Compare against an image associated with this Scout environment
+        to_latest: Compare against the latest scan of `image`
+        only_severity: Filter to these severities (omit for all)
+        ignore_unchanged: Exclude unchanged packages from the diff
+        format: Output format; only "json" (the default) is parsed into `result`
+        platform: Platform of the image to analyze
+
+    Returns:
+        dict: {"format": <format>, "result": <parsed-json-or-raw-text>, "raw": <CliResult dict>}
     """
     targets = [bool(to), bool(to_env), bool(to_latest)]
     if sum(targets) != 1:
@@ -292,14 +300,15 @@ def scout_sbom(
     Does not raise on a non-zero CLI exit (a missing scout plugin still raises) - inspect
     `raw.stderr`.
 
-    args:
-        image - Image reference
-        format - "spdx" (default, SPDX JSON), "cyclonedx" (CycloneDX JSON), "json" (Scout's native
-                      JSON), or "list" (plain-text package list)
-        platform - Platform of the image to analyze
-    returns: dict - {"format", "result", "raw": <CliResult dict>}. `result` is a parsed dict when
-                    `format` is "spdx"/"cyclonedx"/"json" and stdout parses cleanly; for "list" or a
-                    parse failure it's the raw text.
+    Args:
+        image: Image reference
+        format: "spdx" (default, SPDX JSON), "cyclonedx" (CycloneDX JSON), "json" (Scout's native JSON), or "list"
+            (plain-text package list)
+        platform: Platform of the image to analyze
+
+    Returns:
+        dict: {"format", "result", "raw": <CliResult dict>}. `result` is a parsed dict when `format` is
+            "spdx"/"cyclonedx"/"json" and stdout parses cleanly; for "list" or a parse failure it's the raw text.
     """
     args: list[str] = ["sbom", "--format", format]
     if platform is not None:

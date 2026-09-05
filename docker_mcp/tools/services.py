@@ -93,11 +93,13 @@ def service_create(
     docker-py's `ServiceCollection.create` accepts, call `docs_lookup(section="services")` rather
     than guessing a key name.
 
-    args:
-        image - Image to run service tasks from (e.g. "nginx:alpine")
-        command - Override the image's default command; string or list of strings
-        extra_kwargs - Additional docker-py ServiceCollection.create keyword arguments
-    returns: dict - The created service's full document ({"ID", "Version", "Spec", ...})
+    Args:
+        image: Image to run service tasks from (e.g. "nginx:alpine")
+        command: Override the image's default command; string or list of strings
+        extra_kwargs: Additional docker-py ServiceCollection.create keyword arguments
+
+    Returns:
+        dict: The created service's full document ({"ID", "Version", "Spec", ...})
     """
     kwargs = dict(extra_kwargs or {})
     # Stamp the service-level `labels`; leave any caller `container_labels` untouched.
@@ -116,11 +118,13 @@ def service_inspect(id_or_name: str, insert_defaults: bool | None = None, host: 
     actually-running tasks use `service_ps`, or the `service-tasks://{id_or_name}` resource for a
     computed rollout summary.
 
-    args:
-        id_or_name - The service id or name
-        insert_defaults - Merge default values into the output
-    returns: dict - The full service document ({"ID", "Version", "Spec", "Endpoint", ...};
-        "UpdateStatus" during a rolling update)
+    Args:
+        id_or_name: The service id or name
+        insert_defaults: Merge default values into the output
+
+    Returns:
+        dict: The full service document ({"ID", "Version", "Spec", "Endpoint", ...}; "UpdateStatus" during a rolling
+            update)
     """
     return _get_client(host).services.get(id_or_name, insert_defaults=insert_defaults).attrs
 
@@ -133,11 +137,13 @@ def service_list(filters: dict | None = None, managed_only: bool = False, host: 
     Must run against a swarm manager. One entry per service (the desired state); `service_ps`
     lists a service's tasks, and `stack_services` groups services by stack.
 
-    args:
-        filters - Filter by attributes (id, name, label, mode)
-        managed_only - Only return services created by this MCP server (filters on the
-                             docker-mcp-server.managed label); combines with any `filters` given
-    returns: list - One full service document ({"ID", "Spec", ...}) per service
+    Args:
+        filters: Filter by attributes (id, name, label, mode)
+        managed_only: Only return services created by this MCP server (filters on the docker-mcp-server.managed label);
+            combines with any `filters` given
+
+    Returns:
+        list: One full service document ({"ID", "Spec", ...}) per service
     """
     if managed_only:
         filters = managed_filter(filters)
@@ -154,11 +160,13 @@ def service_update(id_or_name: str, updates: dict | None = None, force: bool = F
     the service's tasks redeploy with an unchanged spec - e.g. to reschedule after a node change or
     re-pull a mutable tag).
 
-    args:
-        id_or_name - The service id or name
-        updates - Fields to update on the service; exactly one of updates/force
-        force - Redeploy the service without changing its spec; exactly one of updates/force
-    returns: bool - True after the update
+    Args:
+        id_or_name: The service id or name
+        updates: Fields to update on the service; exactly one of updates/force
+        force: Redeploy the service without changing its spec; exactly one of updates/force
+
+    Returns:
+        bool: True after the update
     """
     if (updates is None) == (not force):
         raise ToolInputError("Pass exactly one of `updates` (fields to change) or `force=True` (redeploy unchanged).")
@@ -178,8 +186,11 @@ def service_remove(id_or_name: str, host: str | None = None) -> bool:
     Requires a swarm manager. Deletes the service definition and shuts down its tasks - no
     confirmation, no undo. To stop work but keep the definition, `service_scale` to 0 replicas.
 
-    args: id_or_name - The service id or name
-    returns: bool - True after the service is removed
+    Args:
+        id_or_name: The service id or name
+
+    Returns:
+        bool: True after the service is removed
     """
     _get_client(host).services.get(id_or_name).remove()
     return True
@@ -196,10 +207,12 @@ def service_ps(id_or_name: str, filters: dict | None = None, host: str | None = 
     and the `service-tasks://{id_or_name}` resource for a computed rollout summary. Requires a
     swarm manager.
 
-    args:
-        id_or_name - The service id or name
-        filters - Filter dict; keys: id, name, node, label, desired-state (running|shutdown|accepted)
-    returns: list - Task dicts (ID, Slot, NodeID, Status, DesiredState, Spec)
+    Args:
+        id_or_name: The service id or name
+        filters: Filter dict; keys: id, name, node, label, desired-state (running|shutdown|accepted)
+
+    Returns:
+        list: Task dicts (ID, Slot, NodeID, Status, DesiredState, Spec)
     """
     service = _get_client(host).services.get(id_or_name)
     return service.tasks(filters=filters)
@@ -228,16 +241,18 @@ def service_logs(
     across all the service's tasks - `container_logs` reads a single container, and the
     `service-logs://{id_or_name}` resource is the resource-flavored equivalent of this tool.
 
-    args:
-        id_or_name - The service id or name
-        details - Show extra details
-        stdout - Include stdout
-        stderr - Include stderr
-        since - Show logs since this Unix timestamp
-        timestamps - Include timestamps
-        tail - Number of lines from the end (default 200), or the literal "all" for everything
-        max_bytes - Abort with ToolInputError if the buffered logs exceed this many bytes (default 32 MiB)
-    returns: str - Decoded log output
+    Args:
+        id_or_name: The service id or name
+        details: Show extra details
+        stdout: Include stdout
+        stderr: Include stderr
+        since: Show logs since this Unix timestamp
+        timestamps: Include timestamps
+        tail: Number of lines from the end (default 200), or the literal "all" for everything
+        max_bytes: Abort with ToolInputError if the buffered logs exceed this many bytes (default 32 MiB)
+
+    Returns:
+        str: Decoded log output
     """
     service = _get_client(host).services.get(id_or_name)
     output = service.logs(
@@ -266,10 +281,12 @@ def service_scale(id_or_name: str, replicas: int, host: str | None = None) -> bo
     `service_inspect`. For any other spec change (image, env, resources) use
     `service_update` instead.
 
-    args:
-        id_or_name - The service id or name
-        replicas - The desired number of running task replicas
-    returns: bool - True once the scale request is accepted
+    Args:
+        id_or_name: The service id or name
+        replicas: The desired number of running task replicas
+
+    Returns:
+        bool: True once the scale request is accepted
     """
     return _get_client(host).services.get(id_or_name).scale(replicas)
 
@@ -285,8 +302,11 @@ def service_rollback(id_or_name: str, host: str | None = None) -> dict:
     so this reads the current version and previous spec via the low-level APIClient and submits them
     with the low-level `update_service` API call.
 
-    args: id_or_name - The service id or name
-    returns: dict - The daemon response (a dict with a "Warnings" key)
+    Args:
+        id_or_name: The service id or name
+
+    Returns:
+        dict: The daemon response (a dict with a "Warnings" key)
     """
     api = _get_client(host).api
     info = api.inspect_service(id_or_name)
@@ -362,16 +382,18 @@ def service_wait(
     `UpdateStatus` at all), returns promptly with `met=false` - there's nothing to converge to, same
     as `container_wait`'s no-healthcheck case.
 
-    args:
-        id_or_name - The service id or name
-        until - Condition to wait for: "running" (default) or "update-converged"
-        replicas - "running" mode only: override the desired replica count (e.g. right after a
-                   same-turn `service_scale` call, before polling reflects the new target)
-        timeout_seconds - Max seconds to wait before returning with timed_out=true (default 600)
-        poll_interval - Seconds between re-checks (default 2, > 0); capped by the time left so a
-                        large value can't push the total wait past the timeout
-    returns: dict - {"service", "until", "met", "timed_out", "running_tasks", "desired_tasks",
-                     "failed_tasks", "update_state", "waited_seconds"}
+    Args:
+        id_or_name: The service id or name
+        until: Condition to wait for: "running" (default) or "update-converged"
+        replicas: "running" mode only: override the desired replica count (e.g. right after a same-turn `service_scale`
+            call, before polling reflects the new target)
+        timeout_seconds: Max seconds to wait before returning with timed_out=true (default 600)
+        poll_interval: Seconds between re-checks (default 2, > 0); capped by the time left so a large value can't push
+            the total wait past the timeout
+
+    Returns:
+        dict: {"service", "until", "met", "timed_out", "running_tasks", "desired_tasks", "failed_tasks", "update_state",
+            "waited_seconds"}
     """
     if timeout_seconds < 0:
         raise ToolInputError(f"timeout_seconds must be >= 0, got {timeout_seconds}.")

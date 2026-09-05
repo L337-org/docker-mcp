@@ -427,22 +427,34 @@ schema cannot already carry; an `Args:` block duplicates what the annotation alr
 `tests/test_server.py::test_the_docstring_exemption_names_the_decorators_in_use` fails if a
 rename or a move ever makes that exemption stop matching.
 
+**Only tools are exempt, and that is deliberate.** The exemption exists because an `Args:` entry
+naming a type duplicates the schema, so it holds only where a docstring is advertised *and* a
+schema carries the same facts. A tool is the only one: its docstring is the description and its
+`inputSchema` carries every parameter's type. A prompt takes its description from
+`@prompt(description=...)`, so its docstring reaches no client at all. A resource advertises
+nothing about its parameters. Both follow the ordinary convention, and
+`tests/test_server.py::test_the_docstring_exemption_names_the_decorators_in_use` fails if either
+is added back to the list.
+
 **`ignore-decorators` matches decorator syntax only, so it misses a registration made by
 calling.** `docker_mcp/tools/resources.py` registers several resources as `resource(...)(fn)`,
-because each takes two URIs or sits behind a multi-host branch, and those docstrings are
-advertised while being invisible to the exemption - and to the test above, which cannot see a
-registration that uses no decorator. The four host-qualified templates carry `# noqa: D405` for
-that reason, and the marker goes **after the closing quotes**: anywhere inside the docstring and
-it becomes part of the description a client reads. Before trusting an exemption here, check the
-advertised surface directly - `list_resource_templates()` is a separate call from
+because each takes two URIs or sits behind a multi-host branch. That is invisible to the
+exemption and to the test above, which cannot see a registration using no decorator - so if a
+tool or prompt is ever registered that way, it will silently lose its exemption. Before trusting
+one, check the advertised surface directly: `list_resource_templates()` is a separate call from
 `list_resources()`, and a check that omits it reports identical while a whole category moves.
 
 **Everything else is Google style** - `Args:` and `Returns:`, capitalised - which is `CS.6.12`'s
 format for Python, enforced by ruff's pydocstyle rules rather than by review.
 
-Most back-end docstrings are not there yet, and the `ignore` list in `pyproject.toml` holds
-exactly the rules that still fail. An entry comes off only in the change that fixes everything it
-names; never add to it. Every other D rule is enforced, so nothing that passes today can regress.
+No docstring rule is ignored - `pyproject.toml`'s `ignore` list is empty - so there is no backlog
+to work through and nothing to add to. A rule that fails is a change to make, not an entry to park.
+The MCP surface and tests are exempt by name rather than by rule, as described above and below.
+
+**One docstring convention, everywhere.** Google style - a summary on the opening line, then
+`Args:` with `name: description` entries and `Returns:`. The surface uses it too; there is no
+second dialect to know. Parameters are never documented `name - description`, which ruff reads as
+no description at all.
 
 **`scripts/check-repo-hygiene.py` is vendored byte-identically into four repositories** and
 self-verifies against a digest they share, so any change to it lands in all four at once with the

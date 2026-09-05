@@ -135,8 +135,11 @@ def _ensure_ssh_port(url: str) -> str:
     the exact `~/.ssh/config` lookup `_ssh_proxy.parse_ssh_url` already does for the CLI-backed
     tools, so both tool families honor a non-default SSH port the same way.
 
-    args: url: str - a DOCKER_HOST/host URL; only `ssh://` URLs with no explicit port are affected
-    returns: str - `url` unchanged, or with the `~/.ssh/config` port spliced into the netloc
+    Args:
+        url (str): a DOCKER_HOST/host URL; only `ssh://` URLs with no explicit port are affected
+
+    Returns:
+        str: `url` unchanged, or with the `~/.ssh/config` port spliced into the netloc
     """
     if not is_ssh_url(url):
         return url
@@ -184,8 +187,11 @@ def _ensure_reachable_family(url: str) -> str:
     that last case the normal (paramiko-native) connection attempt still runs and produces its own
     error, rather than this helper raising first.
 
-    args: url: str - a DOCKER_HOST/host URL; only `ssh://` URLs are affected
-    returns: str - `url` unchanged, or with its hostname replaced by the literal address that answered
+    Args:
+        url (str): a DOCKER_HOST/host URL; only `ssh://` URLs are affected
+
+    Returns:
+        str: `url` unchanged, or with its hostname replaced by the literal address that answered
     """
     if not is_ssh_url(url):
         return url
@@ -226,8 +232,11 @@ def _from_env_no_context(**kwargs: Any) -> docker.DockerClient:
     hard floor: on 7.1.0 the kwarg is not popped and reaches `kwargs_from_env` as an unexpected
     argument.
 
-    args: kwargs - forwarded to `docker.from_env` (e.g. `environment=`)
-    returns: docker.DockerClient - a client that never consults a CLI context on its own
+    Args:
+        kwargs: forwarded to `docker.from_env` (e.g. `environment=`)
+
+    Returns:
+        docker.DockerClient: a client that never consults a CLI context on its own
     """
     # pyright's bundled typeshed stub for `docker` predates 7.2.0 and so lacks `use_context`, while the
     # runtime signature is `**kwargs` and accepts it. tests/test_pyproject_pins.py::
@@ -328,7 +337,8 @@ def system_ping(host: str | None = None) -> bool:
     daemon load - `system_reconnect` rebuilds a wedged client, `host_list` shows the configured
     endpoints. For daemon details use `system_version` / `system_info`.
 
-    returns: bool - True if the daemon responded successfully
+    Returns:
+        bool: True if the daemon responded successfully
     """
     return _get_client(host).ping()
 
@@ -341,7 +351,8 @@ def system_version(host: str | None = None) -> dict:
     Engine version, API level, and per-component versions - the first thing to check for feature
     availability. `system_info` reports runtime state (counts, drivers, swarm role) instead.
 
-    returns: dict - {"Version", "ApiVersion", "MinAPIVersion", "Os", "Arch", "Components", ...}
+    Returns:
+        dict: {"Version", "ApiVersion", "MinAPIVersion", "Os", "Arch", "Components", ...}
     """
     return _get_client(host).version()
 
@@ -354,7 +365,8 @@ def system_info(host: str | None = None) -> dict:
     Daemon runtime state: container/image counts, storage and logging drivers, swarm role, and
     daemon warnings. Use `system_version` for version/API level and `system_df` for disk usage.
 
-    returns: dict - {"Containers", "Images", "Driver", "ServerVersion", "Swarm", "Warnings", ...}
+    Returns:
+        dict: {"Containers", "Images", "Driver", "ServerVersion", "Swarm", "Warnings", ...}
     """
     return _get_client(host).info()
 
@@ -369,8 +381,8 @@ def system_df(host: str | None = None) -> dict:
     counts rather than sizes. The reply enumerates every object on the daemon, so expect a large
     payload on busy hosts.
 
-    returns: dict - {"LayersSize", "Images", "Containers", "Volumes", "BuildCache"} with per-object
-        size fields
+    Returns:
+        dict: {"LayersSize", "Images", "Containers", "Volumes", "BuildCache"} with per-object size fields
     """
     return _get_client(host).df()
 
@@ -386,9 +398,10 @@ def host_list() -> list[dict]:
     (`system_ping(host=...)` checks one entry). The `docker-mcp://hosts` resource mirrors this
     tool.
 
-    returns: list[dict] - one per host: name; url (resolved daemon URL, null = docker-py platform
-        default); read_only; non_destructive (blocks destructive calls only); tls (whether a per-host
-        cert dir is configured); default (the omitted-host fallback)
+    Returns:
+        list[dict]: one per host: name; url (resolved daemon URL, null = docker-py platform default); read_only;
+            non_destructive (blocks destructive calls only); tls (whether a per-host cert dir is configured); default
+            (the omitted-host fallback)
     """
     hosts = _host_registry()
     default_label = _default_host().label if hosts else None
@@ -423,14 +436,16 @@ def system_login(
     `~/.docker/config.json`, and avoid calling this tool from an agent loop. Credentials let
     `image_pull` / `image_push` reach private repositories; `system_logout` clears them.
 
-    args:
-        username - Registry username
-        password - Registry password or token
-        email - Registry account email
-        registry - URL to the registry (defaults to Docker Hub)
-        reauth - Force re-authentication even if valid credentials exist
-        dockercfg_path - Path to a custom dockercfg file
-    returns: dict - The login response: {"Status"} always; "IdentityToken" only when the registry issues one
+    Args:
+        username: Registry username
+        password: Registry password or token
+        email: Registry account email
+        registry: URL to the registry (defaults to Docker Hub)
+        reauth: Force re-authentication even if valid credentials exist
+        dockercfg_path: Path to a custom dockercfg file
+
+    Returns:
+        dict: The login response: {"Status"} always; "IdentityToken" only when the registry issues one
     """
     return _get_client(host).login(
         username=username,
@@ -456,9 +471,11 @@ def system_logout(registry: str | None = None, host: str | None = None) -> dict:
     Reaches into a private docker-py attribute (`api._auth_configs`); degrades to clearing nothing if
     that internal shape changes.
 
-    args:
-        registry - Registry key to clear, or None to clear every cached credential
-    returns: dict - {"cleared": [<registry keys removed>]}
+    Args:
+        registry: Registry key to clear, or None to clear every cached credential
+
+    Returns:
+        dict: {"cleared": [<registry keys removed>]}
     """
     api = _get_client(host).api
     # _auth_configs is a private docker-py attribute: an AuthConfig (dict subclass) whose "auths" key
@@ -501,13 +518,15 @@ def system_events(
     empty list) instead of re-polling a snapshot on a timer - there's no separate wait tool for this
     since the filtering this call already does covers it.
 
-    args:
-        since - Show events created since this timestamp
-        until - Show events created until this timestamp
-        filters - Filters to apply to the event stream
-        limit - Max events to return (default 100)
-        timeout_seconds - Max wall-clock seconds before returning what was collected (default 30)
-    returns: list - A list of decoded event dicts (length <= limit)
+    Args:
+        since: Show events created since this timestamp
+        until: Show events created until this timestamp
+        filters: Filters to apply to the event stream
+        limit: Max events to return (default 100)
+        timeout_seconds: Max wall-clock seconds before returning what was collected (default 30)
+
+    Returns:
+        list: A list of decoded event dicts (length <= limit)
     """
     stream = _get_client(host).events(since=since, until=until, filters=filters, decode=True)
     collected: list = []
@@ -537,7 +556,8 @@ def system_close(host: str | None = None) -> bool:
     trigger a lazy rebuild. With `host` omitted every pooled client is closed (unlike other tools,
     where omitting it means the default host). Closing clients does not affect running containers.
 
-    returns: bool - True once closed
+    Returns:
+        bool: True once closed
     """
     with _client_lock:
         labels = list(_clients) if host is None else [_resolve_host(host).label]
@@ -559,7 +579,8 @@ def system_reconnect(host: str | None = None) -> dict:
     DOCKER_MCP_SERVER_HOSTS and restart. `system_close` closes pooled clients without rebuilding;
     `host_list` shows the configured endpoints.
 
-    returns: dict - the rebuilt host's version info (same shape as `system_version`), confirming connectivity
+    Returns:
+        dict: the rebuilt host's version info (same shape as `system_version`), confirming connectivity
     """
     resolved = _resolve_host(host)
     label = resolved.label

@@ -30,12 +30,14 @@ def volume_create(
     `volume_list`; reclaim unused ones with `volume_prune`. Created volumes are stamped with provenance
     labels.
 
-    args:
-        name - Volume name; auto-generated if omitted (creates an anonymous volume)
-        driver - Volume driver to use (default: "local")
-        driver_opts - Driver-specific options dict
-        labels - Labels to set on the volume
-    returns: dict - The created volume's attrs ({"Name", "Driver", "Mountpoint", "Labels", ...})
+    Args:
+        name: Volume name; auto-generated if omitted (creates an anonymous volume)
+        driver: Volume driver to use (default: "local")
+        driver_opts: Driver-specific options dict
+        labels: Labels to set on the volume
+
+    Returns:
+        dict: The created volume's attrs ({"Name", "Driver", "Mountpoint", "Labels", ...})
     """
     kwargs = drop_none(
         name=name, driver=driver, driver_opts=driver_opts, labels=with_provenance(labels, "volume_create")
@@ -52,8 +54,11 @@ def volume_inspect(name: str, host: str | None = None) -> dict:
     before a backup or `volume_remove`. Volumes are addressed purely by name; they have no
     separate id.
 
-    args: name - The volume name (volumes have no ids)
-    returns: dict - The volume's attrs (Name, Driver, Mountpoint, CreatedAt, Labels, Options, Scope)
+    Args:
+        name: The volume name (volumes have no ids)
+
+    Returns:
+        dict: The volume's attrs (Name, Driver, Mountpoint, CreatedAt, Labels, Options, Scope)
     """
     return _get_client(host).volumes.get(name).attrs
 
@@ -67,11 +72,13 @@ def volume_list(filters: dict | None = None, managed_only: bool = False, host: s
     `volume_remove` / `volume_prune` to clean up. filters={"dangling": True} finds volumes that no
     container references.
 
-    args:
-        filters - Filter by attributes (e.g. dangling, name, label)
-        managed_only - Only return volumes created by this MCP server (filters on the
-                             docker-mcp-server.managed label); combines with any `filters` given
-    returns: list - One volume document ({"Name", "Driver", "Mountpoint", ...}) per volume
+    Args:
+        filters: Filter by attributes (e.g. dangling, name, label)
+        managed_only: Only return volumes created by this MCP server (filters on the docker-mcp-server.managed label);
+            combines with any `filters` given
+
+    Returns:
+        list: One volume document ({"Name", "Driver", "Mountpoint", ...}) per volume
     """
     if managed_only:
         filters = managed_filter(filters)
@@ -89,8 +96,11 @@ def volume_prune(filters: dict | None = None, host: str | None = None) -> dict:
     without it only anonymous volumes are eligible, matching `docker volume prune`'s
     default). Use `volume_list` first to see what currently exists.
 
-    args: filters - Narrow which unused volumes to remove; omit to remove all anonymous ones
-    returns: dict - {"VolumesDeleted": [...], "SpaceReclaimed": <bytes>}
+    Args:
+        filters: Narrow which unused volumes to remove; omit to remove all anonymous ones
+
+    Returns:
+        dict: {"VolumesDeleted": [...], "SpaceReclaimed": <bytes>}
     """
     return _get_client(host).volumes.prune(filters=filters)
 
@@ -105,10 +115,12 @@ def volume_remove(name: str, force: bool = False, host: str | None = None) -> bo
     containers keep their reference but lose the underlying data). For bulk cleanup of
     volumes with no container references at all, use `volume_prune` instead.
 
-    args:
-        name - Volume name to remove
-        force - Remove even if a container still references the volume
-    returns: bool - True after removal
+    Args:
+        name: Volume name to remove
+        force: Remove even if a container still references the volume
+
+    Returns:
+        bool: True after removal
     """
     _get_client(host).volumes.get(name).remove(force=force)
     return True

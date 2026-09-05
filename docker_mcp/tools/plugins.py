@@ -33,13 +33,14 @@ def plugin_create(name: str, plugin_data_dir: str, gzip: bool = False, host: str
     `plugin_remove`). Unlike the other create tools, this stamps no provenance labels - the Engine
     API's plugin-create call accepts none.
 
-    args:
-        name - Local name for the plugin, `author/name:tag`; the `:latest` tag is optional and
-            is the default if omitted
-        plugin_data_dir - Path on this server's filesystem to the plugin data directory
-            (containing `config.json` and `rootfs`)
-        gzip - Compress the uploaded directory with gzip (default False)
-    returns: dict - The created plugin's attrs ({"Id", "Name", "Enabled", "Settings", "Config"})
+    Args:
+        name: Local name for the plugin, `author/name:tag`; the `:latest` tag is optional and is the default if omitted
+        plugin_data_dir: Path on this server's filesystem to the plugin data directory (containing `config.json` and
+            `rootfs`)
+        gzip: Compress the uploaded directory with gzip (default False)
+
+    Returns:
+        dict: The created plugin's attrs ({"Id", "Name", "Enabled", "Settings", "Config"})
     """
     path = host_read_path(plugin_data_dir)
     return _get_client(host).plugins.create(name, str(path), gzip=gzip).attrs
@@ -54,8 +55,11 @@ def plugin_inspect(name: str, host: str | None = None) -> dict:
     `plugin_disable`, or to read the config keys it exposes under `Settings.Env` before
     calling `plugin_configure`. For the set of all installed plugins use `plugin_list`.
 
-    args: name - Plugin name, e.g. "vieux/sshfs:latest"
-    returns: dict - The plugin's attrs, including `Enabled` and `Settings`
+    Args:
+        name: Plugin name, e.g. "vieux/sshfs:latest"
+
+    Returns:
+        dict: The plugin's attrs, including `Enabled` and `Settings`
     """
     return _get_client(host).plugins.get(name).attrs
 
@@ -73,10 +77,12 @@ def plugin_install(remote: str, local_name: str | None = None, host: str | None 
     it requires settings. Use `plugin_list` to list all plugins, or `plugin_remove` to
     uninstall.
 
-    args:
-        remote - Docker Hub plugin reference, e.g. "vieux/sshfs:latest"
-        local_name - Alias to refer to the plugin locally; defaults to remote
-    returns: dict - The installed plugin's attrs ({"Id", "Name", "Enabled", "Settings", "Config"})
+    Args:
+        remote: Docker Hub plugin reference, e.g. "vieux/sshfs:latest"
+        local_name: Alias to refer to the plugin locally; defaults to remote
+
+    Returns:
+        dict: The installed plugin's attrs ({"Id", "Name", "Enabled", "Settings", "Config"})
     """
     return _get_client(host).plugins.install(remote, local_name=local_name).attrs
 
@@ -95,11 +101,13 @@ def plugin_privileges(remote: str, host: str | None = None) -> list:
     `system_login`, or from `~/.docker/config.json` if the host ran `docker login`. Raises if the
     reference cannot be resolved in the registry.
 
-    args: remote - Registry plugin reference, `author/name:tag`; the `:latest` tag is optional and
-        is the default if omitted
-    returns: list - One dict per requested privilege ({"Name", "Description", "Value"}), e.g. Name
-        "mount" with Value ["/data"], or "capabilities" with Value ["CAP_SYS_ADMIN"]; empty if the
-        plugin requests none
+    Args:
+        remote: Registry plugin reference, `author/name:tag`; the `:latest` tag is optional and is the default if
+            omitted
+
+    Returns:
+        list: One dict per requested privilege ({"Name", "Description", "Value"}), e.g. Name "mount" with Value
+            ["/data"], or "capabilities" with Value ["CAP_SYS_ADMIN"]; empty if the plugin requests none
     """
     # The high-level PluginCollection exposes no privileges call; this is the documented low-level one.
     return _get_client(host).api.plugin_privileges(remote)
@@ -132,13 +140,15 @@ def plugin_push(name: str, timeout_seconds: float = 300.0, host: str | None = No
     `container_logs` carries in follow mode. The call still returns normally once the registry
     answers or the stream ends.
 
-    args:
-        name - Installed plugin name to push, `[registry/]author/name:tag`; `:latest` if the tag is
-            omitted. A bare `author/name` pushes to Docker Hub
-        timeout_seconds - Max wall-clock seconds to wait on the push stream before returning what
-            was collected (default 300); raise it for a large plugin over a slow link
-    returns: dict - {"name", "progress": [<decoded status dicts>], "truncated": bool, "error": str
-        or None} - `error` is non-None only when the registry reported a failure
+    Args:
+        name: Installed plugin name to push, `[registry/]author/name:tag`; `:latest` if the tag is omitted. A bare
+            `author/name` pushes to Docker Hub
+        timeout_seconds: Max wall-clock seconds to wait on the push stream before returning what was collected (default
+            300); raise it for a large plugin over a slow link
+
+    Returns:
+        dict: {"name", "progress": [<decoded status dicts>], "truncated": bool, "error": str or None} - `error` is
+            non-None only when the registry reported a failure
     """
     api = _get_client(host).api
     # docker-py exposes no working public path here (see docstring), so we drive its private request
@@ -211,7 +221,8 @@ def plugin_list(host: str | None = None) -> list:
     for `plugin_inspect`/`plugin_enable`/`plugin_disable`/`plugin_remove`; the `Enabled` key shows
     each plugin's state.
 
-    returns: list - One attrs dict per installed plugin (Id, Name, Enabled, Settings, Config)
+    Returns:
+        list: One attrs dict per installed plugin (Id, Name, Enabled, Settings, Config)
     """
     return [p.attrs for p in _get_client(host).plugins.list()]
 
@@ -226,10 +237,12 @@ def plugin_configure(name: str, options: dict, host: str | None = None) -> bool:
     plugin must be disabled before reconfiguring - call `plugin_disable` first if it is
     currently active, then `plugin_enable` afterwards to apply the new settings.
 
-    args:
-        name - Plugin name, e.g. "vieux/sshfs:latest"
-        options - Key/value settings to apply, matching the plugin's declared env keys
-    returns: bool - True after configuration
+    Args:
+        name: Plugin name, e.g. "vieux/sshfs:latest"
+        options: Key/value settings to apply, matching the plugin's declared env keys
+
+    Returns:
+        bool: True after configuration
     """
     _get_client(host).plugins.get(name).configure(options)
     return True
@@ -245,10 +258,12 @@ def plugin_disable(name: str, force: bool = False, host: str | None = None) -> b
     are still using it - this may cause those containers to lose access to plugin-provided
     resources (e.g. a volume driver). Re-enable with `plugin_enable`.
 
-    args:
-        name - The plugin name
-        force - Disable even if active containers are using the plugin (may disrupt them)
-    returns: bool - True after the plugin is disabled
+    Args:
+        name: The plugin name
+        force: Disable even if active containers are using the plugin (may disrupt them)
+
+    Returns:
+        bool: True after the plugin is disabled
     """
     _get_client(host).plugins.get(name).disable(force=force)
     return True
@@ -265,10 +280,12 @@ def plugin_enable(name: str, timeout_seconds: int = 0, host: str | None = None) 
     `timeout_seconds` controls how long Docker waits for the plugin process to become healthy;
     0 means wait indefinitely.
 
-    args:
-        name - The plugin name to enable
-        timeout_seconds - Seconds to wait for the plugin to become healthy (0 = no timeout)
-    returns: bool - True after the plugin is enabled
+    Args:
+        name: The plugin name to enable
+        timeout_seconds: Seconds to wait for the plugin to become healthy (0 = no timeout)
+
+    Returns:
+        bool: True after the plugin is enabled
     """
     _get_client(host).plugins.get(name).enable(timeout=timeout_seconds)
     return True
@@ -283,10 +300,12 @@ def plugin_remove(name: str, force: bool = False, host: str | None = None) -> bo
     enabled plugin must be disabled first unless `force=True`. Plugin names come from
     `plugin_list`.
 
-    args:
-        name - The plugin name (e.g. "vieux/sshfs:latest")
-        force - Remove even if the plugin is enabled (default False)
-    returns: bool - True after removal
+    Args:
+        name: The plugin name (e.g. "vieux/sshfs:latest")
+        force: Remove even if the plugin is enabled (default False)
+
+    Returns:
+        bool: True after removal
     """
     _get_client(host).plugins.get(name).remove(force=force)
     return True
@@ -303,10 +322,12 @@ def plugin_upgrade(name: str, remote: str | None = None, host: str | None = None
     re-pull the same reference. Existing settings and volumes created by the plugin
     persist across the upgrade.
 
-    args:
-        name - The plugin name to upgrade
-        remote - Reference to upgrade to, e.g. "vieux/sshfs:next" (default: same as name)
-    returns: bool - True after the upgrade completes
+    Args:
+        name: The plugin name to upgrade
+        remote: Reference to upgrade to, e.g. "vieux/sshfs:next" (default: same as name)
+
+    Returns:
+        bool: True after the upgrade completes
     """
     plugin = _get_client(host).plugins.get(name)
     if remote is None:
