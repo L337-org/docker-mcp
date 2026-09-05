@@ -60,8 +60,7 @@ def _run_stack(
     cwd: str | None = None,
     stage_cwd: bool = False,
 ) -> CliResult:
-    """
-    Run `docker stack <args...>`, locally or - with no local `docker` binary - on the ssh:// host.
+    """Run `docker stack <args...>`, locally or - with no local `docker` binary - on the ssh:// host.
 
     `stage_cwd` is explicit rather than inferred from `cwd`, because the two questions differ: only
     `stack_deploy` reads local files, and it needs the *server's* working directory staged when `cwd`

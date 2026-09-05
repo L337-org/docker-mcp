@@ -23,8 +23,7 @@ _warned_aliases: set[str] = set()
 
 
 def read_env(canonical: str, *aliases: str, default: str | None = None) -> str | None:
-    """
-    Value of env var `canonical`, falling back to each deprecated `alias` in order, else `default`.
+    """Value of env var `canonical`, falling back to each deprecated `alias` in order, else `default`.
 
     The canonical (DOCKER_MCP_SERVER_*) name is checked first. Reading a value via one of the older
     `aliases` emits a one-time stderr deprecation notice naming `canonical`.
@@ -57,8 +56,7 @@ def _warn_deprecated(alias: str, canonical: str) -> None:
 
 
 def scrub_unresolved_env() -> None:
-    """
-    Drop env vars whose value is an unresolved `${...}` substitution template.
+    """Drop env vars whose value is an unresolved `${...}` substitution template.
 
     Some MCP hosts substitute a placeholder into the server's environment for every declared config
     key but, when an optional field is left blank, pass the *literal* placeholder rather than omitting

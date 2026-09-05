@@ -2,7 +2,8 @@
 
 `tool`, `prompt` and `resource` here are what every module in `tools/` decorates with, and what
 `pyproject.toml`'s ruff `ignore-decorators` names - an advertised docstring is governed by the
-AI-consumer rules rather than by the docstring convention."""
+AI-consumer rules rather than by the docstring convention.
+"""
 
 # MCP server singleton plus the central tool-registration helper.
 #
@@ -292,7 +293,8 @@ _tool_registry: dict[str, ToolRecord] = {}
 @dataclass(frozen=True)
 class PromptRecord:
     """What the `@prompt()` decorator saw for one prompt: its (optional) domain, whether it's gated to
-    multi-host mode, and whether it actually registered."""
+    multi-host mode, and whether it actually registered.
+    """
 
     name: str
     domain: str | None
@@ -314,7 +316,8 @@ def register_resource_domains(section_to_domain: dict[str, str]) -> None:
 
 def is_domain_disabled(domain: str | None) -> bool:
     """True if a (non-None) domain is currently dropped by DOCKER_MCP_SERVER_DISABLE. Reads the live set, so
-    it reflects test monkeypatching of DISABLED_DOMAINS (unlike the import-time tool/prompt gating)."""
+    it reflects test monkeypatching of DISABLED_DOMAINS (unlike the import-time tool/prompt gating).
+    """
     return domain is not None and domain in DISABLED_DOMAINS
 
 
@@ -350,8 +353,7 @@ def _domain_enabled(domain: str, disabled: frozenset[str]) -> bool:
 
 
 def _summary_for(func: Callable[..., Any]) -> str:
-    """
-    First line of a tool's docstring -- the one-liner a catalog row carries instead of the full text.
+    """First line of a tool's docstring -- the one-liner a catalog row carries instead of the full text.
 
     The house docstring format puts a standalone summary sentence first, so the first non-empty line
     is the summary by construction. Returns "" for an undocumented tool rather than raising, since a
@@ -368,8 +370,7 @@ def query_catalog(
     category: str | None = None,
     keyword: str | None = None,
 ) -> dict[str, Any]:
-    """
-    Registered tools matching the given filters, as compact rows.
+    """Registered tools matching the given filters, as compact rows.
 
     Only registered tools are listed. A tool dropped by a read-only switch or a disabled domain is
     absent rather than present-and-flagged: advertising a capability the server will refuse leaks its
@@ -445,8 +446,7 @@ def query_catalog(
 
 
 def tool_catalog() -> dict[str, Any]:
-    """
-    Snapshot of the tool surface: which tools exist, their domain/category, and what the active env
+    """Snapshot of the tool surface: which tools exist, their domain/category, and what the active env
     switches registered. Drives the `docker-mcp://tool-catalog` resource so a client can see the blast
     radius of each tool - and which whole domains a server has disabled - before calling anything.
     """
@@ -524,8 +524,7 @@ _SWARM_DOMAINS = ("swarm", "services", "nodes", "secrets", "configs")
 
 
 def build_instructions(registered_domains: set[str] | None = None) -> str:
-    """
-    Render the server `instructions` router from the domains that actually registered tools.
+    """Render the server `instructions` router from the domains that actually registered tools.
 
     Pass `registered_domains` to render for an arbitrary set (tests); by default it reads the live
     `_tool_registry`, so the switches (DOCKER_MCP_SERVER_DISABLE / _READONLY / _NO_DESTRUCTIVE) are
@@ -604,8 +603,7 @@ def build_instructions(registered_domains: set[str] | None = None) -> str:
 
 
 def finalize_instructions() -> None:
-    """
-    Set the server's `instructions` from the actually-registered surface - called once after every tool
+    """Set the server's `instructions` from the actually-registered surface - called once after every tool
     module has imported (docker_mcp/__init__.py), so the switch-dependent registration is already known.
 
     MCPServer.instructions is a read-only property backed by the low-level server's `instructions`, which
@@ -629,7 +627,8 @@ def _title_for(name: str) -> str:
     """Human-readable display title for a tool, mechanically derived from its snake_case name
     (e.g. "container_list" -> "Container List") so every tool has one without hand-authoring ~150
     of them. Distinct from the schema `title` `_slim_schema` strips - this is the ToolAnnotations
-    field some directories (e.g. the Claude Connectors Directory) require independent of prose."""
+    field some directories (e.g. the Claude Connectors Directory) require independent of prose.
+    """
     words = name.replace("_", " ").title().split(" ")
     return " ".join(_TITLE_ACRONYMS.get(word, word) for word in words)
 
@@ -713,19 +712,22 @@ def _slim_schema(node: Any) -> None:
 
 def _has_host_param(func: Callable) -> bool:
     """A tool is daemon-targeting iff its signature declares the `host` param (registry/hub/context
-    tools and host_list don't, so they're untouched by the host machinery)."""
+    tools and host_list don't, so they're untouched by the host machinery).
+    """
     return _HOST_PARAM in inspect.signature(func).parameters
 
 
 def _is_host_write(name: str, category: ToolCategory) -> bool:
     """A host-targeting *write*: a MUTATING/DESTRUCTIVE tool that is not connection-control. These
-    require an explicit host (multi-host) and refuse an (ro) host; everything else may default."""
+    require an explicit host (multi-host) and refuse an (ro) host; everything else may default.
+    """
     return category in (ToolCategory.MUTATING, ToolCategory.DESTRUCTIVE) and name not in _CONNECTION_CONTROL
 
 
 def _is_host_destructive(name: str, category: ToolCategory) -> bool:
     """A host-targeting *destructive* call: a DESTRUCTIVE tool that is not connection-control. This
-    is what the per-host (nd) marker blocks, while still allowing READ_ONLY/MUTATING calls."""
+    is what the per-host (nd) marker blocks, while still allowing READ_ONLY/MUTATING calls.
+    """
     return category is ToolCategory.DESTRUCTIVE and name not in _CONNECTION_CONTROL
 
 
@@ -738,7 +740,8 @@ def _host_param_description(name: str, category: ToolCategory) -> str:
 
 def _raise_read_only(name: str, label: str, category: ToolCategory) -> NoReturn:
     """Refuse a write to a host carrying the per-host (ro) marker (distinct from the
-    DOCKER_MCP_SERVER_READONLY switch, which drops write tools from the surface entirely)."""
+    DOCKER_MCP_SERVER_READONLY switch, which drops write tools from the surface entirely).
+    """
     raise HostGuardError(
         f"{name}: host {label!r} is read-only (configured with the (ro) marker); refusing this "
         f"{category.value} operation. For a fully read-only server use DOCKER_MCP_SERVER_READONLY."
@@ -747,7 +750,8 @@ def _raise_read_only(name: str, label: str, category: ToolCategory) -> NoReturn:
 
 def _raise_non_destructive(name: str, label: str, category: ToolCategory) -> NoReturn:
     """Refuse a DESTRUCTIVE call to a host carrying the per-host (nd) marker (distinct from the
-    DOCKER_MCP_SERVER_NO_DESTRUCTIVE switch, which drops destructive tools from the surface entirely)."""
+    DOCKER_MCP_SERVER_NO_DESTRUCTIVE switch, which drops destructive tools from the surface entirely).
+    """
     raise HostGuardError(
         f"{name}: host {label!r} is non-destructive (configured with the (nd) marker); refusing this "
         f"{category.value} operation. For a fully non-destructive server use DOCKER_MCP_SERVER_NO_DESTRUCTIVE."
@@ -755,8 +759,7 @@ def _raise_non_destructive(name: str, label: str, category: ToolCategory) -> NoR
 
 
 def _enforce_host_guard(name: str, category: ToolCategory, host: str | None) -> None:
-    """
-    Central call-time guard for a daemon-targeting tool. Wired whenever there is something to enforce:
+    """Central call-time guard for a daemon-targeting tool. Wired whenever there is something to enforce:
     multiple hosts (host selection + per-host (ro)/(nd) refusal) or a single host flagged (ro) or (nd).
     Raises when a write omits `host` in multi-host mode, when `host` is not a configured label, when a
     write targets an (ro) host, or when a destructive call targets an (nd) host. A host carrying both
@@ -787,8 +790,7 @@ def _enforce_host_guard(name: str, category: ToolCategory, host: str | None) -> 
 
 
 def _apply_host_schema(parameters: Any, name: str, category: ToolCategory) -> None:
-    """
-    Display-only surgery on a daemon-targeting tool's advertised `host` property (run after _slim_schema;
+    """Display-only surgery on a daemon-targeting tool's advertised `host` property (run after _slim_schema;
     call-time validation runs off the separate fn_metadata, so this never changes behavior).
 
     Single-host mode: drop `host` entirely so the schema is byte-for-byte today's (footprint-neutral).
@@ -825,7 +827,8 @@ def _host_guard_needed() -> bool:
     """Whether daemon-targeting tools need the call-time host guard wrapped on. Two cases: multiple hosts
     (host selection + per-host (ro)/(nd) refusal), or a single host flagged (ro) or (nd) (refuse
     writes/destructive calls even though the schema carries no host param). A single unrestricted host
-    needs no guard - today's footprint-neutral path."""
+    needs no guard - today's footprint-neutral path.
+    """
     return _hosts.is_multi() or _hosts.is_read_only() or _hosts.is_non_destructive()
 
 
@@ -836,7 +839,8 @@ def _host_guard_needed() -> bool:
 def _wrap_with_host_guard[F: Callable[..., Any]](func: F, name: str, category: ToolCategory) -> F:
     """Wrap a daemon-targeting tool so the host guard runs before it (when `_host_guard_needed()` -
     multi-host, or a single host flagged (ro) or (nd)). Preserves the signature so MCPServer builds
-    the same schema/fn_metadata, and matches the func's sync/async-ness."""
+    the same schema/fn_metadata, and matches the func's sync/async-ness.
+    """
     signature = inspect.signature(func)
 
     def _host_of(args: tuple, kwargs: dict) -> str | None:
@@ -984,8 +988,7 @@ def _translate_failures[F: Callable[..., Any]](func: F, error_cls: type[ToolErro
 
 
 def tool[F: Callable[..., Any]](**kwargs: Any) -> Callable[[F], F]:
-    """
-    Register an @mcp.tool with central classification - the drop-in `@tool()` every tool module uses.
+    """Register an @mcp.tool with central classification - the drop-in `@tool()` every tool module uses.
 
     The tool's category comes from TOOL_CATEGORIES (defaulting to MUTATING, the safe assumption, for
     anything unclassified) and its domain from the defining module. We skip registration when a
@@ -1044,8 +1047,7 @@ def tool[F: Callable[..., Any]](**kwargs: Any) -> Callable[[F], F]:
 
 
 def resource[F: Callable[..., Any]](uri: str, **kwargs: Any) -> Callable[[F], F]:
-    """
-    Register an `@mcp.resource` whose anticipated failures keep their message - the `@resource()`
+    """Register an `@mcp.resource` whose anticipated failures keep their message - the `@resource()`
     every resource registration uses, decorator or call form.
 
     The SDK applies the same type rule to a read as to a tool call: a `ResourceError` keeps its
@@ -1073,8 +1075,7 @@ def resource[F: Callable[..., Any]](uri: str, **kwargs: Any) -> Callable[[F], F]
 
 
 def prompt(description: str, *, domain: str | None = None, multi_host: bool = False) -> Callable[[Callable], Callable]:
-    """
-    Register an `@mcp.prompt`, honoring DOCKER_MCP_SERVER_DISABLE - the `@prompt()` every prompt module uses.
+    """Register an `@mcp.prompt`, honoring DOCKER_MCP_SERVER_DISABLE - the `@prompt()` every prompt module uses.
 
     A prompt tied to a feature area (`domain`) is skipped when that domain is disabled, so a server that
     drops e.g. `scout` doesn't keep prompts that steer the agent toward tools that are no longer

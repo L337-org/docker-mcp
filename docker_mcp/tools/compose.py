@@ -75,8 +75,7 @@ _GLOBAL_FLAGS = ("-f", "--project-name", "--profile")
 
 
 def _global_file_values(subcommand_args: list[str]) -> list[str]:
-    """
-    The `-f` values in the argv's *global prefix* - the local paths a compose call names.
+    """The `-f` values in the argv's *global prefix* - the local paths a compose call names.
 
     Scanning the whole argv for `-f` would be wrong, not merely loose: `compose_run` and `compose_exec`
     append an arbitrary container command, so `command=["python", "-f", "script.py"]` would present
@@ -98,8 +97,7 @@ def _global_file_values(subcommand_args: list[str]) -> list[str]:
 
 
 def _run_compose(subcommand_args: list[str], *, cwd: str | None, timeout: float, host: str | None = None) -> CliResult:
-    """
-    Run `docker compose <args...>`, staging the working directory when the CLI has to run remotely.
+    """Run `docker compose <args...>`, staging the working directory when the CLI has to run remotely.
 
     args:
         subcommand_args - the compose argv, without the leading `compose`
@@ -773,8 +771,7 @@ def compose_top(
 
 
 def _split_cp_arg(arg: str) -> tuple[str, str]:
-    """
-    Split a `compose cp` SRC/DEST argument into `(service, path)`, mirroring `docker compose cp`'s own
+    """Split a `compose cp` SRC/DEST argument into `(service, path)`, mirroring `docker compose cp`'s own
     `splitCpArg` (verified against docker/compose's `pkg/compose/cp.go`, which is byte-for-byte the
     same algorithm plain `docker cp` uses): an absolute local path is never a container reference;
     otherwise the text before the first `:` is the service name, unless it starts with `.` (an
@@ -808,8 +805,7 @@ def _remote_compose_cp(
     timeout_seconds: float,
     host: str | None,
 ) -> CliResult:
-    """
-    Run `compose cp` on the target `ssh://` host, relaying whichever side of the copy is local.
+    """Run `compose cp` on the target `ssh://` host, relaying whichever side of the copy is local.
 
     Always stages `project_dir` first - compose needs to resolve the project/service the same way
     every other compose subcommand does - then branches on which side `_split_cp_arg` identifies as

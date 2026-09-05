@@ -126,8 +126,7 @@ def _decode(blob: bytes | None) -> tuple[str, bool]:
 
 
 def _apply_host_env(env: dict[str, str], host: str | None) -> None:
-    """
-    Point the child `docker` CLI at the selected host by overriding DOCKER_HOST + per-host TLS in `env`.
+    """Point the child `docker` CLI at the selected host by overriding DOCKER_HOST + per-host TLS in `env`.
 
     Inert for the legacy single host (DOCKER_MCP_SERVER_HOSTS unset), which keeps inheriting the ambient
     DOCKER_HOST / DOCKER_CONTEXT exactly as before. For an explicitly-configured host we pin DOCKER_HOST
@@ -164,8 +163,7 @@ def run_docker(
     extra_env: dict[str, str] | None = None,
     host: str | None = None,
 ) -> CliResult:
-    """
-    Run `docker <args...>` with safe, cross-platform defaults.
+    """Run `docker <args...>` with safe, cross-platform defaults.
 
     - Binary resolved via `shutil.which` (handles `docker` vs `docker.exe`).
     - `shell=False` always; argv is a list so PowerShell/cmd/zsh quoting cannot bite us.
@@ -271,8 +269,7 @@ def has_plugin(name: str) -> bool:
 
 
 def require_plugin(name: str) -> None:
-    """
-    Raise CapabilityError with an actionable message if the named CLI plugin is unavailable.
+    """Raise CapabilityError with an actionable message if the named CLI plugin is unavailable.
 
     Every caller reaches this only after `should_remote_exec` has already returned False for the
     target host, which means that host is not reached over ssh:// (an ssh:// host with no local
@@ -305,8 +302,7 @@ def require_plugin(name: str) -> None:
 
 
 def should_remote_exec(host: str | None, *, plugin: str | None = None) -> bool:
-    """
-    Whether a CLI call against `host` has to run on the remote host instead of locally.
+    """Whether a CLI call against `host` has to run on the remote host instead of locally.
 
     True only when the target is an ssh:// host *and* nothing local can serve the call, so a machine
     with a working CLI keeps using it - the credentials, filesystem, and buildx state a call sees
@@ -339,8 +335,7 @@ def remote_exec_cli(
     stdin: bytes | None = None,
     extra_env: dict[str, str] | None = None,
 ) -> CliResult:
-    """
-    Run `docker <args...>` on the target ssh:// host, in `run_docker`'s own result shape.
+    """Run `docker <args...>` on the target ssh:// host, in `run_docker`'s own result shape.
 
     A drop-in for `run_docker` on the calls `should_remote_exec` selects - same `CliResult`, same
     `truncated` flag, same `subprocess.TimeoutExpired` on a timeout - so each tool keeps its existing
@@ -386,8 +381,7 @@ def remote_stage_and_exec(
     stdin: bytes | None = None,
     extra_env: dict[str, str] | None = None,
 ) -> CliResult:
-    """
-    Copy a working directory to the target ssh:// host, run `docker <args...>` in it, and clean up.
+    """Copy a working directory to the target ssh:// host, run `docker <args...>` in it, and clean up.
 
     The counterpart to `remote_exec_cli` for a command that reads local files - Compose files, a bake
     file, a stack's `-c` files. Same `CliResult` contract, so a tool's error convention needs no remote
@@ -494,8 +488,7 @@ def remote_stage_and_exec(
 
 @contextlib.contextmanager
 def remote_cli_session(host: str | None, *, timeout: float) -> Iterator[RemoteStagingSession]:
-    """
-    Open a staging session for a tool whose inputs need bespoke handling, and run it yourself.
+    """Open a staging session for a tool whose inputs need bespoke handling, and run it yourself.
 
     `remote_stage_and_exec` covers the common shape: a working directory plus whole-token path
     arguments. `buildx_build` fits neither half of that - its context needs `.dockerignore`-aware
@@ -518,8 +511,7 @@ def remote_cli_session(host: str | None, *, timeout: float) -> Iterator[RemoteSt
 def run_in_session(
     session: RemoteStagingSession, args: list[str], *, timeout: float, cwd: str | None = None
 ) -> CliResult:
-    """
-    Run `docker <args...>` in an open staging session, in `run_docker`'s result shape.
+    """Run `docker <args...>` in an open staging session, in `run_docker`'s result shape.
 
     args:
         session - a session from `remote_cli_session`
@@ -535,8 +527,7 @@ def run_in_session(
 
 
 def _reject_unforwardable(stdin: bytes | None, extra_env: dict[str, str] | None) -> None:
-    """
-    Refuse the two `run_docker` inputs the remote backends cannot honour.
+    """Refuse the two `run_docker` inputs the remote backends cannot honour.
 
     Rejected rather than dropped: no in-scope tool passes either today, and one that starts to should
     fail loudly here instead of silently diverging from its local path.
@@ -556,8 +547,7 @@ def _reject_unforwardable(stdin: bytes | None, extra_env: dict[str, str] | None)
 
 
 def _ssh_url_for(host: str | None, args: list[str]) -> str:
-    """
-    The ssh:// URL for a host that a remote backend was asked to use.
+    """The ssh:// URL for a host that a remote backend was asked to use.
 
     args:
         host - configured host label, or None for the default host
@@ -578,8 +568,7 @@ def _ssh_url_for(host: str | None, args: list[str]) -> str:
 
 
 def _as_cli_result(result: RemoteExecResult) -> CliResult:
-    """
-    Convert a remote result into `run_docker`'s shape, decoding at the same boundary the local path does.
+    """Convert a remote result into `run_docker`'s shape, decoding at the same boundary the local path does.
 
     The retention cap already applied remotely, so `_decode` re-checks a bound the bytes cannot exceed;
     `truncated` is carried through from the drain, which is the only place that saw what was dropped.
@@ -598,8 +587,7 @@ def _as_cli_result(result: RemoteExecResult) -> CliResult:
 
 
 def flag_values(args: Sequence[str], flag: str) -> list[str]:
-    """
-    The values following each occurrence of `flag` in an already-built argv.
+    """The values following each occurrence of `flag` in an already-built argv.
 
     Used to recover the local paths a compose/stack/bake argv names (`-f`, `-c`) for
     `remote_stage_and_exec`'s `path_values`. Reading them back out of the argv, rather than threading
@@ -616,8 +604,7 @@ def flag_values(args: Sequence[str], flag: str) -> list[str]:
 
 
 def _local_target(value: str, *, base: Path) -> Path | None:
-    """
-    The local path a declared value names, if it exists on this machine.
+    """The local path a declared value names, if it exists on this machine.
 
     Shared by the decision to stage at all and by the rewriting that follows, so the two cannot
     disagree about what counts as a local input. No `~` expansion, matching the docker CLI, which
@@ -646,8 +633,7 @@ def _reconcile_path_tokens(
     base: Path,
     staged_tree: str | None,
 ) -> list[str]:
-    """
-    Rewrite path-naming tokens in `args` so they resolve on the remote host.
+    """Rewrite path-naming tokens in `args` so they resolve on the remote host.
 
     With a staged tree, three cases in order: a relative path inside it needs nothing (the remote cwd
     *is* that tree); an absolute path inside it is rewritten relative, because the local absolute path
@@ -700,8 +686,7 @@ def _reconcile_path_tokens(
 
 
 def safe_positional(value: str, what: str = "value") -> str:
-    """
-    Validate a string that will be appended as a *positional* docker CLI argument.
+    """Validate a string that will be appended as a *positional* docker CLI argument.
 
     `shell=False` (enforced by `run_docker`) blocks shell-metacharacter injection, but it does NOT
     block *flag* injection: the docker CLI parses any argument starting with '-' as an option, even
@@ -724,8 +709,7 @@ def safe_positional(value: str, what: str = "value") -> str:
 
 
 def safe_spec_value(value: str, what: str = "value") -> str:
-    """
-    Validate a string interpolated into a comma-separated `key=value` docker CLI spec.
+    """Validate a string interpolated into a comma-separated `key=value` docker CLI spec.
 
     The sibling of `safe_positional` for a different injection shape. Flags like
     `docker context create --docker` take one argument holding several keys separated by commas, so
@@ -750,8 +734,7 @@ def safe_spec_value(value: str, what: str = "value") -> str:
 
 
 def filter_args(filters: dict | None) -> list[str]:
-    """
-    Translate an SDK-shaped filters dict into repeated `--filter key=value` CLI arguments.
+    """Translate an SDK-shaped filters dict into repeated `--filter key=value` CLI arguments.
 
     Lets CLI-backed tools accept the same `filters` shape as the docker-py-backed tools (one
     `filters` contract across the surface). A list value emits one `--filter` per element -
@@ -768,8 +751,7 @@ def filter_args(filters: dict | None) -> list[str]:
 
 
 def raise_on_cli_failure(result: CliResult, command: str) -> None:
-    """
-    Raise RemoteFailureError if a docker subprocess exited non-zero.
+    """Raise RemoteFailureError if a docker subprocess exited non-zero.
 
     args:
         result: the CliResult from run_docker.
@@ -783,8 +765,7 @@ def raise_on_cli_failure(result: CliResult, command: str) -> None:
 
 
 def parse_ndjson(text: str, *, truncated: bool = False, what: str = "docker output") -> list[dict]:
-    """
-    Parse one JSON object per non-blank line (NDJSON), as emitted by `docker ... --format '{{json .}}'`.
+    """Parse one JSON object per non-blank line (NDJSON), as emitted by `docker ... --format '{{json .}}'`.
 
     args:
         text: the NDJSON body to parse.
@@ -811,8 +792,7 @@ def parse_ndjson(text: str, *, truncated: bool = False, what: str = "docker outp
 def parse_json_or_ndjson(
     text: str, *, truncated: bool = False, what: str = "docker output"
 ) -> list[dict] | dict | None:
-    """
-    Parse output that may be a single JSON document OR NDJSON.
+    """Parse output that may be a single JSON document OR NDJSON.
 
     Compose v2.21+ emits NDJSON (one object per line); older versions emit a single JSON array or
     object. Returns the parsed structure on success, or None if the body is empty.

@@ -1,5 +1,6 @@
 """Tools for containers: their lifecycle, and reaching inside a running one for logs,
-execution, stats and files."""
+execution, stats and files.
+"""
 
 # library of mcp tools relating to container management
 
@@ -395,8 +396,7 @@ def container_remove(
 
 
 def _read_bounded_container_logs(container: Any, what: str, **log_kwargs: Any) -> str:
-    """
-    Read a container's logs incrementally and return them decoded, capped at MAX_PAYLOAD_BYTES.
+    """Read a container's logs incrementally and return them decoded, capped at MAX_PAYLOAD_BYTES.
 
     `stream=True` with `follow=False` is what makes the cap effective: docker-py returns a
     generator that terminates at EOF, so `join_bounded` can abort part-way through. Passing
@@ -526,8 +526,7 @@ _LOG_TAIL_LINES = 200
 
 
 def _read_log_tail(id_or_name: str, tail: int = _LOG_TAIL_LINES, host: str | None = None) -> str:
-    """
-    Return a bounded tail of a container's combined stdout/stderr logs.
+    """Return a bounded tail of a container's combined stdout/stderr logs.
 
     `tail` bounds the line count, but a single pathological line is unbounded on its own, so the
     read also goes through the same MAX_PAYLOAD_BYTES cap as `container_logs`.
@@ -544,8 +543,7 @@ def _div_mb(value: float) -> float:
 
 
 def _summarize_stats(name: str | None, snapshot: dict) -> dict:
-    """
-    Reduce a one-shot `container.stats` snapshot to a small human-readable summary.
+    """Reduce a one-shot `container.stats` snapshot to a small human-readable summary.
 
     CPU% is computed from the snapshot's own `cpu_stats`/`precpu_stats` delta (a single stream=False
     read already carries both), matching how `docker stats` derives it. Every field is read
@@ -592,8 +590,7 @@ def _summarize_stats(name: str | None, snapshot: dict) -> dict:
 
 
 def _read_stats_summary(id_or_name: str, host: str | None = None) -> dict:
-    """
-    Return a computed resource-usage summary for a running container.
+    """Return a computed resource-usage summary for a running container.
 
     Raises ToolInputError if the container isn't running - there is no live cgroup to sample on a
     stopped container, so the `docker-stats://` resource surfaces a clean message instead of a raw

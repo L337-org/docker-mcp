@@ -1,5 +1,6 @@
 """Tools for BuildKit: building and baking images, inspecting and creating multi-platform
-manifests, and managing builder instances and their history."""
+manifests, and managing builder instances and their history.
+"""
 
 # library of mcp tools for `docker buildx`.
 #
@@ -54,8 +55,7 @@ def _run_buildx(
     path_values: list[str] | None = None,
     stage_cwd: bool = False,
 ) -> CliResult:
-    """
-    Run `docker buildx <args...>`, locally or - with no local buildx plugin - on the ssh:// host.
+    """Run `docker buildx <args...>`, locally or - with no local buildx plugin - on the ssh:// host.
 
     `stage_cwd` and `path_values` are passed explicitly by the two tools that read local files, rather
     than recovered by scanning the argv: `buildx_bake` appends caller-supplied target names, so a
@@ -92,8 +92,7 @@ def _run_buildx(
 
 
 def _spec_component(spec: str, key: str) -> str | None:
-    """
-    The value of `key=` within a comma-separated buildx spec, or None if absent.
+    """The value of `key=` within a comma-separated buildx spec, or None if absent.
 
     buildx parses `--output`/`--cache-to`/`--secret` values as comma-separated `key=value` pairs, so a
     path inside one cannot be found by looking at the whole token. A value containing a comma cannot be
@@ -113,8 +112,7 @@ def _spec_component(spec: str, key: str) -> str | None:
 
 
 def _replace_spec_component(spec: str, key: str, new_value: str) -> str:
-    """
-    Rewrite one `key=` component of a buildx spec, leaving the rest of it untouched.
+    """Rewrite one `key=` component of a buildx spec, leaving the rest of it untouched.
 
     args:
         spec - the spec value to rewrite
@@ -132,8 +130,7 @@ def _replace_spec_component(spec: str, key: str, new_value: str) -> str:
 def _refuse_flags_that_resolve_on_the_wrong_host(
     *, output: list[str] | None, cache_to: list[str] | None, cache_from: list[str] | None, ssh: list[str] | None
 ) -> None:
-    """
-    Refuse build flags whose effect would land on the remote host instead of this one.
+    """Refuse build flags whose effect would land on the remote host instead of this one.
 
     Reached only on the remote-exec path, and deliberately a refusal rather than a best effort. A
     `dest=` output written into the staging directory would be deleted with it the moment the build
@@ -204,8 +201,7 @@ def _refuse_flags_that_resolve_on_the_wrong_host(
 
 
 def _local_dockerfile(file: str | None, *, context_is_local: bool) -> Path | None:
-    """
-    Where `--file` points on *this* machine, or None when buildx would not read it from here.
+    """Where `--file` points on *this* machine, or None when buildx would not read it from here.
 
     Three behaviours, all established by running buildx rather than reasoning about it, because the
     remote path must resolve `--file` exactly as the local backend would or it stages the wrong file:
@@ -244,8 +240,7 @@ def _local_dockerfile(file: str | None, *, context_is_local: bool) -> Path | Non
 
 
 def _replace_flag_value(args: list[str], flag: str, new_value: str) -> None:
-    """
-    Rewrite the value token following the first occurrence of `flag`, in place.
+    """Rewrite the value token following the first occurrence of `flag`, in place.
 
     Anchored on the flag rather than matching the value as a whole token: the value is rewritten
     because of where it sits in the argv this module just built, so an unrelated argument that happens
@@ -263,8 +258,7 @@ def _replace_flag_value(args: list[str], flag: str, new_value: str) -> None:
 
 
 def _stage_composite_paths(session: RemoteStagingSession, args: list[str], flag: str, key: str) -> None:
-    """
-    Stage the local path inside each `flag`'s composite spec and rewrite that component, in place.
+    """Stage the local path inside each `flag`'s composite spec and rewrite that component, in place.
 
     Used for `--build-context name=path` and `--secret id=x,src=path`. A component that does not name
     an existing local path (an image ref, a URL, `env=`) is left exactly as it was, so only real local
@@ -465,8 +459,7 @@ def _run_buildx_build_remotely(
     timeout: float,
     host: str | None,
 ) -> CliResult:
-    """
-    Stage a build's local inputs on the ssh:// host and run the build there.
+    """Stage a build's local inputs on the ssh:// host and run the build there.
 
     The context is staged only when it names an existing local directory - the inverse test to guessing
     which strings are URLs, which cannot be got right from syntax alone. A Git/HTTP context (or a path

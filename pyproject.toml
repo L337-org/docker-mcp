@@ -82,17 +82,20 @@ select = ["E", "F", "B", "S", "UP", "D"]
 # of the ones already passing can regress while this is worked through.
 #
 # Counts at the time of writing, with the advertised surface already exempt:
-#   D212 multi-line summary should start on the first line   159
 #   D405 section name capitalisation (the lowercase house style) 78
 #   D417 missing argument descriptions                        46
 #   D205 blank line between summary and description           43
-#   D209 closing quotes on their own line                     18
+#
+# D212 and D209 are cleared. They were mechanical - `ruff --fix` applies both - so they went
+# together: the reviewer is checking that a tool ran correctly, which costs the same for two
+# rules as for one. What remains needs judgement, and no tool can decide where a summary ends
+# or what a parameter does.
 #
 # D405 is the one with a consequence beyond this repository: scripts/check-repo-hygiene.py is
 # vendored byte-identically into four repositories and written in that lowercase style, and
 # claude-routines and apt exclude it from D entirely until this entry goes. Clearing D405 here
 # is what lets those two exclusions be removed.
-ignore = ["D212", "D405", "D417", "D205", "D209"]
+ignore = ["D405", "D417", "D205"]
 
 [tool.ruff.lint.pydocstyle]
 # CS.6.12: Google is the docstring format for Python, enforced here rather than by review.

@@ -57,8 +57,7 @@ _PSEUDO_FSTYPES = frozenset(
 
 @lru_cache(maxsize=1)
 def package_version() -> str:
-    """
-    Installed docker-mcp-server version, or 'unknown' when it can't be resolved.
+    """Installed docker-mcp-server version, or 'unknown' when it can't be resolved.
 
     The single version resolver for every externally-visible surface (User-Agent strings, provenance
     labels), so they always agree. Called at import time to build module-level User-Agent constants,
@@ -72,8 +71,7 @@ def package_version() -> str:
 
 
 def in_container() -> bool:
-    """
-    True when this server is running inside a container.
+    """True when this server is running inside a container.
 
     Docker writes `/.dockerenv` into every container, and our published images additionally set
     `DOCKER_MCP_SERVER_IN_CONTAINER=1`. Either signal flips on the in-container filesystem and
@@ -88,8 +86,7 @@ def _unescape_mountinfo_field(field: str) -> str:
 
 
 def _read_mountinfo() -> list[tuple[str, str]]:
-    """
-    Return (mount_point, fstype) pairs from /proc/self/mountinfo, or [] if it can't be read.
+    """Return (mount_point, fstype) pairs from /proc/self/mountinfo, or [] if it can't be read.
 
     The format is `ID PARENT MAJ:MIN ROOT MOUNT_POINT OPTIONS... - FSTYPE SOURCE SUPER_OPTS`; the
     number of optional fields before the literal ` - ` separator varies, so we split on it.
@@ -112,8 +109,7 @@ def _read_mountinfo() -> list[tuple[str, str]]:
 
 
 def _host_backed(path: Path) -> bool:
-    """
-    True if `path` falls under a real host bind mount inside the container.
+    """True if `path` falls under a real host bind mount inside the container.
 
     Finds the longest mount point in /proc/self/mountinfo that is a prefix of the path (matching the
     directory it would live in, since the file itself may not exist yet) and checks that mount's
@@ -157,8 +153,7 @@ def _unmapped_path_message(path: Path, *, for_write: bool) -> str:
 
 
 def assert_host_writable(dest_path: str) -> None:
-    """
-    Pre-flight guard for the `*_to_file` tools: refuse a destination that isn't on a host bind mount.
+    """Pre-flight guard for the `*_to_file` tools: refuse a destination that isn't on a host bind mount.
 
     A no-op outside a container. Inside one, a write to a non-mounted path silently lands in the
     container's overlay layer and vanishes on `--rm`, so we fail up front with mount instructions
@@ -171,8 +166,7 @@ def assert_host_writable(dest_path: str) -> None:
 
 
 def host_read_path(file_path: str) -> Path:
-    """
-    Resolve a host read path, enriching the "missing file" case with mount guidance in a container.
+    """Resolve a host read path, enriching the "missing file" case with mount guidance in a container.
 
     Returns the expanded path unchanged on the host install, or when the file genuinely exists (it
     may legitimately live inside the container's image). Only when running in a container, the file
@@ -211,8 +205,7 @@ def open_host_read_file(file_path: str) -> IO[bytes]:
 
 
 def classify_host_kernel() -> str:
-    """
-    Best-effort host-OS classification from the shared kernel string (containers share the host
+    """Best-effort host-OS classification from the shared kernel string (containers share the host
     kernel), used to tailor socket-mount hints when the daemon is unreachable.
 
     Returns 'wsl2' (Windows/WSL2), 'docker-desktop' (LinuxKit VM - usually macOS), 'linux' (a native
@@ -230,8 +223,7 @@ def classify_host_kernel() -> str:
 
 
 def close_stream_quietly(stream: Any) -> None:
-    """
-    Best-effort close of a docker `CancellableStream` (or anything with `.close()`).
+    """Best-effort close of a docker `CancellableStream` (or anything with `.close()`).
 
     Used by the log/event tools that arm a watchdog timer to `stream.close()` on a wall-clock
     deadline: when the tool finishes first we still close to free the socket, and a close that
@@ -254,8 +246,7 @@ def close_stream_quietly(stream: Any) -> None:
 
 
 def drop_none(**kwargs: Any) -> dict[str, Any]:
-    """
-    Return a dict containing only the kwargs whose value is not None.
+    """Return a dict containing only the kwargs whose value is not None.
 
     Used at `docker` module call sites where None means "let the SDK pick the default"
     and passing the key explicitly with value=None would override that default.
@@ -264,8 +255,7 @@ def drop_none(**kwargs: Any) -> dict[str, Any]:
 
 
 def stream_to_file(chunks: Iterable[bytes], dest_path: str, *, overwrite: bool = False) -> tuple[Path, int]:
-    """
-    Stream byte chunks to a host file, returning the resolved path and the number of bytes written.
+    """Stream byte chunks to a host file, returning the resolved path and the number of bytes written.
 
     Used by the `*_to_file` tool variants so a large daemon-side payload (image save, container
     export/archive) is written straight to disk instead of being buffered in memory and returned
@@ -313,8 +303,7 @@ def stream_to_file(chunks: Iterable[bytes], dest_path: str, *, overwrite: bool =
 
 
 def as_byte_chunks(chunks: Iterable | bytes | bytearray | str) -> Iterable[bytes]:
-    """
-    Normalize a docker log/stream payload to bytes chunks, ready for `join_bounded`.
+    """Normalize a docker log/stream payload to bytes chunks, ready for `join_bounded`.
 
     Accepts either a stream of chunks or a whole payload. A whole `bytes`/`bytearray` is yielded as a
     single chunk rather than iterated, because iterating one yields ints that would stringify to
@@ -344,8 +333,7 @@ def as_byte_chunks(chunks: Iterable | bytes | bytearray | str) -> Iterable[bytes
 
 
 def join_bounded(chunks: Iterable[bytes], max_bytes: int, what: str, remedy: str | None = None) -> bytes:
-    """
-    Concatenate bytes chunks, aborting with ToolInputError if the running total would exceed
+    """Concatenate bytes chunks, aborting with ToolInputError if the running total would exceed
     max_bytes. A negative `max_bytes` is a caller bug rather than an answer to give a model, and
     stays a `ValueError`.
 

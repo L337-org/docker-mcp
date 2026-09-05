@@ -83,8 +83,7 @@ class SshTarget:
 
 
 def connect_socket_with_family_fallback(hostname: str, port: int, timeout: float | None) -> socket.socket:
-    """
-    Connect a plain TCP socket to hostname:port, trying every resolved address family in turn.
+    """Connect a plain TCP socket to hostname:port, trying every resolved address family in turn.
 
     `paramiko.SSHClient.connect()` already resolves both address families (`getaddrinfo(..., AF_UNSPEC,
     ...)`) and loops over the results, but only advances to the next address when the connect attempt
@@ -124,8 +123,7 @@ def connect_socket_with_family_fallback(hostname: str, port: int, timeout: float
 
 
 def parse_ssh_url(url: str) -> SshTarget:
-    """
-    Parse a DOCKER_HOST=ssh://... URL into paramiko connection parameters.
+    """Parse a DOCKER_HOST=ssh://... URL into paramiko connection parameters.
 
     Applies the same ~/.ssh/config lookups (Hostname, Port, User, IdentityFile, ProxyCommand)
     that docker-py's `SSHHTTPAdapter._create_paramiko_client` performs, so this proxy resolves the
@@ -178,8 +176,7 @@ def parse_ssh_url(url: str) -> SshTarget:
 
 
 def connect_ssh_client(docker_host: str, *, timeout: float | None = None) -> paramiko.SSHClient:
-    """
-    Build and connect a paramiko SSHClient for a DOCKER_HOST=ssh://... URL.
+    """Build and connect a paramiko SSHClient for a DOCKER_HOST=ssh://... URL.
 
     Mirrors docker-py's `SSHHTTPAdapter._create_paramiko_client` defaults: system host keys are
     loaded and an unknown host key is rejected (`RejectPolicy`, not auto-add); `allow_agent` and
@@ -247,8 +244,7 @@ def connect_ssh_client(docker_host: str, *, timeout: float | None = None) -> par
 
 
 def paramiko_dial_stdio_factory(ssh_client: paramiko.SSHClient) -> ChannelFactory:
-    """
-    Build a channel factory that opens a fresh `docker system dial-stdio` channel on `ssh_client`.
+    """Build a channel factory that opens a fresh `docker system dial-stdio` channel on `ssh_client`.
 
     This is the production `ChannelFactory` for `SshDialStdioProxy`: one already-connected SSH
     transport is shared for the lifetime of a single CLI invocation, and a new session channel is
@@ -288,8 +284,7 @@ def _close_quietly(closable: BidirectionalStream) -> None:
 
 
 class SshDialStdioProxy:
-    """
-    Localhost TCP listener that bridges each accepted connection to a stream from `channel_factory`.
+    """Localhost TCP listener that bridges each accepted connection to a stream from `channel_factory`.
 
     Meant to be used per-call (one instance per `run_docker` invocation), not as a long-lived
     session proxy: `start()` binds an ephemeral port, `stop()` tears the listener and every pumped
@@ -401,8 +396,7 @@ def _pump_duplex(conn: socket.socket, stream: BidirectionalStream) -> None:
 
 @contextlib.contextmanager
 def ssh_proxy_for_docker_host(docker_host: str, *, timeout: float | None = None) -> Iterator[SshDialStdioProxy]:
-    """
-    Connect to an ssh:// DOCKER_HOST via paramiko and run a per-call local TCP proxy for the
+    """Connect to an ssh:// DOCKER_HOST via paramiko and run a per-call local TCP proxy for the
     `with` block's duration.
 
     Intended for `_cli.py:run_docker`: point the CLI subprocess's DOCKER_HOST at
@@ -449,8 +443,7 @@ _TIMEOUT_ATTRIBUTION_SLACK_SECONDS = 0.25
 
 
 def _validate_exec_args(argv: Sequence[str], timeout: float, max_output_bytes: int) -> None:
-    """
-    Reject arguments the remote path cannot honour, before anything connects or runs.
+    """Reject arguments the remote path cannot honour, before anything connects or runs.
 
     A non-positive timeout raises `subprocess.TimeoutExpired` rather than `ValueError`, to match the
     local path exactly: `subprocess.run` raises that same exception immediately for `0`, `-1` and
@@ -479,8 +472,7 @@ def _validate_exec_args(argv: Sequence[str], timeout: float, max_output_bytes: i
 
 
 def _watchdog_sleep_seconds(timeout: float) -> int:
-    """
-    Whole seconds the remote watchdog sleeps before killing the command.
+    """Whole seconds the remote watchdog sleeps before killing the command.
 
     Shared by the wrapper that emits the `sleep` and the attribution check that reasons about when it
     can have fired, so the two cannot drift apart. `sleep` takes whole seconds portably, hence the
@@ -493,8 +485,7 @@ def _watchdog_sleep_seconds(timeout: float) -> int:
 
 
 def _is_remote_timeout(returncode: int, elapsed: float, timeout: float) -> bool:
-    """
-    Whether a finished remote command should be reported as having timed out.
+    """Whether a finished remote command should be reported as having timed out.
 
     Requires both the wrapper's sentinel status *and* corroborating elapsed time, so a command that
     legitimately exits with the sentinel code well inside its budget - a container propagating 124
@@ -575,8 +566,7 @@ _FETCH_CHUNK_BYTES = 32_768
 
 
 class RemoteDialectKind(enum.Enum):
-    """
-    Which command-wrapping dialect a remote host needs.
+    """Which command-wrapping dialect a remote host needs.
 
     Only POSIX is implemented. WINDOWS exists so detection can *name* what it found and refuse
     precisely, rather than mis-running a POSIX script against cmd/PowerShell - and so adding Windows
@@ -597,8 +587,7 @@ _POSIX_UNAME_VALUES = frozenset({"linux", "darwin", "freebsd", "openbsd", "netbs
 
 
 class RemoteDialect(Protocol):
-    """
-    Everything platform-specific about driving a remote shell: command wrapping and path handling.
+    """Everything platform-specific about driving a remote shell: command wrapping and path handling.
 
     A dialect exists so the pieces that cannot be written portably are stated once per platform
     rather than assumed. The staging members are argv lists rather than command strings because they
@@ -620,8 +609,7 @@ class RemoteDialect(Protocol):
 
 
 class PosixDialect:
-    """
-    Command wrapper for a POSIX remote shell, needing only `sh`, `sleep`, `kill` and `mktemp`.
+    """Command wrapper for a POSIX remote shell, needing only `sh`, `sleep`, `kill` and `mktemp`.
 
     Deliberately not GNU coreutils `timeout`, which is absent on macOS/BSD; this runs anywhere with
     a POSIX shell. Termination is the *remote* side's own responsibility because closing an SSH
@@ -629,8 +617,7 @@ class PosixDialect:
     """
 
     def wrap_with_timeout(self, argv: Sequence[str], *, timeout: float, cwd: str | None = None) -> str:
-        """
-        Build the remote `sh -c` command that runs `argv` under a self-killing watchdog.
+        """Build the remote `sh -c` command that runs `argv` under a self-killing watchdog.
 
         Two things here are load-bearing and easy to get wrong:
 
@@ -736,8 +723,7 @@ class PosixDialect:
         return f"sh -c {shlex.quote(chr(10).join(lines))}"
 
     def temp_dir_argv(self) -> list[str]:
-        """
-        Argv creating a private staging directory and printing its path.
+        """Argv creating a private staging directory and printing its path.
 
         `mktemp -d` is used rather than a name we compose ourselves because it is atomic and creates
         the directory mode 0700 - on a shared host, a predictable path under /tmp would be a symlink
@@ -752,8 +738,7 @@ class PosixDialect:
         return ["sh", "-c", f'mktemp -d "${{TMPDIR:-/tmp}}/{_STAGE_ROOT_PREFIX}XXXXXXXX"']
 
     def remove_tree_argv(self, path: str) -> list[str]:
-        """
-        Argv removing a staged tree and everything under it.
+        """Argv removing a staged tree and everything under it.
 
         args: path - absolute remote path to remove; passed as an argv element, never interpolated
         returns: list[str] - argv that succeeds whether or not the path still exists
@@ -761,8 +746,7 @@ class PosixDialect:
         return ["rm", "-rf", path]
 
     def extract_tar_argv(self, archive: str, dest: str) -> list[str]:
-        """
-        Argv unpacking a staged tar archive into an existing directory.
+        """Argv unpacking a staged tar archive into an existing directory.
 
         Uncompressed tar only: `-z` autodetection is a GNU/bsdtar extension rather than something
         every POSIX `tar` offers, so the uploader does not compress (see `_upload_and_extract`).
@@ -775,8 +759,7 @@ class PosixDialect:
         return ["tar", "-xf", archive, "-C", dest]
 
     def create_tar_argv(self, source: str, archive: str) -> list[str]:
-        """
-        Argv packing a remote path into an uncompressed tar, for fetching it back over SFTP.
+        """Argv packing a remote path into an uncompressed tar, for fetching it back over SFTP.
 
         The inverse of `extract_tar_argv`: `source`'s parent directory becomes `tar`'s `-C` base and
         only its basename is added, so the archive's sole top-level member is that basename - whether
@@ -793,8 +776,7 @@ class PosixDialect:
         return ["tar", "-cf", archive, "-C", parent or "/", name]
 
     def join_path(self, *parts: str) -> str:
-        r"""
-        Join remote path components with the remote separator.
+        r"""Join remote path components with the remote separator.
 
         `posixpath`, not `os.path`: the separator belongs to the *remote* host, and a server running
         on Windows would otherwise compose `\\`-joined paths for a Linux target.
@@ -809,8 +791,7 @@ _DIALECTS: dict[RemoteDialectKind, RemoteDialect] = {RemoteDialectKind.POSIX: Po
 
 
 def get_dialect(kind: RemoteDialectKind) -> RemoteDialect:
-    """
-    Return the wrapper implementation for a dialect, or refuse if it isn't implemented yet.
+    """Return the wrapper implementation for a dialect, or refuse if it isn't implemented yet.
 
     args: kind - the dialect a host was detected as
     returns: RemoteDialect - the implementation to wrap commands with
@@ -849,8 +830,7 @@ def _clear_dialect_cache() -> None:
 def detect_remote_dialect(
     ssh_client: paramiko.SSHClient, cache_key: str, *, timeout: float | None = None
 ) -> RemoteDialectKind:
-    """
-    Detect which command dialect a remote host needs, by probing `uname -s`.
+    """Detect which command dialect a remote host needs, by probing `uname -s`.
 
     This is a *behavioural* probe - "is there a POSIX shell here that will run my script?" - not an
     OS fingerprint, which is why sshd inside a WSL distro is correctly accepted (it answers "Linux"
@@ -949,8 +929,7 @@ def detect_remote_dialect(
 
 @dataclass(frozen=True)
 class RemoteExecResult:
-    """
-    Outcome of one remote command: raw captured bytes plus whether the cap truncated them.
+    """Outcome of one remote command: raw captured bytes plus whether the cap truncated them.
 
     Bytes rather than str so decoding stays the caller's concern, matching how `_cli.run_docker`
     captures a local subprocess and decodes once at the boundary.
@@ -965,8 +944,7 @@ class RemoteExecResult:
 def _drain_exec_channel(
     channel: paramiko.Channel, *, max_output_bytes: int, deadline: float, argv: Sequence[str], timeout: float
 ) -> tuple[bytes, bytes, bool]:
-    """
-    Pump a channel's stdout and stderr until the command ends, capping what we keep.
+    """Pump a channel's stdout and stderr until the command ends, capping what we keep.
 
     Both streams must be drained *concurrently*: paramiko stops advertising window space for a
     stream nobody reads, so draining only stdout lets a chatty stderr fill the window and block the
@@ -1045,8 +1023,7 @@ def exec_remote(
     cwd: str | None = None,
     dialect: RemoteDialectKind = RemoteDialectKind.POSIX,
 ) -> RemoteExecResult:
-    """
-    Run one command on an already-connected host, under the dialect's own timeout watchdog.
+    """Run one command on an already-connected host, under the dialect's own timeout watchdog.
 
     Prefer `run_remote_exec` unless you already hold a connection you intend to reuse (staging a
     file and then running against it, say) - this takes a client rather than opening one.
@@ -1104,8 +1081,7 @@ def run_remote_exec(
     timeout: float,
     cwd: str | None = None,
 ) -> RemoteExecResult:
-    """
-    Connect to an ssh:// host, run one command on it, and close the connection.
+    """Connect to an ssh:// host, run one command on it, and close the connection.
 
     A fresh connection per call, which suits commands with no local inputs to stage (`scout_*`, and
     the reference-only buildx/stack subcommands): there is nothing to keep a session open for, and
@@ -1152,8 +1128,7 @@ def run_remote_exec(
 
 
 def _walk_relative(root: Path) -> Iterator[str]:
-    """
-    Yield every entry under `root` as a path relative to it, directories included.
+    """Yield every entry under `root` as a path relative to it, directories included.
 
     Symlinks are not followed (`followlinks=False`), so a link into a huge tree costs one entry rather
     than recursing through it - and matches how the tar records them.
@@ -1167,8 +1142,7 @@ def _walk_relative(root: Path) -> Iterator[str]:
 
 
 def _enforce_stage_limits(root: Path, entries: Iterator[str] | Sequence[str], *, what: str) -> None:
-    """
-    Refuse an oversized staging payload before any of it is read, tarred, or uploaded.
+    """Refuse an oversized staging payload before any of it is read, tarred, or uploaded.
 
     Checks as it consumes `entries`, so a pathologically large tree is refused after a few thousand
     entries instead of being walked, tarred to local disk and pushed over SSH first. An entry that
@@ -1201,8 +1175,7 @@ def _enforce_stage_limits(root: Path, entries: Iterator[str] | Sequence[str], *,
 
 
 def _staged_member(info: tarfile.TarInfo) -> tarfile.TarInfo | None:
-    """
-    Keep regular files, directories and symlinks; drop anything else from a staged tar.
+    """Keep regular files, directories and symlinks; drop anything else from a staged tar.
 
     FIFOs and device nodes cannot be meaningfully recreated on another host, and a staged copy of one
     would be a surprise rather than a service. (Sockets never reach this filter - `gettarinfo` returns
@@ -1218,8 +1191,7 @@ def _staged_member(info: tarfile.TarInfo) -> tarfile.TarInfo | None:
 
 
 def _tar_local_tree(root: Path) -> IO[bytes]:
-    """
-    Pack a directory's contents into an uncompressed tar in a local temp file, rewound for upload.
+    """Pack a directory's contents into an uncompressed tar in a local temp file, rewound for upload.
 
     No `.dockerignore` handling: this is a plain directory copy for tools that read files from a
     working directory (Compose, stack, bake), not a build context - see `stage_build_context` for the
@@ -1244,8 +1216,7 @@ def _tar_local_tree(root: Path) -> IO[bytes]:
 
 
 def _load_context_tar_helpers():
-    """
-    Import docker-py's context-tarring helpers on first use, not at module import.
+    """Import docker-py's context-tarring helpers on first use, not at module import.
 
     They are reused so a staged build context honours `.dockerignore` exactly as an SDK-driven build
     would - `APIClient.build` calls the same two - but nothing documents `docker.utils`, so this is a
@@ -1277,8 +1248,7 @@ def _load_context_tar_helpers():
 
 
 def _read_dockerignore(context_dir: Path) -> list[str]:
-    """
-    Read `.dockerignore` into the pattern list docker-py's tarring helpers expect.
+    """Read `.dockerignore` into the pattern list docker-py's tarring helpers expect.
 
     Mirrors `APIClient.build`'s own reading of the file (blank lines and `#` comments dropped, each
     line stripped) so a staged context excludes exactly what an SDK-driven build would.
@@ -1294,8 +1264,7 @@ def _read_dockerignore(context_dir: Path) -> list[str]:
 
 
 class RemoteStagingSession:
-    """
-    One SSH connection plus a private remote temp directory, for a command that reads local files.
+    """One SSH connection plus a private remote temp directory, for a command that reads local files.
 
     Built by `remote_staging_session`, which owns the teardown - don't construct one directly. Each
     `stage_*` call lands in its own numbered subdirectory, so two staged items with the same basename
@@ -1322,8 +1291,7 @@ class RemoteStagingSession:
         self._slots = 0
 
     def _new_slot_path(self, kind: str) -> str:
-        """
-        Reserve the next numbered path under the session root, without creating anything there.
+        """Reserve the next numbered path under the session root, without creating anything there.
 
         args: kind - short label for the slot, for legibility while debugging on the remote host
         returns: str - an absolute remote path, guaranteed unused within this session
@@ -1332,8 +1300,7 @@ class RemoteStagingSession:
         return self._dialect.join_path(self.root, f"{kind}{self._slots}")
 
     def _new_slot(self, kind: str) -> tuple[str, str]:
-        """
-        Create the next numbered subdirectory under the session root.
+        """Create the next numbered subdirectory under the session root.
 
         args: kind - short label for the slot, for legibility while debugging on the remote host
         returns: tuple[str, str] - (the new directory, a sibling path to use for its upload archive)
@@ -1343,8 +1310,7 @@ class RemoteStagingSession:
         return directory, f"{directory}.tar"
 
     def join(self, *parts: str) -> str:
-        """
-        Join remote path components with the remote separator.
+        """Join remote path components with the remote separator.
 
         Lets a caller build an absolute path under something a `stage_*` call returned, instead of
         depending on the command's working directory - which is what keeps `buildx_build`'s `--file`
@@ -1356,8 +1322,7 @@ class RemoteStagingSession:
         return self._dialect.join_path(*parts)
 
     def _control(self, argv: list[str], *, timeout: float, what: str) -> RemoteExecResult:
-        """
-        Run one of the session's own bookkeeping commands, raising if it fails.
+        """Run one of the session's own bookkeeping commands, raising if it fails.
 
         Unlike `exec` - which runs the *caller's* docker command and reports failure in the result -
         these are our own steps, and a caller cannot do anything useful with a half-staged directory.
@@ -1379,8 +1344,7 @@ class RemoteStagingSession:
         return result
 
     def _upload_and_extract(self, archive: IO[bytes], *, destination: str, archive_path: str) -> None:
-        """
-        Upload a tar over SFTP and unpack it into an already-created remote directory.
+        """Upload a tar over SFTP and unpack it into an already-created remote directory.
 
         The archive is written *beside* the destination rather than inside it, so nothing the caller
         later reads (a Compose file glob, a build context) can see it. It is removed once unpacked;
@@ -1406,8 +1370,7 @@ class RemoteStagingSession:
         )
 
     def stage_tree(self, local_dir: Path | str) -> str:
-        """
-        Copy a whole local directory to the remote host and return its remote path.
+        """Copy a whole local directory to the remote host and return its remote path.
 
         For tools that resolve relative paths against a working directory - Compose's `project_dir`,
         `stack deploy`'s `-c` files, `buildx bake`'s files. The copy is unfiltered: it cannot know
@@ -1432,8 +1395,7 @@ class RemoteStagingSession:
         return destination
 
     def stage_file(self, local_file: Path | str) -> str:
-        """
-        Copy one local file to the remote host and return its remote path.
+        """Copy one local file to the remote host and return its remote path.
 
         For a lone path argument that is not a whole tree - a buildkitd config, an imagetools
         descriptor, a Dockerfile living outside its build context. Uploaded directly over SFTP; no tar
@@ -1461,8 +1423,7 @@ class RemoteStagingSession:
         return remote_path
 
     def stage_build_context(self, context_dir: Path | str, *, dockerfile: str | None = None) -> str:
-        """
-        Copy a build context to the remote host, honouring `.dockerignore`, and return its path.
+        """Copy a build context to the remote host, honouring `.dockerignore`, and return its path.
 
         Uses docker-py's own tarring helpers, so what lands remotely is what an SDK-driven build would
         have sent: excluded paths are never read, and the limit check runs over the *included* set, so
@@ -1512,8 +1473,7 @@ class RemoteStagingSession:
         return destination
 
     def reserve_path(self) -> str:
-        """
-        Reserve a fresh, not-yet-existing path under the session root, for a remote command to create.
+        """Reserve a fresh, not-yet-existing path under the session root, for a remote command to create.
 
         Unlike `stage_file`/`stage_tree`, nothing is uploaded and nothing is created here - the path is
         merely guaranteed unused. Handing this to a command that writes to a path (`docker compose cp
@@ -1548,8 +1508,7 @@ class RemoteStagingSession:
             stream_to_file(chunks, str(local_dest), overwrite=False)
 
     def _fetch_directory(self, remote_path: str, local_dest: Path) -> None:
-        """
-        Fetch a remote directory to `local_dest`: pack it remotely, download the tar, extract locally.
+        """Fetch a remote directory to `local_dest`: pack it remotely, download the tar, extract locally.
 
         Mirrors `_upload_and_extract` in reverse. The byte cap is checked against the packed archive
         before it is downloaded (cheap: the remote host already made it); the entry-count cap can only
@@ -1609,8 +1568,7 @@ class RemoteStagingSession:
             extracted.rename(local_dest)
 
     def fetch_path(self, remote_path: str, local_dest: Path | str) -> None:
-        """
-        Bring a path a remote command just produced (via `reserve_path`) back to a local destination.
+        """Bring a path a remote command just produced (via `reserve_path`) back to a local destination.
 
         The inverse of `stage_file`/`stage_tree`: probes whether `remote_path` is a file or a
         directory (only the command that produced it knows), then fetches accordingly - a file
@@ -1653,8 +1611,7 @@ class RemoteStagingSession:
         max_output_bytes: int,
         cwd: str | None = None,
     ) -> RemoteExecResult:
-        """
-        Run a command on the session's host, reusing its connection.
+        """Run a command on the session's host, reusing its connection.
 
         Same semantics as `run_remote_exec` (watchdog timeout, concurrent drain, `TimeoutExpired` on
         expiry) without a second handshake, and `cwd` here is a *remote* path - typically one a
@@ -1681,8 +1638,7 @@ class RemoteStagingSession:
 
 
 def _make_stage_root(ssh_client: paramiko.SSHClient, dialect_kind: RemoteDialectKind, docker_host: str) -> str:
-    """
-    Create the session's private temp directory on the remote host and return its path.
+    """Create the session's private temp directory on the remote host and return its path.
 
     args:
         ssh_client - an already-connected client for the host
@@ -1711,8 +1667,7 @@ def _make_stage_root(ssh_client: paramiko.SSHClient, dialect_kind: RemoteDialect
 
 
 def _verify_shared_filesystem(sftp: paramiko.SFTPClient, root: str, docker_host: str) -> None:
-    """
-    Confirm the SFTP subsystem sees the directory the exec channel just created.
+    """Confirm the SFTP subsystem sees the directory the exec channel just created.
 
     One SSH connection does not guarantee one filesystem. A Windows sshd whose `DefaultShell` is
     `wsl.exe` runs exec commands inside the WSL distro - so `uname -s` says Linux and the watchdog
@@ -1766,8 +1721,7 @@ _TEARDOWN_ERRORS: tuple[type[BaseException], ...] = (
 def _remove_stage_root(
     ssh_client: paramiko.SSHClient, dialect_kind: RemoteDialectKind, root: str, docker_host: str
 ) -> None:
-    """
-    Delete the session's temp directory, reporting a failure without raising.
+    """Delete the session's temp directory, reporting a failure without raising.
 
     Logged at warning because a surviving directory is a real (if small) problem - remote disk held
     until someone clears /tmp, possibly holding a staged secret file - and the operator can only act
@@ -1807,8 +1761,7 @@ def _remove_stage_root(
 
 @contextlib.contextmanager
 def remote_staging_session(docker_host: str, *, timeout: float | None = None) -> Iterator[RemoteStagingSession]:
-    """
-    Open a staging session against an ssh:// host: one connection, one temp dir, guaranteed teardown.
+    """Open a staging session against an ssh:// host: one connection, one temp dir, guaranteed teardown.
 
     Use it for a command that reads local files (Compose files, a bake file, a build context); use
     `run_remote_exec` when every argument is a reference and there is nothing to copy. Staging and

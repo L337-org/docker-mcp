@@ -1,5 +1,4 @@
-"""
-Project exception types.
+"""Project exception types.
 
 Lives at the package root (not under `tools/`) so `docker_mcp.server` can import it for the host
 guard without importing `docker_mcp.tools` - a circular import at tool-registration time - mirroring

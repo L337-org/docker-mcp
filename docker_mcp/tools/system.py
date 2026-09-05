@@ -1,7 +1,8 @@
 """Tools for the daemon itself, and for this server's view of it.
 
 What the daemon is and what it holds, the registry credentials it uses, and which of the
-configured hosts are reachable from here."""
+configured hosts are reachable from here.
+"""
 
 # library of mcp tools relating to the system domain: daemon info/auth and client connection control
 
@@ -56,8 +57,7 @@ _SELF_TERMINATE_OVERRIDE_ENV = "DOCKER_MCP_SERVER_ALLOW_SELF_TERMINATE"
 
 
 def _detect_self_container_id(client: docker.DockerClient) -> str | None:
-    """
-    Resolve the full id of the container this server runs in, or None if it can't be determined.
+    """Resolve the full id of the container this server runs in, or None if it can't be determined.
 
     Docker sets the container's short id as its hostname by default, so we look that up via the
     daemon. Returns None if the hostname was overridden (`--hostname`) or the lookup fails - the
@@ -78,8 +78,7 @@ def _detect_self_container_id(client: docker.DockerClient) -> str | None:
 
 
 def _self_host() -> Host | None:
-    """
-    The host the server's own container runs on = the first configured host on a local transport
+    """The host the server's own container runs on = the first configured host on a local transport
     (unix:// / npipe:// or the platform default). Self-detection and the self-termination guard key off
     this; a remote-only config returns None, leaving the guard inert (our container can't be on a remote).
     """
@@ -90,8 +89,7 @@ def _self_host() -> Host | None:
 
 
 def guard_not_self(container: Container, host: str | None = None) -> None:
-    """
-    Refuse a destructive lifecycle action against this server's own container.
+    """Refuse a destructive lifecycle action against this server's own container.
 
     An accident guard, not a security boundary: it only constrains calls made through this server's
     tools. A human recovering a wedged server runs `docker rm -f` from their own shell, which never
@@ -126,8 +124,7 @@ def _close_client_quietly(client: docker.DockerClient) -> None:
 
 
 def _ensure_ssh_port(url: str) -> str:
-    """
-    Work around a docker-py bug for an `ssh://` URL with no explicit port: `docker.utils.parse_host()`
+    """Work around a docker-py bug for an `ssh://` URL with no explicit port: `docker.utils.parse_host()`
     hardcodes port 22 into the URL *before* `SSHHTTPAdapter._create_paramiko_client` ever runs, so that
     adapter's own `~/.ssh/config` `Port` fallback (which only fires while the port is still unset) never
     triggers - a non-22 `Port` in `~/.ssh/config` is silently ignored. We splice in the configured port
@@ -161,8 +158,7 @@ def _ensure_ssh_port(url: str) -> str:
 
 
 def _ensure_reachable_family(url: str) -> str:
-    """
-    Work around paramiko's narrow IPv4/IPv6 fallback for an `ssh://` docker-py connection.
+    """Work around paramiko's narrow IPv4/IPv6 fallback for an `ssh://` docker-py connection.
 
     `paramiko.SSHClient.connect()` (used internally by docker-py's `SSHHTTPAdapter`) resolves both
     address families but only retries the next one on `ECONNREFUSED`/`EHOSTUNREACH` - a timed-out or
@@ -214,8 +210,7 @@ def _ensure_reachable_family(url: str) -> str:
 
 
 def _from_env_no_context(**kwargs: Any) -> docker.DockerClient:
-    """
-    `docker.from_env` with docker-py's own Docker-context resolution switched off.
+    """`docker.from_env` with docker-py's own Docker-context resolution switched off.
 
     **Every `from_env` call in this package must go through here** (a single choke point rather than a
     convention to remember). docker-py 7.2.0 made `from_env` resolve the active Docker CLI context
@@ -257,8 +252,7 @@ def _build_default_client() -> docker.DockerClient:
 
 
 def _tls_from_dir(cert_dir: str) -> docker.TLSConfig:
-    """
-    A TLSConfig from Docker's conventional certs in `cert_dir`. Always verifies the daemon against
+    """A TLSConfig from Docker's conventional certs in `cert_dir`. Always verifies the daemon against
     `ca.pem`; presents a client cert (mutual TLS) only when both `cert.pem` and `key.pem` are present,
     else verifies the daemon only (e.g. a self-signed daemon pinned via `ca.pem`, with no client auth).
     """
@@ -270,7 +264,8 @@ def _tls_from_dir(cert_dir: str) -> docker.TLSConfig:
 
 def _tls_config_for(host: Host) -> docker.TLSConfig | None:
     """Per-host TLS, tiered: the host's own `(tls=<dir>)` cert dir, else the global DOCKER_CERT_PATH /
-    DOCKER_TLS_VERIFY env (mirroring from_env), else plaintext (None)."""
+    DOCKER_TLS_VERIFY env (mirroring from_env), else plaintext (None).
+    """
     if host.cert_dir:
         return _tls_from_dir(host.cert_dir)
     if (os.environ.get("DOCKER_TLS_VERIFY") or "").strip():
@@ -279,8 +274,7 @@ def _tls_config_for(host: Host) -> docker.TLSConfig | None:
 
 
 def _build_client(host: Host) -> docker.DockerClient:
-    """
-    Build the docker-py client for one configured host.
+    """Build the docker-py client for one configured host.
 
     The legacy single host (DOCKER_MCP_SERVER_HOSTS unset) goes through _build_default_client so the
     existing DOCKER_HOST / from_env behavior (and its TLS env / API-version negotiation) is preserved
@@ -628,7 +622,8 @@ def _connection_help(exc: BaseException, host: Host | None) -> str:
 
 def _host_tag(host: Host) -> str:
     """A host's label with brief `(ro, remote)`/`(nd, remote)` annotations, for the boot roster of
-    the other hosts. `nd` only shows when `ro` is absent, since `ro` already implies it."""
+    the other hosts. `nd` only shows when `ro` is absent, since `ro` already implies it.
+    """
     tags = []
     if host.read_only:
         tags.append("ro")
@@ -641,7 +636,8 @@ def _host_tag(host: Host) -> str:
 
 def _connection_summary(client: docker.DockerClient, host: Host) -> str:
     """One-line confirmation of the default daemon reached, the self-guard status, and a no-connect
-    roster of the other configured hosts (so boot shows the topology without dialing them)."""
+    roster of the other configured hosts (so boot shows the topology without dialing them).
+    """
     try:
         details = client.info()
     except _CONNECT_ERRORS:
@@ -663,8 +659,7 @@ def _connection_summary(client: docker.DockerClient, host: Host) -> str:
 
 
 def startup_preflight() -> None:
-    """
-    Best-effort startup diagnostics, written only to stderr (stdout is the MCP stdio channel).
+    """Best-effort startup diagnostics, written only to stderr (stdout is the MCP stdio channel).
 
     Pings the default host; on failure prints OS-aware connection guidance and returns without raising,
     so a client that only wants the tool list still starts (other hosts connect lazily). On success,

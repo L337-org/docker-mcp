@@ -40,8 +40,7 @@ _MAX_TAG_PAGES = 50  # cap on registry/Hub pagination follow-through
 
 
 def _env_credentials(username: str | None, password: str | None) -> tuple[str | None, str | None]:
-    """
-    Fall back to DOCKER_MCP_SERVER_REGISTRY_USERNAME / DOCKER_MCP_SERVER_REGISTRY_PASSWORD when no
+    """Fall back to DOCKER_MCP_SERVER_REGISTRY_USERNAME / DOCKER_MCP_SERVER_REGISTRY_PASSWORD when no
     explicit credentials are passed.
 
     Setting credentials in the server's environment keeps them out of tool arguments, which many
@@ -88,8 +87,7 @@ _MANIFEST_ACCEPT = ", ".join(
 
 
 def _strip_tag_and_digest(image: str) -> str:
-    """
-    Strip an optional `@sha256:...` digest and `:tag` from an image reference.
+    """Strip an optional `@sha256:...` digest and `:tag` from an image reference.
 
     The colon in a registry hostname's port (e.g. `localhost:5000/foo`) is preserved -
     we only strip a trailing `:tag` that appears *after* the last `/` in the reference,
@@ -105,8 +103,7 @@ def _strip_tag_and_digest(image: str) -> str:
 
 
 def _parse_image_ref(image: str) -> tuple[str, str]:
-    """
-    Split an image reference into (registry_host, repository_path).
+    """Split an image reference into (registry_host, repository_path).
 
     Any `:tag` or `@digest` suffix is stripped - pass tag/digest separately via the
     `reference` parameter of `registry_manifest`.
@@ -144,8 +141,7 @@ def _host_of(netloc: str) -> str:
 
 
 def _is_local_host(host: str) -> bool:
-    """
-    True if `host` is a loopback / private / link-local address or an obvious local name.
+    """True if `host` is a loopback / private / link-local address or an obvious local name.
 
     Used to decide whether sending registry credentials to a token realm is safe. This is a
     best-effort, no-DNS check: it recognizes IP literals and the conventional local-name suffixes
@@ -167,8 +163,7 @@ def _is_local_host(host: str) -> bool:
 
 
 def _validate_bearer_realm(realm: str, registry: str) -> None:
-    """
-    Reject a token realm that would leak credentials in plaintext or to an internal host.
+    """Reject a token realm that would leak credentials in plaintext or to an internal host.
 
     The realm is attacker-controlled - it comes from the registry's `WWW-Authenticate` header - and
     we are about to send (possibly authenticated) requests to it. We therefore require:
@@ -227,8 +222,7 @@ def _get_bearer_token(
 
 
 def _parse_retry_after(value: str | None) -> float | None:
-    """
-    Decode a `Retry-After` header (RFC 7231).
+    """Decode a `Retry-After` header (RFC 7231).
 
     The value is either an integer number of seconds (``"30"``) or an HTTP-date
     (``"Wed, 21 Oct 2026 07:28:00 GMT"``). Returns the delay in seconds, or None
@@ -290,8 +284,7 @@ _MAX_RESPONSE_BYTES = 16 * 1024 * 1024  # 16 MiB
 
 
 def _read_capped_response(resp: httpx.Response, url: str) -> httpx.Response:
-    """
-    Read a streamed response's body into memory bounded by `_MAX_RESPONSE_BYTES`, returning a
+    """Read a streamed response's body into memory bounded by `_MAX_RESPONSE_BYTES`, returning a
     fully-read `httpx.Response` so callers keep using `.json()` / `.text` / `.headers` unchanged.
     """
     chunks: list[bytes] = []
@@ -317,8 +310,7 @@ def _get_with_retry_policy(
     params: dict[str, str] | None = None,
     auth: tuple[str, str] | None = None,
 ) -> httpx.Response:
-    """
-    GET that applies the project's transient-failure retry policy, retrying in a single loop so a
+    """GET that applies the project's transient-failure retry policy, retrying in a single loop so a
     5xx blip after a 429 retry (or vice versa) is still absorbed rather than bubbling up. The body is
     streamed and read bounded by `_MAX_RESPONSE_BYTES` (registries are untrusted; see `_read_capped_response`).
 
@@ -364,7 +356,8 @@ def _registry_get(
     timeout: float,
 ) -> httpx.Response:
     """GET https://<registry>/<path>, transparently handling a Bearer 401 challenge, 429 rate
-    limits, and transient 5xx retries (see `_get_with_retry_policy`)."""
+    limits, and transient 5xx retries (see `_get_with_retry_policy`).
+    """
     url = f"https://{registry}{path}"
     headers: dict[str, str] = {"User-Agent": _USER_AGENT}
     if accept:
@@ -386,8 +379,7 @@ _DEFAULT_PORTS = {"https": 443, "http": 80}
 
 
 def _origin_of(url: str) -> tuple[str, str, int | None]:
-    """
-    Return a URL's (scheme, host, effective port), with an *omitted* port filled in from the scheme.
+    """Return a URL's (scheme, host, effective port), with an *omitted* port filled in from the scheme.
 
     Comparing `urlparse(...).port` directly would treat `https://host/` and `https://host:443/` as
     different origins, since the first parses to None - so an explicit default port would be refused
@@ -410,8 +402,7 @@ def _origin_of(url: str) -> tuple[str, str, int | None]:
 
 
 def _validate_hub_next(next_url: object) -> str:
-    """
-    Require a Hub pagination `next` URL to stay on the Hub API's own scheme, host and port.
+    """Require a Hub pagination `next` URL to stay on the Hub API's own scheme, host and port.
 
     `next` is a URL taken from a *response body* and then fetched, so unlike the registry host in a
     tool argument it is not a destination the caller chose. Without this check, a `next` of
@@ -704,8 +695,7 @@ def _parse_platform(platform: str) -> tuple[str, str, str | None]:
 
 
 def _select_platform_digest(index: dict, platform: str) -> tuple[str, str]:
-    """
-    Pick the sub-manifest matching `platform` from a manifest list / OCI image index.
+    """Pick the sub-manifest matching `platform` from a manifest list / OCI image index.
 
     `platform` is "os/arch[/variant]". An omitted variant matches any variant of that os/arch - so
     "linux/arm64" still selects a "linux/arm64/v8" entry, following Docker's default-variant
@@ -738,8 +728,7 @@ def _select_platform_digest(index: dict, platform: str) -> tuple[str, str]:
 
 
 def _parse_ratelimit_header(value: str | None) -> tuple[int | None, int | None]:
-    """
-    Decode a Docker Hub `RateLimit-Limit` / `RateLimit-Remaining` header.
+    """Decode a Docker Hub `RateLimit-Limit` / `RateLimit-Remaining` header.
 
     The format is "<count>;w=<window-seconds>" (e.g. "100;w=21600") or occasionally a bare count.
     Returns (count, window_seconds); either element is None when absent or unparseable.

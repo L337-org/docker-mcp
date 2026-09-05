@@ -1,7 +1,8 @@
 """The advertised surface, one module per Docker domain.
 
 Importing this package is what registers everything: each module decorates its functions at
-import time, so a module missing from here is a domain the server does not advertise."""
+import time, so a module missing from here is a domain the server does not advertise.
+"""
 
 # library of MCP tools for managing docker
 
