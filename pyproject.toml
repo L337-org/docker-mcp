@@ -81,10 +81,10 @@ select = ["E", "F", "B", "S", "UP", "D"]
 # request along with the violations it names. Every other D rule is enforced from now, so none
 # of the ones already passing can regress while this is worked through.
 #
-# Counts at the time of writing, with the advertised surface already exempt:
+# Counts, measured with `ruff check --select D405,D417,D205 --statistics .`:
 #   D405 section name capitalisation (the lowercase house style) 78
 #   D417 missing argument descriptions                        46
-#   D205 blank line between summary and description           43
+#   D205 blank line between summary and description           46
 #
 # D212 and D209 are cleared. They were mechanical - `ruff --fix` applies both - so they went
 # together: the reviewer is checking that a tool ran correctly, which costs the same for two
