@@ -77,19 +77,19 @@ select = ["E", "F", "B", "S", "UP", "D"]
 
 # The docstring backlog, in configuration where it is reviewable rather than in a planning
 # document nothing enforces. This is the workflow pydocstyle documents for adopting a
-# convention: select everything, ignore exactly what fails today, and remove one entry per pull
-# request along with the violations it names. Every other D rule is enforced from now, so none
-# of the ones already passing can regress while this is worked through.
+# convention: select everything, ignore exactly what fails today, and remove entries along with
+# the violations they name. Every other D rule is enforced from now, so none of the ones already
+# passing can regress while this is worked through.
+#
+# Group what goes in one change by how the fix is made rather than one rule per change. Several
+# mechanical rules cost no more to review together than one, because the question is whether the
+# fixer ran correctly; a rule needing judgement - where a summary ends, what a parameter does -
+# wants reading on its own.
 #
 # Counts, measured with `ruff check --select D405,D417,D205 --statistics .`:
 #   D405 section name capitalisation (the lowercase house style) 78
 #   D417 missing argument descriptions                        46
 #   D205 blank line between summary and description           46
-#
-# D212 and D209 are cleared. They were mechanical - `ruff --fix` applies both - so they went
-# together: the reviewer is checking that a tool ran correctly, which costs the same for two
-# rules as for one. What remains needs judgement, and no tool can decide where a summary ends
-# or what a parameter does.
 #
 # D405 is the one with a consequence beyond this repository: scripts/check-repo-hygiene.py is
 # vendored byte-identically into four repositories and written in that lowercase style, and
