@@ -314,7 +314,7 @@ def should_remote_exec(host: str | None, *, plugin: str | None = None) -> bool:
     than probing per tool, so the decision, and the conditions under which behavior changes at all,
     live here.
 
-    args:
+    Args:
         host - configured host label, or None for the default host
         plugin - the CLI plugin the call needs ("compose"/"buildx"/"scout"), or None for a core-CLI
                  subcommand such as `docker stack ...` (probes only the `docker` binary itself)
@@ -348,7 +348,7 @@ def remote_exec_cli(
     dropped, so a tool that starts needing either fails loudly here instead of silently diverging
     from its local path.
 
-    args:
+    Args:
         host - configured host label, or None for the default host; must resolve to an ssh:// URL
         args - the docker argv *without* the binary, exactly as passed to `run_docker`
         timeout - seconds the remote watchdog allows the command; also bounds the SSH handshake. Total
@@ -400,7 +400,7 @@ def remote_stage_and_exec(
     `build:` context, say) will not find them - the remote CLI reports that, since nothing can follow
     those references without parsing the file.
 
-    args:
+    Args:
         host - configured host label, or None for the default host; must resolve to an ssh:// URL
         args - the docker argv *without* the binary, exactly as passed to `run_docker`
         cwd - local directory to stage and run in; None means the server's own working directory
@@ -496,7 +496,7 @@ def remote_cli_session(host: str | None, *, timeout: float) -> Iterator[RemoteSt
     lives inside them - so it drives a session directly and calls `run_in_session` when the rewriting
     is done. Reach for this only when the generic backend genuinely cannot express the staging.
 
-    args:
+    Args:
         host - configured host label, or None for the default host; must resolve to an ssh:// URL
         timeout - bound on the SSH handshake and dialect probe
     returns: Iterator[RemoteStagingSession] - the session, valid inside the `with` block only
@@ -513,7 +513,7 @@ def run_in_session(
 ) -> CliResult:
     """Run `docker <args...>` in an open staging session, in `run_docker`'s result shape.
 
-    args:
+    Args:
         session - a session from `remote_cli_session`
         args - the docker argv *without* the binary
         timeout - seconds the remote watchdog allows the command
@@ -532,7 +532,7 @@ def _reject_unforwardable(stdin: bytes | None, extra_env: dict[str, str] | None)
     Rejected rather than dropped: no in-scope tool passes either today, and one that starts to should
     fail loudly here instead of silently diverging from its local path.
 
-    args:
+    Args:
         stdin - must be None/empty
         extra_env - must be None/empty
     raises: ValueError - either was supplied
@@ -549,7 +549,7 @@ def _reject_unforwardable(stdin: bytes | None, extra_env: dict[str, str] | None)
 def _ssh_url_for(host: str | None, args: list[str]) -> str:
     """The ssh:// URL for a host that a remote backend was asked to use.
 
-    args:
+    Args:
         host - configured host label, or None for the default host
         args - the docker argv, for the error message only
     returns: str - the host's resolved ssh:// URL
@@ -595,7 +595,7 @@ def flag_values(args: Sequence[str], flag: str) -> list[str]:
     call sites each passing the same list is twenty chances for one to be forgotten, and the omission
     would only show up for an absolute path against a remote host.
 
-    args:
+    Args:
         args - the argv to scan
         flag - the exact flag whose values to collect, e.g. "-f"
     returns: list[str] - one value per occurrence, in order
@@ -610,7 +610,7 @@ def _local_target(value: str, *, base: Path) -> Path | None:
     disagree about what counts as a local input. No `~` expansion, matching the docker CLI, which
     receives argv tokens verbatim.
 
-    args:
+    Args:
         value - a value from `path_values`
         base - the directory a relative value resolves against
     returns: Path | None - the absolute local path, or None when the value names nothing here
@@ -650,7 +650,7 @@ def _reconcile_path_tokens(
     exactly like an out-of-tree file path) would be rewritten too - accepted, being both unlikely and
     visible in the resulting command.
 
-    args:
+    Args:
         session - the staging session to copy extra paths through
         args - the docker argv to rewrite
         path_values - the values in `args` that name local paths
@@ -753,7 +753,7 @@ def filter_args(filters: dict | None) -> list[str]:
 def raise_on_cli_failure(result: CliResult, command: str) -> None:
     """Raise RemoteFailureError if a docker subprocess exited non-zero.
 
-    args:
+    Args:
         result: the CliResult from run_docker.
         command: the docker subcommand for the message, e.g. "buildx ls" or "context inspect".
     """
@@ -767,7 +767,7 @@ def raise_on_cli_failure(result: CliResult, command: str) -> None:
 def parse_ndjson(text: str, *, truncated: bool = False, what: str = "docker output") -> list[dict]:
     """Parse one JSON object per non-blank line (NDJSON), as emitted by `docker ... --format '{{json .}}'`.
 
-    args:
+    Args:
         text: the NDJSON body to parse.
         truncated: True if the underlying stdout was capped by run_docker's byte limit. When set,
                    the final non-blank line is assumed to be a partial record and is dropped before
@@ -797,7 +797,7 @@ def parse_json_or_ndjson(
     Compose v2.21+ emits NDJSON (one object per line); older versions emit a single JSON array or
     object. Returns the parsed structure on success, or None if the body is empty.
 
-    args:
+    Args:
         text: the body to parse.
         truncated: True if the underlying stdout was capped by run_docker's byte limit. When set,
                    the NDJSON branch drops the final (likely partial) line rather than crashing on a

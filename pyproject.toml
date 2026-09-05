@@ -78,7 +78,7 @@ select = ["E", "F", "B", "S", "UP", "D"]
 # The D entries are a backlog, not a decision: each names a docstring rule this code does not
 # satisfy yet. Every other D rule is enforced, so nothing already passing can regress. An entry
 # is removed only by the change that fixes what it names.
-ignore = ["D405", "D417", "D205"]
+ignore = ["D417", "D205"]
 
 [tool.ruff.lint.pydocstyle]
 # CS.6.12: Google is the docstring format for Python, enforced here rather than by review.

@@ -99,7 +99,7 @@ def _global_file_values(subcommand_args: list[str]) -> list[str]:
 def _run_compose(subcommand_args: list[str], *, cwd: str | None, timeout: float, host: str | None = None) -> CliResult:
     """Run `docker compose <args...>`, staging the working directory when the CLI has to run remotely.
 
-    args:
+    Args:
         subcommand_args - the compose argv, without the leading `compose`
         cwd - the project directory, or None for the server's own working directory (which is what
               gets staged in the remote case, matching what the local subprocess would use)

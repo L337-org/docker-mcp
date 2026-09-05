@@ -423,24 +423,30 @@ re-proposes these; it has no memory of last time.
 it to the AI-consumer rules rather than to the Python docstring convention. It wants what the
 schema cannot already carry; an `Args:` block duplicates what the annotation already sends in
 `inputSchema`, and that duplication is paid for on every session. `pyproject.toml`'s ruff
-`ignore-decorators` exempts all 199 of them, and
+`ignore-decorators` exempts the decorated ones, and
 `tests/test_server.py::test_the_docstring_exemption_names_the_decorators_in_use` fails if a
 rename or a move ever makes that exemption stop matching.
+
+**`ignore-decorators` matches decorator syntax only, so it misses a registration made by
+calling.** `docker_mcp/tools/resources.py` registers several resources as `resource(...)(fn)`,
+because each takes two URIs or sits behind a multi-host branch, and those docstrings are
+advertised while being invisible to the exemption - and to the test above, which cannot see a
+registration that uses no decorator. The four host-qualified templates carry `# noqa: D405` for
+that reason, and the marker goes **after the closing quotes**: anywhere inside the docstring and
+it becomes part of the description a client reads. Before trusting an exemption here, check the
+advertised surface directly - `list_resource_templates()` is a separate call from
+`list_resources()`, and a check that omits it reports identical while a whole category moves.
 
 **Everything else is Google style** - `Args:` and `Returns:`, capitalised - which is `CS.6.12`'s
 format for Python, enforced by ruff's pydocstyle rules rather than by review.
 
 Most back-end docstrings are not there yet, and the `ignore` list in `pyproject.toml` holds
-exactly the rules that still fail, largest first. Take one entry off at a time and fix what it
-names in the same change; do not add to it. Every other D rule is enforced from now, so nothing
-that passes today can regress.
+exactly the rules that still fail. An entry comes off only in the change that fixes everything it
+names; never add to it. Every other D rule is enforced, so nothing that passes today can regress.
 
-**`D405` is the entry with a consequence outside this repository.** The lowercase
-`args:`/`returns:` style leaked from the advertised convention into back-end code, and
-`scripts/check-repo-hygiene.py` - vendored byte-identically into four repositories - is written
-in it. `claude-routines` and `apt` exclude that file from the docstring rules entirely until
-`D405` clears here. Clearing it means converting the script in all four copies together and
-regenerating the digest they share.
+**`scripts/check-repo-hygiene.py` is vendored byte-identically into four repositories** and
+self-verifies against a digest they share, so any change to it lands in all four at once with the
+digest regenerated in each. Its own failure message says so when they drift.
 
 Tests are exempt: a test's name is its documentation.
 

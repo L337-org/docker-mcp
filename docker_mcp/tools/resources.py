@@ -298,7 +298,7 @@ def get_host_container_logs_resource(host: str, id_or_name: str) -> str:
         host - Configured host label (from the docker-mcp://hosts resource)
         id_or_name - The container id or name (from that host's index)
     returns: str - The decoded recent log tail
-    """
+    """  # noqa: D405 - advertised description; CS.6.14 keeps the lowercase house style
     _require_containers_domain()
     return _read_log_tail(id_or_name, host=host)
 
@@ -324,7 +324,7 @@ def get_host_container_stats_resource(host: str, id_or_name: str) -> str:
         host - Configured host label (from the docker-mcp://hosts resource)
         id_or_name - The container id or name (from that host's index)
     returns: str - JSON usage summary (same shape as docker-stats://{id_or_name})
-    """
+    """  # noqa: D405 - advertised description; CS.6.14 keeps the lowercase house style
     _require_containers_domain()
     return json.dumps(_read_stats_summary(id_or_name, host=host), indent=2)
 
@@ -415,7 +415,7 @@ def get_host_service_logs_resource(host: str, id_or_name: str) -> str:
         host - Configured host label (from the docker-mcp://hosts resource)
         id_or_name - The service id or name (from that host's index)
     returns: str - The decoded recent log tail
-    """
+    """  # noqa: D405 - advertised description; CS.6.14 keeps the lowercase house style
     _require_services_domain()
     return _read_service_log_tail(id_or_name, host=host)
 
@@ -441,7 +441,7 @@ def get_host_service_tasks_resource(host: str, id_or_name: str) -> str:
         host - Configured host label (from the docker-mcp://hosts resource)
         id_or_name - The service id or name (from that host's index)
     returns: str - JSON summary (same shape as service-tasks://{id_or_name})
-    """
+    """  # noqa: D405 - advertised description; CS.6.14 keeps the lowercase house style
     _require_services_domain()
     return json.dumps(_read_service_task_summary(id_or_name, host=host), indent=2)
 
