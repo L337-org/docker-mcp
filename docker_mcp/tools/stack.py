@@ -72,7 +72,9 @@ def _run_stack(
         host: configured host label, or None for the default host
         cwd: working directory for resolving relative paths, or None for the server's own
         stage_cwd: True for a subcommand that reads local files, so that directory is copied over
-    returns: CliResult - the same shape from either backend
+
+    Returns:
+        CliResult: the same shape from either backend
     """
     if should_remote_exec(host, plugin=None):
         if stage_cwd:
@@ -127,17 +129,19 @@ def stack_deploy(
     `stack_services` / `stack_ps`.
     Does not raise on a non-zero CLI exit - inspect `returncode`/`stderr` in the result.
 
-    args:
-        name - Name of the stack to create or update
-        compose_files - One or more Compose file paths (repeated `-c`; later override earlier). At least one required.
-        with_registry_auth - Send registry credentials to swarm agents (needed for private images)
-        prune - Remove services no longer defined in the Compose file
-        resolve_image - Image-digest resolution; omit for the CLI default ("always")
-        detach - Return immediately after submitting specs (True) vs wait for convergence (False)
-        cwd - Working directory for resolving relative Compose paths (defaults to the server's cwd;
-                      copied to the target host if no local docker CLI)
-        timeout_seconds - Subprocess timeout (default 1800s)
-    returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
+    Args:
+        name: Name of the stack to create or update
+        compose_files: One or more Compose file paths (repeated `-c`; later override earlier). At least one required.
+        with_registry_auth: Send registry credentials to swarm agents (needed for private images)
+        prune: Remove services no longer defined in the Compose file
+        resolve_image: Image-digest resolution; omit for the CLI default ("always")
+        detach: Return immediately after submitting specs (True) vs wait for convergence (False)
+        cwd: Working directory for resolving relative Compose paths (defaults to the server's cwd; copied to the target
+            host if no local docker CLI)
+        timeout_seconds: Subprocess timeout (default 1800s)
+
+    Returns:
+        dict: {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
     """
     if not compose_files:
         raise ToolInputError("stack_deploy requires at least one entry in compose_files.")
@@ -166,7 +170,8 @@ def stack_list(host: str | None = None) -> list:
     drill into one stack with `stack_services`.
     Raises RemoteFailureError if the CLI call fails.
 
-    returns: list - One dict per stack (name, services count, orchestrator)
+    Returns:
+        list: One dict per stack (name, services count, orchestrator)
     """
     result = _run_stack(["stack", "ls", "--format", _JSON_FORMAT], timeout=_TIMEOUT_QUERY, host=host)
     raise_on_cli_failure(result, "stack ls")
@@ -182,11 +187,13 @@ def stack_ps(name: str, no_trunc: bool = False, filters: dict | None = None, hos
     each task runs and why it failed. Requires a swarm manager.
     Raises RemoteFailureError if the CLI call fails.
 
-    args:
-        name - The stack to list tasks for
-        no_trunc - Do not truncate task IDs / errors in the output
-        filters - Filter by attributes, e.g. {"desired-state": "running"}; a list value repeats the filter
-    returns: list - One dict per task (id, name, node, image, desired/current state, error)
+    Args:
+        name: The stack to list tasks for
+        no_trunc: Do not truncate task IDs / errors in the output
+        filters: Filter by attributes, e.g. {"desired-state": "running"}; a list value repeats the filter
+
+    Returns:
+        list: One dict per task (id, name, node, image, desired/current state, error)
     """
     args = ["stack", "ps", "--format", _JSON_FORMAT]
     if no_trunc:
@@ -207,10 +214,12 @@ def stack_services(name: str, filters: dict | None = None, host: str | None = No
     `service_inspect` for one service's full spec. Requires a swarm manager.
     Raises RemoteFailureError if the CLI call fails.
 
-    args:
-        name - The stack to list services for
-        filters - Filter by attributes, e.g. {"name": "web"}; a list value repeats the filter
-    returns: list - One dict per service (id, name, mode, replicas, image, ports)
+    Args:
+        name: The stack to list services for
+        filters: Filter by attributes, e.g. {"name": "web"}; a list value repeats the filter
+
+    Returns:
+        list: One dict per service (id, name, mode, replicas, image, ports)
     """
     args = ["stack", "services", "--format", _JSON_FORMAT]
     args.extend(filter_args(filters))
@@ -232,11 +241,13 @@ def stack_remove(
     returns once removal is requested rather than waiting for teardown.
     Does not raise on a non-zero CLI exit - inspect `returncode`/`stderr` in the result.
 
-    args:
-        names - One or more stack names to remove. At least one is required.
-        detach - Return immediately (True) vs wait for the stack(s) to be fully removed (False)
-        timeout_seconds - Subprocess timeout (default 300s)
-    returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
+    Args:
+        names: One or more stack names to remove. At least one is required.
+        detach: Return immediately (True) vs wait for the stack(s) to be fully removed (False)
+        timeout_seconds: Subprocess timeout (default 300s)
+
+    Returns:
+        dict: {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
     """
     if not names:
         raise ToolInputError("stack_remove requires at least one entry in names.")

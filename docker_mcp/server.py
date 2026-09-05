@@ -386,10 +386,11 @@ def query_catalog(
         domain: Exact domain name to restrict to, or None for every domain
         category: Exact category value ("read_only"/"mutating"/"destructive"), or None for all
         keyword: Case-insensitive substring matched against name, summary and parameter names
-    returns: dict - {"matched", "tools", "domains", "no_domain", "hidden_by_configuration", "switches",
-                    "filters"}. `domains` and `hidden_by_configuration` are keyed by real domain
-                    names only; `no_domain` counts the always-registered domain-less tools, whose
-                    rows carry `domain: None` and which no `domain=` value selects.
+
+    Returns:
+        dict: {"matched", "tools", "domains", "no_domain", "hidden_by_configuration", "switches", "filters"}. `domains`
+            and `hidden_by_configuration` are keyed by real domain names only; `no_domain` counts the always-registered
+            domain-less tools, whose rows carry `domain: None` and which no `domain=` value selects.
     """
     wanted = keyword.lower() if keyword else None
     rows = []
@@ -1092,7 +1093,9 @@ def resource[F: Callable[..., Any]](uri: str, **kwargs: Any) -> Callable[[F], F]
     Args:
         uri: the resource URI or URI template, passed straight to `mcp.resource`
         kwargs: passed to `mcp.resource` (name, title, description, mime_type, ...)
-    returns: Callable - a decorator registering the function as a resource
+
+    Returns:
+        Callable: a decorator registering the function as a resource
     """
 
     def decorator(func: F) -> F:

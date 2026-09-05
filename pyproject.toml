@@ -96,7 +96,6 @@ convention = "google"
 # descriptions into rules that are wrong for them.
 ignore-decorators = [
     "docker_mcp.server.tool",
-    "docker_mcp.server.prompt",
 ]
 
 [tool.ruff.lint.per-file-ignores]

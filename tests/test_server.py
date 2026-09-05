@@ -1696,17 +1696,16 @@ def test_the_docstring_exemption_names_the_decorators_in_use() -> None:
     and is paid for on every session that loads the surface. That argument holds only where
     there is a schema to duplicate:
 
-    - a **tool** advertises `input_schema` carrying every parameter's type, so it is exempt
-    - a **prompt** advertises `arguments` carrying each name and whether it is required, so it
-      is exempt
+    - a **tool** advertises its docstring as the description *and* an `input_schema` carrying
+      every parameter's type, so an `Args:` entry naming a type duplicates the schema. Exempt.
+    - a **prompt** takes its advertised description from `@prompt(description=...)`, so its
+      docstring reaches no client at all and there is nothing to trade off. Not exempt.
     - a **resource** advertises `uri_template`, `name`, `description` and `mime_type`, and
-      nothing about its parameters at all - so there is no duplication to avoid, and its
-      docstrings follow the ordinary convention like any other code
+      nothing about its parameters, so there is no duplication to avoid. Not exempt.
 
-    `resource` is therefore asserted *absent* below. It was exempt once, which cost four `noqa`
-    markers on the functions ruff happened to notice, and those four were not a category: a
-    one-parameter resource fits `args: name - desc` on one line, which ruff never reads as a
-    section, while a two-parameter one does not. Having two parameters is what earned the marker.
+    `prompt` and `resource` are therefore asserted *absent* below. Each was exempt once on the
+    assumption that "advertised" was the test; the test is actually whether a schema would be
+    duplicated, and only a tool has one.
 
     pyproject.toml exempts by fully-qualified decorator path, and a path goes stale silently:
     move or rename `tool` and every advertised description falls under D417 with nothing saying
@@ -1736,17 +1735,22 @@ def test_the_docstring_exemption_names_the_decorators_in_use() -> None:
                     used.add(name)
 
     assert len(used) >= 3, f"only found {sorted(used)} in use, so this check is not seeing the surface"
-    schema_carrying = {"tool", "prompt"} & used
+    schema_carrying = {"tool"} & used
     missing = sorted(schema_carrying - bare)
     assert not missing, (
         f"pyproject.toml's ignore-decorators does not cover {missing}, so those advertised "
         f"docstrings would fall under the docstring convention. It names {sorted(bare)}."
     )
-    assert "resource" not in bare, (
-        "ignore-decorators names `resource`, but a resource advertises no schema for its "
-        "parameters, so there is nothing for a docstring to duplicate and the exemption buys "
-        "nothing. Resource docstrings follow the ordinary convention."
-    )
+    for kind, why in (
+        ("prompt", "a prompt's advertised description comes from `@prompt(description=...)`, so its "
+                   "docstring reaches no client"),
+        ("resource", "a resource advertises no schema for its parameters, so there is nothing for a "
+                     "docstring to duplicate"),
+    ):
+        assert kind not in bare, (
+            f"ignore-decorators names `{kind}`, but {why} - the exemption buys nothing and its "
+            f"docstrings follow the ordinary convention."
+        )
 
     # And the qualified paths must actually resolve, or ruff silently matches nothing.
     import importlib

@@ -427,13 +427,14 @@ schema cannot already carry; an `Args:` block duplicates what the annotation alr
 `tests/test_server.py::test_the_docstring_exemption_names_the_decorators_in_use` fails if a
 rename or a move ever makes that exemption stop matching.
 
-**Resources are not exempt, and that is deliberate.** The exemption exists because an `Args:`
-block duplicates the schema, so it holds only where there is a schema: a tool advertises
-`input_schema` with every parameter's type, a prompt advertises `arguments` with each name and
-whether it is required, and a resource advertises nothing about its parameters at all. Resource
-docstrings therefore follow the ordinary convention, and
-`tests/test_server.py::test_the_docstring_exemption_names_the_decorators_in_use` fails if
-`resource` is added back to the list.
+**Only tools are exempt, and that is deliberate.** The exemption exists because an `Args:` entry
+naming a type duplicates the schema, so it holds only where a docstring is advertised *and* a
+schema carries the same facts. A tool is the only one: its docstring is the description and its
+`input_schema` carries every parameter's type. A prompt takes its description from
+`@prompt(description=...)`, so its docstring reaches no client at all. A resource advertises
+nothing about its parameters. Both follow the ordinary convention, and
+`tests/test_server.py::test_the_docstring_exemption_names_the_decorators_in_use` fails if either
+is added back to the list.
 
 **`ignore-decorators` matches decorator syntax only, so it misses a registration made by
 calling.** `docker_mcp/tools/resources.py` registers several resources as `resource(...)(fn)`,
@@ -450,10 +451,10 @@ No docstring rule is ignored - `pyproject.toml`'s `ignore` list is empty - so th
 to work through and nothing to add to. A rule that fails is a change to make, not an entry to park.
 The MCP surface and tests are exempt by name rather than by rule, as described above and below.
 
-**Parameters are documented `name: description`, not `name - description`.** The dash is the
-advertised surface's separator and it had leaked into back-end code, where ruff reads it as no
-description at all: 142 parameters across 42 functions were documented and reported as
-undocumented, which is why D417 looked like the largest entry in the backlog and was the smallest.
+**One docstring convention, everywhere.** Google style - a summary on the opening line, then
+`Args:` with `name: description` entries and `Returns:`. The surface uses it too; there is no
+second dialect to know. Parameters are never documented `name - description`, which ruff reads as
+no description at all.
 
 **`scripts/check-repo-hygiene.py` is vendored byte-identically into four repositories** and
 self-verifies against a digest they share, so any change to it lands in all four at once with the

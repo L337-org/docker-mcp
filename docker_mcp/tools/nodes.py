@@ -20,8 +20,11 @@ def node_inspect(id_or_name: str, host: str | None = None) -> dict:
     use `node_list` to enumerate nodes first, or the `docker://nodes` resource for a fleet
     summary; `service_ps(filters={"node": ...})` shows what a service runs on one node.
 
-    args: id_or_name - The node id or hostname (as shown by `node_list`)
-    returns: dict - The node's attrs (Spec{Role, Availability}, Status, ManagerStatus for managers)
+    Args:
+        id_or_name: The node id or hostname (as shown by `node_list`)
+
+    Returns:
+        dict: The node's attrs (Spec{Role, Availability}, Status, ManagerStatus for managers)
     """
     return _get_client(host).nodes.get(id_or_name).attrs
 
@@ -34,8 +37,11 @@ def node_list(filters: dict | None = None, host: str | None = None) -> list:
     Must run against a swarm manager. The fleet view of membership, role, and state; drill into
     one node with `node_inspect`, or read the `docker://nodes` resource for a computed summary.
 
-    args: filters - Filter by attributes (id, name, membership, role)
-    returns: list - One full node document per node (Spec, Status, ManagerStatus for managers)
+    Args:
+        filters: Filter by attributes (id, name, membership, role)
+
+    Returns:
+        list: One full node document per node (Spec, Status, ManagerStatus for managers)
     """
     return [n.attrs for n in _get_client(host).nodes.list(**drop_none(filters=filters))]
 
@@ -49,10 +55,12 @@ def node_update(id_or_name: str, spec: dict, host: str | None = None) -> bool:
     Fetch the current spec via `node_inspect` (its `Spec` key), modify it, and resubmit the whole
     dict - e.g. sending just {"Availability": "drain"} would also wipe the node's role and labels.
 
-    args:
-        id_or_name - The node id or name
-        spec - The complete new node spec (see description - omitted keys are cleared)
-    returns: bool - True after the update
+    Args:
+        id_or_name: The node id or name
+        spec: The complete new node spec (see description - omitted keys are cleared)
+
+    Returns:
+        bool: True after the update
     """
     node = _get_client(host).nodes.get(id_or_name)
     node.update(spec)
@@ -67,10 +75,12 @@ def node_remove(id_or_name: str, force: bool = False, host: str | None = None) -
     A node should normally be drained (`node_update` with Availability "drain") and have left the
     swarm first, so its tasks reschedule cleanly. Removing an active/reachable node requires `force=True`.
 
-    args:
-        id_or_name - The node id or name to remove
-        force - Force removal of an active/reachable node
-    returns: bool - True after the node is removed
+    Args:
+        id_or_name: The node id or name to remove
+        force: Force removal of an active/reachable node
+
+    Returns:
+        bool: True after the node is removed
     """
     _get_client(host).nodes.get(id_or_name).remove(force=force)
     return True
@@ -117,13 +127,15 @@ def node_wait(
     every service in the swarm, so that check isn't built into this tool. `service_wait` covers
     service convergence; `node_list` shows every node's state at once.
 
-    args:
-        id_or_name - The node id or name
-        until - Target Status.State to wait for: "ready" (default), "down", "disconnected", "unknown"
-        timeout_seconds - Max seconds to wait before returning with timed_out=true (default 300)
-        poll_interval - Seconds between re-inspections (default 2, > 0); capped by the time left so
-                        a large value can't push the total wait past the timeout
-    returns: dict - {"node", "until", "met", "timed_out", "state", "availability", "waited_seconds"}
+    Args:
+        id_or_name: The node id or name
+        until: Target Status.State to wait for: "ready" (default), "down", "disconnected", "unknown"
+        timeout_seconds: Max seconds to wait before returning with timed_out=true (default 300)
+        poll_interval: Seconds between re-inspections (default 2, > 0); capped by the time left so a large value can't
+            push the total wait past the timeout
+
+    Returns:
+        dict: {"node", "until", "met", "timed_out", "state", "availability", "waited_seconds"}
     """
     if timeout_seconds < 0:
         raise ToolInputError(f"timeout_seconds must be >= 0, got {timeout_seconds}.")

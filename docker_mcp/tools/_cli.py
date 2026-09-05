@@ -318,7 +318,9 @@ def should_remote_exec(host: str | None, *, plugin: str | None = None) -> bool:
         host: configured host label, or None for the default host
         plugin: the CLI plugin the call needs ("compose"/"buildx"/"scout"), or None for a core-CLI
                  subcommand such as `docker stack ...` (probes only the `docker` binary itself)
-    returns: bool - True if the caller should route through `remote_exec_cli` instead of `run_docker`
+
+    Returns:
+        bool: True if the caller should route through `remote_exec_cli` instead of `run_docker`
     """
     if not _resolve_host(host).is_ssh:
         return False
@@ -355,13 +357,16 @@ def remote_exec_cli(
                   wall clock can exceed it by the connect time plus a short kill grace.
         stdin: must be None/empty: the remote channel carries no input
         extra_env: must be None/empty: the child's environment is the remote login shell's
-    returns: CliResult - exit status, decoded stdout/stderr, and whether the byte cap truncated them
-    raises:
-        ValueError - `stdin` or `extra_env` was supplied (an internal guard: no caller needs either,
-                     so its text stays in the log rather than reaching the model)
-        CapabilityError - `host` is not an ssh:// host, or the remote is not POSIX
-        RemoteFailureError - the SSH connection could not be opened
-        subprocess.TimeoutExpired - the command exceeded `timeout`
+
+    Returns:
+        CliResult: exit status, decoded stdout/stderr, and whether the byte cap truncated them
+
+    Raises:
+        ValueError: `stdin` or `extra_env` was supplied (an internal guard: no caller needs either, so its text stays in
+            the log rather than reaching the model)
+        CapabilityError: `host` is not an ssh:// host, or the remote is not POSIX
+        RemoteFailureError: the SSH connection could not be opened
+        subprocess.TimeoutExpired: the command exceeded `timeout`
     """
     _reject_unforwardable(stdin, extra_env)
     url = _ssh_url_for(host, args)
@@ -416,15 +421,17 @@ def remote_stage_and_exec(
                     where the local subprocess would have resolved them.
         stdin: must be None/empty: the remote channel carries no input
         extra_env: must be None/empty: the child's environment is the remote login shell's
-    returns: CliResult - exit status, decoded stdout/stderr, and whether the byte cap truncated them
-    raises:
-        ToolInputError - `cwd` is not a directory (when `stage_cwd`), or the payload exceeds the
-                     staging limits
-        ValueError - `stdin`/`extra_env` was supplied (an internal guard; see `remote_exec_cli`)
-        CapabilityError - `host` is not an ssh:// host, this server's own working directory is gone,
-                       the remote is not POSIX, or its SFTP subsystem sees a different filesystem
-        RemoteFailureError - the SSH connection could not be opened, or staging failed remotely
-        subprocess.TimeoutExpired - the command exceeded `timeout`
+
+    Returns:
+        CliResult: exit status, decoded stdout/stderr, and whether the byte cap truncated them
+
+    Raises:
+        ToolInputError: `cwd` is not a directory (when `stage_cwd`), or the payload exceeds the staging limits
+        ValueError: `stdin`/`extra_env` was supplied (an internal guard; see `remote_exec_cli`)
+        CapabilityError: `host` is not an ssh:// host, this server's own working directory is gone, the remote is not
+            POSIX, or its SFTP subsystem sees a different filesystem
+        RemoteFailureError: the SSH connection could not be opened, or staging failed remotely
+        subprocess.TimeoutExpired: the command exceeded `timeout`
     """
     _reject_unforwardable(stdin, extra_env)
     url = _ssh_url_for(host, args)
@@ -499,10 +506,13 @@ def remote_cli_session(host: str | None, *, timeout: float) -> Iterator[RemoteSt
     Args:
         host: configured host label, or None for the default host; must resolve to an ssh:// URL
         timeout: bound on the SSH handshake and dialect probe
-    returns: Iterator[RemoteStagingSession] - the session, valid inside the `with` block only
-    raises:
-        CapabilityError - not an ssh:// host, a non-POSIX remote, or an unusable SFTP subsystem
-        RemoteFailureError - the connection could not be opened, or staging setup failed remotely
+
+    Returns:
+        Iterator[RemoteStagingSession]: the session, valid inside the `with` block only
+
+    Raises:
+        CapabilityError: not an ssh:// host, a non-POSIX remote, or an unusable SFTP subsystem
+        RemoteFailureError: the connection could not be opened, or staging setup failed remotely
     """
     with remote_staging_session(_ssh_url_for(host, []), timeout=timeout) as session:
         yield session
@@ -518,8 +528,12 @@ def run_in_session(
         args: the docker argv *without* the binary
         timeout: seconds the remote watchdog allows the command
         cwd: remote directory to run in, typically one a `stage_*` call returned
-    returns: CliResult - exit status, decoded stdout/stderr, and whether the byte cap truncated them
-    raises: subprocess.TimeoutExpired - the command exceeded `timeout`
+
+    Returns:
+        CliResult: exit status, decoded stdout/stderr, and whether the byte cap truncated them
+
+    Raises:
+        subprocess.TimeoutExpired: the command exceeded `timeout`
     """
     return _as_cli_result(
         session.exec(["docker", *args], cwd=cwd, timeout=timeout, max_output_bytes=MAX_CLI_OUTPUT_BYTES)
@@ -535,7 +549,9 @@ def _reject_unforwardable(stdin: bytes | None, extra_env: dict[str, str] | None)
     Args:
         stdin: must be None/empty
         extra_env: must be None/empty
-    raises: ValueError - either was supplied
+
+    Raises:
+        ValueError: either was supplied
     """
     if stdin:
         raise ValueError("remote-exec cannot send stdin to a remote docker command (no consumer needs it today).")
@@ -552,8 +568,12 @@ def _ssh_url_for(host: str | None, args: list[str]) -> str:
     Args:
         host: configured host label, or None for the default host
         args: the docker argv, for the error message only
-    returns: str - the host's resolved ssh:// URL
-    raises: CapabilityError - the host is not reached over ssh://
+
+    Returns:
+        str: the host's resolved ssh:// URL
+
+    Raises:
+        CapabilityError: the host is not reached over ssh://
     """
     resolved = _resolve_host(host)
     url = resolved.url
@@ -573,8 +593,11 @@ def _as_cli_result(result: RemoteExecResult) -> CliResult:
     The retention cap already applied remotely, so `_decode` re-checks a bound the bytes cannot exceed;
     `truncated` is carried through from the drain, which is the only place that saw what was dropped.
 
-    args: result - the raw remote outcome
-    returns: CliResult - the decoded equivalent
+    Args:
+        result: the raw remote outcome
+
+    Returns:
+        CliResult: the decoded equivalent
     """
     stdout, truncated_out = _decode(result.stdout)
     stderr, truncated_err = _decode(result.stderr)
@@ -598,7 +621,9 @@ def flag_values(args: Sequence[str], flag: str) -> list[str]:
     Args:
         args: the argv to scan
         flag: the exact flag whose values to collect, e.g. "-f"
-    returns: list[str] - one value per occurrence, in order
+
+    Returns:
+        list[str]: one value per occurrence, in order
     """
     return [value for name, value in zip(args, args[1:], strict=False) if name == flag]
 
@@ -613,7 +638,9 @@ def _local_target(value: str, *, base: Path) -> Path | None:
     Args:
         value: a value from `path_values`
         base: the directory a relative value resolves against
-    returns: Path | None - the absolute local path, or None when the value names nothing here
+
+    Returns:
+        Path | None: the absolute local path, or None when the value names nothing here
     """
     if not value:
         return None
@@ -656,7 +683,9 @@ def _reconcile_path_tokens(
         path_values: the values in `args` that name local paths
         base: the local directory relative values resolve against
         staged_tree: the remote path `base` was staged to, or None when it was not staged
-    returns: list[str] - `args` with path tokens reconciled
+
+    Returns:
+        list[str]: `args` with path tokens reconciled
     """
     replacements: dict[str, str] = {}
     resolved_base = base.resolve()

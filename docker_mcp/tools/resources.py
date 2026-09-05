@@ -595,8 +595,11 @@ def docs_lookup(section: str | None = None) -> str:
     list common keys, not every key docker-py accepts), or before writing Compose/Dockerfile/buildx
     bake-file syntax, which no tool generates.
 
-    args: section - Section name (from a no-argument call's index); omit to list all sections instead
-    returns: str - JSON section index (no `section`) or that section's raw HTML/Markdown content
+    Args:
+        section: Section name (from a no-argument call's index); omit to list all sections instead
+
+    Returns:
+        str: JSON section index (no `section`) or that section's raw HTML/Markdown content
     """
     if section is None:
         return list_docs_sections()
@@ -625,14 +628,15 @@ def tool_list(
     domain is absent rather than flagged; `hidden_by_configuration` reports how many each domain
     hides.
 
-    args:
-        domain - Exact domain name (see any result's `domains` key); omit for every domain
-        category - Exact category; omit for all three
-        keyword - Case-insensitive substring over tool names, summaries and parameter names
-    returns: dict - {"matched": int, "tools": [{"name", "domain", "category", "summary"}],
-                     "domains": {domain: count}, "no_domain": int,
-                     "hidden_by_configuration": {domain: count}, "switches", "filters"}. Every
-                     `domains` key is a value `domain` accepts; `no_domain` counts the domain-less
-                     tools, whose rows carry `domain: null` and which no `domain` value selects.
+    Args:
+        domain: Exact domain name (see any result's `domains` key); omit for every domain
+        category: Exact category; omit for all three
+        keyword: Case-insensitive substring over tool names, summaries and parameter names
+
+    Returns:
+        dict: {"matched": int, "tools": [{"name", "domain", "category", "summary"}], "domains": {domain: count},
+            "no_domain": int, "hidden_by_configuration": {domain: count}, "switches", "filters"}. Every `domains` key is
+            a value `domain` accepts; `no_domain` counts the domain-less tools, whose rows carry `domain: null` and
+            which no `domain` value selects.
     """
     return query_catalog(domain=domain, category=category, keyword=keyword)

@@ -22,12 +22,14 @@ def config_create(
     to update it, create a new config with a new name and update the service to reference it,
     then remove the old config with `config_remove`.
 
-    args:
-        name - Unique config name within the swarm
-        data - Raw bytes content of the config file
-        labels - Labels to set on the config
-        templating - Templating driver config (e.g. {"Name": "golang"} for Go template syntax)
-    returns: dict - The created config's attrs ({"ID", "Version", "CreatedAt", "Spec", ...})
+    Args:
+        name: Unique config name within the swarm
+        data: Raw bytes content of the config file
+        labels: Labels to set on the config
+        templating: Templating driver config (e.g. {"Name": "golang"} for Go template syntax)
+
+    Returns:
+        dict: The created config's attrs ({"ID", "Version", "CreatedAt", "Spec", ...})
     """
     kwargs: dict = {
         "name": name,
@@ -46,8 +48,11 @@ def config_inspect(id_or_name: str, host: str | None = None) -> dict:
     `Spec.Data` in the result holds the base64-encoded contents. Use `config_list` to enumerate
     configs; use this to read one config's contents and metadata.
 
-    args: id_or_name - The config id or name
-    returns: dict - The config's attrs (ID, CreatedAt, UpdatedAt, Spec{Name, Labels, Data base64})
+    Args:
+        id_or_name: The config id or name
+
+    Returns:
+        dict: The config's attrs (ID, CreatedAt, UpdatedAt, Spec{Name, Labels, Data base64})
     """
     return _get_client(host).configs.get(id_or_name).attrs
 
@@ -61,8 +66,11 @@ def config_list(filters: dict | None = None, host: str | None = None) -> list:
     since configs are not treated as sensitive. Valid filter keys: `id`, `name`, `names`,
     `label` (key or key=value). Fetch a single config by id/name with `config_inspect`.
 
-    args: filters - Narrow the list; omit to return every config
-    returns: list - One full config document ({"ID", "Spec", ...}) per config
+    Args:
+        filters: Narrow the list; omit to return every config
+
+    Returns:
+        list: One full config document ({"ID", "Spec", ...}) per config
     """
     return [c.attrs for c in _get_client(host).configs.list(**drop_none(filters=filters))]
 
@@ -75,8 +83,11 @@ def config_remove(id_or_name: str, host: str | None = None) -> bool:
     Requires a swarm manager, and fails while any service still references the config - update or
     remove those services first. The last step of the rotation flow described in `config_create`.
 
-    args: id_or_name - The config id or name
-    returns: bool - True after removal
+    Args:
+        id_or_name: The config id or name
+
+    Returns:
+        bool: True after removal
     """
     _get_client(host).configs.get(id_or_name).remove()
     return True

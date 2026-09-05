@@ -70,31 +70,33 @@ def container_run(
     container exits and returns its output, so long-running images need detach=True. Created
     containers are stamped with provenance labels.
 
-    args:
-        image - The image to run
-        command - The command to run in the container
-        name - Name to assign to the container
-        detach - Run in the background and return container info
-        environment - Environment variables to set
-        ports - Port mappings, e.g. {'2222/tcp': 3333}
-        volumes - Volumes to mount
-        network - Name of the network to attach
-        hostname - Optional hostname for the container
-        user - Username or UID to run as
-        working_dir - Working directory inside the container
-        entrypoint - Entrypoint to override the image default
-        restart_policy - Restart policy, e.g. {'Name': 'on-failure', 'MaximumRetryCount': 3}
-        labels - Labels to set on the container
-        remove - Remove the container when it exits (only with detach=False)
-        auto_remove - Enable auto-removal of the container on daemon side
-        privileged - Give extended privileges to the container
-        tty - Allocate a pseudo-TTY
-        stdin_open - Keep STDIN open
-        mem_limit - Memory limit
-        cpu_count - Number of CPUs
-        extra_kwargs - Additional keyword arguments forwarded to ContainerCollection.run (call
-                       `docs_lookup(section="containers")` for the full accepted set)
-    returns: dict | str - Container attrs when detach=True, otherwise stdout/stderr as a string
+    Args:
+        image: The image to run
+        command: The command to run in the container
+        name: Name to assign to the container
+        detach: Run in the background and return container info
+        environment: Environment variables to set
+        ports: Port mappings, e.g. {'2222/tcp': 3333}
+        volumes: Volumes to mount
+        network: Name of the network to attach
+        hostname: Optional hostname for the container
+        user: Username or UID to run as
+        working_dir: Working directory inside the container
+        entrypoint: Entrypoint to override the image default
+        restart_policy: Restart policy, e.g. {'Name': 'on-failure', 'MaximumRetryCount': 3}
+        labels: Labels to set on the container
+        remove: Remove the container when it exits (only with detach=False)
+        auto_remove: Enable auto-removal of the container on daemon side
+        privileged: Give extended privileges to the container
+        tty: Allocate a pseudo-TTY
+        stdin_open: Keep STDIN open
+        mem_limit: Memory limit
+        cpu_count: Number of CPUs
+        extra_kwargs: Additional keyword arguments forwarded to ContainerCollection.run (call
+            `docs_lookup(section="containers")` for the full accepted set)
+
+    Returns:
+        dict | str: Container attrs when detach=True, otherwise stdout/stderr as a string
     """
     kwargs: dict = {
         "detach": detach,
@@ -157,11 +159,13 @@ def container_create(
     "mode": "rw"}}`), `labels` (dict). For anything else docker-py's `ContainerCollection.create`
     accepts, call `docs_lookup(section="containers")` rather than guessing a key name.
 
-    args:
-        image - Image to create the container from, e.g. "nginx:alpine"
-        command - Override the image's default command; string or list of strings
-        extra_kwargs - Additional docker-py ContainerCollection.create keyword arguments
-    returns: dict - The created container's attrs (not yet running)
+    Args:
+        image: Image to create the container from, e.g. "nginx:alpine"
+        command: Override the image's default command; string or list of strings
+        extra_kwargs: Additional docker-py ContainerCollection.create keyword arguments
+
+    Returns:
+        dict: The created container's attrs (not yet running)
     """
     kwargs = dict(extra_kwargs or {})
     labels = with_provenance(kwargs.get("labels"), "container_create")
@@ -181,8 +185,11 @@ def container_inspect(id_or_name: str, host: str | None = None) -> dict:
     containers use `container_list` instead (same payload per container by default; abridged
     with sparse=True). For just logs or stats use `container_logs` / `container_stats`.
 
-    args: id_or_name - Container id (full or short) or name
-    returns: dict - Full container inspect attrs (equivalent to `docker inspect`)
+    Args:
+        id_or_name: Container id (full or short) or name
+
+    Returns:
+        dict: Full container inspect attrs (equivalent to `docker inspect`)
     """
     return _get_client(host).containers.get(id_or_name).attrs
 
@@ -205,19 +212,21 @@ def container_list(
     Pass all=True to include stopped containers. For a compose project `compose_ps` groups
     containers by service; for swarm services use `service_ps` (tasks may live on other nodes).
 
-    args:
-        all - Show all containers, including stopped ones (default False: running only)
-        since - Only show containers created after this id or name
-        before - Only show containers created before this id or name
-        limit - Maximum number of results
-        filters - Filter by attributes (e.g. status, label)
-        sparse - Skip inspect calls and return less detail
-        ignore_removed - Ignore containers removed during listing
-        managed_only - Only return containers created by this MCP server (filters on the
-                             docker-mcp-server.managed label); combines with any `filters` given
-    returns: list - One dict per container: full inspect payloads by default (each match is
-        inspected, like `container_inspect`); sparse=True skips the per-container inspect calls
-        and returns the daemon's abridged list entries instead
+    Args:
+        all: Show all containers, including stopped ones (default False: running only)
+        since: Only show containers created after this id or name
+        before: Only show containers created before this id or name
+        limit: Maximum number of results
+        filters: Filter by attributes (e.g. status, label)
+        sparse: Skip inspect calls and return less detail
+        ignore_removed: Ignore containers removed during listing
+        managed_only: Only return containers created by this MCP server (filters on the docker-mcp-server.managed
+            label); combines with any `filters` given
+
+    Returns:
+        list: One dict per container: full inspect payloads by default (each match is inspected, like
+            `container_inspect`); sparse=True skips the per-container inspect calls and returns the daemon's abridged
+            list entries instead
     """
     if managed_only:
         filters = managed_filter(filters)
@@ -241,8 +250,11 @@ def container_prune(filters: dict | None = None, host: str | None = None) -> dic
     stopped before that point), `label` (key or key=value). For a broader cleanup of
     containers plus unused images, networks, and volumes see the `prune_managed` prompt.
 
-    args: filters - Narrow which stopped containers to remove; omit to remove all stopped
-    returns: dict - {"ContainersDeleted": [...], "SpaceReclaimed": <bytes>}
+    Args:
+        filters: Narrow which stopped containers to remove; omit to remove all stopped
+
+    Returns:
+        dict: {"ContainersDeleted": [...], "SpaceReclaimed": <bytes>}
     """
     return _get_client(host).containers.prune(filters=filters)
 
@@ -257,8 +269,11 @@ def container_start(id_or_name: str, host: str | None = None) -> dict:
     an already-running container has no effect (the daemon returns 304 and no error is
     raised). To stop then start a running container use `container_restart`.
 
-    args: id_or_name - Container id (full or short) or name
-    returns: dict - The container's full inspect payload after starting
+    Args:
+        id_or_name: Container id (full or short) or name
+
+    Returns:
+        dict: The container's full inspect payload after starting
     """
     container = _get_client(host).containers.get(id_or_name)
     container.start()
@@ -277,10 +292,12 @@ def container_stop(id_or_name: str, stop_timeout_seconds: int = 10, host: str | 
     or `container_pause` to freeze processes without stopping. When the server runs containerized
     it refuses to stop its own container.
 
-    args:
-        id_or_name - The container id or name
-        stop_timeout_seconds - Seconds between the stop signal and SIGKILL (default 10)
-    returns: dict - The container's attrs after the stop (exit code under State.ExitCode)
+    Args:
+        id_or_name: The container id or name
+        stop_timeout_seconds: Seconds between the stop signal and SIGKILL (default 10)
+
+    Returns:
+        dict: The container's attrs after the stop (exit code under State.ExitCode)
     """
     container = _get_client(host).containers.get(id_or_name)
     guard_not_self(container, host=host)
@@ -299,10 +316,12 @@ def container_restart(id_or_name: str, stop_timeout_seconds: int = 10, host: str
     the halves separately. When the server runs containerized it refuses to restart its own
     container.
 
-    args:
-        id_or_name - The container id or name
-        stop_timeout_seconds - Seconds between the stop signal and SIGKILL (default 10)
-    returns: dict - The container's full inspect payload after the restart
+    Args:
+        id_or_name: The container id or name
+        stop_timeout_seconds: Seconds between the stop signal and SIGKILL (default 10)
+
+    Returns:
+        dict: The container's full inspect payload after the restart
     """
     container = _get_client(host).containers.get(id_or_name)
     guard_not_self(container, host=host)
@@ -322,10 +341,12 @@ def container_kill(id_or_name: str, signal: str | None = None, host: str | None 
     conflict error if the container is not running. When the server runs containerized it refuses
     to signal its own container.
 
-    args:
-        id_or_name - The container id or name
-        signal - Signal name or number as a string (e.g. "SIGHUP", "9"); default SIGKILL
-    returns: dict - The container's full inspect payload after the signal
+    Args:
+        id_or_name: The container id or name
+        signal: Signal name or number as a string (e.g. "SIGHUP", "9"); default SIGKILL
+
+    Returns:
+        dict: The container's full inspect payload after the signal
     """
     container = _get_client(host).containers.get(id_or_name)
     guard_not_self(container, host=host)
@@ -344,8 +365,11 @@ def container_pause(id_or_name: str, host: str | None = None) -> dict:
     open file descriptors) but consumes no CPU. Resume with `container_unpause` -
     `container_exec` fails against a paused container until it is unpaused.
 
-    args: id_or_name - The container id or name
-    returns: dict - The container's full inspect payload after pause (State.Paused true)
+    Args:
+        id_or_name: The container id or name
+
+    Returns:
+        dict: The container's full inspect payload after pause (State.Paused true)
     """
     container = _get_client(host).containers.get(id_or_name)
     guard_not_self(container, host=host)
@@ -362,8 +386,11 @@ def container_unpause(id_or_name: str, host: str | None = None) -> dict:
     Only valid on a paused container - it fails if the container is merely stopped; use
     `container_start` for stopped containers. Processes continue from where they were frozen.
 
-    args: id_or_name - The container id or name
-    returns: dict - The container's attrs after unpause (State.Paused becomes false)
+    Args:
+        id_or_name: The container id or name
+
+    Returns:
+        dict: The container's attrs after unpause (State.Paused becomes false)
     """
     container = _get_client(host).containers.get(id_or_name)
     container.unpause()
@@ -383,12 +410,14 @@ def container_remove(
     which kills it first. When the server runs containerized it refuses to remove its own
     container.
 
-    args:
-        id_or_name - The container id or name
-        volumes - Also remove anonymous volumes (the CLI's `--volumes`); named volumes persist
-        link - Remove the specified link
-        force - Kill a running container before removing it (default False: running is an error)
-    returns: bool - True after removal completes
+    Args:
+        id_or_name: The container id or name
+        volumes: Also remove anonymous volumes (the CLI's `--volumes`); named volumes persist
+        link: Remove the specified link
+        force: Kill a running container before removing it (default False: running is an error)
+
+    Returns:
+        bool: True after removal completes
     """
     container = _get_client(host).containers.get(id_or_name)
     guard_not_self(container, host=host)
@@ -449,19 +478,21 @@ def container_logs(
     `timeout_seconds` watchdog can't interrupt a fully silent container - use the snapshot mode
     there if you need a hard time bound.
 
-    args:
-        id_or_name - The container id or name
-        stdout - Include stdout
-        stderr - Include stderr
-        timestamps - Include timestamps
-        tail - Number of lines from the end (default 200), or the literal "all" for everything
-        since - Only return logs created after this unix timestamp
-        until - Only return logs created before this unix timestamp (snapshot mode only)
-        follow - Follow the live log stream instead of returning a snapshot
-        limit_lines - Follow mode: max lines to collect before returning (default 200)
-        timeout_seconds - Follow mode: max wall-clock seconds before returning what was collected (default 30)
-    returns: str - Decoded log output (up to `limit_lines` lines in follow mode). Raises ToolInputError
-                   in snapshot mode if the logs exceed 32 MiB.
+    Args:
+        id_or_name: The container id or name
+        stdout: Include stdout
+        stderr: Include stderr
+        timestamps: Include timestamps
+        tail: Number of lines from the end (default 200), or the literal "all" for everything
+        since: Only return logs created after this unix timestamp
+        until: Only return logs created before this unix timestamp (snapshot mode only)
+        follow: Follow the live log stream instead of returning a snapshot
+        limit_lines: Follow mode: max lines to collect before returning (default 200)
+        timeout_seconds: Follow mode: max wall-clock seconds before returning what was collected (default 30)
+
+    Returns:
+        str: Decoded log output (up to `limit_lines` lines in follow mode). Raises ToolInputError in snapshot mode if
+            the logs exceed 32 MiB.
     """
     container = _get_client(host).containers.get(id_or_name)
     if not follow:
@@ -511,9 +542,11 @@ def container_stats(id_or_name: str, host: str | None = None) -> dict:
     `cpu_stats` and `precpu_stats`. For a pre-computed human-readable summary prefer the
     `docker-stats://{id_or_name}` resource; for a process listing use `container_top`.
 
-    args: id_or_name - The container id or name
-    returns: dict - Engine stats payload (read, cpu_stats, precpu_stats, memory_stats, networks,
-        pids_stats, ...)
+    Args:
+        id_or_name: The container id or name
+
+    Returns:
+        dict: Engine stats payload (read, cpu_stats, precpu_stats, memory_stats, networks, pids_stats, ...)
     """
     container = _get_client(host).containers.get(id_or_name)
     # `decode` is only valid with stream=True; a one-shot stream=False read already returns a dict.
@@ -618,10 +651,12 @@ def container_top(id_or_name: str, ps_args: str | None = None, host: str | None 
     binary in the image - unlike `container_exec` with `ps`. Use `container_stats` for resource
     usage rather than process lists. Fails if the container is not running.
 
-    args:
-        id_or_name - The container id or name
-        ps_args - Extra ps arguments (e.g. "aux"); default is the daemon's standard ps invocation
-    returns: dict - {"Titles": [ps column names], "Processes": [[one row of values per process]]}
+    Args:
+        id_or_name: The container id or name
+        ps_args: Extra ps arguments (e.g. "aux"); default is the daemon's standard ps invocation
+
+    Returns:
+        dict: {"Titles": [ps column names], "Processes": [[one row of values per process]]}
     """
     container = _get_client(host).containers.get(id_or_name)
     return cast(dict, container.top(ps_args=ps_args))
@@ -650,21 +685,22 @@ def container_exec(
     invoke a shell (e.g. `["python", "-V"]`, `["ls", path]`). A string `cmd`, or a shell form like
     `["sh", "-c", template]`, interprets shell metacharacters in the untrusted parts.
 
-    args:
-        id_or_name - The container id or name
-        cmd - Command to execute (prefer exec-form argv, no shell, when any element is agent-controlled)
-        stdout - Attach to stdout
-        stderr - Attach to stderr
-        stdin - Attach to stdin
-        tty - Allocate a pseudo-TTY
-        privileged - Run with extended privileges
-        user - User to run the command as
-        detach - Detach from the exec
-        environment - Environment variables
-        workdir - Working directory inside the container
-        demux - Return stdout and stderr separately
-    returns: dict - {"exit_code", "output"}; output is combined stdout+stderr, or a
-        [stdout, stderr] pair with demux=True
+    Args:
+        id_or_name: The container id or name
+        cmd: Command to execute (prefer exec-form argv, no shell, when any element is agent-controlled)
+        stdout: Attach to stdout
+        stderr: Attach to stderr
+        stdin: Attach to stdin
+        tty: Allocate a pseudo-TTY
+        privileged: Run with extended privileges
+        user: User to run the command as
+        detach: Detach from the exec
+        environment: Environment variables
+        workdir: Working directory inside the container
+        demux: Return stdout and stderr separately
+
+    Returns:
+        dict: {"exit_code", "output"}; output is combined stdout+stderr, or a [stdout, stderr] pair with demux=True
     """
     container = _get_client(host).containers.get(id_or_name)
     result = container.exec_run(
@@ -710,16 +746,18 @@ def container_commit(
     cannot be paused. `changes` accepts Dockerfile instructions to apply on top of the
     snapshot, e.g. `["CMD [\"python\", \"app.py\"]", "ENV FOO=bar"]`.
 
-    args:
-        id_or_name - Container id or name to snapshot
-        repository - Repository name for the new image, e.g. "myorg/myimage"
-        tag - Tag for the new image (default: "latest")
-        message - Commit message stored in the image metadata
-        author - Author string stored in the image metadata
-        pause - Pause the container during commit for consistency (default True)
-        changes - Dockerfile instructions (CMD, ENV, EXPOSE, etc.) to apply to the image
-        conf - Additional image configuration overrides as a dict
-    returns: dict - The new image's full inspect payload (Id is the new image id)
+    Args:
+        id_or_name: Container id or name to snapshot
+        repository: Repository name for the new image, e.g. "myorg/myimage"
+        tag: Tag for the new image (default: "latest")
+        message: Commit message stored in the image metadata
+        author: Author string stored in the image metadata
+        pause: Pause the container during commit for consistency (default True)
+        changes: Dockerfile instructions (CMD, ENV, EXPOSE, etc.) to apply to the image
+        conf: Additional image configuration overrides as a dict
+
+    Returns:
+        dict: The new image's full inspect payload (Id is the new image id)
     """
     container = _get_client(host).containers.get(id_or_name)
     image = container.commit(
@@ -743,8 +781,11 @@ def container_diff(id_or_name: str, host: str | None = None) -> list:
     or to debug unexpected writes. Only the writable container layer is compared - files in
     volumes and bind mounts never show up.
 
-    args: id_or_name - The container id or name
-    returns: list - Dicts of {"Path", "Kind"}; Kind 0=modified, 1=added, 2=deleted
+    Args:
+        id_or_name: The container id or name
+
+    Returns:
+        list: Dicts of {"Path", "Kind"}; Kind 0=modified, 1=added, 2=deleted
     """
     container = _get_client(host).containers.get(id_or_name)
     return container.diff()
@@ -759,10 +800,12 @@ def container_rename(id_or_name: str, name: str, host: str | None = None) -> dic
     starting a replacement under the old name. Fails with a conflict error if the new name is
     already taken. Not related to `image_tag`, which names images.
 
-    args:
-        id_or_name - The container id or name
-        name - The new name; must not be in use by any other container
-    returns: dict - The container's full inspect payload after the rename
+    Args:
+        id_or_name: The container id or name
+        name: The new name; must not be in use by any other container
+
+    Returns:
+        dict: The container's full inspect payload after the rename
     """
     container = _get_client(host).containers.get(id_or_name)
     container.rename(name)
@@ -784,10 +827,12 @@ def container_update(id_or_name: str, updates: dict, host: str | None = None) ->
     image, env, or volumes the container must be recreated (`container_remove` +
     `container_run`).
 
-    args:
-        id_or_name - Container id or name to update
-        updates - Resource fields to update; see description for valid keys
-    returns: dict - The container's full inspect payload after the update
+    Args:
+        id_or_name: Container id or name to update
+        updates: Resource fields to update; see description for valid keys
+
+    Returns:
+        dict: The container's full inspect payload after the update
     """
     container = _get_client(host).containers.get(id_or_name)
     container.update(**updates)
@@ -860,22 +905,22 @@ def container_wait(
     pattern ever appears, returns promptly with `met=false` (not `timed_out`) - no further logs can
     arrive, so there's nothing to keep polling for.
 
-    args:
-        id_or_name - The container id or name
-        until - Condition to wait for: "not-running" (default), "next-exit", "removed", "healthy",
-                or "log-match" (requires `pattern`)
-        timeout_seconds - Max seconds to wait before returning with timed_out=true (default 600)
-        poll_interval - "healthy"/"log-match" only: seconds between re-checks (default 2, > 0);
-                        capped by the time left so a large value can't push the total wait past the
-                        timeout
-        pattern - "log-match" only: substring (or, with `regex=True`, a regular expression) to look
-                  for in the container's logs
-        regex - "log-match" only: treat `pattern` as a regular expression instead of a plain substring
-    returns: dict - {"container", "until", "met", "timed_out", "status_code", "error", "health",
-                     "status", "matched_line", "waited_seconds"}; stop modes fill status_code/error,
-                     "healthy" fills health ("starting"/"healthy"/"unhealthy", or null with no
-                     healthcheck) and status, "log-match" fills matched_line when met and status if
-                     the container exited without matching.
+    Args:
+        id_or_name: The container id or name
+        until: Condition to wait for: "not-running" (default), "next-exit", "removed", "healthy", or "log-match"
+            (requires `pattern`)
+        timeout_seconds: Max seconds to wait before returning with timed_out=true (default 600)
+        poll_interval: "healthy"/"log-match" only: seconds between re-checks (default 2, > 0); capped by the time left
+            so a large value can't push the total wait past the timeout
+        pattern: "log-match" only: substring (or, with `regex=True`, a regular expression) to look for in the
+            container's logs
+        regex: "log-match" only: treat `pattern` as a regular expression instead of a plain substring
+
+    Returns:
+        dict: {"container", "until", "met", "timed_out", "status_code", "error", "health", "status", "matched_line",
+            "waited_seconds"}; stop modes fill status_code/error, "healthy" fills health
+            ("starting"/"healthy"/"unhealthy", or null with no healthcheck) and status, "log-match" fills matched_line
+            when met and status if the container exited without matching.
     """
     if timeout_seconds < 0:
         raise ToolInputError(f"timeout_seconds must be >= 0, got {timeout_seconds}.")
@@ -965,12 +1010,14 @@ def container_export(
     at `max_bytes` (default 32 MiB) because MCP base64-encodes them - a fallback for when no
     writable host path exists (e.g. a containerized server without a bind mount).
 
-    args:
-        id_or_name - The container id or name
-        dest_path - Destination path on the server host; omit to return the bytes in band
-        overwrite - Replace dest_path if it already exists (default False)
-        max_bytes - In-band mode: abort with ToolInputError beyond this many bytes (default 32 MiB)
-    returns: bytes | dict - the tar bytes (in band), or {"path": <resolved path>, "bytes_written": int}
+    Args:
+        id_or_name: The container id or name
+        dest_path: Destination path on the server host; omit to return the bytes in band
+        overwrite: Replace dest_path if it already exists (default False)
+        max_bytes: In-band mode: abort with ToolInputError beyond this many bytes (default 32 MiB)
+
+    Returns:
+        bytes | dict: the tar bytes (in band), or {"path": <resolved path>, "bytes_written": int}
     """
     container = _get_client(host).containers.get(id_or_name)
     if dest_path is None:
@@ -989,11 +1036,13 @@ def container_archive_get(
     For large paths prefer `container_archive_get_to_file`, which streams to a host path; the in-band
     bytes here are capped (default 32 MiB) because MCP base64-encodes them.
 
-    args:
-        id_or_name - The container id or name
-        path - Path inside the container
-        max_bytes - Abort with ToolInputError if the archive exceeds this many bytes (defaults to 32 MiB)
-    returns: dict - Mapping with archive (bytes) and stat (dict) keys
+    Args:
+        id_or_name: The container id or name
+        path: Path inside the container
+        max_bytes: Abort with ToolInputError if the archive exceeds this many bytes (defaults to 32 MiB)
+
+    Returns:
+        dict: Mapping with archive (bytes) and stat (dict) keys
     """
     container = _get_client(host).containers.get(id_or_name)
     stream, stat = container.get_archive(path)
@@ -1012,12 +1061,14 @@ def container_archive_get_to_file(
     straight to disk (no in-band byte cap). The file is written by the server's user; `~` is
     expanded and an existing file is refused unless `overwrite=True`.
 
-    args:
-        id_or_name - The container id or name
-        path - Path inside the container
-        dest_path - Destination path on the server host for the tarball
-        overwrite - Replace dest_path if it already exists (default False)
-    returns: dict - {"path": <resolved path>, "bytes_written": int, "stat": dict}
+    Args:
+        id_or_name: The container id or name
+        path: Path inside the container
+        dest_path: Destination path on the server host for the tarball
+        overwrite: Replace dest_path if it already exists (default False)
+
+    Returns:
+        dict: {"path": <resolved path>, "bytes_written": int, "stat": dict}
     """
     container = _get_client(host).containers.get(id_or_name)
     stream, stat = container.get_archive(path)
@@ -1041,12 +1092,14 @@ def container_archive_put(
     straight to the daemon - preferred for large archives, since in-band bytes are base64-encoded by
     MCP). `from_file` is read by the server's user; `~` is expanded.
 
-    args:
-        id_or_name - The container id or name
-        path - Destination path inside the container (must already exist)
-        data - Tar archive bytes; exactly one of data/from_file
-        from_file - Path on the server host to the tar archive to upload; exactly one of data/from_file
-    returns: bool - True if the upload succeeded
+    Args:
+        id_or_name: The container id or name
+        path: Destination path inside the container (must already exist)
+        data: Tar archive bytes; exactly one of data/from_file
+        from_file: Path on the server host to the tar archive to upload; exactly one of data/from_file
+
+    Returns:
+        bool: True if the upload succeeded
     """
     if (data is None) == (from_file is None):
         raise ToolInputError("Pass exactly one of `data` (in-band tar bytes) or `from_file` (a server-host path).")

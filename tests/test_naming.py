@@ -126,8 +126,8 @@ _PARAM_EXCEPTIONS = {
     ("buildx_bake", "files"),  # bake files are HCL/compose *bake* definitions, not compose files
 }
 
-# Matches both the block form ("    param - desc") and the one-line form ("args: param - desc").
-_ARG_LINE = re.compile(r"^\s*(?:args:\s*)?(?P<param>\w+) - (?P<desc>.+)$")
+# Google style: an entry under `Args:` is "    param: desc" or "    param (type): desc".
+_ARG_LINE = re.compile(r"^\s+(?P<param>\w+)(?:\s*\([^)]*\))?: (?P<desc>.+)$")
 
 
 def _documented_params(func):

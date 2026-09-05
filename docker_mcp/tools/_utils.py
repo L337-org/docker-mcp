@@ -190,9 +190,12 @@ def open_host_read_file(file_path: str) -> IO[bytes]:
     Converting `OSError` wholesale is safe here in a way it is not for writes: every failure mode of
     opening a named file for reading is something the caller can address by naming a different one.
 
-    :param file_path: the caller's path
-    :returns: IO[bytes] - the open binary handle, for use as a context manager and for handing
-        straight to a docker-py call that wants a binary file-like
+    Args:
+        file_path: the caller's path
+
+    Returns:
+        IO[bytes] - the open binary handle, for use as a context manager and for handing straight to a docker-py call
+            that wants a binary file-like
     """
     path = host_read_path(file_path)
     try:

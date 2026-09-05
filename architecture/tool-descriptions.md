@@ -16,14 +16,16 @@ from docker_mcp.server import tool
 
 @tool()
 def mcp_example(name: str):
-    """
-    Say hello to someone by name.
+    """Say hello to someone by name.
 
     Use it for a single greeting; use `mcp_example_bulk` to greet many names in one call.
     Read-only, no side effects.
 
-    args: name - The name to say hello to (any non-empty string)
-    returns: str - The greeting
+    Args:
+        name: The name to say hello to (any non-empty string)
+
+    Returns:
+        str: The greeting
     """
     return f"Hello, {name}!"
 ```
@@ -31,12 +33,14 @@ def mcp_example(name: str):
 (`mcp_example` and `mcp_example_bulk` are illustrative only and exist nowhere in the repo - in a
 real docstring the discriminator must name an actually-registered sibling tool.)
 
-- One-line summary sentence, then a blank line
-- `args:` section lists each parameter as `name - description`. Do **not** repeat the parameter's
-  type - the type annotation already lands in the tool's `inputSchema`, which the client sees
-  alongside the description, so a `name: type - ...` form just duplicates it as prose tokens. (The
-  `returns:` line keeps its type, since the return shape is not in the input schema.)
-- `returns:` line documents the return type and what it contains
+- One-line summary sentence on the opening line, then a blank line
+- Google style throughout: an `Args:` section listing each parameter as `name: description`, and a
+  `Returns:` section. This is CS.6.12's format for Python, and the surface uses it for the same
+  reason the rest of the code does - one convention is cheaper to read and to check than two.
+- Do **not** repeat the parameter's type. The type annotation already lands in the tool's
+  `inputSchema`, which the client sees alongside the description, so `name (str): ...` duplicates
+  it as prose tokens. The `Returns:` entry keeps its type, since the return shape is not in the
+  input schema.
 - Keep descriptions terse: state every functional fact (defaults, accepted formats/values, return
   keys, important caveats) but cut redundancy and verbose phrasing. The docstring is the entire
   tool `description` the client pays tokens for on every session.
@@ -50,15 +54,15 @@ Completeness 10%. Those six are Glama's own dimension names, quoted verbatim - "
 Transparency" keeps its American spelling because renaming an external rubric's dimension would
 misname it. Four rounds of cleanup (#97, the 2.0 rename, #129, and the 2026-07 bottom-20
 pass - see [[project_glama_docstring_quality]] in memory) all chased the same failure: docstrings
-that state *what* the tool does but never *when to use it over its neighbours*, plus `args:` /
-`returns:` lines that merely restate the schema. The standard below exists to prevent a fifth
+that state *what* the tool does but never *when to use it over its neighbours*, plus `Args:` /
+`Returns:` entries that merely restate the schema. The standard below exists to prevent a fifth
 round. It applies to **every `@tool()` docstring added or modified in a PR** (a ratchet - untouched
 legacy docstrings are cleaned opportunistically, not churned):
 
 1. **Summary = specific verb + resource**, with the distinguishing trait up front when a sibling
    could be confused ("Send a signal to a running container (default SIGKILL - immediate, no
    graceful shutdown)").
-2. **A usage-guidance paragraph (1-5 sentences between the summary and `args:`) is required for
+2. **A usage-guidance paragraph (1-5 sentences between the summary and `Args:`) is required for
    every tool, not just complex ones.** Every tool in a 150+-tool server has neighbours. It must
    carry:
    - at least one *discriminator* naming the sibling tool(s) an agent could reach for instead and
@@ -72,13 +76,13 @@ legacy docstrings are cleaned opportunistically, not churned):
      `returncode`/`stderr`" vs "raises `RemoteFailureError` on CLI failure"). Don't overpromise "never
      raises" - a missing binary/plugin or a subprocess timeout still raises even in action tools.
    Scale it to the tool: a trivial read-only tool needs one discriminator sentence, not five.
-3. **Every `args:` line adds semantics the schema cannot carry**: format, accepted values/ranges,
+3. **Every `Args:` entry adds semantics the schema cannot carry**: format, accepted values/ranges,
    defaults, units, and interactions with other parameters. A line that echoes the parameter name
    ("name - The volume name") scores 2/5 on the rubric - say what makes a value valid or how it
    behaves ("name - The volume name (volumes have no separate id)"). Canonical shared-param
    prefixes in `tests/test_naming.py` still apply - append tool-specific detail after the
    canonical prefix rather than rewording it.
-4. **`returns:` names the shape, not just the type.** There is no output schema, so this line is
+4. **`Returns:` names the shape, not just the type.** There is no output schema, so this line is
    all an agent gets. For computed or partial returns, name the load-bearing keys (`{"Titles",
    "Processes"}`; `{"LayersSize", "Images", "Containers", "Volumes", "BuildCache"}`). For a full
    engine inspect document, do NOT enumerate an arbitrary subset of its hundreds of keys - say
