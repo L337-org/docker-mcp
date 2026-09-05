@@ -444,6 +444,26 @@ regenerating the digest they share.
 
 Tests are exempt: a test's name is its documentation.
 
+## The advertised surface has a budget
+
+`AC.1.2` makes the size of what this server advertises a tracked metric rather than an
+afterthought, and at 164 tools it is the dominant cost of connecting to this server at all.
+`tests/test_surface_budget.py` holds the ceilings: per tool, per component, and in total.
+
+**What is measured is the wire form, not the docstring.** A tool costs its name, its description
+and its whole input schema, and the schema is usually the larger half - `buildx_build` is 5,091
+bytes on the wire against 3,398 of description. A docstring-only budget would go green on a
+change that added twenty parameters.
+
+**Bytes, not tokens.** Tokens are what a model pays, but they need a tokenizer pinned to a model
+that changes underneath us, so the figure moves without the surface moving. That is why
+`scripts/measure-comparison-figures.py` reports tokens and is explicitly not a gate, and why
+this is bytes.
+
+**Raising a ceiling is a deliberate decision**, made in a pull request and explained in the
+commit message - not a way to turn a red test green. The number exists to force the question
+"is this worth what every session will pay for it?" to be asked once rather than never.
+
 <!-- BEGIN GENERATED -->
 ## Read these when they apply
 
