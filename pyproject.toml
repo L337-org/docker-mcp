@@ -75,26 +75,9 @@ line-length = 120
 # (security; gives the S603/S310 noqas in _cli.py / resources.py teeth), UP = pyupgrade.
 select = ["E", "F", "B", "S", "UP", "D"]
 
-# The docstring backlog, in configuration where it is reviewable rather than in a planning
-# document nothing enforces. This is the workflow pydocstyle documents for adopting a
-# convention: select everything, ignore exactly what fails today, and remove entries along with
-# the violations they name. Every other D rule is enforced from now, so none of the ones already
-# passing can regress while this is worked through.
-#
-# Group what goes in one change by how the fix is made rather than one rule per change. Several
-# mechanical rules cost no more to review together than one, because the question is whether the
-# fixer ran correctly; a rule needing judgement - where a summary ends, what a parameter does -
-# wants reading on its own.
-#
-# Counts, measured with `ruff check --select D405,D417,D205 --statistics .`:
-#   D405 section name capitalisation (the lowercase house style) 78
-#   D417 missing argument descriptions                        46
-#   D205 blank line between summary and description           46
-#
-# D405 is the one with a consequence beyond this repository: scripts/check-repo-hygiene.py is
-# vendored byte-identically into four repositories and written in that lowercase style, and
-# claude-routines and apt exclude it from D entirely until this entry goes. Clearing D405 here
-# is what lets those two exclusions be removed.
+# The D entries are a backlog, not a decision: each names a docstring rule this code does not
+# satisfy yet. Every other D rule is enforced, so nothing already passing can regress. An entry
+# is removed only by the change that fixes what it names.
 ignore = ["D405", "D417", "D205"]
 
 [tool.ruff.lint.pydocstyle]
