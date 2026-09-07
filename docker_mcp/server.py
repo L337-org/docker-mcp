@@ -34,7 +34,13 @@ mcp = MCPServer("docker-mcp-server")
 
 
 class ToolCategory(Enum):
-    """How a tool affects state - drives both ToolAnnotations and the read-only env switches."""
+    """How a tool affects state - drives both ToolAnnotations and the read-only env switches.
+
+    Attributes:
+        READ_ONLY: reads state and changes nothing.
+        MUTATING: changes state without destroying anything.
+        DESTRUCTIVE: removes or replaces something that cannot be recovered.
+    """
 
     READ_ONLY = "read_only"  # no state change: queries, log/data reads, scans
     MUTATING = "mutating"  # changes state but does not destroy data
@@ -255,7 +261,14 @@ NO_DESTRUCTIVE = env_flag("DOCKER_MCP_SERVER_NO_DESTRUCTIVE")
 
 
 def _parse_domains(value: str | None) -> frozenset[str]:
-    """Parse the comma-separated DOCKER_MCP_SERVER_DISABLE list into a normalized set of domain names."""
+    """Parse the comma-separated DOCKER_MCP_SERVER_DISABLE list into a normalized set of domain names.
+
+    Args:
+        value: the raw DOCKER_MCP_SERVER_DISABLE value
+
+    Returns:
+        frozenset: the domain names, lowercased and stripped
+    """
     return frozenset(part.strip().lower() for part in (value or "").split(",") if part.strip())
 
 
@@ -270,7 +283,16 @@ DISABLED_DOMAINS = _parse_domains(read_env("DOCKER_MCP_SERVER_DISABLE"))
 
 @dataclass(frozen=True)
 class ToolRecord:
-    """What the `@tool()` decorator saw for one tool: its taxonomy and whether it actually registered."""
+    """What the `@tool()` decorator saw for one tool: its taxonomy and whether it actually registered.
+
+    Attributes:
+        name: the tool's advertised name.
+        domain: the module it came from, or None.
+        category: its ToolCategory.
+        registered: whether the switches actually registered it.
+        summary: the first line of its docstring.
+        params: its parameter names.
+    """
 
     name: str
     domain: str | None
@@ -296,6 +318,12 @@ class PromptRecord:
 
     Its (optional) domain, whether it is gated to multi-host mode, and whether it actually
     registered.
+
+    Attributes:
+        name: the prompt's advertised name.
+        domain: the module it came from, or None.
+        registered: whether it actually registered.
+        multi_host: whether it is gated to multi-host mode.
     """
 
     name: str
@@ -312,7 +340,11 @@ _resource_domains: dict[str, str] = {}
 
 
 def register_resource_domains(section_to_domain: dict[str, str]) -> None:
-    """Record which doc-resource sections belong to which domain (called by resources.py at import)."""
+    """Record which doc-resource sections belong to which domain (called by resources.py at import).
+
+    Args:
+        section_to_domain: resource section to the domain that owns it
+    """
     _resource_domains.update(section_to_domain)
 
 
@@ -321,6 +353,12 @@ def is_domain_disabled(domain: str | None) -> bool:
 
     Reads the live set, so it reflects test monkeypatching of DISABLED_DOMAINS, unlike the
     import-time tool and prompt gating.
+
+    Args:
+        domain: the domain to test, or None
+
+    Returns:
+        bool: True when that domain is disabled
     """
     return domain is not None and domain in DISABLED_DOMAINS
 
@@ -336,6 +374,12 @@ def _domain_for(func: Callable) -> str | None:
 
     Returns None for `_NO_DOMAIN_TOOLS` members, which then never get gated by
     DOCKER_MCP_SERVER_DISABLE (see `_domain_enabled`'s call sites).
+
+    Args:
+        func: the decorated function
+
+    Returns:
+        str or None: the module it came from, or None when it has none
     """
     if func.__name__ in _NO_DOMAIN_TOOLS:
         return None
@@ -343,7 +387,16 @@ def _domain_for(func: Callable) -> str | None:
 
 
 def _should_register(category: ToolCategory, *, readonly: bool, no_destructive: bool) -> bool:
-    """Decide whether a tool of `category` is registered under the given category-switch state."""
+    """Decide whether a tool of `category` is registered under the given category-switch state.
+
+    Args:
+        category: the tool's category
+        readonly: whether the read-only switch is set
+        no_destructive: whether the no-destructive switch is set
+
+    Returns:
+        bool: True when this tool registers under those switches
+    """
     if readonly:
         return category is ToolCategory.READ_ONLY
     if no_destructive:
@@ -352,7 +405,15 @@ def _should_register(category: ToolCategory, *, readonly: bool, no_destructive: 
 
 
 def _domain_enabled(domain: str, disabled: frozenset[str]) -> bool:
-    """Decide whether a tool's domain survives the DOCKER_MCP_SERVER_DISABLE switch."""
+    """Decide whether a tool's domain survives the DOCKER_MCP_SERVER_DISABLE switch.
+
+    Args:
+        domain: the domain to test
+        disabled: the disabled domain names
+
+    Returns:
+        bool: True when that domain is not disabled
+    """
     return domain not in disabled
 
 
@@ -362,6 +423,12 @@ def _summary_for(func: Callable[..., Any]) -> str:
     The house docstring format puts a standalone summary sentence first, so the first non-empty line
     is the summary by construction. Returns "" for an undocumented tool rather than raising, since a
     missing summary should degrade the catalog row, not prevent registration.
+
+    Args:
+        func: the decorated function
+
+    Returns:
+        str: the docstring's first line, or empty for an undocumented tool
     """
     for line in (func.__doc__ or "").strip().splitlines():
         if line.strip():
@@ -456,6 +523,9 @@ def tool_catalog() -> dict[str, Any]:
     Which tools exist, their domain and category, and what the active env switches registered.
     Drives the `docker-mcp://tool-catalog` resource so a client can see the blast radius of each
     tool - and which whole domains a server has disabled - before calling anything.
+
+    Returns:
+        dict: the tool surface - every tool's domain and category, and which switches registered it
     """
     # `r.domain or ""` only affects sort order - the stored/reported domain stays None for the
     # handful of `_NO_DOMAIN_TOOLS` (e.g. docs_lookup), sorting before every named domain.
@@ -537,6 +607,12 @@ def build_instructions(registered_domains: set[str] | None = None) -> str:
     `_tool_registry`, so the switches (DOCKER_MCP_SERVER_DISABLE / _READONLY / _NO_DESTRUCTIVE) are
     reflected - a domain with no registered tool contributes no line, so the router never points the
     client at tools that aren't there.
+
+    Args:
+        registered_domains: the domains to render for; None reads the live registry
+
+    Returns:
+        str: the rendered instructions router
     """
     present = (
         registered_domains
@@ -639,13 +715,27 @@ def _title_for(name: str) -> str:
     hand-authoring them. Distinct from the schema `title` `_slim_schema` strips - this is the
     ToolAnnotations field some directories (e.g. the Claude Connectors Directory) require
     independent of prose.
+
+    Args:
+        name: the tool's name
+
+    Returns:
+        str: a human title, with known acronyms cased correctly
     """
     words = name.replace("_", " ").title().split(" ")
     return " ".join(_TITLE_ACRONYMS.get(word, word) for word in words)
 
 
 def _annotations_for(name: str, category: ToolCategory) -> ToolAnnotations:
-    """Build the ToolAnnotations a client uses to auto-allow reads and gate destructive calls."""
+    """Build the ToolAnnotations a client uses to auto-allow reads and gate destructive calls.
+
+    Args:
+        name: the tool's name
+        category: the tool's category
+
+    Returns:
+        ToolAnnotations: the annotations advertised for that tool
+    """
     return ToolAnnotations(
         title=_title_for(name),
         read_only_hint=category is ToolCategory.READ_ONLY,
@@ -692,6 +782,9 @@ def _slim_schema(node: Any) -> None:
       meaningful and kept.
 
     `tests/test_server.py` asserts none of the three survive on any registered tool.
+
+    Args:
+        node: the schema fragment to slim, modified in place
     """
     if isinstance(node, dict):
         node.pop("title", None)
@@ -726,6 +819,12 @@ def _has_host_param(func: Callable) -> bool:
 
     Registry, hub and context tools and host_list do not, so they are untouched by the host
     machinery.
+
+    Args:
+        func: the function to inspect
+
+    Returns:
+        bool: True when it takes a ``host`` parameter
     """
     return _HOST_PARAM in inspect.signature(func).parameters
 
@@ -735,6 +834,13 @@ def _is_host_write(name: str, category: ToolCategory) -> bool:
 
     These require an explicit host in multi-host mode and refuse an (ro) host; everything else may
     default.
+
+    Args:
+        name: the tool's name, for the message
+        category: the tool's category
+
+    Returns:
+        bool: True when the tool writes to the daemon
     """
     return category in (ToolCategory.MUTATING, ToolCategory.DESTRUCTIVE) and name not in _CONNECTION_CONTROL
 
@@ -744,12 +850,27 @@ def _is_host_destructive(name: str, category: ToolCategory) -> bool:
 
     This is what the per-host (nd) marker blocks, while still allowing READ_ONLY and MUTATING
     calls.
+
+    Args:
+        name: the tool's name, for the message
+        category: the tool's category
+
+    Returns:
+        bool: True when the tool destroys daemon state
     """
     return category is ToolCategory.DESTRUCTIVE and name not in _CONNECTION_CONTROL
 
 
 def _host_param_description(name: str, category: ToolCategory) -> str:
-    """The advertised `host` description in multi-host mode - the enum carries the valid labels."""
+    """The advertised `host` description in multi-host mode - the enum carries the valid labels.
+
+    Args:
+        name: the tool's name, for the message
+        category: the tool's category
+
+    Returns:
+        str: the description advertised for the ``host`` parameter
+    """
     if _is_host_write(name, category):
         return "Target host label (required when multiple hosts are configured)."
     return f"Target host label; omit to use the default ({_hosts.default().label!r})."
@@ -760,6 +881,14 @@ def _raise_read_only(name: str, label: str, category: ToolCategory) -> NoReturn:
 
     Distinct from the DOCKER_MCP_SERVER_READONLY switch, which drops write tools from the surface
     entirely.
+
+    Args:
+        name: the tool's name, for the message
+        label: the host label that refused
+        category: the tool's category
+
+    Raises:
+        HostGuardError: always; the message names the host and why it refused.
     """
     raise HostGuardError(
         f"{name}: host {label!r} is read-only (configured with the (ro) marker); refusing this "
@@ -772,6 +901,14 @@ def _raise_non_destructive(name: str, label: str, category: ToolCategory) -> NoR
 
     Distinct from the DOCKER_MCP_SERVER_NO_DESTRUCTIVE switch, which drops destructive tools from
     the surface entirely.
+
+    Args:
+        name: the tool's name, for the message
+        label: the host label that refused
+        category: the tool's category
+
+    Raises:
+        HostGuardError: always; the message names the host and why it refused.
     """
     raise HostGuardError(
         f"{name}: host {label!r} is non-destructive (configured with the (nd) marker); refusing this "
@@ -788,6 +925,15 @@ def _enforce_host_guard(name: str, category: ToolCategory, host: str | None) -> 
     when a destructive call targets an (nd) host. A host carrying both markers is refused by the
     (ro) check first - (ro) is strictly stronger, so (nd) never fires for it. Read-only and
     connection-control tools may omit `host` (None -> default / all).
+
+    Args:
+        name: the tool's name, for the message
+        category: the tool's category
+        host: the host label the call targeted, or None for the default
+
+    Raises:
+        HostGuardError: the host is flagged read-only, or non-destructive and this
+            call is destructive.
     """
     known = _hosts.labels()
     write = _is_host_write(name, category)
@@ -822,6 +968,11 @@ def _apply_host_schema(parameters: Any, name: str, category: ToolCategory) -> No
     Multi-host mode: constrain `host` to an `enum` of the configured labels with a generated description,
     and for writes mark it required (advisory - the guard is the teeth) by adding it to `required` and
     dropping its default.
+
+    Args:
+        parameters: the advertised schema, modified in place
+        name: the tool's name, for the message
+        category: the tool's category
     """
     if not isinstance(parameters, dict):
         return
@@ -854,6 +1005,9 @@ def _host_guard_needed() -> bool:
     Two cases: multiple hosts (host selection plus per-host (ro)/(nd) refusal), or a single host
     flagged (ro) or (nd), which refuses writes and destructive calls even though the schema carries
     no host param. A single unrestricted host needs no guard - the footprint-neutral path.
+
+    Returns:
+        bool: True when any host is flagged, or several are configured
     """
     return _hosts.is_multi() or _hosts.is_read_only() or _hosts.is_non_destructive()
 
@@ -868,6 +1022,14 @@ def _wrap_with_host_guard[F: Callable[..., Any]](func: F, name: str, category: T
     Applies when `_host_guard_needed()` - multi-host, or a single host flagged (ro) or (nd).
     Preserves the signature so MCPServer builds the same schema and fn_metadata, and matches the
     function's sync/async-ness.
+
+    Args:
+        func: the tool function
+        name: the tool's name, for the message
+        category: the tool's category
+
+    Returns:
+        F: the function wrapped so the guard runs before it
     """
     signature = inspect.signature(func)
 
@@ -957,6 +1119,12 @@ def _as_project_failure(exc: BaseException) -> DockerMcpError:
     the fallback cannot be reached by any edit to the table: adding an entry adds it to both. It
     exists for the caller that invokes this directly with something outside the table, and names the
     class in its message rather than silently classifying it as something it is not.
+
+    Args:
+        exc: the exception raised by the compose or stack call
+
+    Returns:
+        DockerMcpError: the failure, typed for the project kind it came from
     """
     for library_type, project_type in _LIBRARY_FAILURES:
         if isinstance(exc, library_type):
@@ -982,6 +1150,13 @@ def _translate_failures[F: Callable[..., Any]](func: F, error_cls: type[ToolErro
     Preserves the signature (the SDK builds the input schema from it) and the sync/async-ness (the
     SDK decides whether to await by asking `is_async_callable`), the same way `_wrap_with_host_guard`
     does and for the same reasons.
+
+    Args:
+        func: the tool or resource function
+        error_cls: the SDK error to re-raise as
+
+    Returns:
+        F: the function wrapped so anticipated failures keep their message
     """
     if inspect.iscoroutinefunction(func):
 
@@ -1022,6 +1197,12 @@ def tool[F: Callable[..., Any]](**kwargs: Any) -> Callable[[F], F]:
     anything unclassified) and its domain from the defining module. We skip registration when a
     read-only env switch forbids the category or DOCKER_MCP_SERVER_DISABLE drops the domain, and otherwise
     attach the matching ToolAnnotations.
+
+    Args:
+        **kwargs: passed to the SDK's own tool decorator
+
+    Returns:
+        Callable: a decorator registering the function it wraps as a tool
     """
 
     def decorator(func: F) -> F:
@@ -1092,7 +1273,7 @@ def resource[F: Callable[..., Any]](uri: str, **kwargs: Any) -> Callable[[F], F]
 
     Args:
         uri: the resource URI or URI template, passed straight to `mcp.resource`
-        kwargs: passed to `mcp.resource` (name, title, description, mime_type, ...)
+        **kwargs: passed to `mcp.resource` (name, title, description, mime_type, ...)
 
     Returns:
         Callable: a decorator registering the function as a resource
@@ -1115,6 +1296,14 @@ def prompt(description: str, *, domain: str | None = None, multi_host: bool = Fa
     DOCKER_MCP_SERVER_HOSTS), so a multi-host workflow prompt stays hidden in the common single-host case
     - the prompt-side parallel of the per-tool host param. Gating happens at import like `@tool()`, and
     the choice is recorded for tool_catalog().
+
+    Args:
+        description: the prompt's advertised description
+        domain: the domain that owns it, or None
+        multi_host: whether to register only in multi-host mode
+
+    Returns:
+        Callable: a decorator registering the function it wraps as a prompt
     """
 
     def decorator(func: Callable) -> Callable:
