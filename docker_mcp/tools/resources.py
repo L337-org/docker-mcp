@@ -35,7 +35,7 @@ def _read_capped_docs_response(url: str) -> bytes:
         url: the documentation page to fetch
 
     Returns:
-        str: the page body
+        bytes: the page body, undecoded
 
     Raises:
         ToolRefusalError: the page exceeds the response cap.
@@ -606,8 +606,10 @@ def get_docs_section(section: str) -> str:  # noqa: DOC503
         str: The HTML (or rendered Markdown) content of the documentation page
 
     Raises:
+        ToolInputError: propagated from _section_url when the section is unknown.
         CapabilityError: the section's domain is disabled.
-        ToolRefusalError: the page exceeds the response cap.
+        ToolRefusalError: propagated from _read_capped_docs_response when the page exceeds
+            the response cap.
     """
     if not _section_enabled(section):
         raise CapabilityError(

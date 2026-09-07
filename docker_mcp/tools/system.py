@@ -91,7 +91,8 @@ def _self_host() -> Host | None:
     leaving the guard inert, because our container cannot be on a remote.
 
     Returns:
-        str or None: the host label the server's own container runs on, or None
+        Host or None: the host the server's own container runs on, or None when it cannot be
+            determined
     """
     for host in _host_registry().values():
         if host.url is None or host.url.startswith(("unix://", "npipe://")):

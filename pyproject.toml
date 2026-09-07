@@ -85,9 +85,13 @@ ignore = []
 convention = "google"
 
 # Tool docstrings are NOT covered by these rules. A tool docstring is the description a client
-# loads and a model reads, and the `inputSchema` sent alongside it already carries every
-# parameter's type - so CS.6.14 hands it to the AI-consumer rules instead, where an `Args:` block
-# would duplicate the schema and be paid for on every session that loads the surface.
+# loads and a model reads, so CS.6.14 hands it to the AI-consumer rules instead.
+#
+# That is not an argument against an `Args:` block - most tools have one, and a parameter's
+# purpose is worth a sentence wherever it is read. It is an argument against repeating each
+# parameter's *type*, which the `inputSchema` sent alongside already carries, and which would
+# then be paid for on every session that loads the surface. So a tool documents what its
+# arguments mean and leaves their types to the schema.
 #
 # Prompts and resources are deliberately absent. A prompt's description comes from
 # `@prompt(description=...)` and a resource advertises nothing about its parameters, so neither
