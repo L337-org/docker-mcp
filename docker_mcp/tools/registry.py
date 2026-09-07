@@ -49,6 +49,13 @@ def _env_credentials(username: str | None, password: str | None) -> tuple[str | 
     MCP clients log verbatim. The password may be a personal-access token. Explicit arguments win
     over the environment; the env pair is only used when *both* arguments are unset, so a caller
     can't accidentally mix an argument username with an environment password.
+
+    Args:
+        username: the caller's username, or None
+        password: the caller's password, or None
+
+    Returns:
+        tuple: ``(username, password)``, each falling back to its environment variable
     """
     if username is not None or password is not None:
         return username, password
@@ -94,6 +101,12 @@ def _strip_tag_and_digest(image: str) -> str:
     The colon in a registry hostname's port (e.g. `localhost:5000/foo`) is preserved -
     we only strip a trailing `:tag` that appears *after* the last `/` in the reference,
     so `ghcr.io:443/org/repo:v1` correctly becomes `ghcr.io:443/org/repo`.
+
+    Args:
+        image: the image reference
+
+    Returns:
+        str: the reference without its tag or digest, the registry port kept
     """
     if "@" in image:
         image = image.split("@", 1)[0]
@@ -117,6 +130,12 @@ def _parse_image_ref(image: str) -> tuple[str, str]:
       "ghcr.io/u/r"        -> ("ghcr.io", "u/r")
       "ghcr.io/u/r@sha256:..." -> ("ghcr.io", "u/r")
       "localhost:5000/r"   -> ("localhost:5000", "r")
+
+    Args:
+        image: the image reference; any tag or digest is stripped
+
+    Returns:
+        tuple: ``(registry_host, repository_path)``
     """
     image = _strip_tag_and_digest(image)
     if "/" not in image:
@@ -128,7 +147,14 @@ def _parse_image_ref(image: str) -> tuple[str, str]:
 
 
 def _parse_bearer_challenge(header: str) -> dict[str, str]:
-    """Parse a `WWW-Authenticate: Bearer ...` header into its key=value pairs."""
+    """Parse a `WWW-Authenticate: Bearer ...` header into its key=value pairs.
+
+    Args:
+        header: the ``WWW-Authenticate`` header value
+
+    Returns:
+        dict: its key=value pairs, empty when the header is not a Bearer challenge
+    """
     if not header.lower().startswith("bearer "):
         return {}
     out: dict[str, str] = {}
@@ -138,7 +164,14 @@ def _parse_bearer_challenge(header: str) -> dict[str, str]:
 
 
 def _host_of(netloc: str) -> str:
-    """Extract the bare host from a "host", "host:port", or "[ipv6]:port" netloc."""
+    """Extract the bare host from a "host", "host:port", or "[ipv6]:port" netloc.
+
+    Args:
+        netloc: a ``host``, ``host:port`` or ``[ipv6]:port`` netloc
+
+    Returns:
+        str: the bare host
+    """
     return urlparse(f"//{netloc}").hostname or netloc
 
 
@@ -149,6 +182,12 @@ def _is_local_host(host: str) -> bool:
     best-effort, no-DNS check: it recognizes IP literals and the conventional local-name suffixes
     (localhost, *.local, *.internal) but does not resolve bare hostnames, so an internal host
     addressed by a plain name that doesn't match those suffixes is treated as non-local.
+
+    Args:
+        host: the host to classify
+
+    Returns:
+        bool: True for a loopback, private or link-local address, or an obvious local name
     """
     if not host:
         return False
@@ -174,6 +213,14 @@ def _validate_bearer_realm(realm: str, registry: str) -> None:
       - the realm host to be public, unless the registry we're talking to is itself local - this
         stops a public registry from redirecting credentialed requests at an internal service (SSRF),
         while still allowing a genuinely local dev registry (e.g. localhost:5000) to use a local realm.
+
+    Args:
+        realm: the token realm from the registry's challenge, which is attacker-controlled
+        registry: the registry the challenge came from, for the message
+
+    Raises:
+        ToolRefusalError: the realm would send credentials in plaintext, or to an
+            internal host.
     """
     parsed = urlparse(realm)
     if parsed.scheme not in ("http", "https"):
@@ -229,6 +276,12 @@ def _parse_retry_after(value: str | None) -> float | None:
     The value is either an integer number of seconds (``"30"``) or an HTTP-date
     (``"Wed, 21 Oct 2026 07:28:00 GMT"``). Returns the delay in seconds, or None
     if the header is missing or unparseable.
+
+    Args:
+        value: the ``Retry-After`` header value, or None
+
+    Returns:
+        float or None: seconds to wait, or None when there is nothing parseable
     """
     if not value:
         return None
@@ -290,6 +343,16 @@ def _read_capped_response(resp: httpx.Response, url: str) -> httpx.Response:
 
     Returns a fully-read `httpx.Response` so callers keep using `.json()`, `.text` and `.headers`
     unchanged.
+
+    Args:
+        resp: the streamed response to read
+        url: what was being fetched, for the message
+
+    Returns:
+        httpx.Response: a fully-read response, so callers keep using ``.json()``, ``.text`` and ``.headers``
+
+    Raises:
+        ToolRefusalError: the body exceeds the response cap.
     """
     chunks: list[bytes] = []
     total = 0
@@ -327,6 +390,16 @@ def _get_with_retry_policy(
     - On HTTP 429 with `Retry-After <= 10s`: sleep + retry once.
     - On HTTP 429 with no Retry-After, or a longer delay, or a second 429: raise.
     - Other status codes are returned as-is for the caller to handle.
+
+    Args:
+        client: the HTTP client to use
+        url: the URL to fetch
+        headers: the request headers
+        params: the query parameters, or None
+        auth: basic-auth credentials, or None
+
+    Returns:
+        httpx.Response: the response, fully read and within the cap
     """
     transient_attempts = 0
     retried_429 = False
@@ -365,6 +438,17 @@ def _registry_get(
 
     Transparently handles a Bearer 401 challenge, 429 rate limits, and transient 5xx retries (see
     `_get_with_retry_policy`).
+
+    Args:
+        registry: the registry host
+        path: the path under it
+        username: the credential username, or None
+        password: the credential password, or None
+        accept: an Accept header value, or None
+        timeout: the per-request timeout in seconds
+
+    Returns:
+        httpx.Response: the response, with any Bearer challenge already answered
     """
     url = f"https://{registry}{path}"
     headers: dict[str, str] = {"User-Agent": _USER_AGENT}
@@ -402,6 +486,12 @@ def _origin_of(url: str) -> tuple[str, str, int | None]:
     returns cleanly for those - it leaves the port in `netloc` - and the error comes from reading the
     `ParseResult.port` property here. Callers handling untrusted input must convert it: see
     `_validate_hub_next`.
+
+    Args:
+        url: the URL to take the origin of
+
+    Returns:
+        tuple: ``(scheme, host, effective port)``, an omitted port filled in from the scheme
     """
     parsed = urlparse(url)
     scheme = parsed.scheme
@@ -422,6 +512,16 @@ def _validate_hub_next(next_url: object) -> str:
     Raises ToolRefusalError on a foreign origin or on a non-string value, matching `hub_tags`'
     parsed-query error style: the body is untrusted, so a malformed `next` must produce the same
     actionable error as a malicious one rather than an AttributeError out of urlparse.
+
+    Args:
+        next_url: the ``next`` value from a Hub response body, of whatever type it held
+
+    Returns:
+        str: the same URL, once accepted
+
+    Raises:
+        ToolRefusalError: it is not a string, or it leaves the Hub API's own scheme,
+            host and port - it came from a response body, so the origin is pinned.
     """
     if not isinstance(next_url, str):
         raise ToolRefusalError(
@@ -448,7 +548,14 @@ def _validate_hub_next(next_url: object) -> str:
 
 
 def _next_link(link_header: str | None) -> str | None:
-    """Return the URL of the rel=next entry in an RFC 5988 Link header, or None."""
+    """Return the URL of the rel=next entry in an RFC 5988 Link header, or None.
+
+    Args:
+        link_header: an RFC 5988 ``Link`` header value, or None
+
+    Returns:
+        str or None: the rel=next URL, or None when there is not one
+    """
     if not link_header:
         return None
     for part in link_header.split(","):
@@ -701,7 +808,17 @@ def registry_image_config(
 
 
 def _parse_platform(platform: str) -> tuple[str, str, str | None]:
-    """Split "os/arch[/variant]" (e.g. "linux/amd64", "linux/arm/v7") into (os, arch, variant)."""
+    """Split "os/arch[/variant]" (e.g. "linux/amd64", "linux/arm/v7") into (os, arch, variant).
+
+    Args:
+        platform: an ``os/arch[/variant]`` string
+
+    Returns:
+        tuple: ``(os, arch, variant)``, variant None when omitted
+
+    Raises:
+        ToolInputError: the string is not two or three slash-separated parts.
+    """
     parts = platform.split("/")
     if len(parts) == 2:
         return parts[0], parts[1], None
@@ -721,8 +838,16 @@ def _select_platform_digest(index: dict, platform: str) -> tuple[str, str]:
     attestation manifests (no real os/arch). Raises ToolInputError if nothing matches, listing what the
     index does offer so the caller can retry.
 
+    Args:
+        index: a manifest list or OCI image index
+        platform: an ``os/arch[/variant]`` string; an omitted variant matches any variant of that os/arch
+
     Returns:
         (digest, actual_platform) of the selected sub-manifest
+
+    Raises:
+        ToolInputError: no sub-manifest matches, or the match is ambiguous.
+
     """
     want_os, want_arch, want_variant = _parse_platform(platform)
     available: list[str] = []
@@ -749,6 +874,12 @@ def _parse_ratelimit_header(value: str | None) -> tuple[int | None, int | None]:
 
     The format is "<count>;w=<window-seconds>" (e.g. "100;w=21600") or occasionally a bare count.
     Returns (count, window_seconds); either element is None when absent or unparseable.
+
+    Args:
+        value: the header value, or None
+
+    Returns:
+        tuple: ``(count, window seconds)``, either None when unparseable
     """
     if not value:
         return (None, None)
@@ -763,7 +894,14 @@ def _parse_ratelimit_header(value: str | None) -> tuple[int | None, int | None]:
 
 
 def _hub_normalize(repository: str) -> str:
-    """Normalize a Hub repository to "namespace/name" form (official images get "library/")."""
+    """Normalize a Hub repository to "namespace/name" form (official images get "library/").
+
+    Args:
+        repository: the Hub repository, with or without a namespace
+
+    Returns:
+        str: the repository in ``namespace/name`` form, official images under ``library/``
+    """
     if "/" not in repository:
         return f"library/{repository}"
     return repository
