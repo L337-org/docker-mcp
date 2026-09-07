@@ -173,6 +173,7 @@ def network_connect(  # noqa: DOC101,DOC103
     ipv6_address: str | None = None,
     link_local_ips: list | None = None,
     driver_opt: dict | None = None,
+    mac_address: str | None = None,
     host: str | None = None,
 ) -> bool:
     """
@@ -194,6 +195,8 @@ def network_connect(  # noqa: DOC101,DOC103
         ipv6_address: Static IPv6 address to assign on this network
         link_local_ips: Link-local IP addresses to assign
         driver_opt: Driver-specific endpoint options
+        mac_address: Static MAC address for this endpoint, e.g. "02:42:ac:11:00:04"; per-network
+            rather than per-container, and a driver is free to ignore it
 
     Returns:
         bool: True after the container is connected
@@ -207,6 +210,7 @@ def network_connect(  # noqa: DOC101,DOC103
         ipv6_address=ipv6_address,
         link_local_ips=link_local_ips,
         driver_opt=driver_opt,
+        mac_address=mac_address,
     )
     return True
 

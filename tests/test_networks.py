@@ -100,6 +100,26 @@ def test_network_connect():
         ipv6_address=None,
         link_local_ips=None,
         driver_opt=None,
+        mac_address=None,
+    )
+
+
+def test_network_connect_forwards_mac_address():
+    network = MagicMock()
+    with _patch() as mock_client:
+        mock_client.return_value.networks.get.return_value = network
+        assert network_connect("mynet", "web", mac_address="02:42:ac:11:00:04") is True
+    # assert_called_once_with, not call_args: pins the call count too, so this cannot pass if the
+    # tool ever connects more than once.
+    network.connect.assert_called_once_with(
+        "web",
+        aliases=None,
+        links=None,
+        ipv4_address=None,
+        ipv6_address=None,
+        link_local_ips=None,
+        driver_opt=None,
+        mac_address="02:42:ac:11:00:04",
     )
 
 

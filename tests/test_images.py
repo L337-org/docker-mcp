@@ -70,6 +70,23 @@ def test_pull_image_single():
     with _patch() as mock_client:
         mock_client.return_value.images.pull.return_value = image
         assert image_pull("nginx", tag="latest") == {"Id": "img1"}
+    # auth_config reaches docker-py even unset, where None means "use the cached credentials"
+    mock_client.return_value.images.pull.assert_called_once_with(
+        "nginx", tag="latest", all_tags=False, platform=None, auth_config=None
+    )
+
+
+def test_pull_image_forwards_auth_config():
+    image = MagicMock()
+    image.attrs = {"Id": "img1"}
+    with _patch() as mock_client:
+        mock_client.return_value.images.pull.return_value = image
+        assert image_pull("private/app", auth_config={"username": "u", "password": "p"}) == {"Id": "img1"}
+    # assert_called_once_with, not call_args: pins the call count too, so this cannot pass if the
+    # tool ever pulls more than once.
+    mock_client.return_value.images.pull.assert_called_once_with(
+        "private/app", tag=None, all_tags=False, platform=None, auth_config={"username": "u", "password": "p"}
+    )
 
 
 def test_pull_image_all_tags():
