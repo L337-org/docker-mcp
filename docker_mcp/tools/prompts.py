@@ -15,6 +15,9 @@ def _host_targeting_note() -> str:
     The prompt bodies use the single-host `docker://containers` / `docker-...://{name}` forms, which are
     NOT registered in multi-host mode (the index becomes empty-authority/host-qualified), so this note
     redirects the agent to the right forms and to the URIs the index already carries per entry.
+
+    Returns:
+        str: the note, or an empty string in single-host mode where it does not apply
     """
     if not _hosts.is_multi():
         return ""

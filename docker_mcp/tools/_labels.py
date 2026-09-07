@@ -33,6 +33,12 @@ def provenance_labels(created_by: str) -> dict[str, str]:
     """The MCP-provenance label set for a resource this server creates, or {} when stamping is disabled.
 
     `created_by` is the @tool name (e.g. "container_run") recorded in the `.tool` label.
+
+    Args:
+        created_by: the @tool name recorded in the ``.tool`` label
+
+    Returns:
+        dict: the provenance labels, or ``{}`` when stamping is disabled
     """
     if env_flag(DISABLE_ENV):
         return {}
@@ -54,6 +60,13 @@ def with_provenance(labels: dict | list | None, created_by: str) -> dict[str, st
     provenance value is kept. Returns a merged dict, or None when there is nothing to apply
     (stamping disabled *and* no caller labels) so the call site can `drop_none` it back out and
     preserve the SDK's default.
+
+    Args:
+        labels: caller-supplied labels in any shape the Docker SDK accepts
+        created_by: the @tool name to stamp
+
+    Returns:
+        dict or None: the merged labels, or None when there is nothing to apply
     """
     merged: dict[str, str] = dict(provenance_labels(created_by))
     if isinstance(labels, dict):
@@ -69,6 +82,12 @@ def managed_filter(filters: dict | None) -> dict:
     """Return a copy of `filters` with the managed-by-us label filter added (for `managed_only=True`).
 
     Preserves any label filter the caller already set by combining into a list rather than clobbering.
+
+    Args:
+        filters: the caller's filters, or None
+
+    Returns:
+        dict: a copy with the managed-by-us label filter added
     """
     result = dict(filters or {})
     existing = result.get("label")
