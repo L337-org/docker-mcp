@@ -98,7 +98,16 @@ def _run_stack(
 
 
 def _parse_stack_list(stdout: str, *, truncated: bool, what: str) -> list[dict]:
-    """Normalize `docker stack <ls|ps|services> --format '{{json .}}'` output to a list of dicts."""
+    """Normalize `docker stack <ls|ps|services> --format '{{json .}}'` output to a list of dicts.
+
+    Args:
+        stdout: the command's raw output
+        truncated: whether the output hit the byte cap
+        what: what was listed, for the error message
+
+    Returns:
+        list: one dict per row
+    """
     parsed = parse_json_or_ndjson(stdout, truncated=truncated, what=what)
     if isinstance(parsed, list):
         return parsed
@@ -142,6 +151,10 @@ def stack_deploy(
 
     Returns:
         dict: {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
+
+    Raises:
+        ToolInputError: `compose_files` is empty, or `resolve_image` is not one of the accepted
+            values.
     """
     if not compose_files:
         raise ToolInputError("stack_deploy requires at least one entry in compose_files.")
@@ -248,6 +261,9 @@ def stack_remove(
 
     Returns:
         dict: {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
+
+    Raises:
+        ToolInputError: no stack name was given.
     """
     if not names:
         raise ToolInputError("stack_remove requires at least one entry in names.")

@@ -30,7 +30,12 @@ from docker_mcp.tools.system import _get_client, guard_not_self
 
 
 class RestartPolicy(TypedDict, total=False):
-    """Restart policy for container_run, mirroring the `docker` module's expected dict shape."""
+    """Restart policy for container_run, mirroring the `docker` module's expected dict shape.
+
+    Attributes:
+        Name: the policy name the docker module expects.
+        MaximumRetryCount: how many restarts to attempt, where the policy uses one.
+    """
 
     Name: Literal["no", "always", "on-failure", "unless-stopped"]
     MaximumRetryCount: int  # only meaningful with Name="on-failure"
@@ -433,6 +438,14 @@ def _read_bounded_container_logs(container: Any, what: str, **log_kwargs: Any) -
     `stream=False` instead would have docker-py buffer the whole payload before returning, so any
     cap applied afterwards would measure memory that had already been committed. Raises ToolInputError
     when the cap is hit, matching `service_logs`.
+
+    Args:
+        container: the container to read from
+        what: what is being read, for the error message
+        **log_kwargs: forwarded to ``container.logs``
+
+    Returns:
+        str: the decoded logs, capped at MAX_PAYLOAD_BYTES
     """
     # as_byte_chunks handles both shapes: docker-py returns a stream for stream=True today, and a
     # whole-payload return would be yielded as one chunk rather than iterated into digit soup.
@@ -564,6 +577,14 @@ def _read_log_tail(id_or_name: str, tail: int = _LOG_TAIL_LINES, host: str | Non
 
     `tail` bounds the line count, but a single pathological line is unbounded on its own, so the
     read also goes through the same MAX_PAYLOAD_BYTES cap as `container_logs`.
+
+    Args:
+        id_or_name: the container to read
+        tail: how many lines to return
+        host: the host label to target, or None for the default
+
+    Returns:
+        str: the combined stdout and stderr tail, bounded
     """
     container = _get_client(host).containers.get(id_or_name)
     return _read_bounded_container_logs(
@@ -572,7 +593,14 @@ def _read_log_tail(id_or_name: str, tail: int = _LOG_TAIL_LINES, host: str | Non
 
 
 def _div_mb(value: float) -> float:
-    """Bytes -> MiB."""
+    """Bytes -> MiB.
+
+    Args:
+        value: a size in bytes
+
+    Returns:
+        float: the same size in MiB
+    """
     return value / (1024 * 1024)
 
 
@@ -583,6 +611,13 @@ def _summarize_stats(name: str | None, snapshot: dict) -> dict:
     read already carries both), matching how `docker stats` derives it. Every field is read
     defensively because the stats shape varies across cgroup v1/v2 and platforms; anything missing
     degrades to 0 rather than raising.
+
+    Args:
+        name: the container's name, or None
+        snapshot: one ``container.stats`` sample
+
+    Returns:
+        dict: a small human-readable summary of that sample
     """
     cpu = snapshot.get("cpu_stats", {}) or {}
     precpu = snapshot.get("precpu_stats", {}) or {}
@@ -629,6 +664,16 @@ def _read_stats_summary(id_or_name: str, host: str | None = None) -> dict:
     Raises ToolInputError if the container isn't running - there is no live cgroup to sample on a
     stopped container, so the `docker-stats://` resource surfaces a clean message instead of a raw
     daemon error.
+
+    Args:
+        id_or_name: the container to sample
+        host: the host label to target, or None for the default
+
+    Returns:
+        dict: the computed resource-usage summary
+
+    Raises:
+        ToolInputError: the container is not running, so there is nothing to sample.
     """
     container = _get_client(host).containers.get(id_or_name)
     container.reload()
@@ -853,7 +898,23 @@ def _wait_result(
     status: str | None = None,
     matched_line: str | None = None,
 ) -> dict:
-    """Build the unified container_wait result snapshot - the same shape for every `until` mode."""
+    """Build the unified container_wait result snapshot - the same shape for every `until` mode.
+
+    Args:
+        id_or_name: the container waited on
+        until: which wait mode was used
+        met: whether the condition was satisfied
+        start: when the wait began, for the elapsed time
+        timed_out: whether the wait hit its deadline
+        status_code: the container's exit status, where the mode produces one
+        error: the failure text, where the wait failed
+        health: the health state, for the health mode
+        status: the container's status, where the mode reports one
+        matched_line: the log line that matched, for the log mode
+
+    Returns:
+        dict: the unified snapshot - the same shape for every ``until`` mode
+    """
     return {
         "container": id_or_name,
         "until": until,
@@ -921,6 +982,10 @@ def container_wait(
             "waited_seconds"}; stop modes fill status_code/error, "healthy" fills health
             ("starting"/"healthy"/"unhealthy", or null with no healthcheck) and status, "log-match" fills matched_line
             when met and status if the container exited without matching.
+
+    Raises:
+        ToolInputError: `timeout_seconds` is negative, `poll_interval` is not positive, or
+            `pattern` is missing for `until='log-match'`.
     """
     if timeout_seconds < 0:
         raise ToolInputError(f"timeout_seconds must be >= 0, got {timeout_seconds}.")
@@ -1100,6 +1165,9 @@ def container_archive_put(
 
     Returns:
         bool: True if the upload succeeded
+
+    Raises:
+        ToolInputError: neither or both of `data` and `from_file` were given.
     """
     if (data is None) == (from_file is None):
         raise ToolInputError("Pass exactly one of `data` (in-band tar bytes) or `from_file` (a server-host path).")

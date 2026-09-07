@@ -29,7 +29,17 @@ _MAX_DOCS_RESPONSE_BYTES = 16 * 1024 * 1024  # 16 MiB
 
 
 def _read_capped_docs_response(url: str) -> bytes:
-    """Stream a docs page bounded by `_MAX_DOCS_RESPONSE_BYTES`, raising if it's exceeded."""
+    """Stream a docs page bounded by `_MAX_DOCS_RESPONSE_BYTES`, raising if it's exceeded.
+
+    Args:
+        url: the documentation page to fetch
+
+    Returns:
+        str: the page body
+
+    Raises:
+        ToolRefusalError: the page exceeds the response cap.
+    """
     with httpx.stream(
         "GET", url, timeout=_DOCS_TIMEOUT, follow_redirects=True, headers={"User-Agent": _USER_AGENT}
     ) as resp:
@@ -125,7 +135,14 @@ register_resource_domains(_SECTION_DOMAINS)
 
 
 def _section_enabled(section: str) -> bool:
-    """A doc section is available unless the domain it documents is dropped by DOCKER_MCP_SERVER_DISABLE."""
+    """A doc section is available unless the domain it documents is dropped by DOCKER_MCP_SERVER_DISABLE.
+
+    Args:
+        section: the documentation section to test
+
+    Returns:
+        bool: True unless the domain it documents is disabled
+    """
     return not is_domain_disabled(_SECTION_DOMAINS.get(section))
 
 
@@ -218,7 +235,11 @@ _CONTAINERS_DOMAIN = "containers"
 
 
 def _require_containers_domain() -> None:
-    """Refuse a container resource read when the `containers` domain is disabled via DOCKER_MCP_SERVER_DISABLE."""
+    """Refuse a container resource read when the `containers` domain is disabled via DOCKER_MCP_SERVER_DISABLE.
+
+    Raises:
+        ToolRefusalError: the ``containers`` domain is disabled.
+    """
     if is_domain_disabled(_CONTAINERS_DOMAIN):
         raise CapabilityError(
             "Container observability resources are unavailable because the 'containers' domain is "
@@ -231,6 +252,14 @@ def _child_uri(scheme: str, ref: str, host: str | None) -> str:
 
     Host-qualified when an index is host-scoped, else empty-authority (multi-host default) or bare
     (single-host).
+
+    Args:
+        scheme: the child resource's scheme
+        ref: the container reference
+        host: the host label to target, or None for the default
+
+    Returns:
+        str: the child URI, matching the index's host context
     """
     if host is not None:
         return f"{scheme}://{host}/{ref}"
@@ -370,7 +399,11 @@ _SERVICES_DOMAIN = "services"
 
 
 def _require_services_domain() -> None:
-    """Refuse a service resource read when the `services` domain is disabled via DOCKER_MCP_SERVER_DISABLE."""
+    """Refuse a service resource read when the `services` domain is disabled via DOCKER_MCP_SERVER_DISABLE.
+
+    Raises:
+        ToolRefusalError: the ``services`` domain is disabled.
+    """
     if is_domain_disabled(_SERVICES_DOMAIN):
         raise CapabilityError(
             "Service observability resources are unavailable because the 'services' domain is "
@@ -498,7 +531,11 @@ _NODES_DOMAIN = "nodes"
 
 
 def _require_nodes_domain() -> None:
-    """Refuse a node resource read when the `nodes` domain is disabled via DOCKER_MCP_SERVER_DISABLE."""
+    """Refuse a node resource read when the `nodes` domain is disabled via DOCKER_MCP_SERVER_DISABLE.
+
+    Raises:
+        ToolRefusalError: the ``nodes`` domain is disabled.
+    """
     if is_domain_disabled(_NODES_DOMAIN):
         raise CapabilityError(
             "Node observability resources are unavailable because the 'nodes' domain is disabled "
@@ -567,6 +604,10 @@ def get_docs_section(section: str) -> str:
 
     Returns:
         str: The HTML (or rendered Markdown) content of the documentation page
+
+    Raises:
+        ToolRefusalError: the section is unknown, its domain is disabled, or the
+            page exceeds the response cap.
     """
     if not _section_enabled(section):
         raise CapabilityError(

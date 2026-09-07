@@ -51,6 +51,9 @@ def context_inspect(name: str) -> dict:
 
     Returns:
         dict: The parsed `docker context inspect` entry (keys include "Name" and "Endpoints" with the daemon URL)
+
+    Raises:
+        RemoteFailureError: the context does not exist, so inspect returned nothing.
     """
     result = run_docker(["context", "inspect", safe_positional(name, "context name")])
     raise_on_cli_failure(result, "context inspect")

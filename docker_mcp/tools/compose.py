@@ -767,6 +767,9 @@ def compose_wait(
 
     Returns:
         dict: {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
+
+    Raises:
+        ToolInputError: no service was named.
     """
     if not services:
         raise ToolInputError("compose_wait requires at least one service.")
@@ -861,6 +864,24 @@ def _remote_compose_cp(
     is refused up front if the local destination already exists, since only this host - not the
     remote one - knows that, and `reserve_path` guarantees the remote command starts from a path that
     does not exist yet (matching what a fresh local destination would look like).
+
+    Args:
+        source: the copy's source, container-side or local
+        dest: the copy's destination, container-side or local
+        index: which replica to address when the service has several
+        all_containers: whether to copy to every replica
+        project_dir: the compose project directory, or None
+        files: the compose files to use, or None
+        project_name: the project name, or None
+        timeout_seconds: the wall-clock limit
+        host: the host label to target, or None for the default
+
+    Returns:
+        dict: the copy's outcome, naming the side that was relayed
+
+    Raises:
+        ToolInputError: neither side of the copy is local, or the local side is
+            unusable.
     """
     ctr_src, _ = _split_cp_arg(source)
     ctr_dst, _ = _split_cp_arg(dest)

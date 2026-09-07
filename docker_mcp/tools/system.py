@@ -62,6 +62,12 @@ def _detect_self_container_id(client: docker.DockerClient) -> str | None:
     Docker sets the container's short id as its hostname by default, so we look that up via the
     daemon. Returns None if the hostname was overridden (`--hostname`) or the lookup fails - the
     self-termination guard then stays inert rather than guessing.
+
+    Args:
+        client: a connected client for the host to look on
+
+    Returns:
+        str or None: this container's full id, or None when it cannot be determined
     """
     hostname = (os.environ.get("HOSTNAME") or "").strip()
     if not hostname:
@@ -83,6 +89,9 @@ def _self_host() -> Host | None:
     The first configured host on a local transport (unix://, npipe://, or the platform default).
     Self-detection and the self-termination guard key off this; a remote-only config returns None,
     leaving the guard inert, because our container cannot be on a remote.
+
+    Returns:
+        str or None: the host label the server's own container runs on, or None
     """
     for host in _host_registry().values():
         if host.url is None or host.url.startswith(("unix://", "npipe://")):
@@ -100,6 +109,14 @@ def guard_not_self(container: Container, host: str | None = None) -> None:
 
     `host` is the host the call targets: the guard only fires on the self host, since our own container
     can only exist on the daemon the server runs on.
+
+    Args:
+        container: the container the action would affect
+        host: the host label the action targets, or None for the default
+
+    Raises:
+        ToolRefusalError: the container is this server's own, so the action would kill
+            the process performing it.
     """
     if _self_container_id is None or container.id != _self_container_id:
         return
@@ -116,7 +133,11 @@ def guard_not_self(container: Container, host: str | None = None) -> None:
 
 
 def _close_client_quietly(client: docker.DockerClient) -> None:
-    """Best-effort close of a discarded client; a failed teardown must not block a reconnect."""
+    """Best-effort close of a discarded client; a failed teardown must not block a reconnect.
+
+    Args:
+        client: the discarded client to close
+    """
     try:
         client.close()
     except Exception:  # noqa: S110, BLE001 - teardown of an already-discarded client is best-effort
@@ -136,7 +157,7 @@ def _ensure_ssh_port(url: str) -> str:
     tools, so both tool families honor a non-default SSH port the same way.
 
     Args:
-        url (str): a DOCKER_HOST/host URL; only `ssh://` URLs with no explicit port are affected
+        url: a DOCKER_HOST/host URL; only `ssh://` URLs with no explicit port are affected
 
     Returns:
         str: `url` unchanged, or with the `~/.ssh/config` port spliced into the netloc
@@ -188,7 +209,7 @@ def _ensure_reachable_family(url: str) -> str:
     error, rather than this helper raising first.
 
     Args:
-        url (str): a DOCKER_HOST/host URL; only `ssh://` URLs are affected
+        url: a DOCKER_HOST/host URL; only `ssh://` URLs are affected
 
     Returns:
         str: `url` unchanged, or with its hostname replaced by the literal address that answered
@@ -233,7 +254,7 @@ def _from_env_no_context(**kwargs: Any) -> docker.DockerClient:
     argument.
 
     Args:
-        kwargs: forwarded to `docker.from_env` (e.g. `environment=`)
+        **kwargs: forwarded to `docker.from_env` (e.g. `environment=`)
 
     Returns:
         docker.DockerClient: a client that never consults a CLI context on its own
@@ -253,6 +274,9 @@ def _build_default_client() -> docker.DockerClient:
     Goes through `_from_env_no_context` on all three paths - see there for why. Two of them are safe
     only incidentally (an env-derived `base_url` short-circuits docker-py's context lookup), so the
     guarantee deliberately doesn't rest on that.
+
+    Returns:
+        docker.DockerClient: a client for DOCKER_HOST, or for the resolved endpoint
     """
     docker_host = os.environ.get("DOCKER_HOST")
     if docker_host:
@@ -270,6 +294,12 @@ def _tls_from_dir(cert_dir: str) -> docker.TLSConfig:
     Always verifies the daemon against `ca.pem`; presents a client cert (mutual TLS) only when both
     `cert.pem` and `key.pem` are present, else verifies the daemon only (e.g. a self-signed daemon
     pinned via `ca.pem`, with no client auth).
+
+    Args:
+        cert_dir: a directory holding Docker's conventional certificate names
+
+    Returns:
+        docker.tls.TLSConfig: the config built from it
     """
     directory = Path(cert_dir)
     cert, key = directory / "cert.pem", directory / "key.pem"
@@ -282,6 +312,12 @@ def _tls_config_for(host: Host) -> docker.TLSConfig | None:
 
     The host's own `(tls=<dir>)` cert dir, else the global DOCKER_CERT_PATH / DOCKER_TLS_VERIFY env
     (mirroring from_env), else plaintext (None).
+
+    Args:
+        host: the configured host to build TLS for
+
+    Returns:
+        docker.tls.TLSConfig or None: the config, or None when the host needs no TLS
     """
     if host.cert_dir:
         return _tls_from_dir(host.cert_dir)
@@ -299,6 +335,12 @@ def _build_client(host: Host) -> docker.DockerClient:
     its resolved URL with per-host TLS; one that resolved to the platform default (url=None, e.g. `local`
     on Windows) is built WITHOUT a base_url so it uses the platform socket/npipe and never re-reads the
     ambient DOCKER_HOST (which is ignored when DOCKER_MCP_SERVER_HOSTS is set).
+
+    Args:
+        host: the configured host to connect to
+
+    Returns:
+        docker.DockerClient: a client for that host
     """
     if not _is_multi() and not (os.environ.get("DOCKER_MCP_SERVER_HOSTS") or "").strip():
         return _build_default_client()
@@ -310,7 +352,17 @@ def _build_client(host: Host) -> docker.DockerClient:
 
 
 def _get_client(host: str | None = None) -> docker.DockerClient:
-    """The pooled docker-py client for `host` (the default host when None), lazily built and cached."""
+    """The pooled docker-py client for `host` (the default host when None), lazily built and cached.
+
+    Args:
+        host: the host label, or None for the default
+
+    Returns:
+        docker.DockerClient: the pooled client, built on first use
+
+    Raises:
+        HostGuardError: the label is not configured.
+    """
     resolved = _resolve_host(host)
     label = resolved.label
     with _client_lock:
@@ -581,6 +633,10 @@ def system_reconnect(host: str | None = None) -> dict:
 
     Returns:
         dict: the rebuilt host's version info (same shape as `system_version`), confirming connectivity
+
+    Raises:
+        RemoteFailureError: a client could not be built for the host, or was built but the daemon
+            is unreachable - in which case the previous client is kept.
     """
     resolved = _resolve_host(host)
     label = resolved.label
@@ -605,7 +661,15 @@ def system_reconnect(host: str | None = None) -> dict:
 
 
 def _connection_help(exc: BaseException, host: Host | None) -> str:
-    """OS-aware guidance, emitted when the startup ping of the default host fails, for getting it reachable."""
+    """OS-aware guidance, emitted when the startup ping of the default host fails, for getting it reachable.
+
+    Args:
+        exc: the failure the startup ping raised
+        host: the host it was pinging, or None when none is resolved
+
+    Returns:
+        str: OS-aware guidance for getting the daemon reachable
+    """
     lines = [f"docker-mcp-server: cannot reach the Docker daemon ({exc})."]
     url = host.url if host is not None else None
     if host is not None and url:
@@ -654,6 +718,12 @@ def _host_tag(host: Host) -> str:
 
     For the boot roster of the other hosts. `nd` only shows when `ro` is absent, since `ro` already
     implies it.
+
+    Args:
+        host: the configured host to label
+
+    Returns:
+        str: its label, annotated with ``(ro, remote)`` or ``(nd, remote)`` where they apply
     """
     tags = []
     if host.read_only:
@@ -670,6 +740,13 @@ def _connection_summary(client: docker.DockerClient, host: Host) -> str:
 
     Names the default daemon, the self-guard status, and a no-connect roster of the other configured
     hosts, so boot shows the topology without dialing them.
+
+    Args:
+        client: the connected client
+        host: the host it reached
+
+    Returns:
+        str: a one-line confirmation of the daemon reached and the hosts configured
     """
     try:
         details = client.info()

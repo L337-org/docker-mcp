@@ -96,7 +96,20 @@ def _node_wait_result(
     state: str | None = None,
     availability: str | None = None,
 ) -> dict:
-    """Build the unified node_wait result snapshot - the same shape for every `until` mode."""
+    """Build the unified node_wait result snapshot - the same shape for every `until` mode.
+
+    Args:
+        id_or_name: the object waited on
+        until: which wait mode was used
+        met: whether the condition was satisfied
+        start: when the wait began, for the elapsed time
+        timed_out: whether the wait hit its deadline
+        state: the node's state, where known
+        availability: the node's availability, where known
+
+    Returns:
+        dict: the unified snapshot - the same shape for every ``until`` mode
+    """
     return {
         "node": id_or_name,
         "until": until,
@@ -136,6 +149,9 @@ def node_wait(
 
     Returns:
         dict: {"node", "until", "met", "timed_out", "state", "availability", "waited_seconds"}
+
+    Raises:
+        ToolInputError: `timeout_seconds` is negative, or `poll_interval` is not positive.
     """
     if timeout_seconds < 0:
         raise ToolInputError(f"timeout_seconds must be >= 0, got {timeout_seconds}.")

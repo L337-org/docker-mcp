@@ -19,7 +19,16 @@ _FAILING_TASK_STATES = frozenset({"failed", "rejected"})
 
 
 def _read_service_log_tail(id_or_name: str, tail: int = 200, host: str | None = None) -> str:
-    """Return a bounded, non-streaming tail of a swarm service's combined stdout/stderr logs."""
+    """Return a bounded, non-streaming tail of a swarm service's combined stdout/stderr logs.
+
+    Args:
+        id_or_name: the service to read
+        tail: how many lines to return
+        host: the host label to target, or None for the default
+
+    Returns:
+        str: the combined stdout and stderr tail, bounded and non-streaming
+    """
     service = _get_client(host).services.get(id_or_name)
     output = service.logs(stdout=True, stderr=True, follow=False, tail=tail)
 
@@ -42,6 +51,13 @@ def _read_service_task_summary(id_or_name: str, host: str | None = None) -> dict
     one task per eligible node, no fixed target), and surfaces any failing tasks' id/node/error.
     Also includes `UpdateStatus.State` from the same service read, so this one summary doubles as
     a rollout-progress view.
+
+    Args:
+        id_or_name: the service to summarise
+        host: the host label to target, or None for the default
+
+    Returns:
+        dict: the task and rollout status summary
     """
     service = _get_client(host).services.get(id_or_name)
     attrs = service.attrs
@@ -167,6 +183,9 @@ def service_update(id_or_name: str, updates: dict | None = None, force: bool = F
 
     Returns:
         bool: True after the update
+
+    Raises:
+        ToolInputError: neither or both of `updates` and `force` were given.
     """
     if (updates is None) == (not force):
         raise ToolInputError("Pass exactly one of `updates` (fields to change) or `force=True` (redeploy unchanged).")
@@ -307,6 +326,10 @@ def service_rollback(id_or_name: str, host: str | None = None) -> dict:
 
     Returns:
         dict: The daemon response (a dict with a "Warnings" key)
+
+    Raises:
+        ToolInputError: the service has no PreviousSpec - it was never updated, or has already
+            been rolled back.
     """
     api = _get_client(host).api
     info = api.inspect_service(id_or_name)
@@ -347,7 +370,22 @@ def _service_wait_result(
     failed_tasks: list | None = None,
     update_state: str | None = None,
 ) -> dict:
-    """Build the unified service_wait result snapshot - the same shape for every `until` mode."""
+    """Build the unified service_wait result snapshot - the same shape for every `until` mode.
+
+    Args:
+        id_or_name: the object waited on
+        until: which wait mode was used
+        met: whether the condition was satisfied
+        start: when the wait began, for the elapsed time
+        timed_out: whether the wait hit its deadline
+        running_tasks: how many tasks are running, where known
+        desired_tasks: how many the service wants, where known
+        failed_tasks: the tasks that failed, where any did
+        update_state: the rollout state, where known
+
+    Returns:
+        dict: the unified snapshot - the same shape for every ``until`` mode
+    """
     return {
         "service": id_or_name,
         "until": until,
@@ -394,6 +432,10 @@ def service_wait(
     Returns:
         dict: {"service", "until", "met", "timed_out", "running_tasks", "desired_tasks", "failed_tasks", "update_state",
             "waited_seconds"}
+
+    Raises:
+        ToolInputError: `timeout_seconds` is negative, `poll_interval` is not positive, or
+            `replicas` is negative.
     """
     if timeout_seconds < 0:
         raise ToolInputError(f"timeout_seconds must be >= 0, got {timeout_seconds}.")

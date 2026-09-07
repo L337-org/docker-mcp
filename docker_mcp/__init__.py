@@ -15,7 +15,7 @@ from docker_mcp import tools  # noqa: F401, E402  -- side-effect import (registe
 finalize_instructions()
 
 
-def main():
+def main() -> None:
     """Run the MCP server."""
     import sys
 

@@ -48,6 +48,13 @@ def _refuse_local_path_args(candidates: dict[str, str | None]) -> None:
     an image reference and a relative path are not distinguishable by syntax (`org/app:v1` contains a
     '/' too). A path that exists here would resolve on the remote host to something else or nothing at
     all, so refusing names the cause; a value that is not a local path passes through untouched.
+
+    Args:
+        candidates: parameter name to value, for the parameters to check
+
+    Raises:
+        ToolInputError: one names a path that exists locally, which would be read
+            on the remote host instead and silently mean something else.
     """
     for name, value in candidates.items():
         if value and Path(value).exists():
@@ -93,7 +100,15 @@ _JSON_FORMATS = frozenset({"json", "sarif", "spdx", "gitlab", "sbom", "cyclonedx
 
 
 def _maybe_parse_json(text: str, format: str) -> dict | list | str | None:
-    """Parse `text` as JSON when `format` names a JSON-emitting format, else return the raw text."""
+    """Parse `text` as JSON when `format` names a JSON-emitting format, else return the raw text.
+
+    Args:
+        text: the command's raw output
+        format: the ``--format`` value that produced it
+
+    Returns:
+        object: the parsed JSON when the format emits it, else the raw text
+    """
     if format not in _JSON_FORMATS:
         return text
     stripped = text.strip()
@@ -261,6 +276,9 @@ def scout_compare(
 
     Returns:
         dict: {"format": <format>, "result": <parsed-json-or-raw-text>, "raw": <CliResult dict>}
+
+    Raises:
+        ToolInputError: not exactly one of `to`, `to_env` or `to_latest` was given.
     """
     targets = [bool(to), bool(to_env), bool(to_latest)]
     if sum(targets) != 1:

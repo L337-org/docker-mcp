@@ -159,6 +159,10 @@ def swarm_update(
 
     Returns:
         bool: True after the update completes
+
+    Raises:
+        RemoteFailureError: swarm inspect returned no version index, so the update cannot be
+            version-guarded - this node may not be a manager.
     """
     client = _get_client(host)
     swarm = client.swarm
@@ -253,7 +257,14 @@ def swarm_unlock_key(host: str | None = None) -> dict:
 
 
 def _read_join_tokens(swarm: object) -> dict:
-    """Pull the {Worker, Manager} join tokens out of a (freshly reloaded) swarm's raw attrs."""
+    """Pull the {Worker, Manager} join tokens out of a (freshly reloaded) swarm's raw attrs.
+
+    Args:
+        swarm: a freshly reloaded swarm object, for its raw attrs
+
+    Returns:
+        dict: the ``Worker`` and ``Manager`` join tokens
+    """
     tokens = getattr(swarm, "attrs", {}).get("JoinTokens", {})
     return {"Worker": tokens.get("Worker"), "Manager": tokens.get("Manager")}
 

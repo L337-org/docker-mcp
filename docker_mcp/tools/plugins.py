@@ -149,6 +149,10 @@ def plugin_push(name: str, timeout_seconds: float = 300.0, host: str | None = No
     Returns:
         dict: {"name", "progress": [<decoded status dicts>], "truncated": bool, "error": str or None} - `error` is
             non-None only when the registry reported a failure
+
+    Raises:
+        CapabilityError: the installed docker-py no longer exposes the APIClient methods this
+            tool needs to reach the plugin push endpoint.
     """
     api = _get_client(host).api
     # docker-py exposes no working public path here (see docstring), so we drive its private request
