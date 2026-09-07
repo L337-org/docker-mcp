@@ -216,8 +216,8 @@ def image_pull(  # noqa: DOC101,DOC103
         tag: The image tag (ignored when all_tags=True)
         all_tags: Pull all tags from the repository
         platform: Platform in os/arch format
-        auth_config: Per-call registry credentials, {"username", "password"}; overrides the
-            cached credential for this pull only
+        auth_config: Per-call registry credentials under the keys `username` and `password`;
+            overrides the cached credential for this pull only
 
     Returns:
         dict | list: Pulled image attrs (or a list of attrs if all_tags=True)
