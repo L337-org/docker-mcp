@@ -127,7 +127,7 @@ def read_text(path, root=None):
 
     Args:
         path (pathlib.Path): the file to read.
-        root (pathlib.Path): repository root, so the message names a relative path when it can.
+        root (pathlib.Path or None): repository root, so the message names a relative path when it can.
 
     Returns:
         str: The file's contents as text.
@@ -157,7 +157,8 @@ def verify_own_digest():
     what lets a moved or vendored copy still check itself.
 
     Raises:
-        CannotEvaluate: The recorded digest is missing, empty, or does not match this file.
+        CannotEvaluate: The recorded digest is missing or empty, this file could not be read
+            to hash it, or the two do not match.
     """
     script = pathlib.Path(__file__).resolve()
     recorded = script.with_suffix(".sha256")
@@ -293,7 +294,9 @@ def workflow_jobs(root, tracked):
         list: One triple per job.
 
     Raises:
-        CannotEvaluate: No workflow files are tracked, or one does not parse as a YAML mapping.
+        CannotEvaluate: No workflow files are tracked, or one of them is not valid YAML, is
+            not a mapping, declares no usable `jobs:` mapping, or gives a job a body that is
+            not a mapping.
     """
     import yaml
 
