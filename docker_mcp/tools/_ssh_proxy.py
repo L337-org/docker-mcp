@@ -90,7 +90,9 @@ class SshTarget:
     proxycommand: str | None
 
 
-def connect_socket_with_family_fallback(hostname: str, port: int, timeout: float | None) -> socket.socket:  # noqa: DOC503
+def connect_socket_with_family_fallback(  # noqa: DOC503
+    hostname: str, port: int, timeout: float | None
+) -> socket.socket:
     """Connect a plain TCP socket to hostname:port, trying every resolved address family in turn.
 
     `paramiko.SSHClient.connect()` already resolves both address families (`getaddrinfo(..., AF_UNSPEC,
@@ -1951,7 +1953,9 @@ def _remove_stage_root(
 
 
 @contextlib.contextmanager
-def remote_staging_session(docker_host: str, *, timeout: float | None = None) -> Iterator[RemoteStagingSession]:  # noqa: DOC502
+def remote_staging_session(  # noqa: DOC502
+    docker_host: str, *, timeout: float | None = None
+) -> Iterator[RemoteStagingSession]:
     """Open a staging session against an ssh:// host: one connection, one temp dir, guaranteed teardown.
 
     Use it for a command that reads local files (Compose files, a bake file, a build context); use

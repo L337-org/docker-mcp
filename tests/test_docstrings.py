@@ -14,14 +14,30 @@ with no gate ever seeing them.
 """
 
 import ast
+import io
 import pathlib
 import re
 import shutil
 import subprocess
+import tokenize
 
 PACKAGE = pathlib.Path(__file__).resolve().parent.parent / "docker_mcp"
 NOQA = re.compile(r"#\s*noqa:\s*([\w,]+)")
 ROOT = PACKAGE.parent
+
+
+def _tracked_python_files():
+    """Every tracked `.py` file, package and tests alike.
+
+    Returns:
+        list: paths, sorted
+    """
+    git = shutil.which("git")
+    assert git, "git is needed to enumerate tracked files"
+    listing = subprocess.run(  # noqa: S603 - fixed argv, resolved binary, no shell
+        [git, "ls-files", "*.py"], cwd=ROOT, capture_output=True, text=True, check=True, timeout=30
+    )
+    return sorted(ROOT / name for name in listing.stdout.split())
 
 
 def _tracked_docstrings():
@@ -30,14 +46,8 @@ def _tracked_docstrings():
     Returns:
         list: `(path, lineno, name, docstring)` tuples
     """
-    git = shutil.which("git")
-    assert git, "git is needed to enumerate tracked files"
-    listing = subprocess.run(  # noqa: S603 - fixed argv, resolved binary, no shell
-        [git, "ls-files", "*.py"], cwd=ROOT, capture_output=True, text=True, check=True, timeout=30
-    )
     out = []
-    for name in listing.stdout.split():
-        path = ROOT / name
+    for path in _tracked_python_files():
         for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
             if not isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
@@ -286,3 +296,44 @@ def test_the_raises_markers_sit_on_real_exemptions():
             )
 
     assert not wrong, "the propagated-exception markers are out of step:\n  " + "\n  ".join(wrong)
+
+
+def test_no_tracked_line_exceeds_the_documented_limit():
+    """No tracked `.py` line is over 120 characters.
+
+    AGENTS.md states the limit and names ruff as what enforces it, but ruff's E501 did not report
+    any of the six lines that were over it when this was written - four were long only because of
+    a trailing `# noqa` marker, which ruff exempts by design. So the documented number had no gate
+    behind it, and every violation reached a reviewer instead of failing here.
+    """
+    over = [
+        f"{path.relative_to(ROOT)}:{n} ({len(line)})"
+        for path in _tracked_python_files()
+        for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1)
+        if len(line) > 120
+    ]
+    assert not over, "these lines are over the 120-character limit:\n  " + "\n  ".join(over)
+
+
+def test_every_doc_marker_sits_on_the_line_pydoclint_reads():
+    """A `# noqa: DOC...` marker sits on the `def` line, not on a closing paren.
+
+    `native-mode-noqa-location = "definition"` means the opening line of the definition. Moving a
+    marker to the closing paren of a split signature was measured to make pydoclint report the
+    code again - and moving it the other way makes the marker silently do nothing while the run
+    stays green, which is the direction that hurts.
+    """
+    marker = re.compile(r"#\s*noqa:[^\n]*\bDOC\d+")
+    stray = []
+    for path in _tracked_python_files():
+        source = path.read_text(encoding="utf-8")
+        lines = source.splitlines()
+        # Comment tokens only: the same text quoted inside a docstring is prose, not a marker.
+        for token in tokenize.generate_tokens(io.StringIO(source).readline):
+            if token.type != tokenize.COMMENT or not marker.search(token.string):
+                continue
+            line = lines[token.start[0] - 1]
+            if not re.match(r"\s*(async\s+)?def\s", line):
+                stray.append(f"{path.relative_to(ROOT)}:{token.start[0]} {line.strip()[:70]}")
+
+    assert not stray, "these DOC markers are not on a definition line:\n  " + "\n  ".join(stray)

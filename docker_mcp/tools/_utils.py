@@ -322,7 +322,12 @@ def drop_none(**kwargs: Any) -> dict[str, Any]:
     return {k: v for k, v in kwargs.items() if v is not None}
 
 
-def stream_to_file(chunks: Iterable[bytes], dest_path: str, *, overwrite: bool = False) -> tuple[Path, int]:  # noqa: DOC503
+def stream_to_file(  # noqa: DOC503
+    chunks: Iterable[bytes],
+    dest_path: str,
+    *,
+    overwrite: bool = False,
+) -> tuple[Path, int]:
     """Stream byte chunks to a host file, returning the resolved path and the number of bytes written.
 
     Used by the `*_to_file` tool variants so a large daemon-side payload (image save, container

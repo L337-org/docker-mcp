@@ -209,7 +209,9 @@ discovery layers. Four cleanup rounds have chased the same failure.
   loosened while the type parameter stays. A test that must pass a deliberately invalid value marks
   that one call `# pyright: ignore[reportArgumentType]` with a reason, rather than being softened to
   a legal one.
-- Line length limit: 120 characters (enforced by ruff and flake8).
+- Line length limit: 120 characters. flake8 does not run here, and ruff's E501 exempts a line
+  made overlong only by a trailing `# noqa`, so `tests/test_docstrings.py` enforces the number
+  itself over every tracked file.
 - **Prose that ships is British English in plain ASCII punctuation.** A tool docstring ships: the server
   advertises it verbatim as the tool's `description`, which is what a model reads when choosing between
   164 tools. So do the README, the agent skill, prompts and resources, comments, commit messages and PR

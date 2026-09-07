@@ -88,7 +88,10 @@ def test_parse_image_ref_strips_tag_from_registry_with_port():
 
 
 def test_parse_bearer_challenge_full():
-    h = 'Bearer realm="https://auth.docker.io/token",service="registry.docker.io",scope="repository:library/alpine:pull"'
+    h = (
+        'Bearer realm="https://auth.docker.io/token",service="registry.docker.io",'
+        'scope="repository:library/alpine:pull"'
+    )
     parsed = _parse_bearer_challenge(h)
     assert parsed == {
         "realm": "https://auth.docker.io/token",
