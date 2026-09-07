@@ -82,10 +82,11 @@ def test_pull_image_forwards_auth_config():
     with _patch() as mock_client:
         mock_client.return_value.images.pull.return_value = image
         assert image_pull("private/app", auth_config={"username": "u", "password": "p"}) == {"Id": "img1"}
-    assert mock_client.return_value.images.pull.call_args.kwargs["auth_config"] == {
-        "username": "u",
-        "password": "p",
-    }
+    # assert_called_once_with, not call_args: pins the call count too, so this cannot pass if the
+    # tool ever pulls more than once.
+    mock_client.return_value.images.pull.assert_called_once_with(
+        "private/app", tag=None, all_tags=False, platform=None, auth_config={"username": "u", "password": "p"}
+    )
 
 
 def test_pull_image_all_tags():
