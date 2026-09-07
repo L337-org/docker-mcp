@@ -99,11 +99,14 @@ def _is_advertised(node):
     return bool({"tool", "resource"} & _decorator_names(node))
 
 
-def _documents_no_args(node):
-    """Whether a definition takes parameters but documents none of them.
+def _has_undocumented_args(node):
+    """Whether a definition leaves any of its parameters undocumented.
 
-    A tool's `host` parameter is added by the decorator's own schema surgery rather than written
-    in the docstring, so a tool documenting every other parameter still trips DOC101 on it.
+    Any, not all, and the difference is the usual case rather than the edge one: a tool's `host`
+    parameter is added by the decorator's own schema surgery rather than written in the
+    docstring, so a tool documenting every other parameter still trips DOC101 on that one. An
+    earlier version of this was named `_has_undocumented_args` and its summary said "documents none
+    of them", which contradicted both the body below it and the paragraph above.
 
     Args:
         node: the function or method
@@ -130,13 +133,13 @@ def test_the_parameter_exemption_sits_only_on_tools_that_need_it():
     for path, node, lines in _definitions():
         codes = _marker_codes(node, lines)
         marked = {"DOC101", "DOC103"} & codes
-        needs = _is_tool(node) and _documents_no_args(node)
+        needs = _is_tool(node) and _has_undocumented_args(node)
         where = f"{path.relative_to(PACKAGE.parent)}:{node.lineno} {node.name}"
         if needs and not marked:
             wrong.append(f"{where}: a tool with undocumented parameters and no DOC101/DOC103 marker")
         if marked and not _is_tool(node):
             wrong.append(f"{where}: carries a DOC101/DOC103 marker but is not a registered tool")
-        if marked and not _documents_no_args(node):
+        if marked and not _has_undocumented_args(node):
             wrong.append(f"{where}: carries a DOC101/DOC103 marker but documents every parameter")
 
     assert not wrong, "the CS.6.14 parameter exemption is out of step:\n  " + "\n  ".join(wrong)
