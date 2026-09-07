@@ -111,34 +111,22 @@ ignore-decorators = [
 # and /tmp paths as plain string fixtures, not real file operations (S108).
 "tests/**" = ["S101", "S105", "S106", "S108", "D"]
 
-# pydoclint: does the docstring agree with the signature? ruff's D rules cannot answer that -
-# D417 only checks the parameters of a section a docstring already has, so a function with no
-# `Args:` section at all passes it clean. That blind spot is the reason this runs at all.
+# pydoclint checks the docstring against the signature; ruff's D417 only checks a section that
+# already exists, so a function documenting no parameters passes it. Run over `docker_mcp` only:
+# `tests/` is exempt as it is from D, and `scripts/` holds a vendored file using the opposite
+# convention.
 #
-# Run over `docker_mcp` only. `tests/` is exempt for the same reason ruff exempts it from D - a
-# test's name is its documentation - and `scripts/` holds a file vendored from four repositories
-# that follows the opposite convention, with its types in the docstring rather than the signature.
+# Two exemptions are per function, both asserted by tests/test_docstrings.py - a tool's docstring
+# is its advertised description with the types already in `inputSchema` (CS.6.14), and
+# DOC502/DOC503 are a decision rather than a backlog, so do not "clear" them.
 #
-# Two exemptions are per function, because pydoclint has no way to express either in
-# configuration, and both are asserted by tests/test_docstrings.py so neither can rot:
-#   - a registered tool's docstring is its advertised description, and the inputSchema sent
-#     alongside it already carries every parameter's type, so CS.6.14 hands it to the
-#     AI-consumer rules and an `Args:` block there would duplicate the schema;
-#   - DOC502 and DOC503 are a decision rather than a backlog: this code documents what a caller
-#     can catch, which includes what its callees raise, and pydoclint only sees exceptions
-#     constructed literally in the body. Every one was read against its raise site first.
-#
-# The marker goes on the definition line rather than the closing docstring line, which is
-# pydoclint's own default in native mode - `native-mode-noqa-location` is what switches it, and
-# without that setting every marker below is silently ignored.
+# native-mode-noqa-location is load-bearing: pydoclint reads DOC noqa from the *closing docstring
+# line* by default, so without it every marker is ignored and the run still passes.
 [tool.pydoclint]
 style = "google"
-# A docstring with no sections counts as "short", and skipping those is the default - which is
-# exactly the case that hides a function documenting no parameters at all.
+# Defaults to true, which would skip exactly the sectionless docstrings this is here to catch.
 skip-checking-short-docstrings = false
-# This code is fully annotated, so the type belongs in the signature and not in the docstring.
-# That is the opposite of send-to-influx, whose code is unannotated; the divergence is real and
-# follows from the code rather than from taste.
+# Fully annotated here, so types belong in the signature - the opposite of send-to-influx.
 arg-type-hints-in-signature = true
 arg-type-hints-in-docstring = false
 check-return-types = false

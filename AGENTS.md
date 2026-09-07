@@ -161,59 +161,15 @@ coverage audit.
 
 ## Tool function format
 
-Every `@tool()` function carries a docstring in one exact format: a one-line summary, a blank line, a
-usage-guidance paragraph, then `args:` (one `name - description` line per parameter, never repeating
-the type — the annotation already reaches the client in `inputSchema`) and a `returns:` line naming
-the shape.
+Every `@tool()` docstring is a one-line summary, a blank line, a usage-guidance paragraph, then
+`Args:` (`name: description`, never the type - the annotation already reaches the client in
+`inputSchema`) and `Returns:` (which does keep its type; the return shape is not in the schema).
 
-The docstring **is** the tool `description` the client pays context for on every session, and it is
+The docstring **is** the `description` the client pays context for on every session, and it is
 scored externally on a six-dimension rubric. **Read
 [architecture/tool-descriptions.md](architecture/tool-descriptions.md) before writing or changing
-one** — it carries the format, the quality standard the ratchet applies to every touched docstring,
-and the division of labour across the three discovery layers. Write it right the first time; four
-cleanup rounds have chased the same failure.
-
-## Docstrings outside the tools
-
-ruff's `D` rules cannot tell a complete docstring from an empty one: `D417` only checks the
-parameters of a section a docstring already has, so a function documenting none of them passes
-clean. `pydoclint` closes that and runs as its own premerge job over `docker_mcp`, reporting
-nothing. Types go in the signature, never in the docstring entry - this code is fully annotated,
-and `arg-type-hints-in-docstring = false` in `[tool.pydoclint]` enforces it.
-
-**The tools use the same Google form as everything else, and are still exempt.** A `@tool()`
-docstring is the advertised description a client pays context for, scored on the rubric in
-[architecture/tool-descriptions.md](architecture/tool-descriptions.md) - read that before
-writing one. It uses `Args:` and `Returns:` like the rest of the code, because one convention is
-cheaper to read and to check than two.
-
-What it does *not* carry is a type in each `Args:` entry: the annotation already reaches the
-client in `inputSchema` alongside the description, so `name (str): ...` duplicates it as prose
-tokens on every session. The `Returns:` entry keeps its type, since the return shape is not in
-the input schema. `pydoclint` reads that as a parameter documented without a type, so each tool
-carries `# noqa: DOC101,DOC103`.
-
-Two things about that marker are worth knowing before they cost you an afternoon:
-
-* It must sit on the **definition line**. `pydoclint`'s native mode reads DOC noqa comments from
-  the *closing docstring line* by default, so `native-mode-noqa-location` in
-  `[tool.pydoclint]` is what makes every marker in this repository work. Without that setting the
-  markers are silently ignored and the run still says it passed.
-* `DOC502` and `DOC503` markers are a decision, not a backlog: this code documents what a caller
-  can catch, which includes what its callees raise, and `pydoclint` only sees exceptions
-  constructed literally in the body. Each was read against its raise site first, which is how
-  five docstrings naming the wrong exception were found rather than silenced.
-
-`tests/test_docstrings.py` asserts both exemptions in both directions, so a tool that needs a
-marker and lacks it fails, and a marker on a definition that no longer needs one fails too.
-
-**A resource docstring is advertised too, and is not exempt.** `@resource` functions follow the
-ordinary convention, because the exemption exists to avoid duplicating a *schema* and a resource
-advertises none - but their docstrings still reach every client through `list_resources()` and
-`list_resource_templates()`, so every byte is paid for on every session. Adding a `Raises:`
-block to one put the surface 109 bytes over budget and named two private helpers in text a model
-reads. If a resource trips a `DOC` code, mark the definition rather than answering it in the
-docstring, and check `tests/test_surface_budget.py` before assuming prose there is free.
+one** - it carries the format, the quality standard, and the division of labour across the three
+discovery layers. Four cleanup rounds have chased the same failure.
 
 ## Conventions
 
@@ -358,19 +314,20 @@ untouched neighbours. Push back on any of these:
 
 1. **Summary** is a specific verb plus resource, with the distinguishing trait up front where a sibling
    could be confused.
-2. **A usage-guidance paragraph is present** (1-5 sentences between the summary and `args:`), and
+2. **A usage-guidance paragraph is present** (1-5 sentences between the summary and `Args:`), and
    carries at least one discriminator naming the sibling tool(s) an agent could reach for instead,
    **by exact tool name** - never "the kill tool". Preconditions, side effects and irreversibility must
    be in prose: `readOnlyHint` / `destructiveHint` annotations do not substitute.
 3. **For a CLI-backed tool, the error style is stated** - "does not raise on a non-zero CLI exit,
    inspect `returncode`/`stderr`" versus "raises `RemoteFailureError` on CLI failure". Do not let a docstring
    promise "never raises": a missing binary or plugin, or a subprocess timeout, still raises.
-4. **`args:` lines add what the schema cannot carry** - format, accepted values, defaults, units,
-   interactions. A line echoing the parameter name ("name - The volume name") is a finding. The type is
-   **not** repeated: the annotation already reaches the client in `inputSchema`.
-5. **`returns:` names the shape**, not just the type. For a full engine inspect document, say which
-   document it is rather than enumerating an arbitrary subset of its keys. "dict - The X's attrs"
-   identifies neither form and is a finding.
+4. **`Args:` entries add what the schema cannot carry** - format, accepted values, defaults,
+   units, interactions. An entry echoing the parameter name (`name: The volume name`) is a
+   finding. The type is **not** repeated: the annotation already reaches the client in
+   `inputSchema`.
+5. **`Returns:` names the shape**, not just the type. For a full engine inspect document, say
+   which document it is rather than enumerating an arbitrary subset of its keys.
+   `dict: The X's attrs` identifies neither form and is a finding.
 6. **Tool descriptions are strict ASCII, no symbol exception**
    (`tests/test_docs.py::test_advertised_tool_descriptions_are_plain_ascii` enforces it).
    Shipped prose more widely is British English in ASCII punctuation - watch in particular for text
@@ -461,51 +418,39 @@ re-proposes these; it has no memory of last time.
     identifier it refers to.
   - **"dialog"** for a UI dialog box, which is the standard technical term in British usage too.
 
-## Docstrings: two conventions, and which is which
+## Docstrings
 
-**Advertised docstrings keep the format documented above** - a `@tool()`, `@prompt()` or
-`@resource()` docstring is the description a client loads and a model reads, so `CS.6.14` hands
-it to the AI-consumer rules rather than to the Python docstring convention. It wants what the
-schema cannot already carry; an `Args:` block duplicates what the annotation already sends in
-`inputSchema`, and that duplication is paid for on every session. `pyproject.toml`'s ruff
-`ignore-decorators` exempts the decorated ones, and
-`tests/test_server.py::test_the_docstring_exemption_names_the_decorators_in_use` fails if a
-rename or a move ever makes that exemption stop matching.
+**Google style everywhere, including the advertised surface** - `Args:` and `Returns:`,
+capitalised. There is no second dialect. `name - description` is not a form here; ruff reads it as
+no description at all. Types live in the signature, never in an `Args:` entry.
 
-**Only tools are exempt, and that is deliberate.** The exemption exists because an `Args:` entry
-naming a type duplicates the schema, so it holds only where a docstring is advertised *and* a
-schema carries the same facts. A tool is the only one: its docstring is the description and its
-`inputSchema` carries every parameter's type. A prompt takes its description from
-`@prompt(description=...)`, so its docstring reaches no client at all. A resource advertises
-nothing about its parameters. Both follow the ordinary convention, and
-`tests/test_server.py::test_the_docstring_exemption_names_the_decorators_in_use` fails if either
-is added back to the list.
+Nothing is ignored by rule: ruff's `ignore` list is empty and `[tool.pydoclint]` parks no code. A
+rule that fails is a change to make, not an entry to add.
 
-**`ignore-decorators` matches decorator syntax only, so it misses a registration made by
-calling.** `docker_mcp/tools/resources.py` registers several resources as `resource(...)(fn)`,
-because each takes two URIs or sits behind a multi-host branch. That is invisible to the
-exemption and to the test above, which cannot see a registration using no decorator - so if a
-tool or prompt is ever registered that way, it will silently lose its exemption. Before trusting
-one, check the advertised surface directly: `list_resource_templates()` is a separate call from
-`list_resources()`, and a check that omits it reports identical while a whole category moves.
+**Only tools are exempt, and only from the parameter codes.** The exemption holds where a
+docstring is advertised *and* a schema already carries the same facts - true of a tool's
+`inputSchema`, false of a prompt (its description comes from `@prompt(description=...)`) and of a
+resource (which advertises nothing about its parameters). It needs two mechanisms: ruff's
+`ignore-decorators`, and a per-tool `# noqa: DOC101,DOC103` because pydoclint has none.
+`tests/test_server.py` and `tests/test_docstrings.py` assert both; do not remove a marker to make
+a run green.
 
-**Everything else is Google style** - `Args:` and `Returns:`, capitalised - which is `CS.6.12`'s
-format for Python, enforced by ruff's pydocstyle rules rather than by review.
+**A resource docstring is advertised too**, via `list_resources()` and `list_resource_templates()`
+- two separate calls, and a check omitting the second reports identical while a whole category
+moves. If a resource trips a `DOC` code, mark the definition rather than answering in the
+docstring: a `Raises:` block added to one put the surface 109 bytes over
+`tests/test_surface_budget.py`.
 
-No docstring rule is ignored - `pyproject.toml`'s `ignore` list is empty - so there is no backlog
-to work through and nothing to add to. A rule that fails is a change to make, not an entry to park.
-The MCP surface and tests are exempt by name rather than by rule, as described above and below.
+**`ignore-decorators` matches decorator syntax only.** `docker_mcp/tools/resources.py` registers
+several resources as `resource(...)(fn)`, which is invisible to it and to the test - so a tool or
+prompt registered that way would silently lose its exemption.
 
-**One docstring convention, everywhere.** Google style - a summary on the opening line, then
-`Args:` with `name: description` entries and `Returns:`. The surface uses it too; there is no
-second dialect to know. Parameters are never documented `name - description`, which ruff reads as
-no description at all.
+DOC502/DOC503 markers are a decision, not a backlog. Read the raise site before adding one; doing
+that found five docstrings naming the wrong exception.
 
 **`scripts/check-repo-hygiene.py` is vendored byte-identically into four repositories** and
-self-verifies against a digest they share, so any change to it lands in all four at once with the
-digest regenerated in each. Its own failure message says so when they drift.
-
-Tests are exempt: a test's name is its documentation.
+self-verifies against a shared digest, so a change to it lands in all four with each digest
+regenerated. Tests are exempt: a test's name is its documentation.
 
 ## The advertised surface has a budget
 
