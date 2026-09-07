@@ -157,8 +157,8 @@ def verify_own_digest():
     what lets a moved or vendored copy still check itself.
 
     Raises:
-        CannotEvaluate: The recorded digest is missing or empty, this file could not be read
-            to hash it, or the two do not match.
+        CannotEvaluate: The recorded digest is missing, empty or unreadable, this file could
+            not be read to hash it, or the two do not match.
     """
     script = pathlib.Path(__file__).resolve()
     recorded = script.with_suffix(".sha256")
@@ -238,6 +238,10 @@ def searchable_text_files(paths):
 
     Returns:
         list: The searchable ones, in the order given.
+
+    Raises:
+        CannotEvaluate: A candidate is tracked but could not be read at all, via
+            is_searchable_text.
     """
     return [p for p in paths if is_searchable_text(p)]
 
@@ -427,6 +431,10 @@ def check_ci_jobs_are_bounded(root, tracked, files):
 
     Returns:
         list: The findings.
+
+    Raises:
+        CannotEvaluate: No workflow files are tracked, or one could not be read or parsed, via
+            workflow_jobs.
     """
     findings = []
     for relative, name, body in workflow_jobs(root, tracked):
@@ -563,7 +571,8 @@ def pointer_findings(root, pointer):
         list: The findings.
 
     Raises:
-        CannotEvaluate: The pointer file, or a file it routes to, could not be read.
+        CannotEvaluate: The pointer file could not be read. The files it routes to are
+            checked for existence, not opened.
     """
     path = root / pointer
     if not path.is_file():
@@ -626,7 +635,8 @@ def check_the_detail_layer_routing(root, tracked, files):
 
     Raises:
         CannotEvaluate: No detail directory exists, or none holds a .md file, so the routed
-            direction would verify nothing - or a routed file could not be read.
+            direction would verify nothing - or the shared instruction file, which carries
+            the routing list, could not be read.
     """
     shared_path = root / SHARED_INSTRUCTION_FILE
     routed = routed_paths(read_text(shared_path, root))

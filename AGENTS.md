@@ -93,9 +93,6 @@ uv run ruff format .
 # Type-check
 uv run pyright
 
-# Check every docstring agrees with its signature
-uv run pydoclint docker_mcp
-
 # Install pre-commit hooks (one-time)
 uv run pre-commit install
 
@@ -172,35 +169,6 @@ scored externally on a six-dimension rubric. **Read
 one** — it carries the format, the quality standard the ratchet applies to every touched docstring,
 and the division of labour across the three discovery layers. Write it right the first time; four
 cleanup rounds have chased the same failure.
-
-## Docstrings outside the tools
-
-ruff's `D` rules cannot tell a complete docstring from an empty one: `D417` only checks the
-parameters of a section a docstring already has, so a function documenting none of them passes
-clean. `pydoclint` closes that and runs as its own premerge job over `docker_mcp`, reporting
-nothing. Types go in the signature, never in the docstring entry - this code is fully annotated,
-and `arg-type-hints-in-docstring = false` in `[tool.pydoclint]` enforces it.
-
-**The tools are deliberately exempt, and keep their own dialect.** A `@tool()` docstring is the
-advertised description a client pays context for, scored on the rubric in
-[architecture/tool-descriptions.md](architecture/tool-descriptions.md) - which is why it uses
-lowercase `args:` with `name - description` rather than a Google `Args:` block. `pydoclint`
-cannot read that as a section, so each tool carries `# noqa: DOC101,DOC103` naming the codes
-that apply to it. Do not "fix" a tool docstring into Google form; the format is the product.
-
-Two things about that marker are worth knowing before they cost you an afternoon:
-
-* It must sit on the **definition line**. `pydoclint`'s native mode reads DOC noqa comments from
-  the *closing docstring line* by default, so `native-mode-noqa-location` in
-  `[tool.pydoclint]` is what makes every marker in this repository work. Without that setting the
-  markers are silently ignored and the run still says it passed.
-* `DOC502` and `DOC503` markers are a decision, not a backlog: this code documents what a caller
-  can catch, which includes what its callees raise, and `pydoclint` only sees exceptions
-  constructed literally in the body. Each was read against its raise site first, which is how
-  five docstrings naming the wrong exception were found rather than silenced.
-
-`tests/test_docstrings.py` asserts both exemptions in both directions, so a tool that needs a
-marker and lacks it fails, and a marker on a definition that no longer needs one fails too.
 
 ## Conventions
 
