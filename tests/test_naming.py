@@ -126,8 +126,15 @@ _PARAM_EXCEPTIONS = {
     ("buildx_bake", "files"),  # bake files are HCL/compose *bake* definitions, not compose files
 }
 
-# Google style: an entry under `Args:` is "    param: desc" or "    param (type): desc".
+# Google style: an entry under `Args:` is "    param: desc" or "    param (type): desc". The
+# type form is accepted here deliberately, even though AGENTS.md forbids it in a tool docstring:
+# this pattern is how the tests below *find* an entry, and a pattern that rejected the type would
+# make a typed `host (str): ...` invisible to
+# test_host_param_is_never_documented_in_docstrings, which would then pass while `host` was
+# documented. The convention is enforced separately, by
+# test_no_tool_repeats_a_parameter_type_in_its_docstring.
 _ARG_LINE = re.compile(r"^\s+(?P<param>\w+)(?:\s*\([^)]*\))?: (?P<desc>.+)$")
+_TYPED_ARG_LINE = re.compile(r"^\s+\*{0,2}\w+\s*\([^)]*\):")
 # Any other section header ends the args block. `Returns:` and `Raises:` entries have the same
 # shape as a parameter - "dict: ..." and "ToolInputError: ..." both match _ARG_LINE - so a scan
 # that does not stop here reports a return type as a documented parameter.
@@ -166,6 +173,27 @@ def test_shared_params_carry_canonical_descriptions():
             if not desc.startswith(canonical):
                 offenders.append(f"{name}({param}): {desc!r} does not start with {canonical!r}")
     assert offenders == [], "shared-param description drift:\n" + "\n".join(offenders)
+
+
+def test_no_tool_repeats_a_parameter_type_in_its_docstring():
+    # The annotation already reaches the client in `inputSchema` alongside the description, so a
+    # type in an `Args:` entry is duplication paid for on every session that loads the surface.
+    # pydoclint cannot check this: its DOC101/DOC103 are suppressed per tool precisely because
+    # the entries carry no types, so it would report a typed entry as documented and be happy.
+    offenders = []
+    for name, func in _tool_functions():
+        in_args = False
+        for line in (func.__doc__ or "").splitlines():
+            header = _SECTION.match(line)
+            if header:
+                in_args = header.group(1) == "Args"
+                continue
+            if in_args and _TYPED_ARG_LINE.match(line):
+                offenders.append(f"{name}: {line.strip()}")
+
+    assert offenders == [], (
+        "these tool `Args:` entries repeat a type the inputSchema already carries:\n  " + "\n  ".join(offenders)
+    )
 
 
 def test_host_param_is_never_documented_in_docstrings():
