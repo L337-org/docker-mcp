@@ -126,11 +126,14 @@ def read_text(path, root=None):
     funnel instead, and a read added later cannot reintroduce it.
 
     Args:
-        path: the file to read.
-        root: repository root, so the message names a relative path when it can.
+        path (pathlib.Path): the file to read.
+        root (pathlib.Path or None): repository root, so the message names a relative path when it can.
 
     Returns:
-        The file's contents as text.
+        str: The file's contents as text.
+
+    Raises:
+        CannotEvaluate: The file could not be read as UTF-8 text.
     """
     # The two deliberate exceptions, so this docstring cannot drift from the code:
     # is_searchable_text() reads bytes to decide whether a file is text at all, where a decode
@@ -153,8 +156,9 @@ def verify_own_digest():
     Takes no repository root: the digest sits beside this file wherever this file is, which is
     what lets a moved or vendored copy still check itself.
 
-    Returns:
-        Nothing; raises CannotEvaluate if the digest is missing or does not match.
+    Raises:
+        CannotEvaluate: The recorded digest is missing, empty or unreadable, this file could
+            not be read to hash it, or the two do not match.
     """
     script = pathlib.Path(__file__).resolve()
     recorded = script.with_suffix(".sha256")
@@ -186,10 +190,13 @@ def tracked_paths(root):
     extension at all.
 
     Args:
-        root: repository root.
+        root (pathlib.Path): repository root.
 
     Returns:
-        A sorted list of paths.
+        list: The tracked paths, sorted.
+
+    Raises:
+        CannotEvaluate: git is not on PATH, or the tracked-file listing could not be built.
     """
     # Resolved by lookup rather than hardcoded: git's path differs per platform and per
     # installation method (SU.6.3). The argument list is fixed and carries no caller input,
@@ -227,10 +234,14 @@ def searchable_text_files(paths):
     workflow the bounds checks must see are different questions.
 
     Args:
-        paths: candidate paths.
+        paths (list): candidate paths.
 
     Returns:
-        A list of the searchable ones, in the order given.
+        list: The searchable ones, in the order given.
+
+    Raises:
+        CannotEvaluate: A candidate is tracked but could not be read at all, via
+            is_searchable_text.
     """
     return [p for p in paths if is_searchable_text(p)]
 
@@ -242,10 +253,13 @@ def is_searchable_text(path):
     script here - is covered, and a future binary asset cannot break the scan.
 
     Args:
-        path: the file to test.
+        path (pathlib.Path): the file to test.
 
     Returns:
-        True when the file is readable UTF-8 text with no NUL bytes.
+        bool: True when the file is readable UTF-8 text with no NUL bytes.
+
+    Raises:
+        CannotEvaluate: The file is tracked but could not be read at all.
     """
     if not path.is_file() or path.suffix.lower() in BINARY_SUFFIXES:
         return False
@@ -275,13 +289,18 @@ def workflow_jobs(root, tracked):
     workflow a developer left lying about is not part of the repository.
 
     Args:
-        root: repository root.
-        tracked: every tracked path, unfiltered - deliberately not the searchable-text subset,
+        root (pathlib.Path): repository root.
+        tracked (list): every tracked path, unfiltered - deliberately not the searchable-text subset,
             because a workflow that is not readable text must still be reported rather than
             quietly dropped from the bounds checks.
 
     Returns:
-        A list of triples.
+        list: One triple per job.
+
+    Raises:
+        CannotEvaluate: No workflow files are tracked, one could not be read, or one is not
+            valid YAML, is not a mapping, declares no usable `jobs:` mapping, or gives a job
+            a body that is not a mapping.
     """
     import yaml
 
@@ -315,14 +334,18 @@ def check_the_scan_is_real(root, tracked, files):
     """The listing found a plausible repository, not an empty glob.
 
     Args:
-        root: repository root.
-        tracked: every tracked path. The sentinel check below uses this rather than the
+        root (pathlib.Path): repository root.
+        tracked (list): every tracked path. The sentinel check below uses this rather than the
             filtered list, so an unreadable universal file is reported as unreadable rather
             than as absent.
-        files: the searchable-text subset, used for the size floor.
+        files (list): the searchable-text subset, used for the size floor.
 
     Returns:
-        A list of findings; raises CannotEvaluate when the listing itself is wrong.
+        list: The findings.
+
+    Raises:
+        CannotEvaluate: The listing itself is wrong - too few files, or a file every
+            copy of this script must see is absent.
     """
     if len(files) < MIN_TRACKED_FILES:
         raise CannotEvaluate(
@@ -351,12 +374,15 @@ def check_no_internal_references(root, tracked, files):
     link in the other direction.
 
     Args:
-        root: repository root.
-        tracked: every tracked path, unfiltered.
-        files: the searchable-text subset.
+        root (pathlib.Path): repository root.
+        tracked (list): every tracked path, unfiltered.
+        files (list): the searchable-text subset.
 
     Returns:
-        A list of findings.
+        list: The findings.
+
+    Raises:
+        CannotEvaluate: A tracked file could not be read.
     """
     findings = []
     for path in files:
@@ -399,12 +425,16 @@ def check_ci_jobs_are_bounded(root, tracked, files):
     expression that is not there.
 
     Args:
-        root: repository root.
-        tracked: every tracked path, unfiltered.
-        files: the searchable-text subset.
+        root (pathlib.Path): repository root.
+        tracked (list): every tracked path, unfiltered.
+        files (list): the searchable-text subset.
 
     Returns:
-        A list of findings.
+        list: The findings.
+
+    Raises:
+        CannotEvaluate: No workflow files are tracked, or one could not be read or parsed, via
+            workflow_jobs.
     """
     findings = []
     for relative, name, body in workflow_jobs(root, tracked):
@@ -458,10 +488,10 @@ def routed_paths(text):
     """Every local .md path a router points at, normalised to repository-relative.
 
     Args:
-        text: the router's contents.
+        text (str): the router's contents.
 
     Returns:
-        A set of repository-relative paths.
+        set: The repository-relative paths the router names.
     """
     out = set()
     for match in ROUTED_LINK.finditer(text):
@@ -497,12 +527,16 @@ def check_the_instruction_layer(root, tracked, files):
     nothing else", so that is what is checked, inside the generated block as well as outside it.
 
     Args:
-        root: repository root.
-        tracked: every tracked path, unfiltered.
-        files: the searchable-text subset.
+        root (pathlib.Path): repository root.
+        tracked (list): every tracked path, unfiltered.
+        files (list): the searchable-text subset.
 
     Returns:
-        A list of findings.
+        list: The findings.
+
+    Raises:
+        CannotEvaluate: There is no shared instruction file, so there is no layer to check,
+            or a file in the layer could not be read.
     """
     findings = []
     shared_path = root / SHARED_INSTRUCTION_FILE
@@ -530,11 +564,15 @@ def pointer_findings(root, pointer):
     as outside it, since content added inside would otherwise satisfy an outside-only check.
 
     Args:
-        root: repository root.
-        pointer: repository-relative path of the pointer file.
+        root (pathlib.Path): repository root.
+        pointer (str): repository-relative path of the pointer file.
 
     Returns:
-        A list of findings.
+        list: The findings.
+
+    Raises:
+        CannotEvaluate: The pointer file could not be read. The files it routes to are
+            checked for existence, not opened.
     """
     path = root / pointer
     if not path.is_file():
@@ -588,12 +626,17 @@ def check_the_detail_layer_routing(root, tracked, files):
     unrouted, so an unrouted file there is an accepted exemption rather than a failure.
 
     Args:
-        root: repository root.
-        tracked: every tracked path, unfiltered.
-        files: the searchable-text subset.
+        root (pathlib.Path): repository root.
+        tracked (list): every tracked path, unfiltered.
+        files (list): the searchable-text subset.
 
     Returns:
-        A list of findings.
+        list: The findings.
+
+    Raises:
+        CannotEvaluate: No detail directory exists, or none holds a .md file, so the routed
+            direction would verify nothing - or the shared instruction file, which carries
+            the routing list, could not be read.
     """
     shared_path = root / SHARED_INSTRUCTION_FILE
     routed = routed_paths(read_text(shared_path, root))
