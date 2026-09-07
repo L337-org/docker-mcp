@@ -73,7 +73,15 @@ ChannelFactory = Callable[[], BidirectionalStream]
 
 @dataclass(frozen=True)
 class SshTarget:
-    """Resolved connection parameters for an ssh:// DOCKER_HOST, after ~/.ssh/config lookup."""
+    """Resolved connection parameters for an ssh:// DOCKER_HOST, after ~/.ssh/config lookup.
+
+    Attributes:
+        hostname: the host to connect to, after ~/.ssh/config lookup.
+        port: the port, defaulted when the URL and config omit it.
+        username: the user to authenticate as, or None to let paramiko decide.
+        key_filename: an identity file from the config, or None.
+        proxycommand: a ProxyCommand from the config, or None.
+    """
 
     hostname: str
     port: int | None
@@ -140,7 +148,7 @@ def parse_ssh_url(url: str) -> SshTarget:
     covers both callers at the one point that already validates the URL.
 
     Args:
-        url (str): a DOCKER_HOST value starting with 'ssh://'
+        url: a DOCKER_HOST value starting with 'ssh://'
 
     Returns:
         SshTarget: hostname/port/username/key_filename/proxycommand after config-file lookup
@@ -219,6 +227,10 @@ def connect_ssh_client(docker_host: str, *, timeout: float | None = None) -> par
 
     Returns:
         paramiko.SSHClient: already connected; caller is responsible for closing it
+
+    Raises:
+        RemoteFailureError: the host could not be reached or authenticated; the message
+            names the phase that failed.
     """
     target = parse_ssh_url(docker_host)
     client = paramiko.SSHClient()
@@ -262,7 +274,7 @@ def paramiko_dial_stdio_factory(ssh_client: paramiko.SSHClient) -> ChannelFactor
     opened per accepted local connection (the docker CLI may open more than one).
 
     Args:
-        ssh_client (paramiko.SSHClient): an already-connected client (see `connect_ssh_client`)
+        ssh_client: an already-connected client (see `connect_ssh_client`)
 
     Returns:
         ChannelFactory: a zero-arg callable returning a new exec channel on each call
@@ -286,6 +298,9 @@ def _close_quietly(closable: BidirectionalStream) -> None:
     `paramiko.Channel` (can raise `paramiko.SSHException` or `EOFError` on an already-torn-down
     transport) - either way this is teardown-path cleanup that must never leak out and abandon
     the caller's pump threads unjoined.
+
+    Args:
+        closable: the stream to shut down and close
     """
     try:
         closable.shutdown(socket.SHUT_RDWR)
@@ -307,6 +322,11 @@ class SshDialStdioProxy:
     """
 
     def __init__(self, channel_factory: ChannelFactory) -> None:
+        """Build the proxy, without binding a port yet.
+
+        Args:
+            channel_factory: opens a fresh remote channel per accepted connection
+        """
         self._channel_factory = channel_factory
         self._listener: socket.socket | None = None
         self._accept_thread: threading.Thread | None = None
@@ -317,7 +337,11 @@ class SshDialStdioProxy:
         self.port: int | None = None
 
     def start(self) -> int:
-        """Bind an ephemeral 127.0.0.1 port, start accepting connections, and return the port."""
+        """Bind an ephemeral 127.0.0.1 port, start accepting connections, and return the port.
+
+        Returns:
+            int: the ephemeral 127.0.0.1 port now accepting connections
+        """
         listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         listener.bind(("127.0.0.1", 0))
         listener.listen()
@@ -382,7 +406,12 @@ class SshDialStdioProxy:
 
 
 def _pump_duplex(conn: socket.socket, stream: BidirectionalStream) -> None:
-    """Relay bytes both ways between `conn` and `stream` until either side closes, then close both."""
+    """Relay bytes both ways between `conn` and `stream` until either side closes, then close both.
+
+    Args:
+        conn: the local socket accepted from the proxy listener
+        stream: the remote channel to relay to and from
+    """
 
     def relay(src: BidirectionalStream, dst: BidirectionalStream) -> None:
         try:
@@ -426,6 +455,9 @@ def ssh_proxy_for_docker_host(docker_host: str, *, timeout: float | None = None)
 
     Returns:
         Iterator[SshDialStdioProxy]: yields the started proxy; read `proxy.port` for the URL
+
+    Yields:
+        str: a ``tcp://127.0.0.1:<port>`` DOCKER_HOST pointing at the local proxy
     """
     ssh_client = connect_ssh_client(docker_host, timeout=timeout)
     try:
@@ -594,6 +626,10 @@ class RemoteDialectKind(enum.Enum):
     Only POSIX is implemented. WINDOWS exists so detection can *name* what it found and refuse
     precisely, rather than mis-running a POSIX script against cmd/PowerShell - and so adding Windows
     later is one new dialect implementation rather than a redesign.
+
+    Attributes:
+        POSIX: a remote shell taking POSIX quoting.
+        WINDOWS: a remote host needing Windows command wrapping.
     """
 
     POSIX = "posix"
@@ -815,7 +851,7 @@ class PosixDialect:
         on Windows would otherwise compose `\\`-joined paths for a Linux target.
 
         Args:
-            parts: path components, the first of which should be absolute
+            *parts: path components, the first of which should be absolute
 
         Returns:
             str: the joined remote path
@@ -899,6 +935,10 @@ def detect_remote_dialect(
 
     Returns:
         RemoteDialectKind: POSIX when `uname -s` names a known POSIX kernel, else WINDOWS
+
+    Raises:
+        RuntimeError: the probe command could not be run at all.
+        TimeoutError: the probe did not finish within the bound.
     """
     now = time.monotonic()
     with _dialect_cache_lock:
@@ -976,6 +1016,12 @@ class RemoteExecResult:
 
     Bytes rather than str so decoding stays the caller's concern, matching how `_cli.run_docker`
     captures a local subprocess and decodes once at the boundary.
+
+    Attributes:
+        returncode: the remote command's exit status.
+        stdout: its raw captured standard output.
+        stderr: its raw captured standard error.
+        truncated: whether the cap cut either stream, so the bytes are incomplete.
     """
 
     returncode: int
@@ -1191,6 +1237,9 @@ def _walk_relative(root: Path) -> Iterator[str]:
 
     Returns:
         Iterator[str]: relative paths, in os.walk order
+
+    Yields:
+        Path: each entry under ``root``, relative to it, directories included
     """
     for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
         for name in (*dirnames, *filenames):
@@ -1267,6 +1316,10 @@ def _tar_local_tree(root: Path) -> IO[bytes]:
 
     Returns:
         IO[bytes]: the archive, positioned at 0; the caller closes it
+
+    Raises:
+        OSError: the directory could not be read or the archive could not be written;
+            the temporary file is removed before the original error propagates.
     """
     archive = tempfile.TemporaryFile()  # deleted on close, never linked into a directory
     try:
@@ -1352,6 +1405,15 @@ class RemoteStagingSession:
         dialect_kind: RemoteDialectKind,
         root: str,
     ) -> None:
+        """Bind a session to one connection, one remote temp directory, and one dialect.
+
+        Args:
+            docker_host: the resolved ssh:// DOCKER_HOST this session targets
+            ssh_client: the already-connected client to run commands through
+            sftp: an SFTP client on the same connection, for file transfer
+            dialect_kind: which command-wrapping dialect the remote host needs
+            root: the remote temporary directory this session stages into
+        """
         self.docker_host = docker_host
         self.root = root
         self._ssh_client = ssh_client
@@ -1393,7 +1455,7 @@ class RemoteStagingSession:
         resolving the way local buildx resolves it.
 
         Args:
-            parts: remote path components, the first absolute
+            *parts: remote path components, the first absolute
 
         Returns:
             str: the joined remote path
@@ -1583,7 +1645,14 @@ class RemoteStagingSession:
         return self._new_slot_path("fetch")
 
     def _remote_is_dir(self, remote_path: str) -> bool:
-        """True if `remote_path` is a directory on the remote host; False if it's anything else."""
+        """True if `remote_path` is a directory on the remote host; False if it's anything else.
+
+        Args:
+            remote_path: the path to test on the remote host
+
+        Returns:
+            bool: True when it is a directory, False for anything else
+        """
         result = self.exec(
             ["test", "-d", remote_path],
             timeout=_STAGING_CONTROL_TIMEOUT_SECONDS,
@@ -1592,7 +1661,15 @@ class RemoteStagingSession:
         return result.returncode == 0
 
     def _fetch_file(self, remote_path: str, local_dest: Path) -> None:
-        """Fetch a single remote file straight to `local_dest`, via `stream_to_file`'s safe write."""
+        """Fetch a single remote file straight to `local_dest`, via `stream_to_file`'s safe write.
+
+        Args:
+            remote_path: the file to fetch
+            local_dest: where to write it
+
+        Raises:
+            ToolInputError: the destination is unusable, or the remote file could not be read.
+        """
         size = self._sftp.stat(remote_path).st_size
         if size is not None and size > _MAX_STAGE_BYTES:
             raise ToolInputError(
@@ -1619,6 +1696,14 @@ class RemoteStagingSession:
         upfront, before any remote work, if that intermediate path already exists: `extractall` would
         otherwise merge into an existing directory there rather than fail, before this function ever
         gets to the rename that would have caught the collision.
+
+        Args:
+            remote_path: the directory to fetch
+            local_dest: where to extract it
+
+        Raises:
+            ToolInputError: the destination is unusable, or the remote directory could not
+                be packed or read.
         """
         extracted = local_dest.parent / posixpath.basename(remote_path.rstrip("/"))
         if extracted.exists():
@@ -1886,9 +1971,13 @@ def remote_staging_session(docker_host: str, *, timeout: float | None = None) ->
     Returns:
         Iterator[RemoteStagingSession]: the session, valid inside the `with` block only
 
+    Yields:
+        RemoteStagingSession: the session, torn down when the block exits
+
     Raises:
         RemoteFailureError: the connection could not be opened, or the remote could not create a writable temp directory
         CapabilityError: a non-POSIX remote, or an SFTP subsystem that cannot see the exec channel's filesystem
+
     """
     ssh_client = connect_ssh_client(docker_host, timeout=timeout)
     sftp: paramiko.SFTPClient | None = None
