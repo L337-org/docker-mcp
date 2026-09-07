@@ -105,8 +105,8 @@ def _has_undocumented_args(node):
     Any, not all, and the difference is the usual case rather than the edge one: a tool's `host`
     parameter is added by the decorator's own schema surgery rather than written in the
     docstring, so a tool documenting every other parameter still trips DOC101 on that one. An
-    earlier version of this was named `_has_undocumented_args` and its summary said "documents none
-    of them", which contradicted both the body below it and the paragraph above.
+    earlier version was named `_documents_no_args` and its summary said "documents none of them",
+    which contradicted both the body below it and the paragraph above.
 
     Args:
         node: the function or method
@@ -119,6 +119,27 @@ def _has_undocumented_args(node):
     documented = set(re.findall(r"^ {4}(\*{0,2}\w+)", section.group(1), re.MULTILINE)) if section else set()
     args = node.args.posonlyargs + node.args.args + node.args.kwonlyargs
     return any(a.arg not in documented for a in args if a.arg not in ("self", "cls"))
+
+
+def test_every_returns_entry_carries_a_type():
+    """Every `Returns:` entry starts with a type.
+
+    pydoclint has no check for this: it holds arguments to carrying a type through DOC109 and
+    DOC110, but nothing equivalent for the return, so an untyped `Returns:` passes every gate.
+    That is how `_select_platform_digest` kept `(digest, actual_platform) of the selected
+    sub-manifest` - a shape, with no type - through the whole conversion.
+    """
+    typed = re.compile(r"^[\w\.\[\], |]+(\s+or\s+[\w\.]+)*:\s+\S")
+    wrong = []
+    for path, node, _ in _definitions():
+        section = re.search(r"^Returns:\n((?:    .*\n?)+)", ast.get_docstring(node) or "", re.MULTILINE)
+        if not section:
+            continue
+        first = section.group(1).splitlines()[0].strip()
+        if not typed.match(first):
+            wrong.append(f"{path.relative_to(PACKAGE.parent)}:{node.lineno} {node.name}: {first[:60]!r}")
+
+    assert not wrong, "these Returns entries do not start with a type:\n  " + "\n  ".join(wrong)
 
 
 def test_the_parameter_exemption_sits_only_on_tools_that_need_it():

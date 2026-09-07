@@ -105,9 +105,9 @@ def connect_socket_with_family_fallback(hostname: str, port: int, timeout: float
     entirely once a socket is already supplied.
 
     Args:
-        hostname: str - the target to resolve; a literal IP is accepted too (single result, no fallback)
-        port: int - the target port
-        timeout: float | None - per-attempt connect timeout in seconds; None waits indefinitely
+        hostname: the target to resolve; a literal IP is accepted too (single result, no fallback)
+        port: the target port
+        timeout: per-attempt connect timeout in seconds; None waits indefinitely
 
     Returns:
         socket.socket: already connected to the first address that accepted
@@ -221,8 +221,8 @@ def connect_ssh_client(docker_host: str, *, timeout: float | None = None) -> par
     with actionable guidance rather than a bare paramiko/socket exception.
 
     Args:
-        docker_host: str - a DOCKER_HOST value starting with 'ssh://'
-        timeout: float | None - seconds to bound the connect/banner/auth phases (capped at
+        docker_host: a DOCKER_HOST value starting with 'ssh://'
+        timeout: seconds to bound the connect/banner/auth phases (capped at
                  _CONNECT_TIMEOUT_CAP_SECONDS); None means paramiko's own (unbounded) defaults
 
     Returns:
@@ -449,8 +449,8 @@ def ssh_proxy_for_docker_host(docker_host: str, *, timeout: float | None = None)
     connection and the local listener are guaranteed to be torn down on the way out, success or not.
 
     Args:
-        docker_host: str - a DOCKER_HOST value starting with 'ssh://'
-        timeout: float | None - forwarded to `connect_ssh_client` to bound the connect/banner/auth
+        docker_host: a DOCKER_HOST value starting with 'ssh://'
+        timeout: forwarded to `connect_ssh_client` to bound the connect/banner/auth
                  phases; see that function's docstring
 
     Returns:

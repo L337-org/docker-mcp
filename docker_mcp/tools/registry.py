@@ -853,7 +853,7 @@ def _select_platform_digest(index: dict, platform: str) -> tuple[str, str]:
         platform: an ``os/arch[/variant]`` string; an omitted variant matches any variant of that os/arch
 
     Returns:
-        (digest, actual_platform) of the selected sub-manifest
+        tuple: ``(digest, actual_platform)`` of the selected sub-manifest
 
     Raises:
         ToolInputError: no sub-manifest matches, or the match is ambiguous.
