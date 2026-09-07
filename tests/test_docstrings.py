@@ -145,8 +145,8 @@ def test_the_parameter_exemption_sits_only_on_tools_that_need_it():
     assert not wrong, "the CS.6.14 parameter exemption is out of step:\n  " + "\n  ".join(wrong)
 
 
-def test_the_propagated_exception_markers_sit_on_real_propagation():
-    """`# noqa: DOC502` / `DOC503` appears only where a documented exception is not raised here.
+def test_the_raises_markers_sit_on_real_exemptions():
+    """A `# noqa` naming DOC501, DOC502 or DOC503 appears only where one of two reasons holds.
 
     This code documents what a caller can catch, which includes what its callees raise;
     pydoclint only sees exceptions constructed literally in the body. That is a decision rather
@@ -157,7 +157,10 @@ def test_the_propagated_exception_markers_sit_on_real_propagation():
     wrong = []
     for path, node, lines in _definitions():
         codes = _marker_codes(node, lines)
-        if not ({"DOC502", "DOC503"} & codes):
+        # DOC501 belongs here too: an advertised docstring carrying no `Raises:` section trips
+        # it for the same reason it trips DOC502 and DOC503, and leaving it out left the marker
+        # on get_docs_section unguarded - the exact rot these guards exist to catch.
+        if not ({"DOC501", "DOC502", "DOC503"} & codes):
             continue
         docstring = ast.get_docstring(node) or ""
         section = re.search(r"^Raises:\n((?:    .*\n?)+)", docstring, re.MULTILINE)
@@ -186,11 +189,11 @@ def test_the_propagated_exception_markers_sit_on_real_propagation():
             # description, and a `Raises:` block there is wire cost on every session rather than
             # documentation for a maintainer. Marking the definition is the whole point.
             if not _is_advertised(node):
-                wrong.append(f"{where}: marked DOC502/DOC503, documents no exception, and is not advertised")
+                wrong.append(f"{where}: marked DOC501/DOC502/DOC503, documents no exception, and is not advertised")
             continue
         elif documented <= raised and not unresolvable:
             wrong.append(
-                f"{where}: marked DOC502/DOC503 but every documented exception is raised here "
+                f"{where}: marked DOC501/DOC502/DOC503 but every documented exception is raised here "
                 f"and no raise is unresolvable, so there is nothing for the marker to suppress"
             )
 
