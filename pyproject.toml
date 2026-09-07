@@ -93,9 +93,12 @@ convention = "google"
 # then be paid for on every session that loads the surface. So a tool documents what its
 # arguments mean and leaves their types to the schema.
 #
-# Prompts and resources are deliberately absent. A prompt's description comes from
-# `@prompt(description=...)` and a resource advertises nothing about its parameters, so neither
-# docstring reaches a client and there is nothing to trade off.
+# Prompts and resources are deliberately absent, for two different reasons. A prompt takes its
+# description from `@prompt(description=...)`, so its docstring reaches no client. A resource's
+# docstring *is* advertised - `resources.py` passes no `description=` at all, and
+# `list_resources()` serves the docstring - but a resource advertises no parameter schema, so
+# there is no duplication to avoid. That is the whole basis of the exemption, so it does not
+# apply. Their docstrings still cost wire bytes: see tests/test_surface_budget.py.
 #
 # Fully-qualified paths through the module the decorator is imported FROM, which is what ruff
 # matches - not the bare name the call site uses. tests/test_server.py asserts this list against
