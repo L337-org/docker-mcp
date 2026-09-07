@@ -7,14 +7,44 @@ names gets fixed, or the function it sits on changes shape, and nothing fails.
 
 So both directions are asserted here. A tool that needs the exemption and lacks it fails, and
 a marker on a definition that no longer needs it fails too.
+
+The dialect guards below run over every tracked `.py`, not just the package. pydoclint's CI job
+is scoped to `docker_mcp`, so six docstrings under `tests/` kept the old lowercase `args:` form
+with no gate ever seeing them.
 """
 
 import ast
 import pathlib
 import re
+import shutil
+import subprocess
 
 PACKAGE = pathlib.Path(__file__).resolve().parent.parent / "docker_mcp"
 NOQA = re.compile(r"#\s*noqa:\s*([\w,]+)")
+ROOT = PACKAGE.parent
+
+
+def _tracked_docstrings():
+    """Every docstring in every tracked `.py`, package and tests alike.
+
+    Returns:
+        list: `(path, lineno, name, docstring)` tuples
+    """
+    git = shutil.which("git")
+    assert git, "git is needed to enumerate tracked files"
+    listing = subprocess.run(  # noqa: S603 - fixed argv, resolved binary, no shell
+        [git, "ls-files", "*.py"], cwd=ROOT, capture_output=True, text=True, check=True, timeout=30
+    )
+    out = []
+    for name in listing.stdout.split():
+        path = ROOT / name
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if not isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            doc = ast.get_docstring(node)
+            if doc:
+                out.append((path, getattr(node, "lineno", 1), getattr(node, "name", "<module>"), doc))
+    return out
 
 
 def _definitions():
@@ -119,6 +149,43 @@ def _has_undocumented_args(node):
     documented = set(re.findall(r"^ {4}(\*{0,2}\w+)", section.group(1), re.MULTILINE)) if section else set()
     args = node.args.posonlyargs + node.args.args + node.args.kwonlyargs
     return any(a.arg not in documented for a in args if a.arg not in ("self", "cls"))
+
+
+def test_no_docstring_uses_a_lowercase_section_header():
+    """Section headers are `Args:`, not `args:`.
+
+    A lowercase header is invisible to every checker we run: ruff reads it as ordinary prose and
+    pydoclint then reports the parameters as undocumented only if it is looking at the file at all.
+    Note what this must *not* match - a parameter genuinely named `args` is documented as
+    `args: the argv to scan` inside a real `Args:` block, and `docker_mcp/tools/_cli.py` is full
+    of those. `ast.get_docstring` dedents, so a header sits at column 0 and an entry at column 4;
+    that anchor is the whole distinction, and both guards here depend on it.
+    """
+    header = re.compile(r"^(args|returns|raises|yields|attributes|examples|note):[^\S\n]*$", re.MULTILINE)
+    wrong = [
+        f"{path.relative_to(ROOT)}:{lineno} {name}: {m.group(1)!r}"
+        for path, lineno, name, doc in _tracked_docstrings()
+        for m in header.finditer(doc)
+    ]
+    assert not wrong, "these section headers are not capitalised:\n  " + "\n  ".join(wrong)
+
+
+def test_no_docstring_collapses_a_section_onto_one_line():
+    """A section header carries no content on its own line.
+
+    `returns: bool - True if that version satisfies` parses as prose, so the return goes
+    undocumented while every gate stays green. Six docstrings under `tests/` were written this way.
+    """
+    collapsed = re.compile(
+        r"^(args|returns|raises|yields|Args|Returns|Raises|Yields):[^\S\n]+\S.*$",
+        re.MULTILINE,
+    )
+    wrong = [
+        f"{path.relative_to(ROOT)}:{lineno} {name}: {m.group(0).strip()[:70]!r}"
+        for path, lineno, name, doc in _tracked_docstrings()
+        for m in collapsed.finditer(doc)
+    ]
+    assert not wrong, "these sections are collapsed onto the header line:\n  " + "\n  ".join(wrong)
 
 
 def test_every_returns_entry_carries_a_type():

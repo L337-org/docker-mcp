@@ -766,10 +766,12 @@ def _calls_function(source: str, name: str) -> bool:
     document helpers they do not call - so the scan below looks for actual `Call` nodes, matching both
     the bare `name(...)` and the `module.name(...)` attribute form.
 
-    args:
-        source - Python source text
-        name - the function name to look for
-    returns: bool - True if the source calls it
+    Args:
+        source: Python source text
+        name: the function name to look for
+
+    Returns:
+        bool: True if the source calls it
     """
     for node in ast.walk(ast.parse(source)):
         if isinstance(node, ast.Call):

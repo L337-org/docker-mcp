@@ -25,10 +25,12 @@ def _admits(requirement: str, version: str) -> bool:
     yet compares equal to a `<2` bound, so a guard built on bounds passes it. `packaging` answers the
     real question and handles markers, extras, `!=` and `~=` for free.
 
-    args:
-        requirement - a PEP 508 requirement string from pyproject's dependency list
-        version - the version to test, normally the first known-bad one
-    returns: bool - True if that version satisfies the requirement
+    Args:
+        requirement: a PEP 508 requirement string from pyproject's dependency list
+        version: the version to test, normally the first known-bad one
+
+    Returns:
+        bool: True if that version satisfies the requirement
     """
     return Requirement(requirement).specifier.contains(version)
 
