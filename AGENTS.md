@@ -19,7 +19,7 @@ order.
 2. **A guard that silently stops guarding.** See the invariant list below. These pass CI, pass review
    at a glance, and fail in production or never fail loudly at all.
 3. **Enumerations that drift.** Any list of domains, tools, channels or files that is copied rather
-   than derived. One list was wrong in six places across a single feature branch.
+   than derived. Derive it, or assert it.
 4. **Unbounded reads of anything external.** Daemon streams, registry bodies, staged files, CLI output.
 5. **Docstring quality on any touched `@tool()`** - the ratchet in the checklist below.
 6. **Everything else.**
@@ -209,19 +209,20 @@ discovery layers. Four cleanup rounds have chased the same failure.
   loosened while the type parameter stays. A test that must pass a deliberately invalid value marks
   that one call `# pyright: ignore[reportArgumentType]` with a reason, rather than being softened to
   a legal one.
-- Line length limit: 120 characters. flake8 does not run here, and ruff's E501 exempts a line
-  made overlong only by a trailing `# noqa`, so `tests/test_docstrings.py` enforces the number
-  itself over every tracked file.
+- Line length limit: 120 characters, enforced by
+  `tests/test_docstrings.py::test_no_tracked_line_exceeds_the_documented_limit` over every tracked
+  file. Do not rely on ruff for it; the test's docstring says why.
 - **Prose that ships is British English in plain ASCII punctuation.** A tool docstring ships: the server
   advertises it verbatim as the tool's `description`, which is what a model reads when choosing between
-  164 tools. So do the README, the agent skill, prompts and resources, comments, commit messages and PR
-  descriptions — the test is whether it ships, not who reads it. **Never `—` or `–`**: use `-`, or `:`
+  this server's tools. So do the README, the agent skill, prompts and resources, comments, commit
+  messages and PR descriptions — the test is whether it ships, not who reads it.
+  **Never `—` or `–`**: use `-`, or `:`
   where what follows explains what came before. Likewise `...` not `…`, `x` not `×`, straight quotes, and
   `10-15%` for ranges.
 - **Tool descriptions are strict ASCII, with no symbol exception**, and CI enforces exactly that:
   `tests/test_docs.py::test_advertised_tool_descriptions_are_plain_ascii` asserts it against what
-  `list_tools()` advertises, so a violating tool fails. There is no allow-list because none of the 164 has
-  needed one - the three arrows and one ellipsis found during the sweep all read better as words. Elsewhere
+  `list_tools()` advertises, so a violating tool fails. Do not add an allow-list: a symbol that seems
+  to need one reads better as words. Elsewhere
   in shipped prose a symbol carrying meaning (`≥`, or `→` inside a table) is still fine; that is the one
   place the general rule and this check deliberately differ.
 - **Scope stops at tool descriptions.** Comments, tests and workflow files still hold em dashes; none of
@@ -337,8 +338,8 @@ untouched neighbours. Push back on any of these:
    defects the moment they land in a shipping file.
 7. **Every factual claim is verified** against docker-py docs or the Engine API spec.
 
-The test: reading only this docstring while holding 164 tool names and nothing else, could an agent
-pick this tool over its neighbours and call it correctly first time?
+The test: reading only this docstring while holding every other tool name and nothing else, could an
+agent pick this tool over its neighbours and call it correctly first time?
 
 ## Deliberate - do not flag
 
@@ -389,7 +390,7 @@ re-proposes these; it has no memory of last time.
 - **`context.py` is permanently excluded from the SSH remote-exec fallback.** Its tools manage *this*
   host's CLI context registry, which a remote host knows nothing about. This is not an oversight
   pending work.
-- **`mcp` carries no major-version cap.**
+- **Do not add a major-version cap to `mcp`.**
   `tests/test_pyproject_pins.py::test_the_declared_mcp_bound_matches_what_the_code_imports` is the
   guard instead, and needs no cap remembered in advance. Flag only a change that silently narrows that
   guard. The same question - cap or guard? - applies to any new direct dependency whose import surface
@@ -423,11 +424,11 @@ re-proposes these; it has no memory of last time.
 ## Docstrings
 
 **Google style everywhere, including the advertised surface** - `Args:` and `Returns:`,
-capitalised. There is no second dialect. `name - description` is not a form here; ruff reads it as
-no description at all. Types live in the signature, never in an `Args:` entry.
+capitalised. `name - description` is not a form here; ruff reads it as no description at all. Types
+live in the signature, never in an `Args:` entry.
 
-Nothing is ignored by rule: ruff's `ignore` list is empty and `[tool.pydoclint]` parks no code. A
-rule that fails is a change to make, not an entry to add.
+Do not park a docstring rule in configuration. A rule that fails is a change to make, not an entry
+to add.
 
 **Only tools are exempt, and only from the parameter codes.** The exemption holds where a
 docstring is advertised *and* a schema already carries the same facts - true of a tool's
@@ -450,17 +451,16 @@ prompt registered that way would silently lose its exemption.
 DOC501/DOC502/DOC503 markers are a decision, not a backlog. Where a marker sits on an advertised
 docstring the omission is deliberate, because a `Raises:` section is wire cost every client pays.
 Some tools carry one regardless, where the failure is worth advertising. Do not add a section to
-clear a code, and read the raise site first: doing that found five docstrings naming the wrong
-exception.
+clear a code, and read the raise site first rather than trusting the name already written there.
 
-**`scripts/check-repo-hygiene.py` is vendored byte-identically into four repositories** and
-self-verifies against a shared digest, so a change to it lands in all four with each digest
-regenerated. Tests are exempt: a test's name is its documentation.
+**`scripts/check-repo-hygiene.py` is vendored byte-identically across repositories** and
+self-verifies against a shared digest, so a change to it must land in every one of them with each
+digest regenerated. Tests are exempt: a test's name is its documentation.
 
 ## The advertised surface has a budget
 
 `AC.1.2` makes the size of what this server advertises a tracked metric rather than an
-afterthought, and at 164 tools it is the dominant cost of connecting to this server at all.
+afterthought: at this server's size it is the dominant cost of connecting to it at all.
 `tests/test_surface_budget.py` holds the ceilings: per tool, per component, and in total.
 
 **What is measured is the wire form, not the docstring.** A tool costs its name, its description
