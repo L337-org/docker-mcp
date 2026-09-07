@@ -27,6 +27,14 @@ def read_env(canonical: str, *aliases: str, default: str | None = None) -> str |
 
     The canonical (DOCKER_MCP_SERVER_*) name is checked first. Reading a value via one of the older
     `aliases` emits a one-time stderr deprecation notice naming `canonical`.
+
+    Args:
+        canonical: the current DOCKER_MCP_SERVER_* name
+        *aliases: the deprecated names, tried in the order given
+        default: returned when none of the names is set
+
+    Returns:
+        str or None: the first value found, or ``default``
     """
     value = os.environ.get(canonical)
     if value is not None:
@@ -40,12 +48,25 @@ def read_env(canonical: str, *aliases: str, default: str | None = None) -> str |
 
 
 def env_flag(canonical: str, *aliases: str) -> bool:
-    """True when `canonical` (or a deprecated `alias`) is set to a truthy value (1/true/yes/on)."""
+    """True when `canonical` (or a deprecated `alias`) is set to a truthy value (1/true/yes/on).
+
+    Args:
+        canonical: the current DOCKER_MCP_SERVER_* name
+        *aliases: the deprecated names, tried in the order given
+
+    Returns:
+        bool: True when the value is set to a truthy string
+    """
     return (read_env(canonical, *aliases) or "").strip().lower() in _TRUTHY
 
 
 def _warn_deprecated(alias: str, canonical: str) -> None:
-    """Print a one-time stderr notice the first time a deprecated alias is read this process."""
+    """Print a one-time stderr notice the first time a deprecated alias is read this process.
+
+    Args:
+        alias: the deprecated name that was read
+        canonical: the current name to point the operator at
+    """
     if alias in _warned_aliases:
         return
     _warned_aliases.add(alias)
