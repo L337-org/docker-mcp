@@ -59,6 +59,22 @@ def _is_tool(node):
     return any(re.search(r"\btool\b", ast.unparse(d)) for d in node.decorator_list)
 
 
+def _is_advertised(node):
+    """Whether a definition's docstring is sent to clients.
+
+    A tool's docstring is its description and a resource's reaches clients through
+    `list_resources()` / `list_resource_templates()`, so in both cases every byte is paid for on
+    every session and the docstring is written for that reader rather than for a maintainer.
+
+    Args:
+        node: the function or method
+
+    Returns:
+        bool: True when a decorator names `tool` or `resource`
+    """
+    return any(re.search(r"\b(tool|resource)\b", ast.unparse(d)) for d in node.decorator_list)
+
+
 def _documents_no_args(node):
     """Whether a definition takes parameters but documents none of them.
 
@@ -139,7 +155,12 @@ def test_the_propagated_exception_markers_sit_on_real_propagation():
         )
         where = f"{path.relative_to(PACKAGE.parent)}:{node.lineno} {node.name}"
         if not documented:
-            wrong.append(f"{where}: marked DOC502/DOC503 but documents no exception at all")
+            # An advertised docstring deliberately carries no Raises section: it is the client's
+            # description, and a `Raises:` block there is wire cost on every session rather than
+            # documentation for a maintainer. Marking the definition is the whole point.
+            if not _is_advertised(node):
+                wrong.append(f"{where}: marked DOC502/DOC503, documents no exception, and is not advertised")
+            continue
         elif documented <= raised and not unresolvable:
             wrong.append(
                 f"{where}: marked DOC502/DOC503 but every documented exception is raised here "
