@@ -47,6 +47,30 @@ def _marker_codes(node, lines):
     return {c.strip() for c in match.group(1).split(",") if c.strip().startswith("DOC")} if match else set()
 
 
+def _decorator_names(node):
+    """The callee name of each decorator on a definition.
+
+    Matched on the callee rather than on the decorator's unparsed text, because the text
+    includes the arguments: `@resource("docker-mcp://tool-catalog", ...)` contains the word
+    "tool" and was being read as a tool decorator, which misclassified that resource and made
+    both guards below wrong about it.
+
+    Args:
+        node: the function or method
+
+    Returns:
+        set: the decorator callee names, `server.tool(...)` contributing "tool"
+    """
+    names = set()
+    for decorator in node.decorator_list:
+        target = decorator.func if isinstance(decorator, ast.Call) else decorator
+        if isinstance(target, ast.Attribute):
+            names.add(target.attr)
+        elif isinstance(target, ast.Name):
+            names.add(target.id)
+    return names
+
+
 def _is_tool(node):
     """Whether a definition is a registered MCP tool.
 
@@ -54,9 +78,9 @@ def _is_tool(node):
         node: the function or method
 
     Returns:
-        bool: True when a decorator names `tool`
+        bool: True when a decorator is `tool`
     """
-    return any(re.search(r"\btool\b", ast.unparse(d)) for d in node.decorator_list)
+    return "tool" in _decorator_names(node)
 
 
 def _is_advertised(node):
@@ -72,7 +96,7 @@ def _is_advertised(node):
     Returns:
         bool: True when a decorator names `tool` or `resource`
     """
-    return any(re.search(r"\b(tool|resource)\b", ast.unparse(d)) for d in node.decorator_list)
+    return bool({"tool", "resource"} & _decorator_names(node))
 
 
 def _documents_no_args(node):

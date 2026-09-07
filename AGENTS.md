@@ -181,12 +181,17 @@ clean. `pydoclint` closes that and runs as its own premerge job over `docker_mcp
 nothing. Types go in the signature, never in the docstring entry - this code is fully annotated,
 and `arg-type-hints-in-docstring = false` in `[tool.pydoclint]` enforces it.
 
-**The tools are deliberately exempt, and keep their own dialect.** A `@tool()` docstring is the
-advertised description a client pays context for, scored on the rubric in
-[architecture/tool-descriptions.md](architecture/tool-descriptions.md) - which is why it uses
-lowercase `args:` with `name - description` rather than a Google `Args:` block. `pydoclint`
-cannot read that as a section, so each tool carries `# noqa: DOC101,DOC103` naming the codes
-that apply to it. Do not "fix" a tool docstring into Google form; the format is the product.
+**The tools use the same Google form as everything else, and are still exempt.** A `@tool()`
+docstring is the advertised description a client pays context for, scored on the rubric in
+[architecture/tool-descriptions.md](architecture/tool-descriptions.md) - read that before
+writing one. It uses `Args:` and `Returns:` like the rest of the code, because one convention is
+cheaper to read and to check than two.
+
+What it does *not* carry is a type in each `Args:` entry: the annotation already reaches the
+client in `inputSchema` alongside the description, so `name (str): ...` duplicates it as prose
+tokens on every session. The `Returns:` entry keeps its type, since the return shape is not in
+the input schema. `pydoclint` reads that as a parameter documented without a type, so each tool
+carries `# noqa: DOC101,DOC103`.
 
 Two things about that marker are worth knowing before they cost you an afternoon:
 
