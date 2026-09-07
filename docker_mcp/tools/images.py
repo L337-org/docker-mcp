@@ -197,6 +197,7 @@ def image_pull(  # noqa: DOC101,DOC103
     tag: str | None = None,
     all_tags: bool = False,
     platform: str | None = None,
+    auth_config: dict | None = None,
     host: str | None = None,
 ) -> dict | list:
     """
@@ -206,16 +207,23 @@ def image_pull(  # noqa: DOC101,DOC103
     Use `image_load` for tarballs, and `registry_manifest` / `image_registry_data` to inspect a
     remote image without pulling it.
 
+    Security: `auth_config` carries registry credentials, which many MCP clients log verbatim. Prefer
+    `docker login` on the host so the `docker` module reuses credentials cached in
+    `~/.docker/config.json`, and leave `auth_config` unset.
+
     Args:
         repository: The image repository
         tag: The image tag (ignored when all_tags=True)
         all_tags: Pull all tags from the repository
         platform: Platform in os/arch format
+        auth_config: Optional registry authentication config
 
     Returns:
         dict | list: Pulled image attrs (or a list of attrs if all_tags=True)
     """
-    result = _get_client(host).images.pull(repository, tag=tag, all_tags=all_tags, platform=platform)
+    result = _get_client(host).images.pull(
+        repository, tag=tag, all_tags=all_tags, platform=platform, auth_config=auth_config
+    )
     if isinstance(result, list):
         return [i.attrs for i in result]
     return result.attrs

@@ -375,7 +375,18 @@ def test_container_stats():
         mock_client.return_value.containers.get.return_value = container
         assert container_stats("web") == {"cpu": 1}
     # `decode` is only valid with stream=True; a one-shot stream=False read already returns a dict.
+    # No `one_shot` at all by default: docker-py version-checks it on `is not None`, so passing
+    # False would newly raise InvalidVersion against a pre-v1.41 daemon.
     container.stats.assert_called_once_with(stream=False)
+
+
+def test_container_stats_one_shot_is_passed_only_when_set():
+    container = MagicMock()
+    container.stats.return_value = {"memory_stats": {}}
+    with _patch() as mock_client:
+        mock_client.return_value.containers.get.return_value = container
+        assert container_stats("web", one_shot=True) == {"memory_stats": {}}
+    container.stats.assert_called_once_with(stream=False, one_shot=True)
 
 
 def test_container_top():

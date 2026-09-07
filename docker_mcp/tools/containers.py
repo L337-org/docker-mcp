@@ -555,23 +555,32 @@ def container_logs(  # noqa: DOC101,DOC103
 
 
 @tool()
-def container_stats(id_or_name: str, host: str | None = None) -> dict:  # noqa: DOC101,DOC103
+def container_stats(id_or_name: str, one_shot: bool = False, host: str | None = None) -> dict:  # noqa: DOC101,DOC103
     """
     Get one point-in-time resource-usage snapshot for a container (non-streaming).
 
     Returns the raw engine stats payload; CPU percent must be computed from the delta between
-    `cpu_stats` and `precpu_stats`. For a pre-computed human-readable summary prefer the
-    `docker-stats://{id_or_name}` resource; for a process listing use `container_top`.
+    `cpu_stats` and `precpu_stats`. By default the daemon collects two cycles before answering,
+    which is what fills `precpu_stats` - so the call takes about a second. `one_shot=True` returns
+    after a single collection instead, leaving `precpu_stats` zeroed and CPU percent uncomputable;
+    use it when only `memory_stats`/`pids_stats` matter. For a pre-computed human-readable summary
+    prefer the `docker-stats://{id_or_name}` resource; for a process listing use `container_top`.
 
     Args:
         id_or_name: The container id or name
+        one_shot: Skip the second collection cycle for a faster answer, at the cost of an empty
+            `precpu_stats` (so no CPU percent); needs daemon API v1.41+
 
     Returns:
         dict: Engine stats payload (read, cpu_stats, precpu_stats, memory_stats, networks, pids_stats, ...)
     """
     container = _get_client(host).containers.get(id_or_name)
     # `decode` is only valid with stream=True; a one-shot stream=False read already returns a dict.
-    return cast(dict, container.stats(stream=False))
+    # `one_shot` is passed only when set: docker-py version-checks the parameter on `is not None`,
+    # so a literal one_shot=False would newly raise InvalidVersion against a pre-v1.41 daemon that
+    # the default call has always worked on.
+    extra = {"one_shot": True} if one_shot else {}
+    return cast(dict, container.stats(stream=False, **extra))
 
 
 # --- shared read helpers, also used by the docker-logs:// / docker-stats:// resources in resources.py ---

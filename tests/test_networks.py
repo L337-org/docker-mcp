@@ -100,7 +100,16 @@ def test_network_connect():
         ipv6_address=None,
         link_local_ips=None,
         driver_opt=None,
+        mac_address=None,
     )
+
+
+def test_network_connect_forwards_mac_address():
+    network = MagicMock()
+    with _patch() as mock_client:
+        mock_client.return_value.networks.get.return_value = network
+        assert network_connect("mynet", "web", mac_address="02:42:ac:11:00:04") is True
+    assert network.connect.call_args.kwargs["mac_address"] == "02:42:ac:11:00:04"
 
 
 def test_network_disconnect():
