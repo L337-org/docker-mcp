@@ -118,7 +118,8 @@ ignore-decorators = [
 #
 # Two exemptions are per function, both asserted by tests/test_docstrings.py - a tool's docstring
 # is its advertised description with the types already in `inputSchema` (CS.6.14), and
-# DOC502/DOC503 are a decision rather than a backlog, so do not "clear" them.
+# DOC501/DOC502/DOC503 on an advertised docstring are a decision rather than a backlog: it
+# carries no `Raises:` section because that is wire cost. Do not "clear" them.
 #
 # native-mode-noqa-location is load-bearing: pydoclint reads DOC noqa from the *closing docstring
 # line* by default, so without it every marker is ignored and the run still passes.
