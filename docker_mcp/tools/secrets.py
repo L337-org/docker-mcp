@@ -9,7 +9,7 @@ from docker_mcp.tools.system import _get_client
 
 
 @tool()
-def secret_create(
+def secret_create(  # noqa: DOC101,DOC103
     name: str, data: bytes, labels: dict | None = None, driver: dict | None = None, host: str | None = None
 ) -> dict:
     """
@@ -39,7 +39,7 @@ def secret_create(
 
 
 @tool()
-def secret_inspect(id_or_name: str, host: str | None = None) -> dict:
+def secret_inspect(id_or_name: str, host: str | None = None) -> dict:  # noqa: DOC101,DOC103
     """
     Get a swarm secret's metadata by id or name; requires a swarm manager.
 
@@ -59,7 +59,7 @@ def secret_inspect(id_or_name: str, host: str | None = None) -> dict:
 
 
 @tool()
-def secret_list(filters: dict | None = None, host: str | None = None) -> list:
+def secret_list(filters: dict | None = None, host: str | None = None) -> list:  # noqa: DOC101,DOC103
     """
     List swarm secrets' metadata; requires a swarm manager.
 
@@ -77,7 +77,7 @@ def secret_list(filters: dict | None = None, host: str | None = None) -> list:
 
 
 @tool()
-def secret_remove(id_or_name: str, host: str | None = None) -> bool:
+def secret_remove(id_or_name: str, host: str | None = None) -> bool:  # noqa: DOC101,DOC103
     """
     Remove a Swarm secret; requires a swarm manager.
 

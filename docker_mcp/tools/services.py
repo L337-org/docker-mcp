@@ -93,7 +93,7 @@ def _read_service_task_summary(id_or_name: str, host: str | None = None) -> dict
 
 
 @tool()
-def service_create(
+def service_create(  # noqa: DOC101,DOC103
     image: str, command: str | list | None = None, extra_kwargs: dict | None = None, host: str | None = None
 ) -> dict:
     """
@@ -126,7 +126,11 @@ def service_create(
 
 
 @tool()
-def service_inspect(id_or_name: str, insert_defaults: bool | None = None, host: str | None = None) -> dict:
+def service_inspect(  # noqa: DOC101,DOC103
+    id_or_name: str,
+    insert_defaults: bool | None = None,
+    host: str | None = None,
+) -> dict:
     """
     Get a swarm service by id or name.
 
@@ -146,7 +150,11 @@ def service_inspect(id_or_name: str, insert_defaults: bool | None = None, host: 
 
 
 @tool()
-def service_list(filters: dict | None = None, managed_only: bool = False, host: str | None = None) -> list:
+def service_list(  # noqa: DOC101,DOC103
+    filters: dict | None = None,
+    managed_only: bool = False,
+    host: str | None = None,
+) -> list:
     """
     List swarm services.
 
@@ -167,7 +175,12 @@ def service_list(filters: dict | None = None, managed_only: bool = False, host: 
 
 
 @tool()
-def service_update(id_or_name: str, updates: dict | None = None, force: bool = False, host: str | None = None) -> bool:
+def service_update(  # noqa: DOC101,DOC103
+    id_or_name: str,
+    updates: dict | None = None,
+    force: bool = False,
+    host: str | None = None,
+) -> bool:
     """
     Update a swarm service's configuration, or force a redeploy with no spec change.
 
@@ -198,7 +211,7 @@ def service_update(id_or_name: str, updates: dict | None = None, force: bool = F
 
 
 @tool()
-def service_remove(id_or_name: str, host: str | None = None) -> bool:
+def service_remove(id_or_name: str, host: str | None = None) -> bool:  # noqa: DOC101,DOC103
     """
     Stop and remove a swarm service.
 
@@ -216,7 +229,7 @@ def service_remove(id_or_name: str, host: str | None = None) -> bool:
 
 
 @tool()
-def service_ps(id_or_name: str, filters: dict | None = None, host: str | None = None) -> list:
+def service_ps(id_or_name: str, filters: dict | None = None, host: str | None = None) -> list:  # noqa: DOC101,DOC103
     """
     List a swarm service's tasks (per-replica scheduling units), like `docker service ps`.
 
@@ -238,7 +251,7 @@ def service_ps(id_or_name: str, filters: dict | None = None, host: str | None = 
 
 
 @tool()
-def service_logs(
+def service_logs(  # noqa: DOC101,DOC103
     id_or_name: str,
     details: bool = False,
     stdout: bool = True,
@@ -289,7 +302,7 @@ def service_logs(
 
 
 @tool()
-def service_scale(id_or_name: str, replicas: int, host: str | None = None) -> bool:
+def service_scale(id_or_name: str, replicas: int, host: str | None = None) -> bool:  # noqa: DOC101,DOC103
     """
     Set the desired replica count for a Replicated-mode swarm service.
 
@@ -311,7 +324,7 @@ def service_scale(id_or_name: str, replicas: int, host: str | None = None) -> bo
 
 
 @tool()
-def service_rollback(id_or_name: str, host: str | None = None) -> dict:
+def service_rollback(id_or_name: str, host: str | None = None) -> dict:  # noqa: DOC101,DOC103
     """
     Roll a swarm service back to its previous spec (the docker `service rollback` equivalent).
 
@@ -400,7 +413,7 @@ def _service_wait_result(
 
 
 @tool()
-def service_wait(
+def service_wait(  # noqa: DOC101,DOC103
     id_or_name: str,
     until: Literal["running", "update-converged"] = "running",
     replicas: int | None = None,

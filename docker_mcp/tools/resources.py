@@ -238,7 +238,7 @@ def _require_containers_domain() -> None:
     """Refuse a container resource read when the `containers` domain is disabled via DOCKER_MCP_SERVER_DISABLE.
 
     Raises:
-        ToolRefusalError: the ``containers`` domain is disabled.
+        CapabilityError: the ``containers`` domain is disabled.
     """
     if is_domain_disabled(_CONTAINERS_DOMAIN):
         raise CapabilityError(
@@ -402,7 +402,7 @@ def _require_services_domain() -> None:
     """Refuse a service resource read when the `services` domain is disabled via DOCKER_MCP_SERVER_DISABLE.
 
     Raises:
-        ToolRefusalError: the ``services`` domain is disabled.
+        CapabilityError: the ``services`` domain is disabled.
     """
     if is_domain_disabled(_SERVICES_DOMAIN):
         raise CapabilityError(
@@ -534,7 +534,7 @@ def _require_nodes_domain() -> None:
     """Refuse a node resource read when the `nodes` domain is disabled via DOCKER_MCP_SERVER_DISABLE.
 
     Raises:
-        ToolRefusalError: the ``nodes`` domain is disabled.
+        CapabilityError: the ``nodes`` domain is disabled.
     """
     if is_domain_disabled(_NODES_DOMAIN):
         raise CapabilityError(
@@ -596,7 +596,7 @@ else:
 
 
 @resource("docker-docs://{section}", mime_type="text/html")
-def get_docs_section(section: str) -> str:
+def get_docs_section(section: str) -> str:  # noqa: DOC503
     """Fetch the documentation page for a section.
 
     Args:
@@ -606,8 +606,8 @@ def get_docs_section(section: str) -> str:
         str: The HTML (or rendered Markdown) content of the documentation page
 
     Raises:
-        ToolRefusalError: the section is unknown, its domain is disabled, or the
-            page exceeds the response cap.
+        CapabilityError: the section's domain is disabled.
+        ToolRefusalError: the page exceeds the response cap.
     """
     if not _section_enabled(section):
         raise CapabilityError(

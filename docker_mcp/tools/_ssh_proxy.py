@@ -90,7 +90,7 @@ class SshTarget:
     proxycommand: str | None
 
 
-def connect_socket_with_family_fallback(hostname: str, port: int, timeout: float | None) -> socket.socket:
+def connect_socket_with_family_fallback(hostname: str, port: int, timeout: float | None) -> socket.socket:  # noqa: DOC503
     """Connect a plain TCP socket to hostname:port, trying every resolved address family in turn.
 
     `paramiko.SSHClient.connect()` already resolves both address families (`getaddrinfo(..., AF_UNSPEC,
@@ -1107,7 +1107,7 @@ def _drain_exec_channel(
     return bytes(stdout), bytes(stderr), truncated
 
 
-def exec_remote(
+def exec_remote(  # noqa: DOC503
     ssh_client: paramiko.SSHClient,
     argv: Sequence[str],
     *,
@@ -1169,7 +1169,7 @@ def exec_remote(
     return RemoteExecResult(returncode=returncode, stdout=stdout, stderr=stderr, truncated=truncated)
 
 
-def run_remote_exec(
+def run_remote_exec(  # noqa: DOC502
     docker_host: str,
     argv: Sequence[str],
     *,
@@ -1300,7 +1300,7 @@ def _staged_member(info: tarfile.TarInfo) -> tarfile.TarInfo | None:
     return None
 
 
-def _tar_local_tree(root: Path) -> IO[bytes]:
+def _tar_local_tree(root: Path) -> IO[bytes]:  # noqa: DOC503
     """Pack a directory's contents into an uncompressed tar in a local temp file, rewound for upload.
 
     No `.dockerignore` handling: this is a plain directory copy for tools that read files from a
@@ -1488,7 +1488,7 @@ class RemoteStagingSession:
             )
         return result
 
-    def _upload_and_extract(self, archive: IO[bytes], *, destination: str, archive_path: str) -> None:
+    def _upload_and_extract(self, archive: IO[bytes], *, destination: str, archive_path: str) -> None:  # noqa: DOC502
         """Upload a tar over SFTP and unpack it into an already-created remote directory.
 
         The archive is written *beside* the destination rather than inside it, so nothing the caller
@@ -1516,7 +1516,7 @@ class RemoteStagingSession:
             what="remove the staged archive",
         )
 
-    def stage_tree(self, local_dir: Path | str) -> str:
+    def stage_tree(self, local_dir: Path | str) -> str:  # noqa: DOC503
         """Copy a whole local directory to the remote host and return its remote path.
 
         For tools that resolve relative paths against a working directory - Compose's `project_dir`,
@@ -1545,7 +1545,7 @@ class RemoteStagingSession:
             self._upload_and_extract(archive, destination=destination, archive_path=archive_path)
         return destination
 
-    def stage_file(self, local_file: Path | str) -> str:
+    def stage_file(self, local_file: Path | str) -> str:  # noqa: DOC503
         """Copy one local file to the remote host and return its remote path.
 
         For a lone path argument that is not a whole tree - a buildkitd config, an imagetools
@@ -1577,7 +1577,7 @@ class RemoteStagingSession:
         self._sftp.put(str(source), remote_path, confirm=True)
         return remote_path
 
-    def stage_build_context(self, context_dir: Path | str, *, dockerfile: str | None = None) -> str:
+    def stage_build_context(self, context_dir: Path | str, *, dockerfile: str | None = None) -> str:  # noqa: DOC503
         """Copy a build context to the remote host, honouring `.dockerignore`, and return its path.
 
         Uses docker-py's own tarring helpers, so what lands remotely is what an SDK-driven build would
@@ -1749,7 +1749,7 @@ class RemoteStagingSession:
         if extracted != local_dest:
             extracted.rename(local_dest)
 
-    def fetch_path(self, remote_path: str, local_dest: Path | str) -> None:
+    def fetch_path(self, remote_path: str, local_dest: Path | str) -> None:  # noqa: DOC503
         """Bring a path a remote command just produced (via `reserve_path`) back to a local destination.
 
         The inverse of `stage_file`/`stage_tree`: probes whether `remote_path` is a file or a
@@ -1764,8 +1764,8 @@ class RemoteStagingSession:
             local_dest: local path to create; refused if it already exists
 
         Raises:
-            ToolInputError: `local_dest` already exists
-            ToolInputError: `local_dest`'s parent is not a directory, or the fetched payload exceeds the staging limits
+            ToolInputError: `local_dest` already exists, its parent is not a directory, or
+                the fetched payload exceeds the staging limits
             RemoteFailureError: the remote path is missing, or packing/removing it remotely failed
         """
         local_dest = Path(local_dest).expanduser()
@@ -1785,7 +1785,7 @@ class RemoteStagingSession:
         else:
             self._fetch_file(remote_path, local_dest)
 
-    def exec(
+    def exec(  # noqa: DOC502
         self,
         argv: Sequence[str],
         *,
@@ -1951,7 +1951,7 @@ def _remove_stage_root(
 
 
 @contextlib.contextmanager
-def remote_staging_session(docker_host: str, *, timeout: float | None = None) -> Iterator[RemoteStagingSession]:
+def remote_staging_session(docker_host: str, *, timeout: float | None = None) -> Iterator[RemoteStagingSession]:  # noqa: DOC502
     """Open a staging session against an ssh:// host: one connection, one temp dir, guaranteed teardown.
 
     Use it for a command that reads local files (Compose files, a bake file, a build context); use

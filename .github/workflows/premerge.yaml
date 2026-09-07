@@ -206,6 +206,38 @@ jobs:
       - name: Run ruff format check
         run: uv run ruff format --check .
 
+  pydoclint-run:
+    # Checks that each docstring agrees with its signature. ruff's D rules cannot: D417 only
+    # checks the parameters of a section a docstring already has, so a function documenting none
+    # of them passes clean. Config and the two per-function exemptions live in
+    # [tool.pydoclint] in pyproject.toml; tests/test_docstrings.py asserts the exemptions.
+    runs-on: [ubuntu-latest]
+    name: Run pydoclint
+    # 4s observed max.
+    timeout-minutes: 5
+    steps:
+      - name: Check out source repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python environment
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+
+      - name: Install dependencies
+        run: uv sync --all-groups --locked
+
+      - name: Run pydoclint
+        # `docker_mcp` explicitly, not `.`: tests/ is exempt for the same reason ruff exempts it
+        # from D, and scripts/ holds a file vendored across four repositories that follows the
+        # opposite convention. Passing a path rather than an --exclude regex is deliberate - an
+        # unanchored `build` in such a regex silently matched tools/buildx.py, so a whole module
+        # went unchecked while the run reported clean.
+        run: uv run pydoclint docker_mcp
+
   pyright-run:
     # Type-checks with the pyright pin from the dev group ([tool.pyright] config in
     # pyproject.toml). Documented as a project convention; this job enforces it.

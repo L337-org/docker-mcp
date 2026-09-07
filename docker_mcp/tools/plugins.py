@@ -18,7 +18,12 @@ _MAX_PUSH_PROGRESS = 200
 
 
 @tool()
-def plugin_create(name: str, plugin_data_dir: str, gzip: bool = False, host: str | None = None) -> dict:
+def plugin_create(  # noqa: DOC101,DOC103
+    name: str,
+    plugin_data_dir: str,
+    gzip: bool = False,
+    host: str | None = None,
+) -> dict:
     """
     Build a plugin from a local plugin data directory and install it under `name`.
 
@@ -47,7 +52,7 @@ def plugin_create(name: str, plugin_data_dir: str, gzip: bool = False, host: str
 
 
 @tool()
-def plugin_inspect(name: str, host: str | None = None) -> dict:
+def plugin_inspect(name: str, host: str | None = None) -> dict:  # noqa: DOC101,DOC103
     """
     Return the full attrs for a single installed plugin.
 
@@ -65,7 +70,7 @@ def plugin_inspect(name: str, host: str | None = None) -> dict:
 
 
 @tool()
-def plugin_install(remote: str, local_name: str | None = None, host: str | None = None) -> dict:
+def plugin_install(remote: str, local_name: str | None = None, host: str | None = None) -> dict:  # noqa: DOC101,DOC103
     """
     Install a plugin from Docker Hub.
 
@@ -88,7 +93,7 @@ def plugin_install(remote: str, local_name: str | None = None, host: str | None 
 
 
 @tool()
-def plugin_privileges(remote: str, host: str | None = None) -> list:
+def plugin_privileges(remote: str, host: str | None = None) -> list:  # noqa: DOC101,DOC103
     """
     Ask the registry which host privileges a not-yet-installed plugin demands.
 
@@ -114,7 +119,7 @@ def plugin_privileges(remote: str, host: str | None = None) -> list:
 
 
 @tool()
-def plugin_push(name: str, timeout_seconds: float = 300.0, host: str | None = None) -> dict:
+def plugin_push(name: str, timeout_seconds: float = 300.0, host: str | None = None) -> dict:  # noqa: DOC101,DOC103
     """
     Push an installed plugin to its registry.
 
@@ -216,7 +221,7 @@ def plugin_push(name: str, timeout_seconds: float = 300.0, host: str | None = No
 
 
 @tool()
-def plugin_list(host: str | None = None) -> list:
+def plugin_list(host: str | None = None) -> list:  # noqa: DOC101,DOC103
     """
     List installed engine plugins with their full attrs.
 
@@ -232,7 +237,7 @@ def plugin_list(host: str | None = None) -> list:
 
 
 @tool()
-def plugin_configure(name: str, options: dict, host: str | None = None) -> bool:
+def plugin_configure(name: str, options: dict, host: str | None = None) -> bool:  # noqa: DOC101,DOC103
     """
     Set runtime configuration options on an installed plugin.
 
@@ -253,7 +258,7 @@ def plugin_configure(name: str, options: dict, host: str | None = None) -> bool:
 
 
 @tool()
-def plugin_disable(name: str, force: bool = False, host: str | None = None) -> bool:
+def plugin_disable(name: str, force: bool = False, host: str | None = None) -> bool:  # noqa: DOC101,DOC103
     """
     Disable a plugin so it stops intercepting Docker API calls; the plugin remains installed.
 
@@ -274,7 +279,7 @@ def plugin_disable(name: str, force: bool = False, host: str | None = None) -> b
 
 
 @tool()
-def plugin_enable(name: str, timeout_seconds: int = 0, host: str | None = None) -> bool:
+def plugin_enable(name: str, timeout_seconds: int = 0, host: str | None = None) -> bool:  # noqa: DOC101,DOC103
     """
     Activate an installed plugin so Docker routes relevant API calls through it.
 
@@ -296,7 +301,7 @@ def plugin_enable(name: str, timeout_seconds: int = 0, host: str | None = None) 
 
 
 @tool()
-def plugin_remove(name: str, force: bool = False, host: str | None = None) -> bool:
+def plugin_remove(name: str, force: bool = False, host: str | None = None) -> bool:  # noqa: DOC101,DOC103
     """
     Uninstall an engine plugin from the daemon.
 
@@ -316,7 +321,7 @@ def plugin_remove(name: str, force: bool = False, host: str | None = None) -> bo
 
 
 @tool()
-def plugin_upgrade(name: str, remote: str | None = None, host: str | None = None) -> bool:
+def plugin_upgrade(name: str, remote: str | None = None, host: str | None = None) -> bool:  # noqa: DOC101,DOC103
     """
     Upgrade an installed plugin to a newer version.
 

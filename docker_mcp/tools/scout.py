@@ -121,7 +121,7 @@ def _maybe_parse_json(text: str, format: str) -> dict | list | str | None:
 
 
 @tool()
-def scout_cves(
+def scout_cves(  # noqa: DOC101,DOC103
     image: str,
     only_fixed: bool = False,
     only_severity: list[Severity] | None = None,
@@ -168,7 +168,7 @@ def scout_cves(
 
 
 @tool()
-def scout_quickview(image: str, platform: str | None = None, host: str | None = None) -> dict:
+def scout_quickview(image: str, platform: str | None = None, host: str | None = None) -> dict:  # noqa: DOC101,DOC103
     """
     Render a compact summary of an image's CVE posture.
 
@@ -196,7 +196,7 @@ def scout_quickview(image: str, platform: str | None = None, host: str | None = 
 
 
 @tool()
-def scout_recommendations(
+def scout_recommendations(  # noqa: DOC101,DOC103
     image: str,
     only_refresh: bool = False,
     only_update: bool = False,
@@ -241,7 +241,7 @@ def scout_recommendations(
 
 
 @tool()
-def scout_compare(
+def scout_compare(  # noqa: DOC101,DOC103
     image: str,
     to: str | None = None,
     to_env: str | None = None,
@@ -302,7 +302,7 @@ def scout_compare(
 
 
 @tool()
-def scout_sbom(
+def scout_sbom(  # noqa: DOC101,DOC103
     image: str,
     format: Literal["list", "json", "spdx", "cyclonedx"] = "spdx",
     platform: str | None = None,

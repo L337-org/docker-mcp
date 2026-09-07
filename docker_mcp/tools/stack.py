@@ -117,7 +117,7 @@ def _parse_stack_list(stdout: str, *, truncated: bool, what: str) -> list[dict]:
 
 
 @tool()
-def stack_deploy(
+def stack_deploy(  # noqa: DOC101,DOC103
     name: str,
     compose_files: list[str],
     with_registry_auth: bool = False,
@@ -175,7 +175,7 @@ def stack_deploy(
 
 
 @tool()
-def stack_list(host: str | None = None) -> list:
+def stack_list(host: str | None = None) -> list:  # noqa: DOC101,DOC103
     """
     List the stacks deployed to the swarm, parsed from `--format '{{json .}}'`.
 
@@ -192,7 +192,12 @@ def stack_list(host: str | None = None) -> list:
 
 
 @tool()
-def stack_ps(name: str, no_trunc: bool = False, filters: dict | None = None, host: str | None = None) -> list:
+def stack_ps(  # noqa: DOC101,DOC103
+    name: str,
+    no_trunc: bool = False,
+    filters: dict | None = None,
+    host: str | None = None,
+) -> list:
     """
     List the tasks of a stack, parsed from `--format '{{json .}}'`.
 
@@ -219,7 +224,7 @@ def stack_ps(name: str, no_trunc: bool = False, filters: dict | None = None, hos
 
 
 @tool()
-def stack_services(name: str, filters: dict | None = None, host: str | None = None) -> list:
+def stack_services(name: str, filters: dict | None = None, host: str | None = None) -> list:  # noqa: DOC101,DOC103
     """
     List the services of a stack, parsed from `--format '{{json .}}'`.
 
@@ -243,7 +248,7 @@ def stack_services(name: str, filters: dict | None = None, host: str | None = No
 
 
 @tool()
-def stack_remove(
+def stack_remove(  # noqa: DOC101,DOC103
     names: list[str], detach: bool = True, timeout_seconds: float = _TIMEOUT_RM, host: str | None = None
 ) -> dict:
     """

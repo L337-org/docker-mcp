@@ -9,7 +9,7 @@ from docker_mcp.tools.system import _get_client
 
 
 @tool()
-def swarm_init(
+def swarm_init(  # noqa: DOC101,DOC103
     advertise_addr: str | None = None,
     listen_addr: str = "0.0.0.0:2377",
     force_new_cluster: bool = False,
@@ -70,7 +70,7 @@ def swarm_init(
 
 
 @tool()
-def swarm_join(
+def swarm_join(  # noqa: DOC101,DOC103
     remote_addrs: list,
     join_token: str,
     listen_addr: str = "0.0.0.0:2377",
@@ -108,7 +108,7 @@ def swarm_join(
 
 
 @tool()
-def swarm_leave(force: bool = False, host: str | None = None) -> bool:
+def swarm_leave(force: bool = False, host: str | None = None) -> bool:  # noqa: DOC101,DOC103
     """
     Leave the current swarm.
 
@@ -126,7 +126,7 @@ def swarm_leave(force: bool = False, host: str | None = None) -> bool:
 
 
 @tool()
-def swarm_update(
+def swarm_update(  # noqa: DOC101,DOC103
     rotate_worker_token: bool = False,
     rotate_manager_token: bool = False,
     rotate_manager_unlock_key: bool = False,
@@ -202,7 +202,7 @@ def swarm_update(
 
 
 @tool()
-def swarm_inspect(host: str | None = None) -> dict:
+def swarm_inspect(host: str | None = None) -> dict:  # noqa: DOC101,DOC103
     """
     Inspect the swarm this daemon belongs to (id, spec, join-token config, CA info).
 
@@ -218,7 +218,7 @@ def swarm_inspect(host: str | None = None) -> dict:
 
 
 @tool()
-def swarm_unlock(key: str, host: str | None = None) -> bool:
+def swarm_unlock(key: str, host: str | None = None) -> bool:  # noqa: DOC101,DOC103
     """
     Unlock a manager node that is locked after restart due to autolock being enabled.
 
@@ -240,7 +240,7 @@ def swarm_unlock(key: str, host: str | None = None) -> bool:
 
 
 @tool()
-def swarm_unlock_key(host: str | None = None) -> dict:
+def swarm_unlock_key(host: str | None = None) -> dict:  # noqa: DOC101,DOC103
     """
     Return the swarm's current unlock key.
 
@@ -270,7 +270,7 @@ def _read_join_tokens(swarm: object) -> dict:
 
 
 @tool()
-def swarm_join_tokens(host: str | None = None) -> dict:
+def swarm_join_tokens(host: str | None = None) -> dict:  # noqa: DOC101,DOC103
     """
     Return the swarm's worker and manager join tokens.
 
@@ -299,7 +299,7 @@ def swarm_join_tokens(host: str | None = None) -> dict:
 
 
 @tool()
-def swarm_task_list(filters: dict | None = None, host: str | None = None) -> list:
+def swarm_task_list(filters: dict | None = None, host: str | None = None) -> list:  # noqa: DOC101,DOC103
     """
     List tasks across the whole swarm, like `docker service ps` with no service to scope it.
 
@@ -325,7 +325,7 @@ def swarm_task_list(filters: dict | None = None, host: str | None = None) -> lis
 
 
 @tool()
-def swarm_task_inspect(id_or_name: str, host: str | None = None) -> dict:
+def swarm_task_inspect(id_or_name: str, host: str | None = None) -> dict:  # noqa: DOC101,DOC103
     """
     Inspect a single swarm task, like `docker inspect --type task`.
 

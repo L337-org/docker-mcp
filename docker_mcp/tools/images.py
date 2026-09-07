@@ -21,7 +21,7 @@ from docker_mcp.tools.system import _get_client
 
 
 @tool()
-def image_build(
+def image_build(  # noqa: DOC101,DOC103
     path: str | None = None,
     tag: str | None = None,
     quiet: bool = False,
@@ -122,7 +122,7 @@ def image_build(
 
 
 @tool()
-def image_inspect(id_or_name: str, host: str | None = None) -> dict:
+def image_inspect(id_or_name: str, host: str | None = None) -> dict:  # noqa: DOC101,DOC103
     """
     Return the full inspect detail for a single local image.
 
@@ -143,7 +143,11 @@ def image_inspect(id_or_name: str, host: str | None = None) -> dict:
 
 
 @tool()
-def image_registry_data(repository: str, auth_config: dict | None = None, host: str | None = None) -> dict:
+def image_registry_data(  # noqa: DOC101,DOC103
+    repository: str,
+    auth_config: dict | None = None,
+    host: str | None = None,
+) -> dict:
     """
     Get registry data for an image without pulling it, via the daemon's distribution endpoint.
 
@@ -165,7 +169,7 @@ def image_registry_data(repository: str, auth_config: dict | None = None, host: 
 
 
 @tool()
-def image_list(
+def image_list(  # noqa: DOC101,DOC103
     repository: str | None = None, all: bool = False, filters: dict | None = None, host: str | None = None
 ) -> list:
     """
@@ -188,7 +192,7 @@ def image_list(
 
 
 @tool()
-def image_pull(
+def image_pull(  # noqa: DOC101,DOC103
     repository: str,
     tag: str | None = None,
     all_tags: bool = False,
@@ -218,7 +222,7 @@ def image_pull(
 
 
 @tool()
-def image_push(
+def image_push(  # noqa: DOC101,DOC103
     repository: str, tag: str | None = None, auth_config: dict | None = None, host: str | None = None
 ) -> str:
     """
@@ -247,7 +251,12 @@ def image_push(
 
 
 @tool()
-def image_remove(id_or_name: str, force: bool = False, noprune: bool = False, host: str | None = None) -> bool:
+def image_remove(  # noqa: DOC101,DOC103
+    id_or_name: str,
+    force: bool = False,
+    noprune: bool = False,
+    host: str | None = None,
+) -> bool:
     """
     Remove a local image by name or id.
 
@@ -270,7 +279,7 @@ def image_remove(id_or_name: str, force: bool = False, noprune: bool = False, ho
 
 
 @tool()
-def image_search(term: str, limit: int | None = None, host: str | None = None) -> list:
+def image_search(term: str, limit: int | None = None, host: str | None = None) -> list:  # noqa: DOC101,DOC103
     """
     Search Docker Hub for public images matching a term.
 
@@ -289,7 +298,7 @@ def image_search(term: str, limit: int | None = None, host: str | None = None) -
 
 
 @tool()
-def image_prune(filters: dict | None = None, host: str | None = None) -> dict:
+def image_prune(filters: dict | None = None, host: str | None = None) -> dict:  # noqa: DOC101,DOC103
     """
     Remove unused local images to reclaim disk space.
 
@@ -309,7 +318,7 @@ def image_prune(filters: dict | None = None, host: str | None = None) -> dict:
 
 
 @tool()
-def image_prune_builds(
+def image_prune_builds(  # noqa: DOC101,DOC103
     filters: dict | None = None,
     keep_storage: int | None = None,
     all: bool | None = None,
@@ -344,7 +353,11 @@ def image_prune_builds(
 
 
 @tool()
-def image_load(data: bytes | None = None, from_file: str | None = None, host: str | None = None) -> list:
+def image_load(  # noqa: DOC101,DOC103
+    data: bytes | None = None,
+    from_file: str | None = None,
+    host: str | None = None,
+) -> list:
     """
     Load an image from a tarball produced by `image_save`, from in-band bytes or a file on the server host.
 
@@ -373,7 +386,7 @@ def image_load(data: bytes | None = None, from_file: str | None = None, host: st
 
 
 @tool()
-def image_import(
+def image_import(  # noqa: DOC101,DOC103
     repository: str | None = None,
     tag: str | None = None,
     from_file: str | None = None,
@@ -479,7 +492,7 @@ def image_import(
 
 
 @tool()
-def image_save(
+def image_save(  # noqa: DOC101,DOC103
     id_or_name: str,
     dest_path: str | None = None,
     named: bool = False,
@@ -516,7 +529,7 @@ def image_save(
 
 
 @tool()
-def image_tag(
+def image_tag(  # noqa: DOC101,DOC103
     id_or_name: str, repository: str, tag: str | None = None, force: bool = False, host: str | None = None
 ) -> bool:
     """
@@ -540,7 +553,7 @@ def image_tag(
 
 
 @tool()
-def image_history(id_or_name: str, host: str | None = None) -> list:
+def image_history(id_or_name: str, host: str | None = None) -> list:  # noqa: DOC101,DOC103
     """
     Return the layer history of an image.
 

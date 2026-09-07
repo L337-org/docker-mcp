@@ -125,7 +125,7 @@ def _run_compose(subcommand_args: list[str], *, cwd: str | None, timeout: float,
 
 
 @tool()
-def compose_up(
+def compose_up(  # noqa: DOC101,DOC103
     project_dir: str | None = None,
     files: list[str] | None = None,
     project_name: str | None = None,
@@ -175,7 +175,7 @@ def compose_up(
 
 
 @tool()
-def compose_down(
+def compose_down(  # noqa: DOC101,DOC103
     project_dir: str | None = None,
     files: list[str] | None = None,
     project_name: str | None = None,
@@ -213,7 +213,7 @@ def compose_down(
 
 
 @tool()
-def compose_ps(
+def compose_ps(  # noqa: DOC101,DOC103
     project_dir: str | None = None,
     files: list[str] | None = None,
     project_name: str | None = None,
@@ -261,7 +261,7 @@ def compose_ps(
 
 
 @tool()
-def compose_logs(
+def compose_logs(  # noqa: DOC101,DOC103
     project_dir: str | None = None,
     files: list[str] | None = None,
     project_name: str | None = None,
@@ -306,7 +306,7 @@ def compose_logs(
 
 
 @tool()
-def compose_config(
+def compose_config(  # noqa: DOC101,DOC103
     project_dir: str | None = None,
     files: list[str] | None = None,
     project_name: str | None = None,
@@ -352,7 +352,7 @@ def compose_config(
 
 
 @tool()
-def compose_build(
+def compose_build(  # noqa: DOC101,DOC103
     project_dir: str | None = None,
     files: list[str] | None = None,
     project_name: str | None = None,
@@ -392,7 +392,7 @@ def compose_build(
 
 
 @tool()
-def compose_pull(
+def compose_pull(  # noqa: DOC101,DOC103
     project_dir: str | None = None,
     files: list[str] | None = None,
     project_name: str | None = None,
@@ -430,7 +430,7 @@ def compose_pull(
 
 
 @tool()
-def compose_restart(
+def compose_restart(  # noqa: DOC101,DOC103
     project_dir: str | None = None,
     files: list[str] | None = None,
     project_name: str | None = None,
@@ -467,7 +467,7 @@ def compose_restart(
 
 
 @tool()
-def compose_stop(
+def compose_stop(  # noqa: DOC101,DOC103
     project_dir: str | None = None,
     files: list[str] | None = None,
     project_name: str | None = None,
@@ -501,7 +501,7 @@ def compose_stop(
 
 
 @tool()
-def compose_start(
+def compose_start(  # noqa: DOC101,DOC103
     project_dir: str | None = None,
     files: list[str] | None = None,
     project_name: str | None = None,
@@ -532,7 +532,7 @@ def compose_start(
 
 
 @tool()
-def compose_run(
+def compose_run(  # noqa: DOC101,DOC103
     service: str,
     command: list[str] | None = None,
     project_dir: str | None = None,
@@ -595,7 +595,7 @@ def compose_run(
 
 
 @tool()
-def compose_exec(
+def compose_exec(  # noqa: DOC101,DOC103
     service: str,
     command: list[str],
     project_dir: str | None = None,
@@ -644,7 +644,7 @@ def compose_exec(
 
 
 @tool()
-def compose_images(
+def compose_images(  # noqa: DOC101,DOC103
     project_dir: str | None = None,
     files: list[str] | None = None,
     project_name: str | None = None,
@@ -682,7 +682,7 @@ def compose_images(
 
 
 @tool()
-def compose_port(
+def compose_port(  # noqa: DOC101,DOC103
     service: str,
     private_port: int,
     # Not an enum: compose performs no validation on this flag at all (tcp/udp/sctp and a bogus
@@ -742,7 +742,7 @@ def compose_port(
 
 
 @tool()
-def compose_wait(
+def compose_wait(  # noqa: DOC101,DOC103
     services: list[str],
     project_dir: str | None = None,
     files: list[str] | None = None,
@@ -779,7 +779,7 @@ def compose_wait(
 
 
 @tool()
-def compose_top(
+def compose_top(  # noqa: DOC101,DOC103
     services: list[str] | None = None,
     project_dir: str | None = None,
     files: list[str] | None = None,
@@ -934,7 +934,7 @@ def _remote_compose_cp(
 
 
 @tool()
-def compose_cp(
+def compose_cp(  # noqa: DOC101,DOC103
     source: str,
     dest: str,
     index: int = 1,
@@ -1001,7 +1001,7 @@ def compose_cp(
 
 
 @tool()
-def compose_kill(
+def compose_kill(  # noqa: DOC101,DOC103
     services: list[str] | None = None,
     signal: str = "SIGKILL",
     remove_orphans: bool = False,
@@ -1039,7 +1039,7 @@ def compose_kill(
 
 
 @tool()
-def compose_pause(
+def compose_pause(  # noqa: DOC101,DOC103
     services: list[str] | None = None,
     project_dir: str | None = None,
     files: list[str] | None = None,
@@ -1070,7 +1070,7 @@ def compose_pause(
 
 
 @tool()
-def compose_unpause(
+def compose_unpause(  # noqa: DOC101,DOC103
     services: list[str] | None = None,
     project_dir: str | None = None,
     files: list[str] | None = None,
@@ -1100,7 +1100,7 @@ def compose_unpause(
 
 
 @tool()
-def compose_list(all: bool = False, host: str | None = None) -> list:
+def compose_list(all: bool = False, host: str | None = None) -> list:  # noqa: DOC101,DOC103
     """
     List compose projects known to the daemon (across all directories).
 

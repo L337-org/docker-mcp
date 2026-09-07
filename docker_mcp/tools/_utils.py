@@ -322,7 +322,7 @@ def drop_none(**kwargs: Any) -> dict[str, Any]:
     return {k: v for k, v in kwargs.items() if v is not None}
 
 
-def stream_to_file(chunks: Iterable[bytes], dest_path: str, *, overwrite: bool = False) -> tuple[Path, int]:
+def stream_to_file(chunks: Iterable[bytes], dest_path: str, *, overwrite: bool = False) -> tuple[Path, int]:  # noqa: DOC503
     """Stream byte chunks to a host file, returning the resolved path and the number of bytes written.
 
     Used by the `*_to_file` tool variants so a large daemon-side payload (image save, container
@@ -347,8 +347,8 @@ def stream_to_file(chunks: Iterable[bytes], dest_path: str, *, overwrite: bool =
         tuple: ``(resolved path, bytes written)``
 
     Raises:
-        ToolInputError: the destination is unusable - not on a host bind mount, or
-            already present without ``overwrite``.
+        ToolInputError: the destination already exists without ``overwrite``, its parent is
+            not a directory, or it is not on a host bind mount.
     """
     assert_host_writable(dest_path)
     path = Path(dest_path).expanduser()

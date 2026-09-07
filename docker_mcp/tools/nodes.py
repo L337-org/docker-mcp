@@ -12,7 +12,7 @@ from docker_mcp.tools.system import _get_client
 
 
 @tool()
-def node_inspect(id_or_name: str, host: str | None = None) -> dict:
+def node_inspect(id_or_name: str, host: str | None = None) -> dict:  # noqa: DOC101,DOC103
     """
     Get a swarm node's full inspect payload by id or name.
 
@@ -30,7 +30,7 @@ def node_inspect(id_or_name: str, host: str | None = None) -> dict:
 
 
 @tool()
-def node_list(filters: dict | None = None, host: str | None = None) -> list:
+def node_list(filters: dict | None = None, host: str | None = None) -> list:  # noqa: DOC101,DOC103
     """
     List swarm nodes.
 
@@ -47,7 +47,7 @@ def node_list(filters: dict | None = None, host: str | None = None) -> list:
 
 
 @tool()
-def node_update(id_or_name: str, spec: dict, host: str | None = None) -> bool:
+def node_update(id_or_name: str, spec: dict, host: str | None = None) -> bool:  # noqa: DOC101,DOC103
     """
     Replace a node's spec (availability, name, role, labels).
 
@@ -68,7 +68,7 @@ def node_update(id_or_name: str, spec: dict, host: str | None = None) -> bool:
 
 
 @tool()
-def node_remove(id_or_name: str, force: bool = False, host: str | None = None) -> bool:
+def node_remove(id_or_name: str, force: bool = False, host: str | None = None) -> bool:  # noqa: DOC101,DOC103
     """
     Remove a node from the swarm.
 
@@ -122,7 +122,7 @@ def _node_wait_result(
 
 
 @tool()
-def node_wait(
+def node_wait(  # noqa: DOC101,DOC103
     id_or_name: str,
     until: Literal["ready", "down", "disconnected", "unknown"] = "ready",
     timeout_seconds: float = 300.0,

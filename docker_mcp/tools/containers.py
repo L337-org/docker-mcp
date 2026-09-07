@@ -42,7 +42,7 @@ class RestartPolicy(TypedDict, total=False):
 
 
 @tool()
-def container_run(
+def container_run(  # noqa: DOC101,DOC103
     image: str,
     command: str | list | None = None,
     name: str | None = None,
@@ -149,7 +149,7 @@ def container_run(
 
 
 @tool()
-def container_create(
+def container_create(  # noqa: DOC101,DOC103
     image: str, command: str | list | None = None, extra_kwargs: dict | None = None, host: str | None = None
 ) -> dict:
     """
@@ -181,7 +181,7 @@ def container_create(
 
 
 @tool()
-def container_inspect(id_or_name: str, host: str | None = None) -> dict:
+def container_inspect(id_or_name: str, host: str | None = None) -> dict:  # noqa: DOC101,DOC103
     """
     Return the full inspect detail for a single container.
 
@@ -200,7 +200,7 @@ def container_inspect(id_or_name: str, host: str | None = None) -> dict:
 
 
 @tool()
-def container_list(
+def container_list(  # noqa: DOC101,DOC103
     all: bool = False,
     since: str | None = None,
     before: str | None = None,
@@ -245,7 +245,7 @@ def container_list(
 
 
 @tool()
-def container_prune(filters: dict | None = None, host: str | None = None) -> dict:
+def container_prune(filters: dict | None = None, host: str | None = None) -> dict:  # noqa: DOC101,DOC103
     """
     Remove all stopped containers to reclaim disk space.
 
@@ -265,7 +265,7 @@ def container_prune(filters: dict | None = None, host: str | None = None) -> dic
 
 
 @tool()
-def container_start(id_or_name: str, host: str | None = None) -> dict:
+def container_start(id_or_name: str, host: str | None = None) -> dict:  # noqa: DOC101,DOC103
     """
     Start an existing stopped container.
 
@@ -287,7 +287,11 @@ def container_start(id_or_name: str, host: str | None = None) -> dict:
 
 
 @tool()
-def container_stop(id_or_name: str, stop_timeout_seconds: int = 10, host: str | None = None) -> dict:
+def container_stop(  # noqa: DOC101,DOC103
+    id_or_name: str,
+    stop_timeout_seconds: int = 10,
+    host: str | None = None,
+) -> dict:
     """
     Gracefully stop a running container (its configured stop signal, then SIGKILL after a timeout).
 
@@ -312,7 +316,11 @@ def container_stop(id_or_name: str, stop_timeout_seconds: int = 10, host: str | 
 
 
 @tool()
-def container_restart(id_or_name: str, stop_timeout_seconds: int = 10, host: str | None = None) -> dict:
+def container_restart(  # noqa: DOC101,DOC103
+    id_or_name: str,
+    stop_timeout_seconds: int = 10,
+    host: str | None = None,
+) -> dict:
     """
     Restart a container: stop then start again in one call.
 
@@ -336,7 +344,7 @@ def container_restart(id_or_name: str, stop_timeout_seconds: int = 10, host: str
 
 
 @tool()
-def container_kill(id_or_name: str, signal: str | None = None, host: str | None = None) -> dict:
+def container_kill(id_or_name: str, signal: str | None = None, host: str | None = None) -> dict:  # noqa: DOC101,DOC103
     """
     Send a signal to a running container (default SIGKILL - immediate, no graceful shutdown).
 
@@ -361,7 +369,7 @@ def container_kill(id_or_name: str, signal: str | None = None, host: str | None 
 
 
 @tool()
-def container_pause(id_or_name: str, host: str | None = None) -> dict:
+def container_pause(id_or_name: str, host: str | None = None) -> dict:  # noqa: DOC101,DOC103
     """
     Suspend all processes in a container using the kernel freezer cgroup.
 
@@ -384,7 +392,7 @@ def container_pause(id_or_name: str, host: str | None = None) -> dict:
 
 
 @tool()
-def container_unpause(id_or_name: str, host: str | None = None) -> dict:
+def container_unpause(id_or_name: str, host: str | None = None) -> dict:  # noqa: DOC101,DOC103
     """
     Resume all processes in a paused container (the reverse of `container_pause`).
 
@@ -404,7 +412,7 @@ def container_unpause(id_or_name: str, host: str | None = None) -> dict:
 
 
 @tool()
-def container_remove(
+def container_remove(  # noqa: DOC101,DOC103
     id_or_name: str, volumes: bool = False, link: bool = False, force: bool = False, host: str | None = None
 ) -> bool:
     """
@@ -461,7 +469,7 @@ def _read_bounded_container_logs(container: Any, what: str, **log_kwargs: Any) -
 
 
 @tool()
-def container_logs(
+def container_logs(  # noqa: DOC101,DOC103
     id_or_name: str,
     stdout: bool = True,
     stderr: bool = True,
@@ -547,7 +555,7 @@ def container_logs(
 
 
 @tool()
-def container_stats(id_or_name: str, host: str | None = None) -> dict:
+def container_stats(id_or_name: str, host: str | None = None) -> dict:  # noqa: DOC101,DOC103
     """
     Get one point-in-time resource-usage snapshot for a container (non-streaming).
 
@@ -688,7 +696,7 @@ def _read_stats_summary(id_or_name: str, host: str | None = None) -> dict:
 
 
 @tool()
-def container_top(id_or_name: str, ps_args: str | None = None, host: str | None = None) -> dict:
+def container_top(id_or_name: str, ps_args: str | None = None, host: str | None = None) -> dict:  # noqa: DOC101,DOC103
     """
     List the processes running inside a container (the daemon runs `ps` on the host).
 
@@ -708,7 +716,7 @@ def container_top(id_or_name: str, ps_args: str | None = None, host: str | None 
 
 
 @tool()
-def container_exec(
+def container_exec(  # noqa: DOC101,DOC103
     id_or_name: str,
     cmd: str | list,
     stdout: bool = True,
@@ -770,7 +778,7 @@ def container_exec(
 
 
 @tool()
-def container_commit(
+def container_commit(  # noqa: DOC101,DOC103
     id_or_name: str,
     repository: str | None = None,
     tag: str | None = None,
@@ -818,7 +826,7 @@ def container_commit(
 
 
 @tool()
-def container_diff(id_or_name: str, host: str | None = None) -> list:
+def container_diff(id_or_name: str, host: str | None = None) -> list:  # noqa: DOC101,DOC103
     """
     List filesystem changes a container has made relative to its image.
 
@@ -837,7 +845,7 @@ def container_diff(id_or_name: str, host: str | None = None) -> list:
 
 
 @tool()
-def container_rename(id_or_name: str, name: str, host: str | None = None) -> dict:
+def container_rename(id_or_name: str, name: str, host: str | None = None) -> dict:  # noqa: DOC101,DOC103
     """
     Rename a container in place; its id, state, and configuration are unchanged.
 
@@ -859,7 +867,7 @@ def container_rename(id_or_name: str, name: str, host: str | None = None) -> dic
 
 
 @tool()
-def container_update(id_or_name: str, updates: dict, host: str | None = None) -> dict:
+def container_update(id_or_name: str, updates: dict, host: str | None = None) -> dict:  # noqa: DOC101,DOC103
     """
     Update resource limits on a container without recreating it.
 
@@ -934,7 +942,7 @@ _LOG_MATCH_TAIL_LINES = 1000
 
 
 @tool()
-def container_wait(
+def container_wait(  # noqa: DOC101,DOC103
     id_or_name: str,
     until: Literal["not-running", "next-exit", "removed", "healthy", "log-match"] = "not-running",
     timeout_seconds: float = 600.0,
@@ -1057,7 +1065,7 @@ def container_wait(
 
 
 @tool()
-def container_export(
+def container_export(  # noqa: DOC101,DOC103
     id_or_name: str,
     dest_path: str | None = None,
     overwrite: bool = False,
@@ -1092,7 +1100,7 @@ def container_export(
 
 
 @tool()
-def container_archive_get(
+def container_archive_get(  # noqa: DOC101,DOC103
     id_or_name: str, path: str, max_bytes: int = MAX_PAYLOAD_BYTES, host: str | None = None
 ) -> dict:
     """
@@ -1115,7 +1123,7 @@ def container_archive_get(
 
 
 @tool()
-def container_archive_get_to_file(
+def container_archive_get_to_file(  # noqa: DOC101,DOC103
     id_or_name: str, path: str, dest_path: str, overwrite: bool = False, host: str | None = None
 ) -> dict:
     """
@@ -1142,7 +1150,7 @@ def container_archive_get_to_file(
 
 
 @tool()
-def container_archive_put(
+def container_archive_put(  # noqa: DOC101,DOC103
     id_or_name: str,
     path: str,
     data: bytes | None = None,

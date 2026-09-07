@@ -9,7 +9,7 @@ from docker_mcp.tools.system import _get_client
 
 
 @tool()
-def volume_create(
+def volume_create(  # noqa: DOC101,DOC103
     name: str | None = None,
     driver: str | None = None,
     driver_opts: dict | None = None,
@@ -46,7 +46,7 @@ def volume_create(
 
 
 @tool()
-def volume_inspect(name: str, host: str | None = None) -> dict:
+def volume_inspect(name: str, host: str | None = None) -> dict:  # noqa: DOC101,DOC103
     """
     Get a volume's full inspect payload by name.
 
@@ -64,7 +64,11 @@ def volume_inspect(name: str, host: str | None = None) -> dict:
 
 
 @tool()
-def volume_list(filters: dict | None = None, managed_only: bool = False, host: str | None = None) -> list:
+def volume_list(  # noqa: DOC101,DOC103
+    filters: dict | None = None,
+    managed_only: bool = False,
+    host: str | None = None,
+) -> list:
     """
     List volumes.
 
@@ -86,7 +90,7 @@ def volume_list(filters: dict | None = None, managed_only: bool = False, host: s
 
 
 @tool()
-def volume_prune(filters: dict | None = None, host: str | None = None) -> dict:
+def volume_prune(filters: dict | None = None, host: str | None = None) -> dict:  # noqa: DOC101,DOC103
     """
     Remove volumes not referenced by any container, running or stopped.
 
@@ -106,7 +110,7 @@ def volume_prune(filters: dict | None = None, host: str | None = None) -> dict:
 
 
 @tool()
-def volume_remove(name: str, force: bool = False, host: str | None = None) -> bool:
+def volume_remove(name: str, force: bool = False, host: str | None = None) -> bool:  # noqa: DOC101,DOC103
     """
     Remove a single volume by name.
 

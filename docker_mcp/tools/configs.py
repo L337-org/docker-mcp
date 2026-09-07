@@ -9,7 +9,7 @@ from docker_mcp.tools.system import _get_client
 
 
 @tool()
-def config_create(
+def config_create(  # noqa: DOC101,DOC103
     name: str, data: bytes, labels: dict | None = None, templating: dict | None = None, host: str | None = None
 ) -> dict:
     """
@@ -40,7 +40,7 @@ def config_create(
 
 
 @tool()
-def config_inspect(id_or_name: str, host: str | None = None) -> dict:
+def config_inspect(id_or_name: str, host: str | None = None) -> dict:  # noqa: DOC101,DOC103
     """
     Get a swarm config's full inspect payload by id or name.
 
@@ -58,7 +58,7 @@ def config_inspect(id_or_name: str, host: str | None = None) -> dict:
 
 
 @tool()
-def config_list(filters: dict | None = None, host: str | None = None) -> list:
+def config_list(filters: dict | None = None, host: str | None = None) -> list:  # noqa: DOC101,DOC103
     """
     List swarm configs; requires a swarm manager.
 
@@ -76,7 +76,7 @@ def config_list(filters: dict | None = None, host: str | None = None) -> list:
 
 
 @tool()
-def config_remove(id_or_name: str, host: str | None = None) -> bool:
+def config_remove(id_or_name: str, host: str | None = None) -> bool:  # noqa: DOC101,DOC103
     """
     Remove a swarm config.
 

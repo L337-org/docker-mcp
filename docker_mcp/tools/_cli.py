@@ -364,7 +364,7 @@ def should_remote_exec(host: str | None, *, plugin: str | None = None) -> bool:
     return plugin is not None and not has_plugin(plugin)
 
 
-def remote_exec_cli(
+def remote_exec_cli(  # noqa: DOC502
     host: str | None,
     args: list[str],
     *,
@@ -410,7 +410,7 @@ def remote_exec_cli(
     )
 
 
-def remote_stage_and_exec(
+def remote_stage_and_exec(  # noqa: DOC503
     host: str | None,
     args: list[str],
     *,
@@ -529,7 +529,7 @@ def remote_stage_and_exec(
 
 
 @contextlib.contextmanager
-def remote_cli_session(host: str | None, *, timeout: float) -> Iterator[RemoteStagingSession]:
+def remote_cli_session(host: str | None, *, timeout: float) -> Iterator[RemoteStagingSession]:  # noqa: DOC502
     """Open a staging session for a tool whose inputs need bespoke handling, and run it yourself.
 
     `remote_stage_and_exec` covers the common shape: a working directory plus whole-token path
@@ -557,7 +557,7 @@ def remote_cli_session(host: str | None, *, timeout: float) -> Iterator[RemoteSt
         yield session
 
 
-def run_in_session(
+def run_in_session(  # noqa: DOC502
     session: RemoteStagingSession, args: list[str], *, timeout: float, cwd: str | None = None
 ) -> CliResult:
     """Run `docker <args...>` in an open staging session, in `run_docker`'s result shape.

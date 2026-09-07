@@ -306,7 +306,7 @@ def _stage_composite_paths(session: RemoteStagingSession, args: list[str], flag:
 
 
 @tool()
-def buildx_build(
+def buildx_build(  # noqa: DOC101,DOC103
     context: str,
     tags: list[str] | None = None,
     platforms: list[str] | None = None,
@@ -383,6 +383,10 @@ def buildx_build(
 
     Returns:
         dict: {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
+
+    Raises:
+        ToolInputError: `context` is '-' (a tarball on stdin), which this tool does not forward,
+            or `push` and `load` were both given - `--load` only works for a single-platform build.
     """
     if context == "-":
         raise ToolInputError(
@@ -462,7 +466,7 @@ def buildx_build(
     return run_docker(["buildx", *args], timeout=timeout_seconds, host=host).to_dict()
 
 
-def _run_buildx_build_remotely(
+def _run_buildx_build_remotely(  # noqa: DOC502
     args: list[str],
     *,
     context: str,
@@ -543,7 +547,7 @@ def _run_buildx_build_remotely(
 
 
 @tool()
-def buildx_bake(
+def buildx_bake(  # noqa: DOC101,DOC103
     targets: list[str] | None = None,
     files: list[str] | None = None,
     set_overrides: list[str] | None = None,
@@ -611,7 +615,7 @@ def buildx_bake(
 
 
 @tool()
-def buildx_imagetools_inspect(
+def buildx_imagetools_inspect(  # noqa: DOC101,DOC103
     image: str,
     raw: bool = False,
     format: str | None = None,
@@ -637,6 +641,10 @@ def buildx_imagetools_inspect(
     Returns:
         dict: {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}. When `raw=True` or `format="{{json
             .}}"`, `stdout` is a JSON document the caller can parse.
+
+    Raises:
+        ToolInputError: `raw` and `format` were both given - `raw` always emits the unmodified
+            manifest JSON, so a format would be ignored rather than applied.
     """
     if raw and format is not None:
         raise ToolInputError(
@@ -656,7 +664,7 @@ def buildx_imagetools_inspect(
 
 
 @tool()
-def buildx_imagetools_create(
+def buildx_imagetools_create(  # noqa: DOC101,DOC103
     target: str,
     sources: list[str],
     append: bool = False,
@@ -690,6 +698,9 @@ def buildx_imagetools_create(
 
     Returns:
         dict: {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
+
+    Raises:
+        ToolInputError: no source ref or file was given.
     """
     if not sources and not descriptor_files:
         raise ToolInputError("buildx_imagetools_create requires at least one source ref or file")
@@ -711,7 +722,7 @@ def buildx_imagetools_create(
 
 
 @tool()
-def buildx_list(host: str | None = None) -> list:
+def buildx_list(host: str | None = None) -> list:  # noqa: DOC101,DOC103
     """
     List builder instances.
 
@@ -729,7 +740,7 @@ def buildx_list(host: str | None = None) -> list:
 
 
 @tool()
-def buildx_history_list(builder: str | None = None, host: str | None = None) -> list:
+def buildx_history_list(builder: str | None = None, host: str | None = None) -> list:  # noqa: DOC101,DOC103
     """
     List recent build records (BuildKit build history), parsed from `--format '{{json .}}'`.
 
@@ -752,7 +763,11 @@ def buildx_history_list(builder: str | None = None, host: str | None = None) -> 
 
 
 @tool()
-def buildx_history_inspect(ref: str = "", builder: str | None = None, host: str | None = None) -> dict:
+def buildx_history_inspect(  # noqa: DOC101,DOC103
+    ref: str = "",
+    builder: str | None = None,
+    host: str | None = None,
+) -> dict:
     """
     Inspect a single build record by ref, parsed from `--format json`.
 
@@ -795,7 +810,11 @@ def buildx_history_inspect(ref: str = "", builder: str | None = None, host: str 
 
 
 @tool()
-def buildx_inspect(name: str | None = None, bootstrap: bool = False, host: str | None = None) -> dict:
+def buildx_inspect(  # noqa: DOC101,DOC103
+    name: str | None = None,
+    bootstrap: bool = False,
+    host: str | None = None,
+) -> dict:
     """
     Inspect a builder instance.
 
@@ -820,7 +839,7 @@ def buildx_inspect(name: str | None = None, bootstrap: bool = False, host: str |
 
 
 @tool()
-def buildx_du(builder: str | None = None, host: str | None = None) -> list:
+def buildx_du(builder: str | None = None, host: str | None = None) -> list:  # noqa: DOC101,DOC103
     """
     Report BuildKit cache disk usage as a list of records.
 
@@ -846,7 +865,7 @@ def buildx_du(builder: str | None = None, host: str | None = None) -> list:
 
 
 @tool()
-def buildx_prune(
+def buildx_prune(  # noqa: DOC101,DOC103
     all: bool = False,
     filters: dict | None = None,
     reserved_space: str | None = None,
@@ -890,7 +909,7 @@ def buildx_prune(
 
 
 @tool()
-def buildx_create(
+def buildx_create(  # noqa: DOC101,DOC103
     name: str | None = None,
     # Not an enum: buildx drivers are pluggable (docker, docker-container, kubernetes, remote,
     # cloud, ...) and the set grows with the plugin, so pinning it would date badly.
@@ -956,7 +975,12 @@ def buildx_create(
 
 
 @tool()
-def buildx_use(name: str, default: bool = False, global_default: bool = False, host: str | None = None) -> dict:
+def buildx_use(  # noqa: DOC101,DOC103
+    name: str,
+    default: bool = False,
+    global_default: bool = False,
+    host: str | None = None,
+) -> dict:
     """
     Select the active builder for subsequent buildx operations.
 
@@ -984,7 +1008,7 @@ def buildx_use(name: str, default: bool = False, global_default: bool = False, h
 
 
 @tool()
-def buildx_remove(
+def buildx_remove(  # noqa: DOC101,DOC103
     name: str | None = None,
     all_inactive: bool = False,
     keep_state: bool = False,
@@ -1008,6 +1032,9 @@ def buildx_remove(
 
     Returns:
         dict: {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
+
+    Raises:
+        ToolInputError: neither or both of `name` and `all_inactive` were given.
     """
     if not name and not all_inactive:
         raise ToolInputError("buildx_remove requires either `name` or `all_inactive=True`")

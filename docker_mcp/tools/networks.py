@@ -11,7 +11,7 @@ from docker_mcp.tools.system import _get_client
 
 
 @tool()
-def network_create(
+def network_create(  # noqa: DOC101,DOC103
     name: str,
     driver: str | None = None,
     options: dict | None = None,
@@ -70,7 +70,7 @@ def network_create(
 
 
 @tool()
-def network_inspect(id_or_name: str, host: str | None = None) -> dict:
+def network_inspect(id_or_name: str, host: str | None = None) -> dict:  # noqa: DOC101,DOC103
     """
     Return the full inspect detail for a single network.
 
@@ -89,7 +89,7 @@ def network_inspect(id_or_name: str, host: str | None = None) -> dict:
 
 
 @tool()
-def network_list(
+def network_list(  # noqa: DOC101,DOC103
     names: list | None = None,
     ids: list | None = None,
     filters: dict | None = None,
@@ -125,7 +125,7 @@ def network_list(
 
 
 @tool()
-def network_prune(filters: dict | None = None, host: str | None = None) -> dict:
+def network_prune(filters: dict | None = None, host: str | None = None) -> dict:  # noqa: DOC101,DOC103
     """
     Remove networks that have no active container endpoints.
 
@@ -144,7 +144,7 @@ def network_prune(filters: dict | None = None, host: str | None = None) -> dict:
 
 
 @tool()
-def network_remove(id_or_name: str, host: str | None = None) -> bool:
+def network_remove(id_or_name: str, host: str | None = None) -> bool:  # noqa: DOC101,DOC103
     """
     Remove a single custom network by id or name.
 
@@ -164,7 +164,7 @@ def network_remove(id_or_name: str, host: str | None = None) -> bool:
 
 
 @tool()
-def network_connect(
+def network_connect(  # noqa: DOC101,DOC103
     id_or_name: str,
     container: str,
     aliases: list | None = None,
@@ -212,7 +212,12 @@ def network_connect(
 
 
 @tool()
-def network_disconnect(id_or_name: str, container: str, force: bool = False, host: str | None = None) -> bool:
+def network_disconnect(  # noqa: DOC101,DOC103
+    id_or_name: str,
+    container: str,
+    force: bool = False,
+    host: str | None = None,
+) -> bool:
     """
     Disconnect a container from a network.
 

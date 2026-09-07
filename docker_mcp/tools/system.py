@@ -351,7 +351,7 @@ def _build_client(host: Host) -> docker.DockerClient:
     return docker.DockerClient(base_url=url, tls=tls) if tls is not None else docker.DockerClient(base_url=url)
 
 
-def _get_client(host: str | None = None) -> docker.DockerClient:
+def _get_client(host: str | None = None) -> docker.DockerClient:  # noqa: DOC503
     """The pooled docker-py client for `host` (the default host when None), lazily built and cached.
 
     Args:
@@ -361,7 +361,8 @@ def _get_client(host: str | None = None) -> docker.DockerClient:
         docker.DockerClient: the pooled client, built on first use
 
     Raises:
-        HostGuardError: the label is not configured.
+        RemoteFailureError: a client was built but the daemon is unreachable.
+        HostGuardError: propagated from _hosts.resolve when the label is not configured.
     """
     resolved = _resolve_host(host)
     label = resolved.label
@@ -381,7 +382,7 @@ def _get_client(host: str | None = None) -> docker.DockerClient:
 
 
 @tool()
-def system_ping(host: str | None = None) -> bool:
+def system_ping(host: str | None = None) -> bool:  # noqa: DOC101,DOC103
     """
     Check that the Docker server is responsive.
 
@@ -396,7 +397,7 @@ def system_ping(host: str | None = None) -> bool:
 
 
 @tool()
-def system_version(host: str | None = None) -> dict:
+def system_version(host: str | None = None) -> dict:  # noqa: DOC101,DOC103
     """
     Return Docker server version information.
 
@@ -410,7 +411,7 @@ def system_version(host: str | None = None) -> dict:
 
 
 @tool()
-def system_info(host: str | None = None) -> dict:
+def system_info(host: str | None = None) -> dict:  # noqa: DOC101,DOC103
     """
     Return system-wide Docker information, like `docker info`.
 
@@ -424,7 +425,7 @@ def system_info(host: str | None = None) -> dict:
 
 
 @tool()
-def system_df(host: str | None = None) -> dict:
+def system_df(host: str | None = None) -> dict:  # noqa: DOC101,DOC103
     """
     Summarize Docker disk usage: layer storage plus per-object sizes for images, containers, volumes, build cache.
 
@@ -471,7 +472,7 @@ def host_list() -> list[dict]:
 
 
 @tool()
-def system_login(
+def system_login(  # noqa: DOC101,DOC103
     username: str,
     password: str,
     email: str | None = None,
@@ -510,7 +511,7 @@ def system_login(
 
 
 @tool()
-def system_logout(registry: str | None = None, host: str | None = None) -> dict:
+def system_logout(registry: str | None = None, host: str | None = None) -> dict:  # noqa: DOC101,DOC103
     """
     Clear cached registry credentials from this server's in-memory Docker client.
 
@@ -546,7 +547,7 @@ def system_logout(registry: str | None = None, host: str | None = None) -> dict:
 
 
 @tool()
-def system_events(
+def system_events(  # noqa: DOC101,DOC103
     since: str | None = None,
     until: str | None = None,
     filters: dict | None = None,
@@ -599,7 +600,7 @@ def system_events(
 
 
 @tool()
-def system_close(host: str | None = None) -> bool:
+def system_close(host: str | None = None) -> bool:  # noqa: DOC101,DOC103
     """
     Close and drop pooled Docker client connection(s); each is rebuilt lazily on next use.
 
@@ -621,7 +622,7 @@ def system_close(host: str | None = None) -> bool:
 
 
 @tool()
-def system_reconnect(host: str | None = None) -> dict:
+def system_reconnect(host: str | None = None) -> dict:  # noqa: DOC101,DOC103
     """
     Rebuild a pooled Docker client from its configured endpoint, to recover a wedged connection.
 
