@@ -202,6 +202,14 @@ Two things about that marker are worth knowing before they cost you an afternoon
 `tests/test_docstrings.py` asserts both exemptions in both directions, so a tool that needs a
 marker and lacks it fails, and a marker on a definition that no longer needs one fails too.
 
+**A resource docstring is advertised too, and is not exempt.** `@resource` functions follow the
+ordinary convention, because the exemption exists to avoid duplicating a *schema* and a resource
+advertises none - but their docstrings still reach every client through `list_resources()` and
+`list_resource_templates()`, so every byte is paid for on every session. Adding a `Raises:`
+block to one put the surface 109 bytes over budget and named two private helpers in text a model
+reads. If a resource trips a `DOC` code, mark the definition rather than answering it in the
+docstring, and check `tests/test_surface_budget.py` before assuming prose there is free.
+
 ## Conventions
 
 - **Tool naming convention (2.0, permanent):** every tool is named `<management-command>_<verb>`, anchored
