@@ -203,9 +203,9 @@ def image_pull(  # noqa: DOC101,DOC103
     """
     Pull an image from a registry to the daemon's local store.
 
-    Private repositories need credentials - `system_login` (or `docker login` on the host) first.
-    Use `image_load` for tarballs, and `registry_manifest` / `image_registry_data` to inspect a
-    remote image without pulling it.
+    Private repositories need credentials - `system_login` (or `docker login` on the host) first,
+    or `auth_config` to authenticate this call alone. Use `image_load` for tarballs, and
+    `registry_manifest` / `image_registry_data` to inspect a remote image without pulling it.
 
     Security: `auth_config` carries registry credentials, which many MCP clients log verbatim. Prefer
     `docker login` on the host so the `docker` module reuses credentials cached in
