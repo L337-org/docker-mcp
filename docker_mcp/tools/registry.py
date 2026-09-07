@@ -194,7 +194,7 @@ def _is_local_host(host: str) -> bool:
     h = host.lower().rstrip(".")
     if h == "localhost" or h.endswith((".localhost", ".local", ".internal")):
         return True
-    # Parse the *normalized* host so an IP literal with a trailing dot (e.g. "127.0.0.1.") is still
+    # Parse the *normalised* host so an IP literal with a trailing dot (e.g. "127.0.0.1.") is still
     # recognized rather than slipping through as a non-local name.
     try:
         ip = ipaddress.ip_address(h)
@@ -904,7 +904,7 @@ def _parse_ratelimit_header(value: str | None) -> tuple[int | None, int | None]:
 
 
 def _hub_normalize(repository: str) -> str:
-    """Normalize a Hub repository to "namespace/name" form (official images get "library/").
+    """Normalise a Hub repository to "namespace/name" form (official images get "library/").
 
     Args:
         repository: the Hub repository, with or without a namespace

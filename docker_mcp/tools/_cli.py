@@ -148,7 +148,7 @@ def _apply_host_env(env: dict[str, str], host: str | None) -> None:
     """
     resolved = _resolve_host(host)
     if not _is_multi() and not (os.environ.get("DOCKER_MCP_SERVER_HOSTS") or "").strip():
-        return  # legacy single host: inherit the ambient docker env (unchanged behavior)
+        return  # legacy single host: inherit the ambient docker env (unchanged behaviour)
     # Explicit host: pin to this host's endpoint and never inherit the ambient DOCKER_HOST / DOCKER_CONTEXT
     # (DOCKER_HOST is ignored when DOCKER_MCP_SERVER_HOSTS is set). A host that resolved to the platform
     # default (url=None) drops them so the CLI finds its own default socket/npipe.
@@ -331,7 +331,7 @@ def require_plugin(name: str) -> None:
 # host is reached over ssh://, the command can instead run *on that host* - which, being a Docker
 # host, plausibly has the CLI and its plugins already.
 #
-# This is a pure fallback. With a usable local CLI nothing below is reached and behavior is
+# This is a pure fallback. With a usable local CLI nothing below is reached and behaviour is
 # unchanged, including the dial-stdio proxy in `run_docker`: only the "we have no local option at
 # all" case changes, from an error into a remote call.
 
@@ -346,7 +346,7 @@ def should_remote_exec(host: str | None, *, plugin: str | None = None) -> bool:
     reach a unix://, tcp:// or npipe:// daemon's host to run anything on it.
 
     A CLI-backed tool module calls this in exactly one place - its shared `_run_*` wrapper - rather
-    than probing per tool, so the decision, and the conditions under which behavior changes at all,
+    than probing per tool, so the decision, and the conditions under which behaviour changes at all,
     live here.
 
     Args:

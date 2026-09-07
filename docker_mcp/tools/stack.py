@@ -98,7 +98,7 @@ def _run_stack(
 
 
 def _parse_stack_list(stdout: str, *, truncated: bool, what: str) -> list[dict]:
-    """Normalize `docker stack <ls|ps|services> --format '{{json .}}'` output to a list of dicts.
+    """Normalise `docker stack <ls|ps|services> --format '{{json .}}'` output to a list of dicts.
 
     Args:
         stdout: the command's raw output

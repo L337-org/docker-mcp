@@ -72,7 +72,7 @@ def with_provenance(labels: dict | list | None, created_by: str) -> dict[str, st
     if isinstance(labels, dict):
         merged.update(labels)  # caller wins on any key collision
     elif isinstance(labels, list):
-        # docker accepts a list of bare names (set with empty values); normalize so we can merge.
+        # docker accepts a list of bare names (set with empty values); normalise so we can merge.
         for name in labels:
             merged.setdefault(name, "")
     return merged or None

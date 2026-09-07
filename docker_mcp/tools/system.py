@@ -331,7 +331,7 @@ def _build_client(host: Host) -> docker.DockerClient:
     """Build the docker-py client for one configured host.
 
     The legacy single host (DOCKER_MCP_SERVER_HOSTS unset) goes through _build_default_client so the
-    existing DOCKER_HOST / from_env behavior (and its TLS env / API-version negotiation) is preserved
+    existing DOCKER_HOST / from_env behaviour (and its TLS env / API-version negotiation) is preserved
     exactly - this is the ONLY path that reads DOCKER_HOST. An explicitly-configured host is built from
     its resolved URL with per-host TLS; one that resolved to the platform default (url=None, e.g. `local`
     on Windows) is built WITHOUT a base_url so it uses the platform socket/npipe and never re-reads the

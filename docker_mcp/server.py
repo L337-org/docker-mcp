@@ -261,7 +261,7 @@ NO_DESTRUCTIVE = env_flag("DOCKER_MCP_SERVER_NO_DESTRUCTIVE")
 
 
 def _parse_domains(value: str | None) -> frozenset[str]:
-    """Parse the comma-separated DOCKER_MCP_SERVER_DISABLE list into a normalized set of domain names.
+    """Parse the comma-separated DOCKER_MCP_SERVER_DISABLE list into a normalised set of domain names.
 
     Args:
         value: the raw DOCKER_MCP_SERVER_DISABLE value
@@ -693,7 +693,7 @@ def finalize_instructions() -> None:
 
     MCPServer.instructions is a read-only property backed by the low-level server's `instructions`, which
     is read at run() time (create_initialization_options), so writing it through here after registration
-    propagates to the MCP initialize handshake. Reaching into `_lowlevel_server` is guarded the same way as
+    propagates to the MCP initialise handshake. Reaching into `_lowlevel_server` is guarded the same way as
     the schema-title strip below: an MCPServer refactor degrades to "instructions stay unset" rather than
     raising.
     """
@@ -766,7 +766,7 @@ def _slim_schema(node: Any) -> None:
 
     Applied recursively, and to annotations that only restate a default. All three transforms
     are display-only - call-time validation runs off
-    the tool's separate `fn_metadata`, so none changes behavior - and were measured to be
+    the tool's separate `fn_metadata`, so none changes behaviour - and were measured to be
     information-free, together ~18% of the advertised schema tokens:
 
     - **`title`** (~10%): pydantic stamps one on every property/`$def` (the title-cased field name,
@@ -962,7 +962,7 @@ def _apply_host_schema(parameters: Any, name: str, category: ToolCategory) -> No
     """Display-only surgery on a daemon-targeting tool's advertised `host` property.
 
     Runs after _slim_schema; call-time validation runs off the separate fn_metadata, so this never
-    changes behavior.
+    changes behaviour.
 
     Single-host mode: drop `host` entirely so the schema is byte-for-byte today's (footprint-neutral).
     Multi-host mode: constrain `host` to an `enum` of the configured labels with a generated description,

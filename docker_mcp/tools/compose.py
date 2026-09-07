@@ -860,7 +860,7 @@ def _remote_compose_cp(
 
     Because the actual copy always runs through the real remote CLI, every documented parameter
     behaves exactly as it does locally - `--all`, `--index`, `project_dir`/`files` and the result
-    shape all come along for free. The one behavior with no remote equivalent: a container->host copy
+    shape all come along for free. The one behaviour with no remote equivalent: a container->host copy
     is refused up front if the local destination already exists, since only this host - not the
     remote one - knows that, and `reserve_path` guarantees the remote command starts from a path that
     does not exist yet (matching what a fresh local destination would look like).

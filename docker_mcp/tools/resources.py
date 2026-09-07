@@ -596,7 +596,7 @@ else:
 
 
 @resource("docker-docs://{section}", mime_type="text/html")
-def get_docs_section(section: str) -> str:  # noqa: DOC503
+def get_docs_section(section: str) -> str:  # noqa: DOC501,DOC503
     """Fetch the documentation page for a section.
 
     Args:
@@ -604,12 +604,6 @@ def get_docs_section(section: str) -> str:  # noqa: DOC503
 
     Returns:
         str: The HTML (or rendered Markdown) content of the documentation page
-
-    Raises:
-        ToolInputError: propagated from _section_url when the section is unknown.
-        CapabilityError: the section's domain is disabled.
-        ToolRefusalError: propagated from _read_capped_docs_response when the page exceeds
-            the response cap.
     """
     if not _section_enabled(section):
         raise CapabilityError(

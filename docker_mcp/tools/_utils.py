@@ -383,7 +383,7 @@ def stream_to_file(chunks: Iterable[bytes], dest_path: str, *, overwrite: bool =
 
 
 def as_byte_chunks(chunks: Iterable | bytes | bytearray | str) -> Iterable[bytes]:
-    """Normalize a docker log/stream payload to bytes chunks, ready for `join_bounded`.
+    """Normalise a docker log/stream payload to bytes chunks, ready for `join_bounded`.
 
     Accepts either a stream of chunks or a whole payload. A whole `bytes`/`bytearray` is yielded as a
     single chunk rather than iterated, because iterating one yields ints that would stringify to
