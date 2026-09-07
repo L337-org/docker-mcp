@@ -97,7 +97,7 @@ def _active_context_name() -> str | None:
     """Name of the active Docker CLI context: $DOCKER_CONTEXT, else config.json's currentContext.
 
     Returns:
-        str: the active context's name, empty when none is set
+        str or None: the active context's name, or None when none is set
     """
     name = (os.environ.get("DOCKER_CONTEXT") or "").strip()
     if name:

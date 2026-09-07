@@ -241,7 +241,7 @@ def open_host_read_file(file_path: str) -> IO[bytes]:
         file_path: the caller's path
 
     Returns:
-        IO[bytes] - the open binary handle, for use as a context manager and for handing straight to a docker-py call
+        IO[bytes]: the open binary handle, for use as a context manager and for handing straight to a docker-py call
             that wants a binary file-like
 
     Raises:

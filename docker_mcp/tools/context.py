@@ -31,7 +31,8 @@ def context_list() -> list:
     Raises RemoteFailureError if the CLI call fails.
 
     Returns:
-        list: One dict per context with at least name, description, dockerEndpoint, and current
+        list: One dict per context with at least name, description, dockerEndpoint, and
+            current - the last being true for the context the CLI would use by default
     """
     result = run_docker(["context", "ls", "--format", "{{json .}}"])
     raise_on_cli_failure(result, "context ls")
