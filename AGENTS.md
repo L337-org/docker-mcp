@@ -447,9 +447,11 @@ docstring: a `Raises:` block added to one put the surface 109 bytes over
 several resources as `resource(...)(fn)`, which is invisible to it and to the test - so a tool or
 prompt registered that way would silently lose its exemption.
 
-DOC501/DOC502/DOC503 markers are a decision, not a backlog - an advertised docstring carries no
-`Raises:` section because that is wire cost. Read the raise site before adding one; doing
-that found five docstrings naming the wrong exception.
+DOC501/DOC502/DOC503 markers are a decision, not a backlog. Where a marker sits on an advertised
+docstring the omission is deliberate, because a `Raises:` section is wire cost every client pays.
+Some tools carry one regardless, where the failure is worth advertising. Do not add a section to
+clear a code, and read the raise site first: doing that found five docstrings naming the wrong
+exception.
 
 **`scripts/check-repo-hygiene.py` is vendored byte-identically into four repositories** and
 self-verifies against a shared digest, so a change to it lands in all four with each digest

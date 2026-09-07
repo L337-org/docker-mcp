@@ -337,3 +337,28 @@ def test_every_doc_marker_sits_on_the_line_pydoclint_reads():
                 stray.append(f"{path.relative_to(ROOT)}:{token.start[0]} {line.strip()[:70]}")
 
     assert not stray, "these DOC markers are not on a definition line:\n  " + "\n  ".join(stray)
+
+
+def test_no_args_entry_carries_its_type_in_the_dash_form():
+    """No `Args:` entry writes its type as `name: type - description`.
+
+    This repository puts types in the signature, and DOC111 enforces that - but only for the
+    `name: type` form it can parse. Written with a dash, `hostname: str - the target to resolve`
+    is a description beginning "str", so seven of these sat in `_ssh_proxy.py` with every gate
+    green and AGENTS.md describing a rule the code did not follow.
+    """
+    typed = re.compile(
+        r"^    \*{0,2}\w+:\s*(?:str|int|bool|float|dict|list|set|tuple|bytes|Path|[A-Z]\w+)"
+        r"(?:\s*\|\s*[\w.]+)*\s+-\s",
+        re.MULTILINE,
+    )
+    wrong = []
+    for path, lineno, name, doc in _tracked_docstrings():
+        section = re.search(r"^Args:\n((?:    .*\n?)+)", doc, re.MULTILINE)
+        if section:
+            wrong += [
+                f"{path.relative_to(ROOT)}:{lineno} {name}: {m.group(0).strip()[:60]!r}"
+                for m in typed.finditer(section.group(1))
+            ]
+
+    assert not wrong, "these entries carry a type in the dash form:\n  " + "\n  ".join(wrong)
