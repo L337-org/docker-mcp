@@ -294,9 +294,9 @@ def workflow_jobs(root, tracked):
         list: One triple per job.
 
     Raises:
-        CannotEvaluate: No workflow files are tracked, or one of them is not valid YAML, is
-            not a mapping, declares no usable `jobs:` mapping, or gives a job a body that is
-            not a mapping.
+        CannotEvaluate: No workflow files are tracked, one could not be read, or one is not
+            valid YAML, is not a mapping, declares no usable `jobs:` mapping, or gives a job
+            a body that is not a mapping.
     """
     import yaml
 
@@ -527,7 +527,8 @@ def check_the_instruction_layer(root, tracked, files):
         list: The findings.
 
     Raises:
-        CannotEvaluate: There is no shared instruction file, so there is no layer to check.
+        CannotEvaluate: There is no shared instruction file, so there is no layer to check,
+            or a file in the layer could not be read.
     """
     findings = []
     shared_path = root / SHARED_INSTRUCTION_FILE
@@ -560,6 +561,9 @@ def pointer_findings(root, pointer):
 
     Returns:
         list: The findings.
+
+    Raises:
+        CannotEvaluate: The pointer file, or a file it routes to, could not be read.
     """
     path = root / pointer
     if not path.is_file():
@@ -621,8 +625,8 @@ def check_the_detail_layer_routing(root, tracked, files):
         list: The findings.
 
     Raises:
-        CannotEvaluate: No detail directory exists, or none holds a .md file, so the
-            routed direction would verify nothing.
+        CannotEvaluate: No detail directory exists, or none holds a .md file, so the routed
+            direction would verify nothing - or a routed file could not be read.
     """
     shared_path = root / SHARED_INSTRUCTION_FILE
     routed = routed_paths(read_text(shared_path, root))
