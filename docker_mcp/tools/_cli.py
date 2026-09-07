@@ -79,7 +79,14 @@ _WINDOWS_EXTRA_ENV_KEYS = (
 
 @dataclass(frozen=True)
 class CliResult:
-    """Captured outcome of a single `docker` subprocess invocation."""
+    """Captured outcome of a single `docker` subprocess invocation.
+
+    Attributes:
+        returncode: the subprocess's exit status.
+        stdout: its decoded standard output.
+        stderr: its decoded standard error.
+        truncated: whether either stream hit the byte cap, so the content is incomplete.
+    """
 
     returncode: int
     stdout: str
@@ -134,6 +141,10 @@ def _apply_host_env(env: dict[str, str], host: str | None) -> None:
     drop DOCKER_CONTEXT, and apply the per-host cert dir - else fall through to the global
     DOCKER_CERT_PATH/DOCKER_TLS_VERIFY, else plaintext. The ssh:// proxy rewrite below keys off the
     resulting DOCKER_HOST, so an ssh:// host is handled there.
+
+    Args:
+        env: the child environment, modified in place
+        host: the host label to target, or None for the default
     """
     resolved = _resolve_host(host)
     if not _is_multi() and not (os.environ.get("DOCKER_MCP_SERVER_HOSTS") or "").strip():
@@ -183,6 +194,17 @@ def run_docker(
       ssh:// DOCKER_HOST ignores TLS and the rewritten tcp:// one must too. The paramiko connect
       itself (which runs before the subprocess, to stand up that proxy) is bounded by this same
       `timeout`, so a slow/unreachable ssh:// host can't hang past the caller's own deadline.
+
+    Args:
+        args: the arguments after ``docker``
+        cwd: the working directory, or None
+        timeout: the wall-clock limit in seconds
+        stdin: bytes to write to the child, or None
+        extra_env: extra environment entries, or None
+        host: the host label to target, or None for the default
+
+    Returns:
+        CliResult: the exit status, decoded streams, and whether the byte cap was hit
     """
     binary = _resolve("docker")
     cmd = [binary, *args]
@@ -252,7 +274,14 @@ def _clear_plugin_cache() -> None:
 
 
 def has_plugin(name: str) -> bool:
-    """Return True if `docker <name> version` exits 0. Cached per process with a short TTL."""
+    """Return True if `docker <name> version` exits 0. Cached per process with a short TTL.
+
+    Args:
+        name: the CLI plugin's name
+
+    Returns:
+        bool: True when ``docker <name> version`` exits 0
+    """
     now = time.monotonic()
     with _plugin_cache_lock:
         entry = _plugin_cache.get(name)
@@ -277,6 +306,12 @@ def require_plugin(name: str) -> None:
     this host at an ssh:// endpoint that already has it is always a live alternative - named in the
     message for the three plugins that share this helper (compose, buildx, scout), all of which
     support that fallback.
+
+    Args:
+        name: the CLI plugin's name
+
+    Raises:
+        CapabilityError: the plugin is unavailable; the message says how to install it.
     """
     if not has_plugin(name):
         raise CapabilityError(
@@ -510,9 +545,13 @@ def remote_cli_session(host: str | None, *, timeout: float) -> Iterator[RemoteSt
     Returns:
         Iterator[RemoteStagingSession]: the session, valid inside the `with` block only
 
+    Yields:
+        RemoteStagingSession: the session, for the caller to stage into and run
+
     Raises:
         CapabilityError: not an ssh:// host, a non-POSIX remote, or an unusable SFTP subsystem
         RemoteFailureError: the connection could not be opened, or staging setup failed remotely
+
     """
     with remote_staging_session(_ssh_url_for(host, []), timeout=timeout) as session:
         yield session
@@ -727,6 +766,16 @@ def safe_positional(value: str, what: str = "value") -> str:
     A legitimate image reference, service, context, or builder name never starts with '-', so we
     reject those outright with an actionable error. Returns `value` unchanged when it is safe, so
     call sites can wrap inline: `args.append(safe_positional(image, "image"))`.
+
+    Args:
+        value: the string to validate
+        what: what is being validated, for the error message
+
+    Returns:
+        str: the same value, once accepted
+
+    Raises:
+        ToolInputError: it could be read as an option rather than a positional.
     """
     if value.startswith("-"):
         raise ToolInputError(
@@ -752,6 +801,16 @@ def safe_spec_value(value: str, what: str = "value") -> str:
     first and then on the first '=' of each part, so `host=tcp://a=b` parses as one key with the
     value `tcp://a=b`. Rejecting '=' as well would refuse legitimate filesystem paths containing
     one, so it is deliberately allowed - do not "harden" this to include it.
+
+    Args:
+        value: the string to validate
+        what: what is being validated, for the error message
+
+    Returns:
+        str: the same value, once accepted
+
+    Raises:
+        ToolInputError: it contains a separator that would break out of the spec.
     """
     if "," in value:
         raise ToolInputError(
@@ -769,6 +828,12 @@ def filter_args(filters: dict | None) -> list[str]:
     `filters` contract across the surface). A list value emits one `--filter` per element -
     docker-py's own convention for repeated filters (`{"label": ["a=1", "b=2"]}`) - and a bool
     lowercases to the CLI's `true`/`false`.
+
+    Args:
+        filters: an SDK-shaped filters dict, or None
+
+    Returns:
+        list: repeated ``--filter key=value`` arguments
     """
     args: list[str] = []
     for key, value in (filters or {}).items():
@@ -785,6 +850,10 @@ def raise_on_cli_failure(result: CliResult, command: str) -> None:
     Args:
         result: the CliResult from run_docker.
         command: the docker subcommand for the message, e.g. "buildx ls" or "context inspect".
+
+    Raises:
+        RemoteFailureError: the subprocess exited non-zero; the message carries its
+            stderr.
     """
     if result.returncode != 0:
         raise RemoteFailureError(
@@ -802,6 +871,13 @@ def parse_ndjson(text: str, *, truncated: bool = False, what: str = "docker outp
                    the final non-blank line is assumed to be a partial record and is dropped before
                    parsing rather than crashing on a half-record.
         what: short label used in error messages, e.g. "buildx ls output".
+
+    Returns:
+        list: one dict per non-blank line
+
+    Raises:
+        RuntimeError: a line is not valid JSON and the output was not truncated, so the
+            malformed line cannot be explained by a cut-off stream.
     """
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     if truncated and lines:
@@ -832,6 +908,9 @@ def parse_json_or_ndjson(
                    the NDJSON branch drops the final (likely partial) line rather than crashing on a
                    half-record; see `parse_ndjson`.
         what: short label used in error messages, e.g. "compose ps output".
+
+    Returns:
+        list, dict or None: the parsed documents, the single document, or None when there is nothing to parse
     """
     stripped = text.strip()
     if not stripped:
