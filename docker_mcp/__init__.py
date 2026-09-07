@@ -8,14 +8,15 @@ from docker_mcp import _hosts
 # (one stderr line + non-zero exit).
 _hosts.load()
 
-from docker_mcp import tools  # noqa: F401, E402  -- side-effect import (registers @mcp.tool()); must follow _hosts.load()
+# Side-effect import: registers the @mcp.tool() functions, and must follow _hosts.load().
+from docker_mcp import tools  # noqa: F401, E402
 
 # Build the server `instructions` router now that every tool has registered, so it reflects exactly the
 # domains the active env switches (DOCKER_MCP_SERVER_DISABLE / _READONLY / _NO_DESTRUCTIVE) left registered.
 finalize_instructions()
 
 
-def main():
+def main() -> None:
     """Run the MCP server."""
     import sys
 

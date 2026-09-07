@@ -53,12 +53,11 @@ def fail_unless_environmental(*, returncode: int, stderr: str = "", stdout: str 
     A non-zero exit with no recognised cause is treated as a product defect, because that is the
     likelier explanation and because the alternative -- skipping -- hides it indefinitely.
 
-    args:
-        returncode - The CLI exit status; zero returns immediately
-        stderr - Captured stderr, searched for an environmental signal
-        stdout - Captured stdout, searched too (some plugins report errors here)
-        what - Short description of the call, used in the skip or failure message
-    returns: None - raises via `pytest.skip` or `pytest.fail` when `returncode` is non-zero
+    Args:
+        returncode: The CLI exit status; zero returns immediately
+        stderr: Captured stderr, searched for an environmental signal
+        stdout: Captured stdout, searched too (some plugins report errors here)
+        what: Short description of the call, used in the skip or failure message
     """
     if returncode == 0:
         return
@@ -80,10 +79,9 @@ def fail_unless_environmental_error(exc: BaseException, *, what: str) -> None:
     A fixture that skips on any exception hides a product defect just as effectively as one that
     skips on any non-zero exit, so the same rule applies: skip only for a cause we can name.
 
-    args:
-        exc - The caught exception, whose string form is searched for an environmental signal
-        what - Short description of the call, used in the skip or failure message
-    returns: None - always raises, via `pytest.skip` or `pytest.fail`
+    Args:
+        exc: The caught exception, whose string form is searched for an environmental signal
+        what: Short description of the call, used in the skip or failure message
     """
     text = str(exc).lower()
     for signal in _ENVIRONMENTAL_SIGNALS:

@@ -79,7 +79,14 @@ _WINDOWS_EXTRA_ENV_KEYS = (
 
 @dataclass(frozen=True)
 class CliResult:
-    """Captured outcome of a single `docker` subprocess invocation."""
+    """Captured outcome of a single `docker` subprocess invocation.
+
+    Attributes:
+        returncode: the subprocess's exit status.
+        stdout: its decoded standard output.
+        stderr: its decoded standard error.
+        truncated: whether either stream hit the byte cap, so the content is incomplete.
+    """
 
     returncode: int
     stdout: str
@@ -134,10 +141,14 @@ def _apply_host_env(env: dict[str, str], host: str | None) -> None:
     drop DOCKER_CONTEXT, and apply the per-host cert dir - else fall through to the global
     DOCKER_CERT_PATH/DOCKER_TLS_VERIFY, else plaintext. The ssh:// proxy rewrite below keys off the
     resulting DOCKER_HOST, so an ssh:// host is handled there.
+
+    Args:
+        env: the child environment, modified in place
+        host: the host label to target, or None for the default
     """
     resolved = _resolve_host(host)
     if not _is_multi() and not (os.environ.get("DOCKER_MCP_SERVER_HOSTS") or "").strip():
-        return  # legacy single host: inherit the ambient docker env (unchanged behavior)
+        return  # legacy single host: inherit the ambient docker env (unchanged behaviour)
     # Explicit host: pin to this host's endpoint and never inherit the ambient DOCKER_HOST / DOCKER_CONTEXT
     # (DOCKER_HOST is ignored when DOCKER_MCP_SERVER_HOSTS is set). A host that resolved to the platform
     # default (url=None) drops them so the CLI finds its own default socket/npipe.
@@ -183,6 +194,17 @@ def run_docker(
       ssh:// DOCKER_HOST ignores TLS and the rewritten tcp:// one must too. The paramiko connect
       itself (which runs before the subprocess, to stand up that proxy) is bounded by this same
       `timeout`, so a slow/unreachable ssh:// host can't hang past the caller's own deadline.
+
+    Args:
+        args: the arguments after ``docker``
+        cwd: the working directory, or None
+        timeout: the wall-clock limit in seconds
+        stdin: bytes to write to the child, or None
+        extra_env: extra environment entries, or None
+        host: the host label to target, or None for the default
+
+    Returns:
+        CliResult: the exit status, decoded streams, and whether the byte cap was hit
     """
     binary = _resolve("docker")
     cmd = [binary, *args]
@@ -252,7 +274,14 @@ def _clear_plugin_cache() -> None:
 
 
 def has_plugin(name: str) -> bool:
-    """Return True if `docker <name> version` exits 0. Cached per process with a short TTL."""
+    """Return True if `docker <name> version` exits 0. Cached per process with a short TTL.
+
+    Args:
+        name: the CLI plugin's name
+
+    Returns:
+        bool: True when ``docker <name> version`` exits 0
+    """
     now = time.monotonic()
     with _plugin_cache_lock:
         entry = _plugin_cache.get(name)
@@ -277,6 +306,12 @@ def require_plugin(name: str) -> None:
     this host at an ssh:// endpoint that already has it is always a live alternative - named in the
     message for the three plugins that share this helper (compose, buildx, scout), all of which
     support that fallback.
+
+    Args:
+        name: the CLI plugin's name
+
+    Raises:
+        CapabilityError: the plugin is unavailable; the message says how to install it.
     """
     if not has_plugin(name):
         raise CapabilityError(
@@ -296,7 +331,7 @@ def require_plugin(name: str) -> None:
 # host is reached over ssh://, the command can instead run *on that host* - which, being a Docker
 # host, plausibly has the CLI and its plugins already.
 #
-# This is a pure fallback. With a usable local CLI nothing below is reached and behavior is
+# This is a pure fallback. With a usable local CLI nothing below is reached and behaviour is
 # unchanged, including the dial-stdio proxy in `run_docker`: only the "we have no local option at
 # all" case changes, from an error into a remote call.
 
@@ -311,14 +346,16 @@ def should_remote_exec(host: str | None, *, plugin: str | None = None) -> bool:
     reach a unix://, tcp:// or npipe:// daemon's host to run anything on it.
 
     A CLI-backed tool module calls this in exactly one place - its shared `_run_*` wrapper - rather
-    than probing per tool, so the decision, and the conditions under which behavior changes at all,
+    than probing per tool, so the decision, and the conditions under which behaviour changes at all,
     live here.
 
     Args:
-        host - configured host label, or None for the default host
-        plugin - the CLI plugin the call needs ("compose"/"buildx"/"scout"), or None for a core-CLI
+        host: configured host label, or None for the default host
+        plugin: the CLI plugin the call needs ("compose"/"buildx"/"scout"), or None for a core-CLI
                  subcommand such as `docker stack ...` (probes only the `docker` binary itself)
-    returns: bool - True if the caller should route through `remote_exec_cli` instead of `run_docker`
+
+    Returns:
+        bool: True if the caller should route through `remote_exec_cli` instead of `run_docker`
     """
     if not _resolve_host(host).is_ssh:
         return False
@@ -327,7 +364,7 @@ def should_remote_exec(host: str | None, *, plugin: str | None = None) -> bool:
     return plugin is not None and not has_plugin(plugin)
 
 
-def remote_exec_cli(
+def remote_exec_cli(  # noqa: DOC502
     host: str | None,
     args: list[str],
     *,
@@ -349,19 +386,22 @@ def remote_exec_cli(
     from its local path.
 
     Args:
-        host - configured host label, or None for the default host; must resolve to an ssh:// URL
-        args - the docker argv *without* the binary, exactly as passed to `run_docker`
-        timeout - seconds the remote watchdog allows the command; also bounds the SSH handshake. Total
+        host: configured host label, or None for the default host; must resolve to an ssh:// URL
+        args: the docker argv *without* the binary, exactly as passed to `run_docker`
+        timeout: seconds the remote watchdog allows the command; also bounds the SSH handshake. Total
                   wall clock can exceed it by the connect time plus a short kill grace.
-        stdin - must be None/empty: the remote channel carries no input
-        extra_env - must be None/empty: the child's environment is the remote login shell's
-    returns: CliResult - exit status, decoded stdout/stderr, and whether the byte cap truncated them
-    raises:
-        ValueError - `stdin` or `extra_env` was supplied (an internal guard: no caller needs either,
-                     so its text stays in the log rather than reaching the model)
-        CapabilityError - `host` is not an ssh:// host, or the remote is not POSIX
-        RemoteFailureError - the SSH connection could not be opened
-        subprocess.TimeoutExpired - the command exceeded `timeout`
+        stdin: must be None/empty: the remote channel carries no input
+        extra_env: must be None/empty: the child's environment is the remote login shell's
+
+    Returns:
+        CliResult: exit status, decoded stdout/stderr, and whether the byte cap truncated them
+
+    Raises:
+        ValueError: `stdin` or `extra_env` was supplied (an internal guard: no caller needs either, so its text stays in
+            the log rather than reaching the model)
+        CapabilityError: `host` is not an ssh:// host, or the remote is not POSIX
+        RemoteFailureError: the SSH connection could not be opened
+        subprocess.TimeoutExpired: the command exceeded `timeout`
     """
     _reject_unforwardable(stdin, extra_env)
     url = _ssh_url_for(host, args)
@@ -370,7 +410,7 @@ def remote_exec_cli(
     )
 
 
-def remote_stage_and_exec(
+def remote_stage_and_exec(  # noqa: DOC503
     host: str | None,
     args: list[str],
     *,
@@ -401,30 +441,32 @@ def remote_stage_and_exec(
     those references without parsing the file.
 
     Args:
-        host - configured host label, or None for the default host; must resolve to an ssh:// URL
-        args - the docker argv *without* the binary, exactly as passed to `run_docker`
-        cwd - local directory to stage and run in; None means the server's own working directory
-        timeout - seconds allowed for the command itself, and the bound on the SSH handshake. Staging
+        host: configured host label, or None for the default host; must resolve to an ssh:// URL
+        args: the docker argv *without* the binary, exactly as passed to `run_docker`
+        cwd: local directory to stage and run in; None means the server's own working directory
+        timeout: seconds allowed for the command itself, and the bound on the SSH handshake. Staging
                   has its own bounds, so total wall clock exceeds this by the upload time.
-        path_values - values in `args` that name local paths, so they can be reconciled as above.
+        path_values: values in `args` that name local paths, so they can be reconciled as above.
                       Matched against `args` by whole token.
-        stage_cwd - True (the default) for a command that reads files from a working directory. False
+        stage_cwd: True (the default) for a command that reads files from a working directory. False
                     for one whose only local inputs are the paths it names (`buildx create --config`,
                     `buildx imagetools create --file`): nothing is staged as a working directory, the
                     remote command gets no cwd, and every `path_values` entry that exists locally is
                     staged individually. `cwd` is then used only to resolve relative ones, matching
                     where the local subprocess would have resolved them.
-        stdin - must be None/empty: the remote channel carries no input
-        extra_env - must be None/empty: the child's environment is the remote login shell's
-    returns: CliResult - exit status, decoded stdout/stderr, and whether the byte cap truncated them
-    raises:
-        ToolInputError - `cwd` is not a directory (when `stage_cwd`), or the payload exceeds the
-                     staging limits
-        ValueError - `stdin`/`extra_env` was supplied (an internal guard; see `remote_exec_cli`)
-        CapabilityError - `host` is not an ssh:// host, this server's own working directory is gone,
-                       the remote is not POSIX, or its SFTP subsystem sees a different filesystem
-        RemoteFailureError - the SSH connection could not be opened, or staging failed remotely
-        subprocess.TimeoutExpired - the command exceeded `timeout`
+        stdin: must be None/empty: the remote channel carries no input
+        extra_env: must be None/empty: the child's environment is the remote login shell's
+
+    Returns:
+        CliResult: exit status, decoded stdout/stderr, and whether the byte cap truncated them
+
+    Raises:
+        ToolInputError: `cwd` is not a directory (when `stage_cwd`), or the payload exceeds the staging limits
+        ValueError: `stdin`/`extra_env` was supplied (an internal guard; see `remote_exec_cli`)
+        CapabilityError: `host` is not an ssh:// host, this server's own working directory is gone, the remote is not
+            POSIX, or its SFTP subsystem sees a different filesystem
+        RemoteFailureError: the SSH connection could not be opened, or staging failed remotely
+        subprocess.TimeoutExpired: the command exceeded `timeout`
     """
     _reject_unforwardable(stdin, extra_env)
     url = _ssh_url_for(host, args)
@@ -487,7 +529,7 @@ def remote_stage_and_exec(
 
 
 @contextlib.contextmanager
-def remote_cli_session(host: str | None, *, timeout: float) -> Iterator[RemoteStagingSession]:
+def remote_cli_session(host: str | None, *, timeout: float) -> Iterator[RemoteStagingSession]:  # noqa: DOC502
     """Open a staging session for a tool whose inputs need bespoke handling, and run it yourself.
 
     `remote_stage_and_exec` covers the common shape: a working directory plus whole-token path
@@ -497,29 +539,40 @@ def remote_cli_session(host: str | None, *, timeout: float) -> Iterator[RemoteSt
     is done. Reach for this only when the generic backend genuinely cannot express the staging.
 
     Args:
-        host - configured host label, or None for the default host; must resolve to an ssh:// URL
-        timeout - bound on the SSH handshake and dialect probe
-    returns: Iterator[RemoteStagingSession] - the session, valid inside the `with` block only
-    raises:
-        CapabilityError - not an ssh:// host, a non-POSIX remote, or an unusable SFTP subsystem
-        RemoteFailureError - the connection could not be opened, or staging setup failed remotely
+        host: configured host label, or None for the default host; must resolve to an ssh:// URL
+        timeout: bound on the SSH handshake and dialect probe
+
+    Returns:
+        Iterator[RemoteStagingSession]: the session, valid inside the `with` block only
+
+    Yields:
+        RemoteStagingSession: the session, for the caller to stage into and run
+
+    Raises:
+        CapabilityError: not an ssh:// host, a non-POSIX remote, or an unusable SFTP subsystem
+        RemoteFailureError: the connection could not be opened, or staging setup failed remotely
+
     """
     with remote_staging_session(_ssh_url_for(host, []), timeout=timeout) as session:
         yield session
 
 
-def run_in_session(
+def run_in_session(  # noqa: DOC502
     session: RemoteStagingSession, args: list[str], *, timeout: float, cwd: str | None = None
 ) -> CliResult:
     """Run `docker <args...>` in an open staging session, in `run_docker`'s result shape.
 
     Args:
-        session - a session from `remote_cli_session`
-        args - the docker argv *without* the binary
-        timeout - seconds the remote watchdog allows the command
-        cwd - remote directory to run in, typically one a `stage_*` call returned
-    returns: CliResult - exit status, decoded stdout/stderr, and whether the byte cap truncated them
-    raises: subprocess.TimeoutExpired - the command exceeded `timeout`
+        session: a session from `remote_cli_session`
+        args: the docker argv *without* the binary
+        timeout: seconds the remote watchdog allows the command
+        cwd: remote directory to run in, typically one a `stage_*` call returned
+
+    Returns:
+        CliResult: exit status, decoded stdout/stderr, and whether the byte cap truncated them
+
+    Raises:
+        subprocess.TimeoutExpired: the command exceeded `timeout`
     """
     return _as_cli_result(
         session.exec(["docker", *args], cwd=cwd, timeout=timeout, max_output_bytes=MAX_CLI_OUTPUT_BYTES)
@@ -533,9 +586,11 @@ def _reject_unforwardable(stdin: bytes | None, extra_env: dict[str, str] | None)
     fail loudly here instead of silently diverging from its local path.
 
     Args:
-        stdin - must be None/empty
-        extra_env - must be None/empty
-    raises: ValueError - either was supplied
+        stdin: must be None/empty
+        extra_env: must be None/empty
+
+    Raises:
+        ValueError: either was supplied
     """
     if stdin:
         raise ValueError("remote-exec cannot send stdin to a remote docker command (no consumer needs it today).")
@@ -550,10 +605,14 @@ def _ssh_url_for(host: str | None, args: list[str]) -> str:
     """The ssh:// URL for a host that a remote backend was asked to use.
 
     Args:
-        host - configured host label, or None for the default host
-        args - the docker argv, for the error message only
-    returns: str - the host's resolved ssh:// URL
-    raises: CapabilityError - the host is not reached over ssh://
+        host: configured host label, or None for the default host
+        args: the docker argv, for the error message only
+
+    Returns:
+        str: the host's resolved ssh:// URL
+
+    Raises:
+        CapabilityError: the host is not reached over ssh://
     """
     resolved = _resolve_host(host)
     url = resolved.url
@@ -573,8 +632,11 @@ def _as_cli_result(result: RemoteExecResult) -> CliResult:
     The retention cap already applied remotely, so `_decode` re-checks a bound the bytes cannot exceed;
     `truncated` is carried through from the drain, which is the only place that saw what was dropped.
 
-    args: result - the raw remote outcome
-    returns: CliResult - the decoded equivalent
+    Args:
+        result: the raw remote outcome
+
+    Returns:
+        CliResult: the decoded equivalent
     """
     stdout, truncated_out = _decode(result.stdout)
     stderr, truncated_err = _decode(result.stderr)
@@ -596,9 +658,11 @@ def flag_values(args: Sequence[str], flag: str) -> list[str]:
     would only show up for an absolute path against a remote host.
 
     Args:
-        args - the argv to scan
-        flag - the exact flag whose values to collect, e.g. "-f"
-    returns: list[str] - one value per occurrence, in order
+        args: the argv to scan
+        flag: the exact flag whose values to collect, e.g. "-f"
+
+    Returns:
+        list[str]: one value per occurrence, in order
     """
     return [value for name, value in zip(args, args[1:], strict=False) if name == flag]
 
@@ -611,9 +675,11 @@ def _local_target(value: str, *, base: Path) -> Path | None:
     receives argv tokens verbatim.
 
     Args:
-        value - a value from `path_values`
-        base - the directory a relative value resolves against
-    returns: Path | None - the absolute local path, or None when the value names nothing here
+        value: a value from `path_values`
+        base: the directory a relative value resolves against
+
+    Returns:
+        Path | None: the absolute local path, or None when the value names nothing here
     """
     if not value:
         return None
@@ -651,12 +717,14 @@ def _reconcile_path_tokens(
     visible in the resulting command.
 
     Args:
-        session - the staging session to copy extra paths through
-        args - the docker argv to rewrite
-        path_values - the values in `args` that name local paths
-        base - the local directory relative values resolve against
-        staged_tree - the remote path `base` was staged to, or None when it was not staged
-    returns: list[str] - `args` with path tokens reconciled
+        session: the staging session to copy extra paths through
+        args: the docker argv to rewrite
+        path_values: the values in `args` that name local paths
+        base: the local directory relative values resolve against
+        staged_tree: the remote path `base` was staged to, or None when it was not staged
+
+    Returns:
+        list[str]: `args` with path tokens reconciled
     """
     replacements: dict[str, str] = {}
     resolved_base = base.resolve()
@@ -698,6 +766,16 @@ def safe_positional(value: str, what: str = "value") -> str:
     A legitimate image reference, service, context, or builder name never starts with '-', so we
     reject those outright with an actionable error. Returns `value` unchanged when it is safe, so
     call sites can wrap inline: `args.append(safe_positional(image, "image"))`.
+
+    Args:
+        value: the string to validate
+        what: what is being validated, for the error message
+
+    Returns:
+        str: the same value, once accepted
+
+    Raises:
+        ToolInputError: it could be read as an option rather than a positional.
     """
     if value.startswith("-"):
         raise ToolInputError(
@@ -723,6 +801,16 @@ def safe_spec_value(value: str, what: str = "value") -> str:
     first and then on the first '=' of each part, so `host=tcp://a=b` parses as one key with the
     value `tcp://a=b`. Rejecting '=' as well would refuse legitimate filesystem paths containing
     one, so it is deliberately allowed - do not "harden" this to include it.
+
+    Args:
+        value: the string to validate
+        what: what is being validated, for the error message
+
+    Returns:
+        str: the same value, once accepted
+
+    Raises:
+        ToolInputError: it contains a separator that would break out of the spec.
     """
     if "," in value:
         raise ToolInputError(
@@ -740,6 +828,12 @@ def filter_args(filters: dict | None) -> list[str]:
     `filters` contract across the surface). A list value emits one `--filter` per element -
     docker-py's own convention for repeated filters (`{"label": ["a=1", "b=2"]}`) - and a bool
     lowercases to the CLI's `true`/`false`.
+
+    Args:
+        filters: an SDK-shaped filters dict, or None
+
+    Returns:
+        list: repeated ``--filter key=value`` arguments
     """
     args: list[str] = []
     for key, value in (filters or {}).items():
@@ -756,6 +850,10 @@ def raise_on_cli_failure(result: CliResult, command: str) -> None:
     Args:
         result: the CliResult from run_docker.
         command: the docker subcommand for the message, e.g. "buildx ls" or "context inspect".
+
+    Raises:
+        RemoteFailureError: the subprocess exited non-zero; the message carries its
+            stderr.
     """
     if result.returncode != 0:
         raise RemoteFailureError(
@@ -773,6 +871,13 @@ def parse_ndjson(text: str, *, truncated: bool = False, what: str = "docker outp
                    the final non-blank line is assumed to be a partial record and is dropped before
                    parsing rather than crashing on a half-record.
         what: short label used in error messages, e.g. "buildx ls output".
+
+    Returns:
+        list: one dict per non-blank line
+
+    Raises:
+        RuntimeError: a line is not valid JSON and the output was not truncated, so the
+            malformed line cannot be explained by a cut-off stream.
     """
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     if truncated and lines:
@@ -803,6 +908,9 @@ def parse_json_or_ndjson(
                    the NDJSON branch drops the final (likely partial) line rather than crashing on a
                    half-record; see `parse_ndjson`.
         what: short label used in error messages, e.g. "compose ps output".
+
+    Returns:
+        list, dict or None: the parsed documents, the single document, or None when there is nothing to parse
     """
     stripped = text.strip()
     if not stripped:

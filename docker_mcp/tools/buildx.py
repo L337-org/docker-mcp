@@ -64,13 +64,15 @@ def _run_buildx(
     target could be the very flag a scan looks for. Explicit values need no such assumption.
 
     Args:
-        args - the buildx argv, without the leading `buildx`
-        cwd - working directory for the command, or None for the server's own
-        timeout - seconds allowed for the command
-        host - configured host label, or None for the default host
-        path_values - values in `args` naming local paths to reconcile with the remote host
-        stage_cwd - True when the subcommand reads files from `cwd` (bake), so it is copied over
-    returns: CliResult - the same shape from either backend
+        args: the buildx argv, without the leading `buildx`
+        cwd: working directory for the command, or None for the server's own
+        timeout: seconds allowed for the command
+        host: configured host label, or None for the default host
+        path_values: values in `args` naming local paths to reconcile with the remote host
+        stage_cwd: True when the subcommand reads files from `cwd` (bake), so it is copied over
+
+    Returns:
+        CliResult: the same shape from either backend
     """
     if should_remote_exec(host, plugin="buildx"):
         if stage_cwd or path_values:
@@ -102,9 +104,11 @@ def _spec_component(spec: str, key: str) -> str | None:
     rather than approximate.
 
     Args:
-        spec - one spec value, e.g. "type=local,dest=out" or "id=npmrc,src=/home/u/.npmrc"
-        key - the component to read, e.g. "dest"
-    returns: str | None - the component's value, or None when the spec does not carry it
+        spec: one spec value, e.g. "type=local,dest=out" or "id=npmrc,src=/home/u/.npmrc"
+        key: the component to read, e.g. "dest"
+
+    Returns:
+        str | None: the component's value, or None when the spec does not carry it
     """
     for component in spec.split(","):
         name, separator, value = component.partition("=")
@@ -117,10 +121,12 @@ def _replace_spec_component(spec: str, key: str, new_value: str) -> str:
     """Rewrite one `key=` component of a buildx spec, leaving the rest of it untouched.
 
     Args:
-        spec - the spec value to rewrite
-        key - the component to replace, e.g. "src"
-        new_value - the replacement value
-    returns: str - the rewritten spec
+        spec: the spec value to rewrite
+        key: the component to replace, e.g. "src"
+        new_value: the replacement value
+
+    Returns:
+        str: the rewritten spec
     """
     parts = []
     for component in spec.split(","):
@@ -149,11 +155,13 @@ def _refuse_flags_that_resolve_on_the_wrong_host(
     flags is refused whatever its value.
 
     Args:
-        output - `--output` specs
-        cache_to - `--cache-to` specs
-        cache_from - `--cache-from` specs
-        ssh - `--ssh` specs
-    raises: ToolInputError - any of the above is present
+        output: `--output` specs
+        cache_to: `--cache-to` specs
+        cache_from: `--cache-from` specs
+        ssh: `--ssh` specs
+
+    Raises:
+        ToolInputError: any of the above is present
     """
     checks = (
         (
@@ -220,10 +228,14 @@ def _local_dockerfile(file: str | None, *, context_is_local: bool) -> Path | Non
       this server's working directory, silently building something else.
 
     Args:
-        file - the `file` parameter as given, or None
-        context_is_local - whether `context` names an existing local directory
-    returns: Path | None - the local path buildx would read, else None
-    raises: ToolInputError - a relative `file` cannot be resolved (this server's cwd is unavailable)
+        file: the `file` parameter as given, or None
+        context_is_local: whether `context` names an existing local directory
+
+    Returns:
+        Path | None: the local path buildx would read, else None
+
+    Raises:
+        ToolInputError: a relative `file` cannot be resolved (this server's cwd is unavailable)
     """
     if file is None:
         return None
@@ -249,9 +261,9 @@ def _replace_flag_value(args: list[str], flag: str, new_value: str) -> None:
     to equal it cannot be caught by accident.
 
     Args:
-        args - the argv to modify in place
-        flag - the flag whose value to replace, e.g. "--file"
-        new_value - the replacement
+        args: the argv to modify in place
+        flag: the flag whose value to replace, e.g. "--file"
+        new_value: the replacement
     """
     for index, token in enumerate(args):
         if token == flag and index + 1 < len(args):
@@ -267,10 +279,10 @@ def _stage_composite_paths(session: RemoteStagingSession, args: list[str], flag:
     inputs are copied.
 
     Args:
-        session - the open staging session
-        args - the argv to modify in place
-        flag - the repeatable flag to walk, e.g. "--secret"
-        key - the component holding a path; "" means the whole value after `name=`
+        session: the open staging session
+        args: the argv to modify in place
+        flag: the repeatable flag to walk, e.g. "--secret"
+        key: the component holding a path; "" means the whole value after `name=`
     """
     for index, token in enumerate(args):
         if token != flag or index + 1 >= len(args):
@@ -294,7 +306,7 @@ def _stage_composite_paths(session: RemoteStagingSession, args: list[str], flag:
 
 
 @tool()
-def buildx_build(
+def buildx_build(  # noqa: DOC101,DOC103
     context: str,
     tags: list[str] | None = None,
     platforms: list[str] | None = None,
@@ -336,40 +348,45 @@ def buildx_build(
     `cache_from` with a local `src=`, or any `ssh=` - each would resolve on the remote machine, losing
     the output or silently changing the build.
 
-    args:
-        context - Build context: a filesystem path or Git/HTTP URL (verbatim; no `~`/glob expansion).
-                       The `-` stdin-tarball form is NOT supported (stdin isn't forwarded - it'd block
-                       on the server's own stdin); serve a pre-packed tarball over HTTP instead. Copied
-                       to the target host when it names a local directory and there is no local plugin.
-        tags - Image references to apply (`-t`, repeatable)
-        platforms - Target platforms, e.g. ["linux/amd64", "linux/arm64"]
-        file - Dockerfile path. A relative path resolves against this server's working directory
-                      (buildx's own rule), NOT against `context` - pass e.g. "ctx/Dockerfile" for a
-                      Dockerfile inside the context directory "ctx".
-        build_args - Build-time variables (each becomes `--build-arg KEY=VALUE`)
-        build_contexts - Additional named build contexts (e.g. {"deps": "./vendor"})
-        labels - Labels to set on the resulting image (each becomes `--label KEY=VALUE`)
-        annotations - OCI manifest annotations (passed verbatim, repeatable)
-        target - Target build stage to stop at
-        push - Push the result to the registry (mutually exclusive with `load`)
-        load - Load the result into the local image store (single-platform builds only)
-        output - Custom `--output` specs (e.g. ["type=tar,dest=out.tar"]). A filesystem `dest=` is
-                      refused when the build has to run on a remote host; `dest=-` (stdout) is fine.
-        no_cache - Do not use cache when building
-        no_cache_filter - Stage names to exclude from caching
-        pull - Always attempt to pull a newer version of each base image
-        cache_from - Cache import specs, e.g. ["type=registry,ref=user/img:cache"]
-        cache_to - Cache export specs
-        builder - Override the active builder
-        sbom - Shorthand for `--attest=type=sbom`; pass "true" or a config string
-        provenance - Shorthand for `--attest=type=provenance`; pass "true", "false", or a config string
-        attest - Custom attestation specs (repeatable)
-        secret - Secret specs (e.g. ["id=npmrc,src=/home/user/.npmrc"] or ["id=npmrc,env=NPM_TOKEN"]).
-                            `~` in `src=` is NOT expanded (by this tool or the CLI) - use an absolute path.
-        ssh - SSH agent socket/key specs (e.g. ["default"], using $SSH_AUTH_SOCK). Refused when
-                            the build has to run on a remote host: the socket read would be that host's.
-        timeout_seconds - Subprocess timeout (default 1800s)
-    returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
+    Args:
+        context: Build context: a filesystem path or Git/HTTP URL (verbatim; no `~`/glob expansion). The `-`
+            stdin-tarball form is NOT supported (stdin isn't forwarded - it'd block on the server's own stdin); serve a
+            pre-packed tarball over HTTP instead. Copied to the target host when it names a local directory and there is
+            no local plugin.
+        tags: Image references to apply (`-t`, repeatable)
+        platforms: Target platforms, e.g. ["linux/amd64", "linux/arm64"]
+        file: Dockerfile path. A relative path resolves against this server's working directory (buildx's own rule), NOT
+            against `context` - pass e.g. "ctx/Dockerfile" for a Dockerfile inside the context directory "ctx".
+        build_args: Build-time variables (each becomes `--build-arg KEY=VALUE`)
+        build_contexts: Additional named build contexts (e.g. {"deps": "./vendor"})
+        labels: Labels to set on the resulting image (each becomes `--label KEY=VALUE`)
+        annotations: OCI manifest annotations (passed verbatim, repeatable)
+        target: Target build stage to stop at
+        push: Push the result to the registry (mutually exclusive with `load`)
+        load: Load the result into the local image store (single-platform builds only)
+        output: Custom `--output` specs (e.g. ["type=tar,dest=out.tar"]). A filesystem `dest=` is refused when the build
+            has to run on a remote host; `dest=-` (stdout) is fine.
+        no_cache: Do not use cache when building
+        no_cache_filter: Stage names to exclude from caching
+        pull: Always attempt to pull a newer version of each base image
+        cache_from: Cache import specs, e.g. ["type=registry,ref=user/img:cache"]
+        cache_to: Cache export specs
+        builder: Override the active builder
+        sbom: Shorthand for `--attest=type=sbom`; pass "true" or a config string
+        provenance: Shorthand for `--attest=type=provenance`; pass "true", "false", or a config string
+        attest: Custom attestation specs (repeatable)
+        secret: Secret specs (e.g. ["id=npmrc,src=/home/user/.npmrc"] or ["id=npmrc,env=NPM_TOKEN"]). `~` in `src=` is
+            NOT expanded (by this tool or the CLI) - use an absolute path.
+        ssh: SSH agent socket/key specs (e.g. ["default"], using $SSH_AUTH_SOCK). Refused when the build has to run on a
+            remote host: the socket read would be that host's.
+        timeout_seconds: Subprocess timeout (default 1800s)
+
+    Returns:
+        dict: {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
+
+    Raises:
+        ToolInputError: `context` is '-' (a tarball on stdin), which this tool does not forward,
+            or `push` and `load` were both given - `--load` only works for a single-platform build.
     """
     if context == "-":
         raise ToolInputError(
@@ -449,7 +466,7 @@ def buildx_build(
     return run_docker(["buildx", *args], timeout=timeout_seconds, host=host).to_dict()
 
 
-def _run_buildx_build_remotely(
+def _run_buildx_build_remotely(  # noqa: DOC502
     args: list[str],
     *,
     context: str,
@@ -476,16 +493,22 @@ def _run_buildx_build_remotely(
     context, is copied on its own and pointed at the same way.
 
     Args:
-        args - the fully-built buildx argv, ending with the context positional
-        context - the context as the caller gave it
-        file - the `file` parameter as the caller gave it
-        output/cache_to/cache_from/ssh - checked for effects that would land on the wrong machine
-        timeout - seconds allowed for the build
-        host - configured host label, or None for the default host
-    returns: CliResult - the build's outcome, in `run_docker`'s shape
-    raises:
-        ToolInputError - a refused flag (see `_refuse_flags_that_resolve_on_the_wrong_host`), or a
-                     `file` that cannot be resolved against this server's working directory
+        args: the fully-built buildx argv, ending with the context positional
+        context: the context as the caller gave it
+        file: the `file` parameter as the caller gave it
+        output: checked for effects that would land on the wrong machine.
+        cache_to: checked for effects that would land on the wrong machine.
+        cache_from: checked for effects that would land on the wrong machine.
+        ssh: checked for effects that would land on the wrong machine.
+        timeout: seconds allowed for the build
+        host: configured host label, or None for the default host
+
+    Returns:
+        CliResult: the build's outcome, in `run_docker`'s shape
+
+    Raises:
+        ToolInputError: a refused flag (see `_refuse_flags_that_resolve_on_the_wrong_host`), or a `file` that cannot be
+            resolved against this server's working directory
     """
     # Before connecting: a refusal should not cost an SSH handshake and a context upload.
     _refuse_flags_that_resolve_on_the_wrong_host(output=output, cache_to=cache_to, cache_from=cache_from, ssh=ssh)
@@ -524,7 +547,7 @@ def _run_buildx_build_remotely(
 
 
 @tool()
-def buildx_bake(
+def buildx_bake(  # noqa: DOC101,DOC103
     targets: list[str] | None = None,
     files: list[str] | None = None,
     set_overrides: list[str] | None = None,
@@ -544,19 +567,21 @@ def buildx_bake(
     Dockerfile target use `buildx_build`.
     Does not raise on a non-zero CLI exit - inspect `returncode`/`stderr` in the result.
 
-    args:
-        targets - Bake targets to build (default: the `default` group)
-        files - Bake file paths (`-f`, repeatable)
-        set_overrides - Per-target overrides, e.g. ["app.platform=linux/amd64"]
-        push - Push results to the registry
-        load - Load results into the local image store
-        no_cache - Do not use cache when building
-        pull - Always pull a newer base image
-        builder - Override the active builder
-        cwd - Working directory containing the bake file (defaults to the server's cwd; copied to
-                      the target host if no local plugin)
-        timeout_seconds - Subprocess timeout (default 1800s)
-    returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
+    Args:
+        targets: Bake targets to build (default: the `default` group)
+        files: Bake file paths (`-f`, repeatable)
+        set_overrides: Per-target overrides, e.g. ["app.platform=linux/amd64"]
+        push: Push results to the registry
+        load: Load results into the local image store
+        no_cache: Do not use cache when building
+        pull: Always pull a newer base image
+        builder: Override the active builder
+        cwd: Working directory containing the bake file (defaults to the server's cwd; copied to the target host if no
+            local plugin)
+        timeout_seconds: Subprocess timeout (default 1800s)
+
+    Returns:
+        dict: {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
     """
     args: list[str] = ["bake", "--progress=plain"]
     for f in files or []:
@@ -590,7 +615,7 @@ def buildx_bake(
 
 
 @tool()
-def buildx_imagetools_inspect(
+def buildx_imagetools_inspect(  # noqa: DOC101,DOC103
     image: str,
     raw: bool = False,
     format: str | None = None,
@@ -607,15 +632,19 @@ def buildx_imagetools_inspect(
     CLI's credential store; `registry_manifest` answers the same question over direct HTTPS
     with no daemon or plugin.
 
-    args:
-        image - Image reference, e.g. "alpine:3.19" or "ghcr.io/org/repo@sha256:..."
-        raw - Return the raw manifest bytes (a JSON document) instead of the
-                    human-rendered tree
-        format - Go template format string (mutually exclusive with `raw`)
-        builder - Override the active builder
-    returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}.
-                    When `raw=True` or `format="{{json .}}"`, `stdout` is a JSON document
-                    the caller can parse.
+    Args:
+        image: Image reference, e.g. "alpine:3.19" or "ghcr.io/org/repo@sha256:..."
+        raw: Return the raw manifest bytes (a JSON document) instead of the human-rendered tree
+        format: Go template format string (mutually exclusive with `raw`)
+        builder: Override the active builder
+
+    Returns:
+        dict: {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}. When `raw=True` or `format="{{json
+            .}}"`, `stdout` is a JSON document the caller can parse.
+
+    Raises:
+        ToolInputError: `raw` and `format` were both given - `raw` always emits the unmodified
+            manifest JSON, so a format would be ignored rather than applied.
     """
     if raw and format is not None:
         raise ToolInputError(
@@ -635,7 +664,7 @@ def buildx_imagetools_inspect(
 
 
 @tool()
-def buildx_imagetools_create(
+def buildx_imagetools_create(  # noqa: DOC101,DOC103
     target: str,
     sources: list[str],
     append: bool = False,
@@ -655,18 +684,23 @@ def buildx_imagetools_create(
     the result with `buildx_imagetools_inspect`.
     Does not raise on a non-zero CLI exit - inspect `returncode`/`stderr` in the result.
 
-    args:
-        target - Tag for the new manifest list (`-t`)
-        sources - Source image references to combine
-        append - Append to the existing manifest at `target` rather than replacing
-        dry_run - Print the resulting manifest without pushing
-        annotations - OCI annotations (repeatable; passed verbatim)
-        platforms - Filter source platforms when combining
-        descriptor_files - Files to read source descriptors from, instead of refs (copied to the
-                            target host if no local plugin)
-        builder - Override the active builder
-        timeout_seconds - Subprocess timeout (default 600s)
-    returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
+    Args:
+        target: Tag for the new manifest list (`-t`)
+        sources: Source image references to combine
+        append: Append to the existing manifest at `target` rather than replacing
+        dry_run: Print the resulting manifest without pushing
+        annotations: OCI annotations (repeatable; passed verbatim)
+        platforms: Filter source platforms when combining
+        descriptor_files: Files to read source descriptors from, instead of refs (copied to the target host if no local
+            plugin)
+        builder: Override the active builder
+        timeout_seconds: Subprocess timeout (default 600s)
+
+    Returns:
+        dict: {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
+
+    Raises:
+        ToolInputError: no source ref or file was given.
     """
     if not sources and not descriptor_files:
         raise ToolInputError("buildx_imagetools_create requires at least one source ref or file")
@@ -688,7 +722,7 @@ def buildx_imagetools_create(
 
 
 @tool()
-def buildx_list(host: str | None = None) -> list:
+def buildx_list(host: str | None = None) -> list:  # noqa: DOC101,DOC103
     """
     List builder instances.
 
@@ -696,9 +730,9 @@ def buildx_list(host: str | None = None) -> list:
     detail and `buildx_use` to switch the default.
     Raises RemoteFailureError if the CLI call fails.
 
-    returns: list - One dict per builder (parsed from `--format '{{json .}}'`).
-                    If the captured stdout was truncated by MAX_CLI_OUTPUT_BYTES the
-                    last (likely partial) record is dropped before parsing.
+    Returns:
+        list: One dict per builder (parsed from `--format '{{json .}}'`). If the captured stdout was truncated by
+            MAX_CLI_OUTPUT_BYTES the last (likely partial) record is dropped before parsing.
     """
     result = _run_buildx(["ls", "--format", "{{json .}}"], timeout=_TIMEOUT_QUERY, host=host)
     raise_on_cli_failure(result, "buildx ls")
@@ -706,7 +740,7 @@ def buildx_list(host: str | None = None) -> list:
 
 
 @tool()
-def buildx_history_list(builder: str | None = None, host: str | None = None) -> list:
+def buildx_history_list(builder: str | None = None, host: str | None = None) -> list:  # noqa: DOC101,DOC103
     """
     List recent build records (BuildKit build history), parsed from `--format '{{json .}}'`.
 
@@ -714,9 +748,11 @@ def buildx_history_list(builder: str | None = None, host: str | None = None) -> 
     finding a build to drill into with `buildx_history_inspect`. Requires buildx >= v0.13 (older
     versions have no `history` subcommand and this raises with the CLI's "unknown command" error).
 
-    args:
-        builder - Builder instance to read history from (defaults to the active builder)
-    returns: list - One dict per build record (ref, name, status, total/completed/cached steps, times)
+    Args:
+        builder: Builder instance to read history from (defaults to the active builder)
+
+    Returns:
+        list: One dict per build record (ref, name, status, total/completed/cached steps, times)
     """
     args = ["history", "ls", "--format", "{{json .}}"]
     if builder is not None:
@@ -727,7 +763,11 @@ def buildx_history_list(builder: str | None = None, host: str | None = None) -> 
 
 
 @tool()
-def buildx_history_inspect(ref: str = "", builder: str | None = None, host: str | None = None) -> dict:
+def buildx_history_inspect(  # noqa: DOC101,DOC103
+    ref: str = "",
+    builder: str | None = None,
+    host: str | None = None,
+) -> dict:
     """
     Inspect a single build record by ref, parsed from `--format json`.
 
@@ -736,14 +776,15 @@ def buildx_history_inspect(ref: str = "", builder: str | None = None, host: str 
     v0.13.
     Raises RemoteFailureError if the CLI call fails.
 
-    args:
-        ref - Build record ref. Pass the `ref` field from `buildx_history_list` directly - it
-                   reports a qualified "<builder>/<node>/<id>", but `history inspect` only accepts the
-                   bare id, so this reduces it to the id and (unless `builder` is given) targets the
-                   builder named in the ref. Empty/omitted inspects the most recent build; the `^N`
-                   syntax (e.g. "^0" = latest) is also valid.
-        builder - Builder instance the build ran on (defaults to the one in `ref`, else active)
-    returns: dict - The parsed build record (or {"raw": <stdout>} if the output isn't a JSON object)
+    Args:
+        ref: Build record ref. Pass the `ref` field from `buildx_history_list` directly - it reports a qualified
+            "<builder>/<node>/<id>", but `history inspect` only accepts the bare id, so this reduces it to the id and
+            (unless `builder` is given) targets the builder named in the ref. Empty/omitted inspects the most recent
+            build; the `^N` syntax (e.g. "^0" = latest) is also valid.
+        builder: Builder instance the build ran on (defaults to the one in `ref`, else active)
+
+    Returns:
+        dict: The parsed build record (or {"raw": <stdout>} if the output isn't a JSON object)
     """
     # `buildx history ls` emits ref as "<builder>/<node>/<id>", but `history inspect` only finds the
     # record by its bare id; the qualified form errors with "no record found". Reduce a qualified ref
@@ -769,7 +810,11 @@ def buildx_history_inspect(ref: str = "", builder: str | None = None, host: str 
 
 
 @tool()
-def buildx_inspect(name: str | None = None, bootstrap: bool = False, host: str | None = None) -> dict:
+def buildx_inspect(  # noqa: DOC101,DOC103
+    name: str | None = None,
+    bootstrap: bool = False,
+    host: str | None = None,
+) -> dict:
     """
     Inspect a builder instance.
 
@@ -777,11 +822,13 @@ def buildx_inspect(name: str | None = None, bootstrap: bool = False, host: str |
     returns machine-parsed JSON for all builders.
     Does not raise on a non-zero CLI exit - inspect `returncode`/`stderr` in the result.
 
-    args:
-        name - Builder name (defaults to the active builder)
-        bootstrap - Boot the builder if it isn't already running
-    returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}.
-                    stdout is human-readable; parse with the agent or call buildx_list for JSON.
+    Args:
+        name: Builder name (defaults to the active builder)
+        bootstrap: Boot the builder if it isn't already running
+
+    Returns:
+        dict: {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}. stdout is human-readable; parse with
+            the agent or call buildx_list for JSON.
     """
     args: list[str] = ["inspect"]
     if bootstrap:
@@ -792,7 +839,7 @@ def buildx_inspect(name: str | None = None, bootstrap: bool = False, host: str |
 
 
 @tool()
-def buildx_du(builder: str | None = None, host: str | None = None) -> list:
+def buildx_du(builder: str | None = None, host: str | None = None) -> list:  # noqa: DOC101,DOC103
     """
     Report BuildKit cache disk usage as a list of records.
 
@@ -803,8 +850,11 @@ def buildx_du(builder: str | None = None, host: str | None = None) -> list:
     disk, not builder cache).
     Raises RemoteFailureError if the CLI call fails.
 
-    args: builder - Override the active builder
-    returns: list - One dict per cache record (parsed from `--format '{{json .}}'`)
+    Args:
+        builder: Override the active builder
+
+    Returns:
+        list: One dict per cache record (parsed from `--format '{{json .}}'`)
     """
     args: list[str] = ["du", "--format", "{{json .}}"]
     if builder is not None:
@@ -815,7 +865,7 @@ def buildx_du(builder: str | None = None, host: str | None = None) -> list:
 
 
 @tool()
-def buildx_prune(
+def buildx_prune(  # noqa: DOC101,DOC103
     all: bool = False,
     filters: dict | None = None,
     reserved_space: str | None = None,
@@ -831,15 +881,17 @@ def buildx_prune(
     Destructive: this tool always passes `--force` because no interactive prompt is
     available under MCP. Pair with `buildx_du` first to inventory what would be removed.
 
-    args:
-        all - Include internal/frontend images
-        filters - Filter by attributes (e.g. {"until": "24h", "type": "exec.cachemount"})
-        reserved_space - Amount of disk to always keep (e.g. "10GB")
-        max_used_space - Maximum disk space the cache may use (e.g. "20GB")
-        min_free_space - Target amount of free disk after pruning (e.g. "5GB")
-        builder - Override the active builder
-        timeout_seconds - Subprocess timeout (default 600s)
-    returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
+    Args:
+        all: Include internal/frontend images
+        filters: Filter by attributes (e.g. {"until": "24h", "type": "exec.cachemount"})
+        reserved_space: Amount of disk to always keep (e.g. "10GB")
+        max_used_space: Maximum disk space the cache may use (e.g. "20GB")
+        min_free_space: Target amount of free disk after pruning (e.g. "5GB")
+        builder: Override the active builder
+        timeout_seconds: Subprocess timeout (default 600s)
+
+    Returns:
+        dict: {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
     """
     args: list[str] = ["prune", "--force"]
     if all:
@@ -857,7 +909,7 @@ def buildx_prune(
 
 
 @tool()
-def buildx_create(
+def buildx_create(  # noqa: DOC101,DOC103
     name: str | None = None,
     # Not an enum: buildx drivers are pluggable (docker, docker-container, kubernetes, remote,
     # cloud, ...) and the set grows with the plugin, so pinning it would date badly.
@@ -880,18 +932,20 @@ def buildx_create(
     starts the builder now rather than on first build.
     Does not raise on a non-zero CLI exit - inspect `returncode`/`stderr` in the result.
 
-    args:
-        name - Name for the new builder (defaults to a generated name)
-        driver - BuildKit driver (e.g. "docker-container", "kubernetes", "remote")
-        driver_opts - Driver-specific options (each becomes `--driver-opt KEY=VALUE`)
-        use - Set the new builder as the current one
-        bootstrap - Boot the builder immediately
-        platforms - Platforms the builder advertises
-        config - Path to a buildkitd config file (copied to the target host if no local plugin);
-            passed as `--buildkitd-config`, so this argument needs buildx >= 0.17
-        node_name - Node name within the builder (for multi-node builders)
-        append - Append a node to an existing builder named `name`
-    returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
+    Args:
+        name: Name for the new builder (defaults to a generated name)
+        driver: BuildKit driver (e.g. "docker-container", "kubernetes", "remote")
+        driver_opts: Driver-specific options (each becomes `--driver-opt KEY=VALUE`)
+        use: Set the new builder as the current one
+        bootstrap: Boot the builder immediately
+        platforms: Platforms the builder advertises
+        config: Path to a buildkitd config file (copied to the target host if no local plugin); passed as
+            `--buildkitd-config`, so this argument needs buildx >= 0.17
+        node_name: Node name within the builder (for multi-node builders)
+        append: Append a node to an existing builder named `name`
+
+    Returns:
+        dict: {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
     """
     args: list[str] = ["create"]
     if driver is not None:
@@ -921,7 +975,12 @@ def buildx_create(
 
 
 @tool()
-def buildx_use(name: str, default: bool = False, global_default: bool = False, host: str | None = None) -> dict:
+def buildx_use(  # noqa: DOC101,DOC103
+    name: str,
+    default: bool = False,
+    global_default: bool = False,
+    host: str | None = None,
+) -> dict:
     """
     Select the active builder for subsequent buildx operations.
 
@@ -931,11 +990,13 @@ def buildx_use(name: str, default: bool = False, global_default: bool = False, h
     current status. To avoid switching the global default, pass a specific builder name
     directly via `buildx_build`'s `builder` parameter instead.
 
-    args:
-        name - Builder name to activate (from `buildx_list`)
-        default - Persist as default builder for the current Docker context
-        global_default - Persist as default builder across all Docker contexts
-    returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
+    Args:
+        name: Builder name to activate (from `buildx_list`)
+        default: Persist as default builder for the current Docker context
+        global_default: Persist as default builder across all Docker contexts
+
+    Returns:
+        dict: {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
     """
     args: list[str] = ["use"]
     if default:
@@ -947,7 +1008,7 @@ def buildx_use(name: str, default: bool = False, global_default: bool = False, h
 
 
 @tool()
-def buildx_remove(
+def buildx_remove(  # noqa: DOC101,DOC103
     name: str | None = None,
     all_inactive: bool = False,
     keep_state: bool = False,
@@ -962,13 +1023,18 @@ def buildx_remove(
     use `buildx_prune` to reclaim cache while keeping the builder.
     Does not raise on a non-zero CLI exit - inspect `returncode`/`stderr` in the result.
 
-    args:
-        name - Builder name to remove (mutually exclusive with `all_inactive`)
-        all_inactive - Remove every inactive builder
-        keep_state - Keep the BuildKit state volume
-        keep_daemon - Keep the BuildKit daemon process running
-        force - Force removal even if the builder is in use
-    returns: dict - {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
+    Args:
+        name: Builder name to remove (mutually exclusive with `all_inactive`)
+        all_inactive: Remove every inactive builder
+        keep_state: Keep the BuildKit state volume
+        keep_daemon: Keep the BuildKit daemon process running
+        force: Force removal even if the builder is in use
+
+    Returns:
+        dict: {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
+
+    Raises:
+        ToolInputError: neither or both of `name` and `all_inactive` were given.
     """
     if not name and not all_inactive:
         raise ToolInputError("buildx_remove requires either `name` or `all_inactive=True`")

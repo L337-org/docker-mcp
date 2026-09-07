@@ -62,6 +62,12 @@ def _detect_self_container_id(client: docker.DockerClient) -> str | None:
     Docker sets the container's short id as its hostname by default, so we look that up via the
     daemon. Returns None if the hostname was overridden (`--hostname`) or the lookup fails - the
     self-termination guard then stays inert rather than guessing.
+
+    Args:
+        client: a connected client for the host to look on
+
+    Returns:
+        str or None: this container's full id, or None when it cannot be determined
     """
     hostname = (os.environ.get("HOSTNAME") or "").strip()
     if not hostname:
@@ -83,6 +89,10 @@ def _self_host() -> Host | None:
     The first configured host on a local transport (unix://, npipe://, or the platform default).
     Self-detection and the self-termination guard key off this; a remote-only config returns None,
     leaving the guard inert, because our container cannot be on a remote.
+
+    Returns:
+        Host or None: the host the server's own container runs on, or None when it cannot be
+            determined
     """
     for host in _host_registry().values():
         if host.url is None or host.url.startswith(("unix://", "npipe://")):
@@ -100,6 +110,14 @@ def guard_not_self(container: Container, host: str | None = None) -> None:
 
     `host` is the host the call targets: the guard only fires on the self host, since our own container
     can only exist on the daemon the server runs on.
+
+    Args:
+        container: the container the action would affect
+        host: the host label the action targets, or None for the default
+
+    Raises:
+        ToolRefusalError: the container is this server's own, so the action would kill
+            the process performing it.
     """
     if _self_container_id is None or container.id != _self_container_id:
         return
@@ -116,7 +134,11 @@ def guard_not_self(container: Container, host: str | None = None) -> None:
 
 
 def _close_client_quietly(client: docker.DockerClient) -> None:
-    """Best-effort close of a discarded client; a failed teardown must not block a reconnect."""
+    """Best-effort close of a discarded client; a failed teardown must not block a reconnect.
+
+    Args:
+        client: the discarded client to close
+    """
     try:
         client.close()
     except Exception:  # noqa: S110, BLE001 - teardown of an already-discarded client is best-effort
@@ -135,8 +157,11 @@ def _ensure_ssh_port(url: str) -> str:
     the exact `~/.ssh/config` lookup `_ssh_proxy.parse_ssh_url` already does for the CLI-backed
     tools, so both tool families honor a non-default SSH port the same way.
 
-    args: url: str - a DOCKER_HOST/host URL; only `ssh://` URLs with no explicit port are affected
-    returns: str - `url` unchanged, or with the `~/.ssh/config` port spliced into the netloc
+    Args:
+        url: a DOCKER_HOST/host URL; only `ssh://` URLs with no explicit port are affected
+
+    Returns:
+        str: `url` unchanged, or with the `~/.ssh/config` port spliced into the netloc
     """
     if not is_ssh_url(url):
         return url
@@ -184,8 +209,11 @@ def _ensure_reachable_family(url: str) -> str:
     that last case the normal (paramiko-native) connection attempt still runs and produces its own
     error, rather than this helper raising first.
 
-    args: url: str - a DOCKER_HOST/host URL; only `ssh://` URLs are affected
-    returns: str - `url` unchanged, or with its hostname replaced by the literal address that answered
+    Args:
+        url: a DOCKER_HOST/host URL; only `ssh://` URLs are affected
+
+    Returns:
+        str: `url` unchanged, or with its hostname replaced by the literal address that answered
     """
     if not is_ssh_url(url):
         return url
@@ -226,8 +254,11 @@ def _from_env_no_context(**kwargs: Any) -> docker.DockerClient:
     hard floor: on 7.1.0 the kwarg is not popped and reaches `kwargs_from_env` as an unexpected
     argument.
 
-    args: kwargs - forwarded to `docker.from_env` (e.g. `environment=`)
-    returns: docker.DockerClient - a client that never consults a CLI context on its own
+    Args:
+        **kwargs: forwarded to `docker.from_env` (e.g. `environment=`)
+
+    Returns:
+        docker.DockerClient: a client that never consults a CLI context on its own
     """
     # pyright's bundled typeshed stub for `docker` predates 7.2.0 and so lacks `use_context`, while the
     # runtime signature is `**kwargs` and accepts it. tests/test_pyproject_pins.py::
@@ -244,6 +275,9 @@ def _build_default_client() -> docker.DockerClient:
     Goes through `_from_env_no_context` on all three paths - see there for why. Two of them are safe
     only incidentally (an env-derived `base_url` short-circuits docker-py's context lookup), so the
     guarantee deliberately doesn't rest on that.
+
+    Returns:
+        docker.DockerClient: a client for DOCKER_HOST, or for the resolved endpoint
     """
     docker_host = os.environ.get("DOCKER_HOST")
     if docker_host:
@@ -261,6 +295,12 @@ def _tls_from_dir(cert_dir: str) -> docker.TLSConfig:
     Always verifies the daemon against `ca.pem`; presents a client cert (mutual TLS) only when both
     `cert.pem` and `key.pem` are present, else verifies the daemon only (e.g. a self-signed daemon
     pinned via `ca.pem`, with no client auth).
+
+    Args:
+        cert_dir: a directory holding Docker's conventional certificate names
+
+    Returns:
+        docker.tls.TLSConfig: the config built from it
     """
     directory = Path(cert_dir)
     cert, key = directory / "cert.pem", directory / "key.pem"
@@ -273,6 +313,12 @@ def _tls_config_for(host: Host) -> docker.TLSConfig | None:
 
     The host's own `(tls=<dir>)` cert dir, else the global DOCKER_CERT_PATH / DOCKER_TLS_VERIFY env
     (mirroring from_env), else plaintext (None).
+
+    Args:
+        host: the configured host to build TLS for
+
+    Returns:
+        docker.tls.TLSConfig or None: the config, or None when the host needs no TLS
     """
     if host.cert_dir:
         return _tls_from_dir(host.cert_dir)
@@ -285,11 +331,17 @@ def _build_client(host: Host) -> docker.DockerClient:
     """Build the docker-py client for one configured host.
 
     The legacy single host (DOCKER_MCP_SERVER_HOSTS unset) goes through _build_default_client so the
-    existing DOCKER_HOST / from_env behavior (and its TLS env / API-version negotiation) is preserved
+    existing DOCKER_HOST / from_env behaviour (and its TLS env / API-version negotiation) is preserved
     exactly - this is the ONLY path that reads DOCKER_HOST. An explicitly-configured host is built from
     its resolved URL with per-host TLS; one that resolved to the platform default (url=None, e.g. `local`
     on Windows) is built WITHOUT a base_url so it uses the platform socket/npipe and never re-reads the
     ambient DOCKER_HOST (which is ignored when DOCKER_MCP_SERVER_HOSTS is set).
+
+    Args:
+        host: the configured host to connect to
+
+    Returns:
+        docker.DockerClient: a client for that host
     """
     if not _is_multi() and not (os.environ.get("DOCKER_MCP_SERVER_HOSTS") or "").strip():
         return _build_default_client()
@@ -300,8 +352,19 @@ def _build_client(host: Host) -> docker.DockerClient:
     return docker.DockerClient(base_url=url, tls=tls) if tls is not None else docker.DockerClient(base_url=url)
 
 
-def _get_client(host: str | None = None) -> docker.DockerClient:
-    """The pooled docker-py client for `host` (the default host when None), lazily built and cached."""
+def _get_client(host: str | None = None) -> docker.DockerClient:  # noqa: DOC503
+    """The pooled docker-py client for `host` (the default host when None), lazily built and cached.
+
+    Args:
+        host: the host label, or None for the default
+
+    Returns:
+        docker.DockerClient: the pooled client, built on first use
+
+    Raises:
+        RemoteFailureError: a client was built but the daemon is unreachable.
+        HostGuardError: propagated from _hosts.resolve when the label is not configured.
+    """
     resolved = _resolve_host(host)
     label = resolved.label
     with _client_lock:
@@ -320,7 +383,7 @@ def _get_client(host: str | None = None) -> docker.DockerClient:
 
 
 @tool()
-def system_ping(host: str | None = None) -> bool:
+def system_ping(host: str | None = None) -> bool:  # noqa: DOC101,DOC103
     """
     Check that the Docker server is responsive.
 
@@ -328,39 +391,42 @@ def system_ping(host: str | None = None) -> bool:
     daemon load - `system_reconnect` rebuilds a wedged client, `host_list` shows the configured
     endpoints. For daemon details use `system_version` / `system_info`.
 
-    returns: bool - True if the daemon responded successfully
+    Returns:
+        bool: True if the daemon responded successfully
     """
     return _get_client(host).ping()
 
 
 @tool()
-def system_version(host: str | None = None) -> dict:
+def system_version(host: str | None = None) -> dict:  # noqa: DOC101,DOC103
     """
     Return Docker server version information.
 
     Engine version, API level, and per-component versions - the first thing to check for feature
     availability. `system_info` reports runtime state (counts, drivers, swarm role) instead.
 
-    returns: dict - {"Version", "ApiVersion", "MinAPIVersion", "Os", "Arch", "Components", ...}
+    Returns:
+        dict: {"Version", "ApiVersion", "MinAPIVersion", "Os", "Arch", "Components", ...}
     """
     return _get_client(host).version()
 
 
 @tool()
-def system_info(host: str | None = None) -> dict:
+def system_info(host: str | None = None) -> dict:  # noqa: DOC101,DOC103
     """
     Return system-wide Docker information, like `docker info`.
 
     Daemon runtime state: container/image counts, storage and logging drivers, swarm role, and
     daemon warnings. Use `system_version` for version/API level and `system_df` for disk usage.
 
-    returns: dict - {"Containers", "Images", "Driver", "ServerVersion", "Swarm", "Warnings", ...}
+    Returns:
+        dict: {"Containers", "Images", "Driver", "ServerVersion", "Swarm", "Warnings", ...}
     """
     return _get_client(host).info()
 
 
 @tool()
-def system_df(host: str | None = None) -> dict:
+def system_df(host: str | None = None) -> dict:  # noqa: DOC101,DOC103
     """
     Summarize Docker disk usage: layer storage plus per-object sizes for images, containers, volumes, build cache.
 
@@ -369,8 +435,8 @@ def system_df(host: str | None = None) -> dict:
     counts rather than sizes. The reply enumerates every object on the daemon, so expect a large
     payload on busy hosts.
 
-    returns: dict - {"LayersSize", "Images", "Containers", "Volumes", "BuildCache"} with per-object
-        size fields
+    Returns:
+        dict: {"LayersSize", "Images", "Containers", "Volumes", "BuildCache"} with per-object size fields
     """
     return _get_client(host).df()
 
@@ -386,9 +452,10 @@ def host_list() -> list[dict]:
     (`system_ping(host=...)` checks one entry). The `docker-mcp://hosts` resource mirrors this
     tool.
 
-    returns: list[dict] - one per host: name; url (resolved daemon URL, null = docker-py platform
-        default); read_only; non_destructive (blocks destructive calls only); tls (whether a per-host
-        cert dir is configured); default (the omitted-host fallback)
+    Returns:
+        list[dict]: one per host: name; url (resolved daemon URL, null = docker-py platform default); read_only;
+            non_destructive (blocks destructive calls only); tls (whether a per-host cert dir is configured); default
+            (the omitted-host fallback)
     """
     hosts = _host_registry()
     default_label = _default_host().label if hosts else None
@@ -406,7 +473,7 @@ def host_list() -> list[dict]:
 
 
 @tool()
-def system_login(
+def system_login(  # noqa: DOC101,DOC103
     username: str,
     password: str,
     email: str | None = None,
@@ -423,14 +490,16 @@ def system_login(
     `~/.docker/config.json`, and avoid calling this tool from an agent loop. Credentials let
     `image_pull` / `image_push` reach private repositories; `system_logout` clears them.
 
-    args:
-        username - Registry username
-        password - Registry password or token
-        email - Registry account email
-        registry - URL to the registry (defaults to Docker Hub)
-        reauth - Force re-authentication even if valid credentials exist
-        dockercfg_path - Path to a custom dockercfg file
-    returns: dict - The login response: {"Status"} always; "IdentityToken" only when the registry issues one
+    Args:
+        username: Registry username
+        password: Registry password or token
+        email: Registry account email
+        registry: URL to the registry (defaults to Docker Hub)
+        reauth: Force re-authentication even if valid credentials exist
+        dockercfg_path: Path to a custom dockercfg file
+
+    Returns:
+        dict: The login response: {"Status"} always; "IdentityToken" only when the registry issues one
     """
     return _get_client(host).login(
         username=username,
@@ -443,7 +512,7 @@ def system_login(
 
 
 @tool()
-def system_logout(registry: str | None = None, host: str | None = None) -> dict:
+def system_logout(registry: str | None = None, host: str | None = None) -> dict:  # noqa: DOC101,DOC103
     """
     Clear cached registry credentials from this server's in-memory Docker client.
 
@@ -456,9 +525,11 @@ def system_logout(registry: str | None = None, host: str | None = None) -> dict:
     Reaches into a private docker-py attribute (`api._auth_configs`); degrades to clearing nothing if
     that internal shape changes.
 
-    args:
-        registry - Registry key to clear, or None to clear every cached credential
-    returns: dict - {"cleared": [<registry keys removed>]}
+    Args:
+        registry: Registry key to clear, or None to clear every cached credential
+
+    Returns:
+        dict: {"cleared": [<registry keys removed>]}
     """
     api = _get_client(host).api
     # _auth_configs is a private docker-py attribute: an AuthConfig (dict subclass) whose "auths" key
@@ -477,7 +548,7 @@ def system_logout(registry: str | None = None, host: str | None = None) -> dict:
 
 
 @tool()
-def system_events(
+def system_events(  # noqa: DOC101,DOC103
     since: str | None = None,
     until: str | None = None,
     filters: dict | None = None,
@@ -501,13 +572,15 @@ def system_events(
     empty list) instead of re-polling a snapshot on a timer - there's no separate wait tool for this
     since the filtering this call already does covers it.
 
-    args:
-        since - Show events created since this timestamp
-        until - Show events created until this timestamp
-        filters - Filters to apply to the event stream
-        limit - Max events to return (default 100)
-        timeout_seconds - Max wall-clock seconds before returning what was collected (default 30)
-    returns: list - A list of decoded event dicts (length <= limit)
+    Args:
+        since: Show events created since this timestamp
+        until: Show events created until this timestamp
+        filters: Filters to apply to the event stream
+        limit: Max events to return (default 100)
+        timeout_seconds: Max wall-clock seconds before returning what was collected (default 30)
+
+    Returns:
+        list: A list of decoded event dicts (length <= limit)
     """
     stream = _get_client(host).events(since=since, until=until, filters=filters, decode=True)
     collected: list = []
@@ -528,7 +601,7 @@ def system_events(
 
 
 @tool()
-def system_close(host: str | None = None) -> bool:
+def system_close(host: str | None = None) -> bool:  # noqa: DOC101,DOC103
     """
     Close and drop pooled Docker client connection(s); each is rebuilt lazily on next use.
 
@@ -537,7 +610,8 @@ def system_close(host: str | None = None) -> bool:
     trigger a lazy rebuild. With `host` omitted every pooled client is closed (unlike other tools,
     where omitting it means the default host). Closing clients does not affect running containers.
 
-    returns: bool - True once closed
+    Returns:
+        bool: True once closed
     """
     with _client_lock:
         labels = list(_clients) if host is None else [_resolve_host(host).label]
@@ -549,7 +623,7 @@ def system_close(host: str | None = None) -> bool:
 
 
 @tool()
-def system_reconnect(host: str | None = None) -> dict:
+def system_reconnect(host: str | None = None) -> dict:  # noqa: DOC101,DOC103
     """
     Rebuild a pooled Docker client from its configured endpoint, to recover a wedged connection.
 
@@ -559,7 +633,12 @@ def system_reconnect(host: str | None = None) -> dict:
     DOCKER_MCP_SERVER_HOSTS and restart. `system_close` closes pooled clients without rebuilding;
     `host_list` shows the configured endpoints.
 
-    returns: dict - the rebuilt host's version info (same shape as `system_version`), confirming connectivity
+    Returns:
+        dict: the rebuilt host's version info (same shape as `system_version`), confirming connectivity
+
+    Raises:
+        RemoteFailureError: a client could not be built for the host, or was built but the daemon
+            is unreachable - in which case the previous client is kept.
     """
     resolved = _resolve_host(host)
     label = resolved.label
@@ -584,7 +663,15 @@ def system_reconnect(host: str | None = None) -> dict:
 
 
 def _connection_help(exc: BaseException, host: Host | None) -> str:
-    """OS-aware guidance, emitted when the startup ping of the default host fails, for getting it reachable."""
+    """OS-aware guidance, emitted when the startup ping of the default host fails, for getting it reachable.
+
+    Args:
+        exc: the failure the startup ping raised
+        host: the host it was pinging, or None when none is resolved
+
+    Returns:
+        str: OS-aware guidance for getting the daemon reachable
+    """
     lines = [f"docker-mcp-server: cannot reach the Docker daemon ({exc})."]
     url = host.url if host is not None else None
     if host is not None and url:
@@ -633,6 +720,12 @@ def _host_tag(host: Host) -> str:
 
     For the boot roster of the other hosts. `nd` only shows when `ro` is absent, since `ro` already
     implies it.
+
+    Args:
+        host: the configured host to label
+
+    Returns:
+        str: its label, annotated with ``(ro, remote)`` or ``(nd, remote)`` where they apply
     """
     tags = []
     if host.read_only:
@@ -649,6 +742,13 @@ def _connection_summary(client: docker.DockerClient, host: Host) -> str:
 
     Names the default daemon, the self-guard status, and a no-connect roster of the other configured
     hosts, so boot shows the topology without dialing them.
+
+    Args:
+        client: the connected client
+        host: the host it reached
+
+    Returns:
+        str: a one-line confirmation of the daemon reached and the hosts configured
     """
     try:
         details = client.info()

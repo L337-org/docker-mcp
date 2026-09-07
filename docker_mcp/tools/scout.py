@@ -48,6 +48,13 @@ def _refuse_local_path_args(candidates: dict[str, str | None]) -> None:
     an image reference and a relative path are not distinguishable by syntax (`org/app:v1` contains a
     '/' too). A path that exists here would resolve on the remote host to something else or nothing at
     all, so refusing names the cause; a value that is not a local path passes through untouched.
+
+    Args:
+        candidates: parameter name to value, for the parameters to check
+
+    Raises:
+        ToolInputError: one names a path that exists locally, which would be read
+            on the remote host instead and silently mean something else.
     """
     for name, value in candidates.items():
         if value and Path(value).exists():
@@ -69,12 +76,14 @@ def _run_scout(
     """Run `docker scout <args...>`, locally or - with no usable local plugin - on the ssh:// host itself.
 
     Args:
-        args - the scout subcommand argv, without the leading `scout`
-        timeout - seconds allowed for the call (also bounds the SSH handshake on the remote path)
-        host - configured host label, or None for the default host
-        local_path_args - `{param: value}` pairs that may name a local path; each is refused on the
+        args: the scout subcommand argv, without the leading `scout`
+        timeout: seconds allowed for the call (also bounds the SSH handshake on the remote path)
+        host: configured host label, or None for the default host
+        local_path_args: `{param: value}` pairs that may name a local path; each is refused on the
                           remote path if it exists here (see `_refuse_local_path_args`)
-    returns: CliResult - the same shape from either backend
+
+    Returns:
+        CliResult: the same shape from either backend
     """
     if should_remote_exec(host, plugin="scout"):
         _refuse_local_path_args(local_path_args or {})
@@ -91,7 +100,15 @@ _JSON_FORMATS = frozenset({"json", "sarif", "spdx", "gitlab", "sbom", "cyclonedx
 
 
 def _maybe_parse_json(text: str, format: str) -> dict | list | str | None:
-    """Parse `text` as JSON when `format` names a JSON-emitting format, else return the raw text."""
+    """Parse `text` as JSON when `format` names a JSON-emitting format, else return the raw text.
+
+    Args:
+        text: the command's raw output
+        format: the ``--format`` value that produced it
+
+    Returns:
+        object: the parsed JSON when the format emits it, else the raw text
+    """
     if format not in _JSON_FORMATS:
         return text
     stripped = text.strip()
@@ -104,7 +121,7 @@ def _maybe_parse_json(text: str, format: str) -> dict | list | str | None:
 
 
 @tool()
-def scout_cves(
+def scout_cves(  # noqa: DOC101,DOC103
     image: str,
     only_fixed: bool = False,
     only_severity: list[Severity] | None = None,
@@ -123,17 +140,18 @@ def scout_cves(
     Does not raise on a non-zero CLI exit (a missing scout plugin still raises) - inspect
     `raw.stderr`.
 
-    args:
-        image - Image reference (a tag or a digest)
-        only_fixed - Only report CVEs with a fixed version available
-        only_severity - Filter to these severities (omit for all)
-        ignore_base - Exclude CVEs introduced by the base image
-        format - Parsed into `result` as JSON: "sarif" (default, the standard vulnerability-report
-            schema), "spdx", "gitlab", "sbom". Returned verbatim as text: "packages" (Scout's own
-            default, grouped by package), "markdown". There is no plain "json" for this subcommand
-        platform - Platform of the image to analyze, e.g. "linux/amd64"
-    returns: dict - {"format": <format>, "result": <parsed-json-or-raw-text>,
-                     "raw": <CliResult dict>}
+    Args:
+        image: Image reference (a tag or a digest)
+        only_fixed: Only report CVEs with a fixed version available
+        only_severity: Filter to these severities (omit for all)
+        ignore_base: Exclude CVEs introduced by the base image
+        format: Parsed into `result` as JSON: "sarif" (default, the standard vulnerability-report schema), "spdx",
+            "gitlab", "sbom". Returned verbatim as text: "packages" (Scout's own default, grouped by package),
+            "markdown". There is no plain "json" for this subcommand
+        platform: Platform of the image to analyze, e.g. "linux/amd64"
+
+    Returns:
+        dict: {"format": <format>, "result": <parsed-json-or-raw-text>, "raw": <CliResult dict>}
     """
     args: list[str] = ["cves", "--format", format]
     if only_fixed:
@@ -150,7 +168,7 @@ def scout_cves(
 
 
 @tool()
-def scout_quickview(image: str, platform: str | None = None, host: str | None = None) -> dict:
+def scout_quickview(image: str, platform: str | None = None, host: str | None = None) -> dict:  # noqa: DOC101,DOC103
     """
     Render a compact summary of an image's CVE posture.
 
@@ -162,10 +180,12 @@ def scout_quickview(image: str, platform: str | None = None, host: str | None = 
     Does not raise on a non-zero CLI exit (a missing scout plugin still raises) - inspect
     `raw.stderr`.
 
-    args:
-        image - Image reference
-        platform - Platform of the image to analyze, e.g. "linux/amd64"
-    returns: dict - {"result": <rendered text>, "raw": <CliResult dict>}
+    Args:
+        image: Image reference
+        platform: Platform of the image to analyze, e.g. "linux/amd64"
+
+    Returns:
+        dict: {"result": <rendered text>, "raw": <CliResult dict>}
     """
     args: list[str] = ["quickview"]
     if platform is not None:
@@ -176,7 +196,7 @@ def scout_quickview(image: str, platform: str | None = None, host: str | None = 
 
 
 @tool()
-def scout_recommendations(
+def scout_recommendations(  # noqa: DOC101,DOC103
     image: str,
     only_refresh: bool = False,
     only_update: bool = False,
@@ -196,13 +216,15 @@ def scout_recommendations(
     Does not raise on a non-zero CLI exit (a missing scout plugin still raises) - inspect
     `raw.stderr`.
 
-    args:
-        image - Image reference
-        only_refresh - Only show "refresh" recommendations (same major/minor)
-        only_update - Only show "update" recommendations (newer minor/major)
-        tag - Restrict to suggestions matching this tag pattern
-        platform - Platform of the image to analyze
-    returns: dict - {"result": <rendered text>, "raw": <CliResult dict>}
+    Args:
+        image: Image reference
+        only_refresh: Only show "refresh" recommendations (same major/minor)
+        only_update: Only show "update" recommendations (newer minor/major)
+        tag: Restrict to suggestions matching this tag pattern
+        platform: Platform of the image to analyze
+
+    Returns:
+        dict: {"result": <rendered text>, "raw": <CliResult dict>}
     """
     args: list[str] = ["recommendations"]
     if only_refresh:
@@ -219,7 +241,7 @@ def scout_recommendations(
 
 
 @tool()
-def scout_compare(
+def scout_compare(  # noqa: DOC101,DOC103
     image: str,
     to: str | None = None,
     to_env: str | None = None,
@@ -241,18 +263,22 @@ def scout_compare(
     on a remote `ssh://` host (no local scout plugin): the file is not staged, so it would resolve
     against that host's filesystem instead.
 
-    args:
-        image - The new / candidate image reference
-        to - Compare against this image reference, directory, or archive (a local directory/archive
-                      only when the CLI runs on this host - see above)
-        to_env - Compare against an image associated with this Scout environment
-        to_latest - Compare against the latest scan of `image`
-        only_severity - Filter to these severities (omit for all)
-        ignore_unchanged - Exclude unchanged packages from the diff
-        format - Output format; only "json" (the default) is parsed into `result`
-        platform - Platform of the image to analyze
-    returns: dict - {"format": <format>, "result": <parsed-json-or-raw-text>,
-                     "raw": <CliResult dict>}
+    Args:
+        image: The new / candidate image reference
+        to: Compare against this image reference, directory, or archive (a local directory/archive only when the CLI
+            runs on this host - see above)
+        to_env: Compare against an image associated with this Scout environment
+        to_latest: Compare against the latest scan of `image`
+        only_severity: Filter to these severities (omit for all)
+        ignore_unchanged: Exclude unchanged packages from the diff
+        format: Output format; only "json" (the default) is parsed into `result`
+        platform: Platform of the image to analyze
+
+    Returns:
+        dict: {"format": <format>, "result": <parsed-json-or-raw-text>, "raw": <CliResult dict>}
+
+    Raises:
+        ToolInputError: not exactly one of `to`, `to_env` or `to_latest` was given.
     """
     targets = [bool(to), bool(to_env), bool(to_latest)]
     if sum(targets) != 1:
@@ -276,7 +302,7 @@ def scout_compare(
 
 
 @tool()
-def scout_sbom(
+def scout_sbom(  # noqa: DOC101,DOC103
     image: str,
     format: Literal["list", "json", "spdx", "cyclonedx"] = "spdx",
     platform: str | None = None,
@@ -292,14 +318,15 @@ def scout_sbom(
     Does not raise on a non-zero CLI exit (a missing scout plugin still raises) - inspect
     `raw.stderr`.
 
-    args:
-        image - Image reference
-        format - "spdx" (default, SPDX JSON), "cyclonedx" (CycloneDX JSON), "json" (Scout's native
-                      JSON), or "list" (plain-text package list)
-        platform - Platform of the image to analyze
-    returns: dict - {"format", "result", "raw": <CliResult dict>}. `result` is a parsed dict when
-                    `format` is "spdx"/"cyclonedx"/"json" and stdout parses cleanly; for "list" or a
-                    parse failure it's the raw text.
+    Args:
+        image: Image reference
+        format: "spdx" (default, SPDX JSON), "cyclonedx" (CycloneDX JSON), "json" (Scout's native JSON), or "list"
+            (plain-text package list)
+        platform: Platform of the image to analyze
+
+    Returns:
+        dict: {"format", "result", "raw": <CliResult dict>}. `result` is a parsed dict when `format` is
+            "spdx"/"cyclonedx"/"json" and stdout parses cleanly; for "list" or a parse failure it's the raw text.
     """
     args: list[str] = ["sbom", "--format", format]
     if platform is not None:

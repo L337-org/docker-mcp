@@ -63,6 +63,9 @@ def package_version() -> str:
     labels), so they always agree. Called at import time to build module-level User-Agent constants,
     so it must never raise - any metadata-lookup failure (not just a missing package) falls back to
     'unknown' rather than crashing the importing module. Cached: the metadata lookup is done once.
+
+    Returns:
+        str: the installed version, or 'unknown' when it cannot be resolved
     """
     try:
         return _pkg_version("docker-mcp-server")
@@ -76,12 +79,22 @@ def in_container() -> bool:
     Docker writes `/.dockerenv` into every container, and our published images additionally set
     `DOCKER_MCP_SERVER_IN_CONTAINER=1`. Either signal flips on the in-container filesystem and
     self-termination guards; on the host install neither is present so those guards are inert.
+
+    Returns:
+        bool: True when this server is running inside a container
     """
     return env_flag(IN_CONTAINER_ENV) or Path("/.dockerenv").exists()
 
 
 def _unescape_mountinfo_field(field: str) -> str:
-    r"""Decode the octal escapes the kernel applies to mountinfo path fields (space/tab/newline/\\)."""
+    r"""Decode the octal escapes the kernel applies to mountinfo path fields (space/tab/newline/\\).
+
+    Args:
+        field: one mountinfo field, octal escapes included
+
+    Returns:
+        str: the field with its escapes decoded
+    """
     return field.replace("\\040", " ").replace("\\011", "\t").replace("\\012", "\n").replace("\\134", "\\")
 
 
@@ -90,6 +103,9 @@ def _read_mountinfo() -> list[tuple[str, str]]:
 
     The format is `ID PARENT MAJ:MIN ROOT MOUNT_POINT OPTIONS... - FSTYPE SOURCE SUPER_OPTS`; the
     number of optional fields before the literal ` - ` separator varies, so we split on it.
+
+    Returns:
+        list: ``(mount_point, fstype)`` pairs, empty when mountinfo cannot be read
     """
     try:
         raw = Path("/proc/self/mountinfo").read_text(encoding="utf-8", errors="replace")
@@ -115,6 +131,12 @@ def _host_backed(path: Path) -> bool:
     directory it would live in, since the file itself may not exist yet) and checks that mount's
     fstype is not a pseudo / overlay filesystem. Conservative: returns False when mountinfo is
     unavailable, so the guards prefer a (recoverable) false alarm over a silent data-loss write.
+
+    Args:
+        path: the path to test; its directory is matched, since the file may not exist yet
+
+    Returns:
+        bool: True when it falls under a real host bind mount
     """
     mounts = _read_mountinfo()
     if not mounts:
@@ -134,7 +156,15 @@ def _host_backed(path: Path) -> bool:
 
 
 def _unmapped_path_message(path: Path, *, for_write: bool) -> str:
-    """Actionable error text telling the user how to bind-mount a host directory into the container."""
+    """Actionable error text telling the user how to bind-mount a host directory into the container.
+
+    Args:
+        path: the path that is not mounted
+        for_write: whether the caller was writing, which changes the verb and the consequence
+
+    Returns:
+        str: the error text, naming the bind mount to add
+    """
     if for_write:
         verb, consequence = (
             "write to",
@@ -158,6 +188,13 @@ def assert_host_writable(dest_path: str) -> None:
     A no-op outside a container. Inside one, a write to a non-mounted path silently lands in the
     container's overlay layer and vanishes on `--rm`, so we fail up front with mount instructions
     rather than reporting a phantom success.
+
+    Args:
+        dest_path: the destination the caller asked to write to
+
+    Raises:
+        ToolInputError: running in a container and the destination is not on a host
+            bind mount, so the write would land in the overlay and vanish with the container.
     """
     if not in_container():
         return
@@ -172,6 +209,16 @@ def host_read_path(file_path: str) -> Path:
     may legitimately live inside the container's image). Only when running in a container, the file
     is absent, and its location isn't a host bind mount do we raise the actionable mount message
     instead of letting a bare FileNotFoundError surface.
+
+    Args:
+        file_path: the path the caller supplied
+
+    Returns:
+        Path: the expanded path
+
+    Raises:
+        ToolInputError: running in a container and the file is missing because its
+            directory is not mounted; the message names the mount to add.
     """
     path = Path(file_path).expanduser()
     if in_container() and not path.exists() and not _host_backed(path):
@@ -190,9 +237,16 @@ def open_host_read_file(file_path: str) -> IO[bytes]:
     Converting `OSError` wholesale is safe here in a way it is not for writes: every failure mode of
     opening a named file for reading is something the caller can address by naming a different one.
 
-    :param file_path: the caller's path
-    :returns: IO[bytes] - the open binary handle, for use as a context manager and for handing
-        straight to a docker-py call that wants a binary file-like
+    Args:
+        file_path: the caller's path
+
+    Returns:
+        IO[bytes]: the open binary handle, for use as a context manager and for handing straight to a docker-py call
+            that wants a binary file-like
+
+    Raises:
+        ToolInputError: the path could not be opened - missing, a directory where a
+            file belongs, or not permitted.
     """
     path = host_read_path(file_path)
     try:
@@ -212,6 +266,9 @@ def classify_host_kernel() -> str:
 
     Returns 'wsl2' (Windows/WSL2), 'docker-desktop' (LinuxKit VM - usually macOS), 'linux' (a native
     Linux daemon), or 'unknown' when os.uname() is unavailable (non-POSIX).
+
+    Returns:
+        str: the classification, used to tailor socket-mount hints
     """
     try:
         release = os.uname().release.lower()
@@ -237,6 +294,9 @@ def close_stream_quietly(stream: Any) -> None:
     `DockerException` for an `ssh://` daemon (SSH streams aren't cancellable). This helper runs in a
     watchdog-timer thread and in tool `finally` blocks, so none of those may escape - mirrors
     `client.py:_close_client_quietly`.
+
+    Args:
+        stream: a docker ``CancellableStream``, or anything with ``.close()``
     """
     close = getattr(stream, "close", None)
     if close is None:
@@ -252,11 +312,22 @@ def drop_none(**kwargs: Any) -> dict[str, Any]:
 
     Used at `docker` module call sites where None means "let the SDK pick the default"
     and passing the key explicitly with value=None would override that default.
+
+    Args:
+        **kwargs: the candidate keyword arguments
+
+    Returns:
+        dict: only those whose value is not None
     """
     return {k: v for k, v in kwargs.items() if v is not None}
 
 
-def stream_to_file(chunks: Iterable[bytes], dest_path: str, *, overwrite: bool = False) -> tuple[Path, int]:
+def stream_to_file(  # noqa: DOC503
+    chunks: Iterable[bytes],
+    dest_path: str,
+    *,
+    overwrite: bool = False,
+) -> tuple[Path, int]:
     """Stream byte chunks to a host file, returning the resolved path and the number of bytes written.
 
     Used by the `*_to_file` tool variants so a large daemon-side payload (image save, container
@@ -271,6 +342,18 @@ def stream_to_file(chunks: Iterable[bytes], dest_path: str, *, overwrite: bool =
 
     When running in a container, refuses up front if `dest_path` isn't on a host bind mount (the
     write would otherwise be silently discarded on `--rm`); see `assert_host_writable`.
+
+    Args:
+        chunks: the byte chunks to write
+        dest_path: where to write them
+        overwrite: whether an existing file may be replaced
+
+    Returns:
+        tuple: ``(resolved path, bytes written)``
+
+    Raises:
+        ToolInputError: the destination already exists without ``overwrite``, its parent is
+            not a directory, or it is not on a host bind mount.
     """
     assert_host_writable(dest_path)
     path = Path(dest_path).expanduser()
@@ -305,7 +388,7 @@ def stream_to_file(chunks: Iterable[bytes], dest_path: str, *, overwrite: bool =
 
 
 def as_byte_chunks(chunks: Iterable | bytes | bytearray | str) -> Iterable[bytes]:
-    """Normalize a docker log/stream payload to bytes chunks, ready for `join_bounded`.
+    """Normalise a docker log/stream payload to bytes chunks, ready for `join_bounded`.
 
     Accepts either a stream of chunks or a whole payload. A whole `bytes`/`bytearray` is yielded as a
     single chunk rather than iterated, because iterating one yields ints that would stringify to
@@ -317,6 +400,12 @@ def as_byte_chunks(chunks: Iterable | bytes | bytearray | str) -> Iterable[bytes
     `join_bounded`, and `join_bounded` can only close what it is handed - this wrapper - so without
     this the underlying docker stream's socket leaks whenever the byte cap aborts iteration, which
     is exactly the guarantee `join_bounded`'s own docstring makes.
+
+    Args:
+        chunks: a stream of chunks, or a whole payload as bytes, bytearray or str
+
+    Yields:
+        bytes: each chunk; a whole payload is yielded as one rather than iterated
     """
     if isinstance(chunks, (bytes, bytearray)):
         yield bytes(chunks)
@@ -350,6 +439,20 @@ def join_bounded(chunks: Iterable[bytes], max_bytes: int, what: str, remedy: str
     OOM the MCP server process. The cap is checked *before* the next chunk is appended, so
     the in-memory buffer never grows past `max_bytes`. The source iterator is best-effort closed
     in a finally so aborting on the cap doesn't leak the underlying docker stream's socket.
+
+    Args:
+        chunks: the byte chunks to concatenate
+        max_bytes: the ceiling on the running total
+        what: what is being joined, for the error message
+        remedy: what the caller could do instead, for the error message
+
+    Returns:
+        bytes: the concatenated payload
+
+    Raises:
+        ToolInputError: the total would exceed ``max_bytes``.
+        ValueError: ``max_bytes`` is negative, which is a caller bug rather than an answer to
+            give a model.
     """
     if max_bytes < 0:
         raise ValueError(f"max_bytes must be non-negative, got {max_bytes}")

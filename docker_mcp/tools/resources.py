@@ -29,7 +29,17 @@ _MAX_DOCS_RESPONSE_BYTES = 16 * 1024 * 1024  # 16 MiB
 
 
 def _read_capped_docs_response(url: str) -> bytes:
-    """Stream a docs page bounded by `_MAX_DOCS_RESPONSE_BYTES`, raising if it's exceeded."""
+    """Stream a docs page bounded by `_MAX_DOCS_RESPONSE_BYTES`, raising if it's exceeded.
+
+    Args:
+        url: the documentation page to fetch
+
+    Returns:
+        bytes: the page body, undecoded
+
+    Raises:
+        ToolRefusalError: the page exceeds the response cap.
+    """
     with httpx.stream(
         "GET", url, timeout=_DOCS_TIMEOUT, follow_redirects=True, headers={"User-Agent": _USER_AGENT}
     ) as resp:
@@ -125,7 +135,14 @@ register_resource_domains(_SECTION_DOMAINS)
 
 
 def _section_enabled(section: str) -> bool:
-    """A doc section is available unless the domain it documents is dropped by DOCKER_MCP_SERVER_DISABLE."""
+    """A doc section is available unless the domain it documents is dropped by DOCKER_MCP_SERVER_DISABLE.
+
+    Args:
+        section: the documentation section to test
+
+    Returns:
+        bool: True unless the domain it documents is disabled
+    """
     return not is_domain_disabled(_SECTION_DOMAINS.get(section))
 
 
@@ -141,15 +158,15 @@ def _section_url(section: str) -> str:
 
 @resource("docker-docs://contents", mime_type="application/json")
 def list_docs_sections() -> str:
-    """
-    List the available documentation sections.
+    """List the available documentation sections.
 
     The response keeps the original `base_url` and `sections` (a list of section names)
     fields for backward compatibility with clients that parsed the pre-extension shape.
     Sections served from external URLs (compose, context, registry specs) appear in
     `sections` alongside the SDK ones; their absolute URLs live in `section_urls`.
 
-    returns: str - JSON describing each section's source URL and how to read it
+    Returns:
+        str: JSON describing each section's source URL and how to read it
     """
     all_sections: list[str] = [*SDK_SECTIONS, *EXTERNAL_SECTIONS.keys()]
     # Hide sections whose domain is disabled via DOCKER_MCP_SERVER_DISABLE, mirroring how disabled tools and
@@ -182,29 +199,32 @@ def list_docs_sections() -> str:
 
 @resource("docker-mcp://tool-catalog", mime_type="application/json")
 def get_tool_catalog() -> str:
-    """
-    List every tool this server knows about with its domain, mutation category, and whether the
-    active env switches actually registered it.
+    """List every tool this server knows about.
+
+    Each entry carries its domain, its mutation category, and whether the active env switches
+    actually registered it.
 
     Read this to see the blast radius of a tool before calling it (READ_ONLY / MUTATING /
     DESTRUCTIVE) and to confirm which whole domains the operator disabled via DOCKER_MCP_SERVER_DISABLE
     (or the read-only switches) - a tool absent from the live tool list but present here as
     `registered: false` was filtered out by configuration, not missing by mistake.
 
-    returns: str - JSON with `switches`, per-domain counts, and a per-tool list
+    Returns:
+        str: JSON with `switches`, per-domain counts, and a per-tool list
     """
     return json.dumps(tool_catalog(), indent=2)
 
 
 @resource("docker-mcp://hosts", mime_type="application/json")
 def get_hosts_resource() -> str:
-    """
-    The Docker hosts configured via DOCKER_MCP_SERVER_HOSTS - the same data as the `host_list` tool:
-    each host's name, resolved daemon URL, read_only / non_destructive / tls flags, and which one is
-    the default used when a tool's `host` argument is omitted. The resolved default is observable
-    here but is not itself a selectable label.
+    """The Docker hosts configured via DOCKER_MCP_SERVER_HOSTS.
 
-    returns: str - JSON list, one object per configured host
+    The same data as the `host_list` tool: each host's name, resolved daemon URL, read_only /
+    non_destructive / tls flags, and which one is the default used when a tool's `host` argument is
+    omitted. The resolved default is observable here but is not itself a selectable label.
+
+    Returns:
+        str: JSON list, one object per configured host
     """
     return json.dumps(host_list(), indent=2)
 
@@ -215,7 +235,11 @@ _CONTAINERS_DOMAIN = "containers"
 
 
 def _require_containers_domain() -> None:
-    """Refuse a container resource read when the `containers` domain is disabled via DOCKER_MCP_SERVER_DISABLE."""
+    """Refuse a container resource read when the `containers` domain is disabled via DOCKER_MCP_SERVER_DISABLE.
+
+    Raises:
+        CapabilityError: the ``containers`` domain is disabled.
+    """
     if is_domain_disabled(_CONTAINERS_DOMAIN):
         raise CapabilityError(
             "Container observability resources are unavailable because the 'containers' domain is "
@@ -228,6 +252,14 @@ def _child_uri(scheme: str, ref: str, host: str | None) -> str:
 
     Host-qualified when an index is host-scoped, else empty-authority (multi-host default) or bare
     (single-host).
+
+    Args:
+        scheme: the child resource's scheme
+        ref: the container reference
+        host: the host label to target, or None for the default
+
+    Returns:
+        str: the child URI, matching the index's host context
     """
     if host is not None:
         return f"{scheme}://{host}/{ref}"
@@ -263,7 +295,8 @@ def list_container_resources() -> str:
     URI (a stopped container has no live cgroup to sample). Exited containers include their
     `exit_code` as a triage signal.
 
-    returns: str - JSON object {"containers": [{id, name, image, status, exit_code?, logs, stats?}, ...]}
+    Returns:
+        str: JSON object {"containers": [{id, name, image, status, exit_code?, logs, stats?}, ...]}
     """
     return _render_index(None)
 
@@ -274,8 +307,11 @@ def list_host_container_resources(host: str) -> str:
     Same shape as the default container index, but the child logs/stats URIs stay on `host` so
     following them reads the same daemon.
 
-    args: host - Configured host label (from the docker-mcp://hosts resource)
-    returns: str - JSON object {"containers": [...]}
+    Args:
+        host: Configured host label (from the docker-mcp://hosts resource)
+
+    Returns:
+        str: JSON object {"containers": [...]}
     """
     return _render_index(host)
 
@@ -286,8 +322,11 @@ def get_container_logs_resource(id_or_name: str) -> str:
     Works on running and stopped containers, so it can surface why a container exited. The read is
     capped to a recent tail so it can't flood the agent's context.
 
-    args: id_or_name - The container id or name (from the container index)
-    returns: str - The decoded recent log tail
+    Args:
+        id_or_name: The container id or name (from the container index)
+
+    Returns:
+        str: The decoded recent log tail
     """
     _require_containers_domain()
     return _read_log_tail(id_or_name)
@@ -296,11 +335,13 @@ def get_container_logs_resource(id_or_name: str) -> str:
 def get_host_container_logs_resource(host: str, id_or_name: str) -> str:
     """Read a bounded log tail for a container on a named host (host-qualified docker-logs variant).
 
-    args:
-        host - Configured host label (from the docker-mcp://hosts resource)
-        id_or_name - The container id or name (from that host's index)
-    returns: str - The decoded recent log tail
-    """  # noqa: D405 - advertised description; CS.6.14 keeps the lowercase house style
+    Args:
+        host: Configured host label (from the docker-mcp://hosts resource)
+        id_or_name: The container id or name (from that host's index)
+
+    Returns:
+        str: The decoded recent log tail
+    """
     _require_containers_domain()
     return _read_log_tail(id_or_name, host=host)
 
@@ -311,9 +352,12 @@ def get_container_stats_resource(id_or_name: str) -> str:
     Returns a small summary (CPU %, memory used/limit/%, network and block I/O) derived from a single
     stats snapshot. Raises if the container isn't running, since stats require a live cgroup.
 
-    args: id_or_name - The container id or name (from the container index)
-    returns: str - JSON {container, cpu_percent, mem_used_mb, mem_limit_mb, mem_percent,
-                   net_rx_mb, net_tx_mb, blk_read_mb, blk_write_mb}
+    Args:
+        id_or_name: The container id or name (from the container index)
+
+    Returns:
+        str: JSON {container, cpu_percent, mem_used_mb, mem_limit_mb, mem_percent,
+            net_rx_mb, net_tx_mb, blk_read_mb, blk_write_mb}
     """
     _require_containers_domain()
     return json.dumps(_read_stats_summary(id_or_name), indent=2)
@@ -322,11 +366,13 @@ def get_container_stats_resource(id_or_name: str) -> str:
 def get_host_container_stats_resource(host: str, id_or_name: str) -> str:
     """Resource-usage summary for a running container on a named host (host-qualified docker-stats variant).
 
-    args:
-        host - Configured host label (from the docker-mcp://hosts resource)
-        id_or_name - The container id or name (from that host's index)
-    returns: str - JSON usage summary (same shape as docker-stats://{id_or_name})
-    """  # noqa: D405 - advertised description; CS.6.14 keeps the lowercase house style
+    Args:
+        host: Configured host label (from the docker-mcp://hosts resource)
+        id_or_name: The container id or name (from that host's index)
+
+    Returns:
+        str: JSON usage summary (same shape as docker-stats://{id_or_name})
+    """
     _require_containers_domain()
     return json.dumps(_read_stats_summary(id_or_name, host=host), indent=2)
 
@@ -353,7 +399,11 @@ _SERVICES_DOMAIN = "services"
 
 
 def _require_services_domain() -> None:
-    """Refuse a service resource read when the `services` domain is disabled via DOCKER_MCP_SERVER_DISABLE."""
+    """Refuse a service resource read when the `services` domain is disabled via DOCKER_MCP_SERVER_DISABLE.
+
+    Raises:
+        CapabilityError: the ``services`` domain is disabled.
+    """
     if is_domain_disabled(_SERVICES_DOMAIN):
         raise CapabilityError(
             "Service observability resources are unavailable because the 'services' domain is "
@@ -386,7 +436,8 @@ def _render_services_index(host: str | None) -> str:
 def list_service_resources() -> str:
     """Index every swarm service with the resource URIs for reading its logs and task/rollout status.
 
-    returns: str - JSON object {"services": [{id, name, image, mode, desired_replicas, logs, tasks}, ...]}
+    Returns:
+        str: JSON object {"services": [{id, name, image, mode, desired_replicas, logs, tasks}, ...]}
     """
     return _render_services_index(None)
 
@@ -394,8 +445,11 @@ def list_service_resources() -> str:
 def list_host_service_resources(host: str) -> str:
     """Index every swarm service on a named host (the host-qualified service index).
 
-    args: host - Configured host label (from the docker-mcp://hosts resource)
-    returns: str - JSON object {"services": [...]}
+    Args:
+        host: Configured host label (from the docker-mcp://hosts resource)
+
+    Returns:
+        str: JSON object {"services": [...]}
     """
     return _render_services_index(host)
 
@@ -403,8 +457,11 @@ def list_host_service_resources(host: str) -> str:
 def get_service_logs_resource(id_or_name: str) -> str:
     """Read a bounded tail of a swarm service's combined stdout/stderr logs.
 
-    args: id_or_name - The service id or name (from the service index)
-    returns: str - The decoded recent log tail
+    Args:
+        id_or_name: The service id or name (from the service index)
+
+    Returns:
+        str: The decoded recent log tail
     """
     _require_services_domain()
     return _read_service_log_tail(id_or_name)
@@ -413,11 +470,13 @@ def get_service_logs_resource(id_or_name: str) -> str:
 def get_host_service_logs_resource(host: str, id_or_name: str) -> str:
     """Read a bounded log tail for a swarm service on a named host (host-qualified service-logs variant).
 
-    args:
-        host - Configured host label (from the docker-mcp://hosts resource)
-        id_or_name - The service id or name (from that host's index)
-    returns: str - The decoded recent log tail
-    """  # noqa: D405 - advertised description; CS.6.14 keeps the lowercase house style
+    Args:
+        host: Configured host label (from the docker-mcp://hosts resource)
+        id_or_name: The service id or name (from that host's index)
+
+    Returns:
+        str: The decoded recent log tail
+    """
     _require_services_domain()
     return _read_service_log_tail(id_or_name, host=host)
 
@@ -429,8 +488,11 @@ def get_service_tasks_resource(id_or_name: str) -> str:
     rolling-update state if one is in progress - the "is this service OK right now" signal, since a
     service has no cgroup-style stats of its own.
 
-    args: id_or_name - The service id or name (from the service index)
-    returns: str - JSON {service, mode, running_tasks, desired_tasks, failed_tasks, update_state}
+    Args:
+        id_or_name: The service id or name (from the service index)
+
+    Returns:
+        str: JSON {service, mode, running_tasks, desired_tasks, failed_tasks, update_state}
     """
     _require_services_domain()
     return json.dumps(_read_service_task_summary(id_or_name), indent=2)
@@ -439,11 +501,13 @@ def get_service_tasks_resource(id_or_name: str) -> str:
 def get_host_service_tasks_resource(host: str, id_or_name: str) -> str:
     """Task/rollout status summary for a swarm service on a named host (host-qualified variant).
 
-    args:
-        host - Configured host label (from the docker-mcp://hosts resource)
-        id_or_name - The service id or name (from that host's index)
-    returns: str - JSON summary (same shape as service-tasks://{id_or_name})
-    """  # noqa: D405 - advertised description; CS.6.14 keeps the lowercase house style
+    Args:
+        host: Configured host label (from the docker-mcp://hosts resource)
+        id_or_name: The service id or name (from that host's index)
+
+    Returns:
+        str: JSON summary (same shape as service-tasks://{id_or_name})
+    """
     _require_services_domain()
     return json.dumps(_read_service_task_summary(id_or_name, host=host), indent=2)
 
@@ -467,7 +531,11 @@ _NODES_DOMAIN = "nodes"
 
 
 def _require_nodes_domain() -> None:
-    """Refuse a node resource read when the `nodes` domain is disabled via DOCKER_MCP_SERVER_DISABLE."""
+    """Refuse a node resource read when the `nodes` domain is disabled via DOCKER_MCP_SERVER_DISABLE.
+
+    Raises:
+        CapabilityError: the ``nodes`` domain is disabled.
+    """
     if is_domain_disabled(_NODES_DOMAIN):
         raise CapabilityError(
             "Node observability resources are unavailable because the 'nodes' domain is disabled "
@@ -502,7 +570,8 @@ def list_node_resources() -> str:
     Index only - no per-node child resource. Watch this to notice a node flapping between
     ready/down, or an unexpected availability/role change, without re-querying `node_list`.
 
-    returns: str - JSON object {"nodes": [{id, hostname, state, availability, role, manager_reachability}, ...]}
+    Returns:
+        str: JSON object {"nodes": [{id, hostname, state, availability, role, manager_reachability}, ...]}
     """
     return _render_nodes_index(None)
 
@@ -510,8 +579,11 @@ def list_node_resources() -> str:
 def list_host_node_resources(host: str) -> str:
     """Index every swarm node on a named host (the host-qualified node index).
 
-    args: host - Configured host label (from the docker-mcp://hosts resource)
-    returns: str - JSON object {"nodes": [...]}
+    Args:
+        host: Configured host label (from the docker-mcp://hosts resource)
+
+    Returns:
+        str: JSON object {"nodes": [...]}
     """
     return _render_nodes_index(host)
 
@@ -524,12 +596,14 @@ else:
 
 
 @resource("docker-docs://{section}", mime_type="text/html")
-def get_docs_section(section: str) -> str:
-    """
-    Fetch the documentation page for a section.
+def get_docs_section(section: str) -> str:  # noqa: DOC501,DOC503
+    """Fetch the documentation page for a section.
 
-    args: section - Section name from `docker-docs://contents`
-    returns: str - The HTML (or rendered Markdown) content of the documentation page
+    Args:
+        section: Section name from `docker-docs://contents`
+
+    Returns:
+        str: The HTML (or rendered Markdown) content of the documentation page
     """
     if not _section_enabled(section):
         raise CapabilityError(
@@ -558,8 +632,11 @@ def docs_lookup(section: str | None = None) -> str:
     list common keys, not every key docker-py accepts), or before writing Compose/Dockerfile/buildx
     bake-file syntax, which no tool generates.
 
-    args: section - Section name (from a no-argument call's index); omit to list all sections instead
-    returns: str - JSON section index (no `section`) or that section's raw HTML/Markdown content
+    Args:
+        section: Section name (from a no-argument call's index); omit to list all sections instead
+
+    Returns:
+        str: JSON section index (no `section`) or that section's raw HTML/Markdown content
     """
     if section is None:
         return list_docs_sections()
@@ -588,14 +665,15 @@ def tool_list(
     domain is absent rather than flagged; `hidden_by_configuration` reports how many each domain
     hides.
 
-    args:
-        domain - Exact domain name (see any result's `domains` key); omit for every domain
-        category - Exact category; omit for all three
-        keyword - Case-insensitive substring over tool names, summaries and parameter names
-    returns: dict - {"matched": int, "tools": [{"name", "domain", "category", "summary"}],
-                     "domains": {domain: count}, "no_domain": int,
-                     "hidden_by_configuration": {domain: count}, "switches", "filters"}. Every
-                     `domains` key is a value `domain` accepts; `no_domain` counts the domain-less
-                     tools, whose rows carry `domain: null` and which no `domain` value selects.
+    Args:
+        domain: Exact domain name (see any result's `domains` key); omit for every domain
+        category: Exact category; omit for all three
+        keyword: Case-insensitive substring over tool names, summaries and parameter names
+
+    Returns:
+        dict: {"matched": int, "tools": [{"name", "domain", "category", "summary"}], "domains": {domain: count},
+            "no_domain": int, "hidden_by_configuration": {domain: count}, "switches", "filters"}. Every `domains` key is
+            a value `domain` accepts; `no_domain` counts the domain-less tools, whose rows carry `domain: null` and
+            which no `domain` value selects.
     """
     return query_catalog(domain=domain, category=category, keyword=keyword)

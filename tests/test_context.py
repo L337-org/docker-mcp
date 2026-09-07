@@ -23,7 +23,8 @@ def _fail(stderr: str, returncode: int = 1) -> CliResult:
 
 def test_context_ls_parses_json_lines():
     payload = (
-        '{"Name":"default","Description":"docker desktop","DockerEndpoint":"unix:///var/run/docker.sock","Current":true}\n'
+        '{"Name":"default","Description":"docker desktop",'
+        '"DockerEndpoint":"unix:///var/run/docker.sock","Current":true}\n'
         '{"Name":"remote","Description":"prod","DockerEndpoint":"tcp://x:2376","Current":false}\n'
     )
     with patch("docker_mcp.tools.context.run_docker", return_value=_ok(payload)) as run:

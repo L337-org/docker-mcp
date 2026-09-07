@@ -65,8 +65,11 @@ def _named_domains(line: str) -> frozenset[str]:
     Word boundaries matter: `compose_up` and `scout_cves` are tool names rather than domain names, and
     `\\bcompose\\b` skips them because `_` is a word character.
 
-    args: line - one line of documentation
-    returns: frozenset[str] - the domains named
+    Args:
+        line: one line of documentation
+
+    Returns:
+        frozenset[str]: the domains named
     """
     return frozenset(d for d in _CLI_DOMAINS if re.search(rf"\b{d}\b", line, re.IGNORECASE))
 
@@ -75,8 +78,11 @@ def _incomplete_enumeration(line: str) -> list[str] | None:
     """
     The domains a line omits, if it enumerates the CLI-backed surface incompletely.
 
-    args: line - one line of documentation
-    returns: list[str] | None - the missing domains, or None when the line is fine or not an enumeration
+    Args:
+        line: one line of documentation
+
+    Returns:
+        list[str] | None: the missing domains, or None when the line is fine or not an enumeration
     """
     # Backticks are stripped before the marker test, not before anything else: the real lines carry
     # the marker phrase as "`docker` CLI feature", and a plain-substring match against the raw line
