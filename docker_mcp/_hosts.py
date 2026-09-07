@@ -59,6 +59,14 @@ class Host:
     `url` is the resolved concrete daemon URL, or None to let docker-py's from_env() apply its own
     platform default (e.g. the Windows named pipe). `cert_dir` is a tcp+TLS cert directory (`ca.pem`
     required - the daemon is always verified; `cert.pem`/`key.pem` optional for mutual TLS), or None.
+
+    Attributes:
+        label: the name this daemon is addressed by.
+        url: the resolved concrete daemon URL, or None to let ``from_env()`` apply its own
+            platform default.
+        read_only: whether the ``(ro)`` marker was set, blocking every write.
+        non_destructive: whether the ``(nd)`` marker was set, blocking destructive calls only.
+        cert_dir: a tcp+TLS certificate directory, or None.
     """
 
     label: str
@@ -77,12 +85,20 @@ class Host:
 
 
 def _docker_config_dir() -> Path:
-    """The Docker CLI config directory ($DOCKER_CONFIG, else ~/.docker) - where contexts live."""
+    """The Docker CLI config directory ($DOCKER_CONFIG, else ~/.docker) - where contexts live.
+
+    Returns:
+        Path: the Docker CLI config directory
+    """
     return Path(os.environ.get("DOCKER_CONFIG") or Path.home() / ".docker")
 
 
 def _active_context_name() -> str | None:
-    """Name of the active Docker CLI context: $DOCKER_CONTEXT, else config.json's currentContext."""
+    """Name of the active Docker CLI context: $DOCKER_CONTEXT, else config.json's currentContext.
+
+    Returns:
+        str: the active context's name, empty when none is set
+    """
     name = (os.environ.get("DOCKER_CONTEXT") or "").strip()
     if name:
         return name
@@ -94,7 +110,14 @@ def _active_context_name() -> str | None:
 
 
 def _context_host(name: str) -> str | None:
-    """The docker endpoint Host for a named CLI context, read from its meta.json, or None."""
+    """The docker endpoint Host for a named CLI context, read from its meta.json, or None.
+
+    Args:
+        name: the CLI context to read
+
+    Returns:
+        str or None: the context's docker endpoint, or None when it has none
+    """
     digest = hashlib.sha256(name.encode("utf-8")).hexdigest()
     meta_path = _docker_config_dir() / "contexts" / "meta" / digest / "meta.json"
     try:
@@ -113,6 +136,9 @@ def resolve_local() -> str | None:
     context happens to point. Returns None to let from_env() apply its platform default (e.g. the
     Windows named pipe, which has nothing to probe on disk) - which is context-free because that call
     goes through `system._from_env_no_context`.
+
+    Returns:
+        str or None: the first well-known socket that exists, or None to let ``from_env()`` decide
     """
     if sys.platform == "win32":  # pyright: ignore[reportUnreachable]
         return None
@@ -145,6 +171,9 @@ def resolve_auto() -> str | None:
     until 7.2.0 and now does its own resolution, but we keep ours and switch theirs off (see
     `system._from_env_no_context`): the result has to be pinned at `load()` and shared with the docker
     CLI shell-out, neither of which a per-client-build lookup inside docker-py can give us.
+
+    Returns:
+        str or None: the active context's endpoint, the local socket, or None to let ``from_env()`` decide
     """
     name = _active_context_name()
     if name and name != "default":
@@ -167,6 +196,13 @@ def _parse_markers(text: str, context: str) -> tuple[str, bool, bool, str | None
     Markers may appear in any order and are case-insensitive; returns (endpoint, read_only,
     non_destructive, cert_dir). (ro) and (nd) may combine with no error - (ro) is strictly stronger
     and wins at enforcement time (see server.py).
+
+    Args:
+        text: the endpoint spec, markers included
+        context: what is being parsed, for the error message
+
+    Returns:
+        tuple: ``(endpoint, read_only, non_destructive, cert_dir)``
     """
     read_only = False
     non_destructive = False
@@ -189,7 +225,14 @@ def _parse_markers(text: str, context: str) -> tuple[str, bool, bool, str | None
 
 
 def _readable(path: Path) -> bool:
-    """True if `path` exists and can be opened for reading."""
+    """True if `path` exists and can be opened for reading.
+
+    Args:
+        path: the file to test
+
+    Returns:
+        bool: True when it exists and can be opened for reading
+    """
     try:
         with path.open("rb"):
             return True
@@ -207,6 +250,10 @@ def _validate_cert_dir(label: str, cert_dir: str) -> None:
     authentication, never opportunistic encryption). The client cert is optional but paired: provide
     `cert.pem` AND `key.pem` for mutual TLS (a daemon that requires client auth), or neither to verify
     the daemon only (e.g. a self-signed daemon you pin via `ca.pem`).
+
+    Args:
+        label: the host label, for the error message
+        cert_dir: the directory to validate
     """
     directory = Path(cert_dir)
     if not _readable(directory / "ca.pem"):
@@ -226,7 +273,16 @@ def _validate_cert_dir(label: str, cert_dir: str) -> None:
 
 
 def _make_host(label: str, raw_endpoint: str, context: str) -> Host:
-    """Build a Host from one endpoint spec: parse markers, validate, and resolve to a concrete URL."""
+    """Build a Host from one endpoint spec: parse markers, validate, and resolve to a concrete URL.
+
+    Args:
+        label: the host label
+        raw_endpoint: the endpoint spec, markers included
+        context: what is being parsed, for the error message
+
+    Returns:
+        Host: the built host, with its URL resolved
+    """
     endpoint, read_only, non_destructive, cert_dir = _parse_markers(raw_endpoint.strip(), context)
     low = endpoint.lower()
     if cert_dir is not None:
@@ -249,7 +305,11 @@ def _make_host(label: str, raw_endpoint: str, context: str) -> Host:
 
 
 def _legacy_host() -> Host:
-    """The single synthesized host when DOCKER_MCP_SERVER_HOSTS is unset: DOCKER_HOST if set, else auto."""
+    """The single synthesized host when DOCKER_MCP_SERVER_HOSTS is unset: DOCKER_HOST if set, else auto.
+
+    Returns:
+        Host: the single synthesized host
+    """
     docker_host = (os.environ.get("DOCKER_HOST") or "").strip()
     url = docker_host or resolve_auto()
     return Host(label=_DEFAULT_LABEL, url=url)
@@ -261,6 +321,12 @@ def parse_registry(raw: str | None) -> dict[str, Host]:
     Unset/empty -> a single synthesized host from DOCKER_HOST/auto. A value with no '=' is the bare
     single-host shorthand (the whole value is one endpoint). Otherwise it is a comma-separated
     `label=endpoint` list. Raises HostConfigError on any malformed value; the caller fail-fasts.
+
+    Args:
+        raw: the DOCKER_MCP_SERVER_HOSTS value, or None when unset
+
+    Returns:
+        dict: ``{label: Host}`` in declared order, the first being the default
     """
     text = (raw or "").strip()
     if not text:
@@ -316,6 +382,9 @@ def load() -> None:
     Scrubs unresolved `${...}` placeholders first so an mcpb blank field resolves to the default host
     rather than fail-fast. A malformed value prints one stderr line and exits non-zero - a misparsed
     (ro)/(tls=) must never silently leave a host writable or unencrypted.
+
+    Raises:
+        SystemExit: the configuration is malformed, so the server must not start.
     """
     global _registry
     scrub_unresolved_env()
@@ -337,6 +406,15 @@ def resolve(host: str | None) -> Host:
     Raises HostGuardError naming the configured labels for an unknown label - a refusal the caller
     is meant to read, since a resource read reaches no host guard and this is the only place a typo
     can be named.
+
+    Args:
+        host: the host label, or None for the default
+
+    Returns:
+        Host: the named host, or the first configured one
+
+    Raises:
+        HostGuardError: the label is not configured; the message names those that are.
     """
     if host is None:
         return default()
@@ -351,30 +429,60 @@ def resolve(host: str | None) -> Host:
 
 
 def default() -> Host:
-    """The default host (first registry entry) used when a host is omitted."""
+    """The default host (first registry entry) used when a host is omitted.
+
+    Returns:
+        Host: the first registry entry
+    """
     return next(iter(_registry.values()))
 
 
 def labels() -> list[str]:
-    """Configured host labels in declared order (first = default)."""
+    """Configured host labels in declared order (first = default).
+
+    Returns:
+        list: the configured labels, in declared order
+    """
     return list(_registry)
 
 
 def is_read_only(host: str | None = None) -> bool:
-    """Whether the named (or default) host is flagged read-only."""
+    """Whether the named (or default) host is flagged read-only.
+
+    Args:
+        host: the host label, or None for the default
+
+    Returns:
+        bool: True when that host is flagged read-only
+    """
     return resolve(host).read_only
 
 
 def is_non_destructive(host: str | None = None) -> bool:
-    """Whether the named (or default) host is flagged non-destructive (blocks DESTRUCTIVE calls only)."""
+    """Whether the named (or default) host is flagged non-destructive (blocks DESTRUCTIVE calls only).
+
+    Args:
+        host: the host label, or None for the default
+
+    Returns:
+        bool: True when that host is flagged non-destructive
+    """
     return resolve(host).non_destructive
 
 
 def is_multi() -> bool:
-    """True when 2+ hosts are configured (gates the per-call host param, its enum, and multi-host prompts)."""
+    """True when 2+ hosts are configured (gates the per-call host param, its enum, and multi-host prompts).
+
+    Returns:
+        bool: True when two or more hosts are configured
+    """
     return len(_registry) >= 2
 
 
 def registry() -> dict[str, Host]:
-    """A copy of the pinned registry, for host_list / the docker-mcp://hosts resource."""
+    """A copy of the pinned registry, for host_list / the docker-mcp://hosts resource.
+
+    Returns:
+        dict: a copy of the pinned registry
+    """
     return dict(_registry)
