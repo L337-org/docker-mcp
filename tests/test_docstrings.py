@@ -464,7 +464,9 @@ def test_every_sibling_reference_names_a_registered_tool():
     for path, node, _ in _definitions():
         if not _is_tool(node):
             continue
-        params = {a.arg for a in node.args.args + node.args.kwonlyargs}
+        spec = node.args
+        params = {a.arg for a in spec.posonlyargs + spec.args + spec.kwonlyargs}
+        params |= {a.arg for a in (spec.vararg, spec.kwarg) if a is not None}
         for found in token.findall(ast.get_docstring(node) or ""):
             if "_" not in found or found in params or found in names:
                 continue

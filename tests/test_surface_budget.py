@@ -5,9 +5,10 @@ This server advertises 164 tools, and at that size the surface is the dominant c
 at all - which is exactly why it needs a number attached rather than an intention.
 
 WHAT IS MEASURED IS THE WIRE FORM, not the docstring. A tool costs its name, its description and
-its whole input schema, and the schema is usually the larger half: `buildx_build` is 5,091 bytes
-on the wire against 3,398 of description. Measuring docstrings alone would have missed the
-schema-slimming work entirely, and would go green on a change that added twenty parameters.
+its whole input schema, and the schema is a large share of it: `buildx_build` is 4,969 bytes on
+the wire against 3,275 of description (both anchors, drifting like the ones below). Measuring
+docstrings alone would have missed the schema-slimming work entirely, and would go green on a
+change that added twenty parameters.
 
 Bytes rather than tokens, deliberately. Tokens are what a model actually pays, but they need a
 tokenizer pinned to a model that changes under us, and the figure then moves without the surface
