@@ -316,7 +316,7 @@ def test_no_advertised_docstring_carries_a_raises_section():
     wrong = [
         f"{path.relative_to(ROOT)}:{node.lineno} {node.name}"
         for path, node, _ in _definitions()
-        if _is_advertised(node) and re.search(r"^Raises:\n", ast.get_docstring(node) or "", re.MULTILINE)
+        if _is_advertised(node) and re.search(r"^Raises:", ast.get_docstring(node) or "", re.MULTILINE)
     ]
 
     assert not wrong, (
@@ -398,7 +398,8 @@ def _tool_names():
     """Every registered tool's name.
 
     Returns:
-        set: the tool names, collected from the decorators rather than by importing the server
+        set: the tool names, taken from the definitions `_is_tool` accepts while walking the
+            AST, rather than by importing the server
     """
     return {node.name for _, node, _ in _definitions() if _is_tool(node)}
 
