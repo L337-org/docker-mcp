@@ -636,8 +636,8 @@ def buildx_imagetools_inspect(  # noqa: DOC101,DOC103,DOC501,DOC503
         builder: Override the active builder
 
     Returns:
-        dict: {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}. When `raw=True` or `format="{{json
-            .}}"`, `stdout` is a JSON document the caller can parse.
+        dict: {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}. With `raw=True` or
+            `format="{{json .}}"`, `stdout` is a JSON document the caller can parse.
     """
     if raw and format is not None:
         raise ToolInputError(

@@ -159,10 +159,10 @@ def container_create(  # noqa: DOC101,DOC103
     start, or want creation and start as separate observable steps. For the common case of
     create-then-start-immediately use `container_run` instead - it does both in one call.
     Start the created container with `container_start`. Common `extra_kwargs` keys: `name`
-    (str), `environment` (list of "KEY=VAL" or dict), `ports` (dict, e.g.
-    `{"80/tcp": 8080}`), `volumes` (dict, e.g. `{"/host/path": {"bind": "/container/path",
-    "mode": "rw"}}`), `labels` (dict). For anything else docker-py's `ContainerCollection.create`
-    accepts, call `docs_lookup(section="containers")` rather than guessing a key name.
+    (str), `environment` (list of "KEY=VAL" or dict), `ports` (dict, e.g. `{"80/tcp": 8080}`),
+    `volumes` (dict, e.g. `{"/host/path": {"bind": "/container/path", "mode": "rw"}}`), `labels`
+    (dict). For anything else docker-py's `ContainerCollection.create` accepts, call
+    `docs_lookup(section="containers")` rather than guessing a key name.
 
     Args:
         image: Image to create the container from, e.g. "nginx:alpine"
