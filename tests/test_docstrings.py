@@ -411,6 +411,11 @@ def _returns_attrs(node):
     (`container_wait`, `node_wait`, `swarm_update`) returns a shape of its own making and is not
     covered here, which is why this looks at the returned expression and not at the body.
 
+    A return inside a nested definition is the tool's helper returning, not the tool, so those are
+    excluded the same way `test_the_raises_markers_sit_on_real_exemptions` excludes nested raises.
+    `ast.walk` descends into an inner `def`, so without this an inner helper handing back `.attrs`
+    would put a documentation requirement on a tool that returns something else entirely.
+
     Args:
         node: the function definition to inspect
 
@@ -427,8 +432,15 @@ def _returns_attrs(node):
             return is_attrs(expr.body) or is_attrs(expr.orelse)
         return False
 
+    nested = {
+        id(stmt)
+        for inner in ast.walk(node)
+        if isinstance(inner, (ast.FunctionDef, ast.AsyncFunctionDef)) and inner is not node
+        for stmt in ast.walk(inner)
+    }
     return any(
-        isinstance(stmt, ast.Return) and stmt.value is not None and is_attrs(stmt.value) for stmt in ast.walk(node)
+        isinstance(stmt, ast.Return) and id(stmt) not in nested and stmt.value is not None and is_attrs(stmt.value)
+        for stmt in ast.walk(node)
     )
 
 
