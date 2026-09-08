@@ -266,11 +266,8 @@ def service_logs(  # noqa: DOC101,DOC103
 
     Args:
         details: Show extra details
-        stdout: Include stdout
-        stderr: Include stderr
         since: Show logs since this Unix timestamp
-        timestamps: Include timestamps
-        tail: Number of lines from the end (default 200), or the literal "all" for everything
+        tail: Number of lines from the end, or the literal "all" for everything
         max_bytes: Abort with ToolInputError if the buffered logs exceed this many bytes (default 32 MiB)
 
     Returns:
@@ -419,7 +416,7 @@ def service_wait(  # noqa: DOC101,DOC103,DOC501,DOC503
         until: Condition to wait for: "running" (default) or "update-converged"
         replicas: "running" mode only: override the desired replica count (e.g. right after a same-turn `service_scale`
             call, before polling reflects the new target)
-        timeout_seconds: Max seconds to wait before returning with timed_out=true (default 600)
+        timeout_seconds: Max seconds to wait before returning with timed_out=true
         poll_interval: Seconds between re-checks (default 2, > 0); capped by the time left so a large value can't push
             the total wait past the timeout
 

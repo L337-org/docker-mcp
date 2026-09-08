@@ -181,7 +181,6 @@ def scout_quickview(image: str, platform: str | None = None, host: str | None = 
     `raw.stderr`.
 
     Args:
-        image: Image reference
         platform: Platform of the image to analyze, e.g. "linux/amd64"
 
     Returns:
@@ -217,7 +216,6 @@ def scout_recommendations(  # noqa: DOC101,DOC103
     `raw.stderr`.
 
     Args:
-        image: Image reference
         only_refresh: Only show "refresh" recommendations (same major/minor)
         only_update: Only show "update" recommendations (newer minor/major)
         tag: Restrict to suggestions matching this tag pattern
@@ -316,7 +314,6 @@ def scout_sbom(  # noqa: DOC101,DOC103
     `raw.stderr`.
 
     Args:
-        image: Image reference
         format: "spdx" (default, SPDX JSON), "cyclonedx" (CycloneDX JSON), "json" (Scout's native JSON), or "list"
             (plain-text package list)
         platform: Platform of the image to analyze

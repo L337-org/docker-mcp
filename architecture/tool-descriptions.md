@@ -77,7 +77,20 @@ legacy docstrings are cleaned opportunistically, not churned):
      raises" - a missing binary/plugin or a subprocess timeout still raises even in action tools.
    Scale it to the tool: a trivial read-only tool needs one discriminator sentence, not five.
 3. **Every `Args:` entry adds semantics the schema cannot carry**: format, accepted values/ranges,
-   defaults, units, and interactions with other parameters. A line that echoes the parameter name
+   units, and interactions with other parameters.
+
+   Know what the client already has. The two halves of a tool are built independently: the
+   description is `fn.__doc__` verbatim and unparsed, while the input schema comes from the
+   signature via pydantic and never reads the docstring. Nothing bridges them, so the `Args:` block
+   is prose whose only reader is the model - and the schema has already told that model each
+   parameter's **name, type, default and enum**, structurally. Repeating any of those buys nothing
+   and is paid for every session: `stdout: Include stdout` against `{"type": "boolean", "default":
+   true}` is the name a second time. Say what JSON Schema cannot: the shape inside a permissive
+   container type, a unit, a range, what makes a value valid, how two parameters interact.
+
+   This is a rule about tools, not about prompts. A prompt argument carries only `name`, `title`,
+   `description` and `required` on the wire - no type and no default - so a default written into a
+   prompt's prose is the only copy there is, and stays. A line that echoes the parameter name
    ("name - The volume name") scores 2/5 on the rubric - say what makes a value valid or how it
    behaves ("name - The volume name (volumes have no separate id)"). Canonical shared-param
    prefixes in `tests/test_naming.py` still apply - append tool-specific detail after the

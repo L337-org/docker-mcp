@@ -151,7 +151,6 @@ def compose_up(  # noqa: DOC101,DOC103
             verbatim, no shell expansion)
         files: Explicit compose file paths (repeatable, `-f`)
         project_name: Compose project name override
-        profiles: Profiles to activate
         services: Specific services to bring up (default: all)
         build: Build images before starting
         pull: Pull strategy; omit to use each service's own `pull_policy`
@@ -199,7 +198,6 @@ def compose_down(  # noqa: DOC101,DOC103
         project_dir: Dir with the compose file (default: server cwd; copied to the target host if no local plugin)
         files: Explicit compose file paths (repeatable, `-f`)
         project_name: Compose project name override
-        profiles: Profiles to consider
         volumes: Also remove named volumes declared by the project (destructive)
         remove_orphans: Remove containers not declared in the compose file
         timeout_seconds: Subprocess timeout (default 300s)
@@ -289,7 +287,7 @@ def compose_logs(  # noqa: DOC101,DOC103
         files: Explicit compose file paths (repeatable, `-f`)
         project_name: Compose project name override
         services: Restrict to these services (default: all)
-        tail: Lines per container (default 200), or the literal "all" (still capped at MAX_CLI_OUTPUT_BYTES)
+        tail: Lines per container, or the literal "all" (still capped at MAX_CLI_OUTPUT_BYTES)
         since: Show logs since this timestamp/duration (e.g. "10m", "2024-01-01T00:00:00")
         until: Show logs before this timestamp/duration
         timestamps: Include per-line timestamps
@@ -577,13 +575,13 @@ def compose_run(  # noqa: DOC101,DOC103
         project_dir: Dir with the compose file (default: server cwd; copied to the target host if no local plugin)
         files: Explicit compose file paths (repeatable, `-f`)
         project_name: Compose project name override
-        detach: Run detached (default True)
-        rm: Remove the container after the run (default True)
+        detach: Run detached
+        rm: Remove the container after the run
         no_deps: Don't start linked services
         workdir: Working directory inside the container
         user: User to run as inside the container (uid or name)
         env: Environment variables to set inside the container
-        name: Optional container name
+        name: Container name
         timeout_seconds: Subprocess timeout (default 600s)
 
     Returns:
@@ -638,7 +636,7 @@ def compose_exec(  # noqa: DOC101,DOC103
         project_dir: Dir with the compose file (default: server cwd; copied to the target host if no local plugin)
         files: Explicit compose file paths (repeatable, `-f`)
         project_name: Compose project name override
-        index: Container index when the service has multiple replicas (default 1)
+        index: Container index when the service has multiple replicas
         workdir: Working directory inside the container
         user: User to run as inside the container (uid or name)
         env: Environment variables to set for the exec session
@@ -725,7 +723,7 @@ def compose_port(  # noqa: DOC101,DOC103
         service: Service name from the compose file
         private_port: The container-internal port to look up
         protocol: "tcp" (default) or "udp"
-        index: Container index when the service has multiple replicas (default 1)
+        index: Container index when the service has multiple replicas
         project_dir: Dir with the compose file (default: server cwd; copied to the target host if no local plugin)
         files: Explicit compose file paths (repeatable, `-f`)
         project_name: Compose project name override
@@ -984,7 +982,7 @@ def compose_cp(  # noqa: DOC101,DOC103
     Args:
         source: `SERVICE:SRC_PATH` or a host path
         dest: `SERVICE:DEST_PATH` or a host path (not "-")
-        index: Container index when the service has multiple replicas (default 1)
+        index: Container index when the service has multiple replicas
         all_containers: Copy to/from all containers of the service (`--all`)
         project_dir: Dir with the compose file (default: server cwd; copied to the target host if no local plugin)
         files: Explicit compose file paths (repeatable, `-f`)

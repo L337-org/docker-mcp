@@ -584,8 +584,8 @@ def registry_tags(  # noqa: DOC501,DOC503
 
     Args:
         repository: Image/repository ref, e.g. "alpine", "ghcr.io/org/repo"; any `:tag`/`@digest` is stripped
-        username: Optional registry username (overrides DOCKER_MCP_SERVER_REGISTRY_USERNAME)
-        password: Optional registry password/token (overrides DOCKER_MCP_SERVER_REGISTRY_PASSWORD)
+        username: Registry username (overrides DOCKER_MCP_SERVER_REGISTRY_USERNAME)
+        password: Registry password/token (overrides DOCKER_MCP_SERVER_REGISTRY_PASSWORD)
         limit: Max tags to return (default 1000, >= 1); pagination capped at 50 pages
 
     Returns:
@@ -650,10 +650,10 @@ def registry_tag_wait(  # noqa: DOC501,DOC503
     Args:
         repository: Image/repository ref, e.g. "alpine", "ghcr.io/org/repo"; any `:tag`/`@digest` is stripped
         tag: The exact tag name to wait for
-        username: Optional registry username (overrides DOCKER_MCP_SERVER_REGISTRY_USERNAME)
-        password: Optional registry password/token (overrides DOCKER_MCP_SERVER_REGISTRY_PASSWORD)
+        username: Registry username (overrides DOCKER_MCP_SERVER_REGISTRY_USERNAME)
+        password: Registry password/token (overrides DOCKER_MCP_SERVER_REGISTRY_PASSWORD)
         limit: Max tags to scan per poll (default 1000, >= 1); forwarded to `registry_tags`
-        timeout_seconds: Max seconds to wait before returning with timed_out=true (default 600)
+        timeout_seconds: Max seconds to wait before returning with timed_out=true
         poll_interval: Seconds between re-checks (default 5, > 0); capped by the time left so a large value can't push
             the total wait past the timeout
 
@@ -706,9 +706,9 @@ def registry_manifest(
 
     Args:
         repository: Image/repository ref, e.g. "ghcr.io/org/repo"; `:tag`/`@digest` is stripped - pass via `reference`
-        reference: Tag or digest (default "latest")
-        username: Optional registry username (overrides DOCKER_MCP_SERVER_REGISTRY_USERNAME; no config.json)
-        password: Optional registry password/token (overrides DOCKER_MCP_SERVER_REGISTRY_PASSWORD)
+        reference: Tag or digest
+        username: Registry username (overrides DOCKER_MCP_SERVER_REGISTRY_USERNAME; no config.json)
+        password: Registry password/token (overrides DOCKER_MCP_SERVER_REGISTRY_PASSWORD)
 
     Returns:
         dict: {"name", "registry", "reference", "media_type", "digest", "manifest": <JSON body>}
@@ -752,11 +752,11 @@ def registry_image_config(  # noqa: DOC501,DOC503
 
     Args:
         repository: Image/repository ref, e.g. "ghcr.io/org/repo"; `:tag`/`@digest` is stripped - pass via `reference`
-        reference: Tag or digest (default "latest")
-        platform: Platform to select from a multi-platform image, "os/arch[/variant]" (default "linux/amd64"); ignored
+        reference: Tag or digest
+        platform: Platform to select from a multi-platform image, "os/arch[/variant]"; ignored
             for single-platform images
-        username: Optional registry username (overrides DOCKER_MCP_SERVER_REGISTRY_USERNAME)
-        password: Optional registry password/token (overrides DOCKER_MCP_SERVER_REGISTRY_PASSWORD)
+        username: Registry username (overrides DOCKER_MCP_SERVER_REGISTRY_USERNAME)
+        password: Registry password/token (overrides DOCKER_MCP_SERVER_REGISTRY_PASSWORD)
 
     Returns:
         dict: {"name", "registry", "reference", "platform", "config_digest", "config": <parsed>}; `platform` is the
@@ -1004,8 +1004,8 @@ def hub_rate_limit(username: str | None = None, password: str | None = None) -> 
     Plans with no limit return no headers - reported as `"unlimited": true`.
 
     Args:
-        username: Optional Hub username (overrides DOCKER_MCP_SERVER_REGISTRY_USERNAME)
-        password: Optional Hub password/token (overrides DOCKER_MCP_SERVER_REGISTRY_PASSWORD)
+        username: Hub username (overrides DOCKER_MCP_SERVER_REGISTRY_USERNAME)
+        password: Hub password/token (overrides DOCKER_MCP_SERVER_REGISTRY_PASSWORD)
 
     Returns:
         dict: {"authenticated", "limit", "remaining", "window_seconds", "unlimited"}

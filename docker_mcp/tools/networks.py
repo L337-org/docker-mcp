@@ -34,7 +34,6 @@ def network_create(  # noqa: DOC101,DOC103
     so creating is not idempotent - check `network_list` first when the network may already exist.
 
     Args:
-        name: The name of the network
         driver: Driver name (daemon default `bridge`; `overlay` for swarm scope)
         options: Driver-specific options dict
         ipam: IPAM configuration as a dict (engine shape: {"Driver", "Config": [{"Subnet", "Gateway", ...}]})

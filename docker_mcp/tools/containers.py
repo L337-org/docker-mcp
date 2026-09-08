@@ -76,15 +76,15 @@ def container_run(  # noqa: DOC101,DOC103
     containers are stamped with provenance labels.
 
     Args:
-        image: The image to run
         command: The command to run in the container
         name: Name to assign to the container
         detach: Run in the background and return container info
-        environment: Environment variables to set
+        environment: Environment variables, as `{"KEY": "value"}` or a list of "KEY=value" strings
         ports: Port mappings, e.g. {'2222/tcp': 3333}
-        volumes: Volumes to mount
+        volumes: Volumes to mount, as `{"/host/path": {"bind": "/in/container", "mode": "rw"}}`
+            or a list of "host:container:mode" strings
         network: Name of the network to attach
-        hostname: Optional hostname for the container
+        hostname: Hostname for the container
         user: Username or UID to run as
         working_dir: Working directory inside the container
         entrypoint: Entrypoint to override the image default
@@ -94,7 +94,6 @@ def container_run(  # noqa: DOC101,DOC103
         auto_remove: Enable auto-removal of the container on daemon side
         privileged: Give extended privileges to the container
         tty: Allocate a pseudo-TTY
-        stdin_open: Keep STDIN open
         mem_limit: Memory limit: bytes as an int, or a units string ("100000b", "1000k", "128m", "1g")
         cpu_count: Number of CPUs
         extra_kwargs: Additional keyword arguments forwarded to ContainerCollection.run (call
@@ -302,7 +301,7 @@ def container_stop(  # noqa: DOC101,DOC103
     it refuses to stop its own container.
 
     Args:
-        stop_timeout_seconds: Seconds between the stop signal and SIGKILL (default 10)
+        stop_timeout_seconds: Seconds between the stop signal and SIGKILL
 
     Returns:
         dict: The container's full inspect payload after the stop (exit code under State.ExitCode)
@@ -329,7 +328,7 @@ def container_restart(  # noqa: DOC101,DOC103
     container.
 
     Args:
-        stop_timeout_seconds: Seconds between the stop signal and SIGKILL (default 10)
+        stop_timeout_seconds: Seconds between the stop signal and SIGKILL
 
     Returns:
         dict: The container's full inspect payload after the restart
@@ -490,15 +489,12 @@ def container_logs(  # noqa: DOC101,DOC103
     there if you need a hard time bound.
 
     Args:
-        stdout: Include stdout
-        stderr: Include stderr
-        timestamps: Include timestamps
-        tail: Number of lines from the end (default 200), or the literal "all" for everything
+        tail: Number of lines from the end, or the literal "all" for everything
         since: Only return logs created after this unix timestamp
         until: Only return logs created before this unix timestamp (snapshot mode only)
         follow: Follow the live log stream instead of returning a snapshot
-        limit_lines: Follow mode: max lines to collect before returning (default 200)
-        timeout_seconds: Follow mode: max wall-clock seconds before returning what was collected (default 30)
+        limit_lines: Follow mode: max lines to collect before returning
+        timeout_seconds: Follow mode: max wall-clock seconds before returning what was collected
 
     Returns:
         str: Decoded log output (up to `limit_lines` lines in follow mode). Raises ToolInputError in snapshot mode if
@@ -736,14 +732,11 @@ def container_exec(  # noqa: DOC101,DOC103
 
     Args:
         cmd: Command to execute (prefer exec-form argv, no shell, when any element is agent-controlled)
-        stdout: Attach to stdout
-        stderr: Attach to stderr
-        stdin: Attach to stdin
         tty: Allocate a pseudo-TTY
         privileged: Run with extended privileges
         user: User to run the command as
         detach: Detach from the exec
-        environment: Environment variables
+        environment: Environment variables, as `{"KEY": "value"}` or a list of "KEY=value" strings
         workdir: Working directory inside the container
         demux: Return stdout and stderr separately
 
@@ -800,7 +793,7 @@ def container_commit(  # noqa: DOC101,DOC103
         tag: Tag for the new image (default: "latest")
         message: Commit message stored in the image metadata
         author: Author string stored in the image metadata
-        pause: Pause the container during commit for consistency (default True)
+        pause: Pause the container during commit for consistency
         changes: Dockerfile instructions (CMD, ENV, EXPOSE, etc.) to apply to the image
         conf: Additional image configuration overrides as a dict
 
@@ -968,7 +961,7 @@ def container_wait(  # noqa: DOC101,DOC103,DOC501,DOC503
     Args:
         until: Condition to wait for: "not-running" (default), "next-exit", "removed", "healthy", or "log-match"
             (requires `pattern`)
-        timeout_seconds: Max seconds to wait before returning with timed_out=true (default 600)
+        timeout_seconds: Max seconds to wait before returning with timed_out=true
         poll_interval: "healthy"/"log-match" only: seconds between re-checks (default 2, > 0); capped by the time left
             so a large value can't push the total wait past the timeout
         pattern: "log-match" only: substring (or, with `regex=True`, a regular expression) to look for in the
@@ -1071,7 +1064,7 @@ def container_export(  # noqa: DOC101,DOC103
 
     Args:
         dest_path: Destination path on the server host; omit to return the bytes in band
-        overwrite: Replace dest_path if it already exists (default False)
+        overwrite: Replace dest_path if it already exists
         max_bytes: In-band mode: abort with ToolInputError beyond this many bytes (default 32 MiB)
 
     Returns:
@@ -1121,7 +1114,7 @@ def container_archive_get_to_file(  # noqa: DOC101,DOC103
     Args:
         path: Path inside the container
         dest_path: Destination path on the server host for the tarball
-        overwrite: Replace dest_path if it already exists (default False)
+        overwrite: Replace dest_path if it already exists
 
     Returns:
         dict: {"path": <resolved path>, "bytes_written": int, "stat": dict}

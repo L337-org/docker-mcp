@@ -88,7 +88,7 @@ def context_create(
     Args:
         name: Name for the new context (must not already exist)
         docker_host: Daemon URL, e.g. "tcp://10.0.0.5:2376" or "unix:///var/run/docker.sock"; no commas
-        description: Optional human description shown in `context ls`
+        description: Human description shown in `context ls`
         tls_ca: Path on the local host to the CA cert (for TLS daemons); no commas
         tls_cert: Path on the local host to the client cert; no commas
         tls_key: Path on the local host to the client key; no commas

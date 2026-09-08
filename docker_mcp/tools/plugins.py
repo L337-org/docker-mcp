@@ -42,7 +42,7 @@ def plugin_create(  # noqa: DOC101,DOC103
         name: Local name for the plugin, `author/name:tag`; the `:latest` tag is optional and is the default if omitted
         plugin_data_dir: Path on this server's filesystem to the plugin data directory (containing `config.json` and
             `rootfs`)
-        gzip: Compress the uploaded directory with gzip (default False)
+        gzip: Compress the uploaded directory with gzip
 
     Returns:
         dict: The created plugin's full document ({"Id", "Name", "Enabled", "Settings", "Config"})
@@ -266,7 +266,6 @@ def plugin_disable(name: str, force: bool = False, host: str | None = None) -> b
     resources (e.g. a volume driver). Re-enable with `plugin_enable`.
 
     Args:
-        name: The plugin name
         force: Disable even if active containers are using the plugin (may disrupt them)
 
     Returns:
@@ -309,7 +308,7 @@ def plugin_remove(name: str, force: bool = False, host: str | None = None) -> bo
 
     Args:
         name: The plugin name (e.g. "vieux/sshfs:latest")
-        force: Remove even if the plugin is enabled (default False)
+        force: Remove even if the plugin is enabled
 
     Returns:
         bool: True after removal

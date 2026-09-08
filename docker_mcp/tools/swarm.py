@@ -43,7 +43,6 @@ def swarm_init(  # noqa: DOC101,DOC103
         subnet_size: Subnet size for the IP pool
         data_path_addr: Address to use for data path traffic
         data_path_port: Port number for data path traffic
-        name: Name of the swarm
         labels: Labels to set on the swarm
         autolock_managers: Require the unlock key after every manager restart
         log_driver: Default log driver configuration

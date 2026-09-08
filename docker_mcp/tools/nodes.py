@@ -141,7 +141,7 @@ def node_wait(  # noqa: DOC101,DOC103,DOC501,DOC503
 
     Args:
         until: Target Status.State to wait for: "ready" (default), "down", "disconnected", "unknown"
-        timeout_seconds: Max seconds to wait before returning with timed_out=true (default 300)
+        timeout_seconds: Max seconds to wait before returning with timed_out=true
         poll_interval: Seconds between re-inspections (default 2, > 0); capped by the time left so a large value can't
             push the total wait past the timeout
 

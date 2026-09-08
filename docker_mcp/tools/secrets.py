@@ -25,7 +25,7 @@ def secret_create(  # noqa: DOC101,DOC103
         name: Name for the secret (unique within the swarm)
         data: The secret payload (max 500 KB; must be empty when driver is set)
         labels: Labels to set on the secret
-        driver: Optional secret-driver config for values held in an external store
+        driver: Secret-driver config for values held in an external store
 
     Returns:
         dict: The created secret's full document (ID and Spec metadata; never the payload)

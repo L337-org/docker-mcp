@@ -71,7 +71,7 @@ def image_build(  # noqa: DOC101,DOC103
         tag: Name and optional tag in "name:tag" format to apply to the built image
         quiet: Suppress verbose build output (final image id still returned)
         nocache: Ignore the layer cache and rebuild all layers
-        rm: Remove intermediate containers on success (default True)
+        rm: Remove intermediate containers on success
         pull: Always pull a newer version of each FROM base image before building
         forcerm: Remove intermediate containers even on build failure
         dockerfile: Dockerfile filename relative to path (default: "Dockerfile"); an absolute path or one containing
@@ -160,7 +160,7 @@ def image_registry_data(  # noqa: DOC101,DOC103
 
     Args:
         repository: Image reference
-        auth_config: Optional registry authentication config
+        auth_config: Registry authentication config
 
     Returns:
         dict: The registry data document {"Descriptor", "Platforms"} - the OCI descriptor and
@@ -213,7 +213,6 @@ def image_pull(  # noqa: DOC101,DOC103
     `~/.docker/config.json`, and leave `auth_config` unset.
 
     Args:
-        repository: The image repository
         tag: The image tag (ignored when all_tags=True)
         all_tags: Pull all tags from the repository
         platform: Platform in os/arch format
@@ -247,9 +246,7 @@ def image_push(  # noqa: DOC101,DOC103
     `~/.docker/config.json`, and leave `auth_config` unset.
 
     Args:
-        repository: The image repository
-        tag: The tag to push
-        auth_config: Optional registry authentication config
+        auth_config: Registry authentication config
 
     Returns:
         str: Push output as a string
@@ -514,10 +511,9 @@ def image_save(  # noqa: DOC101,DOC103
     exists (e.g. a containerized server without a bind mount).
 
     Args:
-        id_or_name: Image name or id
         dest_path: Destination path on the server host; omit to return the bytes in band
         named: Whether to retain repository/tag names in the saved archive
-        overwrite: Replace dest_path if it already exists (default False)
+        overwrite: Replace dest_path if it already exists
         max_bytes: In-band mode: abort with ToolInputError beyond this many bytes (default 32 MiB)
 
     Returns:
@@ -544,8 +540,7 @@ def image_tag(  # noqa: DOC101,DOC103
     Args:
         id_or_name: The source image name or id
         repository: Target repository name (registry-qualified for pushing, e.g. "ghcr.io/o/r")
-        tag: Optional tag for the new image (default "latest")
-        force: Force the tag
+        tag: Tag for the new image (default "latest")
 
     Returns:
         bool: True if the image was tagged
