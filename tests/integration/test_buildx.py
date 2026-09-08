@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from docker_mcp.exceptions import RemoteFailureError
 from docker_mcp.tools._cli import has_plugin
 from tests.integration.conftest import fail_unless_environmental
 from docker_mcp.tools.buildx import (
@@ -89,7 +90,7 @@ def test_buildx_history_ls_and_inspect_after_build(build_context: Path):
     assert build["returncode"] == 0, build["stderr"]
     try:
         records = buildx_history_list()
-    except RuntimeError as exc:
+    except RemoteFailureError as exc:
         if "unknown" in str(exc).lower() or "history" in str(exc).lower():
             pytest.skip(f"buildx history not supported on this buildx version: {exc}")
         raise

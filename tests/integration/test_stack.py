@@ -7,6 +7,7 @@ import uuid
 
 import pytest
 
+from docker_mcp.exceptions import RemoteFailureError
 from docker_mcp.tools.system import system_info
 from docker_mcp.tools.stack import stack_deploy, stack_list, stack_ps, stack_remove, stack_services
 
@@ -56,7 +57,7 @@ def test_stack_lifecycle(deployed_stack):
         try:
             tasks = stack_ps(name)
             break
-        except RuntimeError as exc:
+        except RemoteFailureError as exc:
             # Only the transient no-tasks-yet case is retryable; anything else is a real failure.
             if "nothing found in stack" not in str(exc) or time.monotonic() > deadline:
                 raise

@@ -6,6 +6,8 @@
 import httpx
 import pytest
 
+from docker_mcp.exceptions import RemoteFailureError
+
 from docker_mcp.tools.registry import (
     hub_tags,
     hub_rate_limit,
@@ -52,7 +54,7 @@ def _call_or_skip(fn, *args, **kwargs):
         if exc.response.status_code in (502, 503, 504):
             pytest.skip(f"Docker Hub returned a sustained {exc.response.status_code}; skipping: {exc}")
         raise
-    except RuntimeError as exc:
+    except RemoteFailureError as exc:
         if "(HTTP 429)" in str(exc):
             pytest.skip(f"Docker Hub rate-limited the shared CI IP (HTTP 429); skipping: {exc}")
         raise
