@@ -323,7 +323,9 @@ untouched neighbours. Push back on any of these:
    be in prose: `readOnlyHint` / `destructiveHint` annotations do not substitute.
 3. **For a CLI-backed tool, the error style is stated** - "does not raise on a non-zero CLI exit,
    inspect `returncode`/`stderr`" versus "raises `RemoteFailureError` on CLI failure". Do not let a docstring
-   promise "never raises": a missing binary or plugin, or a subprocess timeout, still raises.
+   promise "never raises": a missing binary or plugin, or a subprocess timeout, still raises. Saying
+   neither is the more common failure and is now gated by
+   `test_every_cli_backed_tool_states_its_error_convention`.
 4. **`Args:` entries add what the schema cannot carry** - format, accepted values, defaults,
    units, interactions. An entry echoing the parameter name (`name: The volume name`) is a
    finding. The type is **not** repeated: the annotation already reaches the client in

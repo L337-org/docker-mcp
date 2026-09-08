@@ -21,6 +21,8 @@ import shutil
 import subprocess
 import tokenize
 
+from docker_mcp.server import _CLI_DOMAINS
+
 PACKAGE = pathlib.Path(__file__).resolve().parent.parent / "docker_mcp"
 NOQA = re.compile(r"#\s*noqa:\s*([\w,]+)")
 ROOT = PACKAGE.parent
@@ -322,6 +324,41 @@ def test_no_advertised_docstring_carries_a_raises_section():
     assert not wrong, (
         "these advertised docstrings carry a Raises section, which is wire cost on every session "
         "for a type the client never sees - mark the definition instead:\n  " + "\n  ".join(wrong)
+    )
+
+
+def test_every_cli_backed_tool_states_its_error_convention():
+    """A CLI-backed tool says which of the two error conventions it follows.
+
+    `architecture/cli-shell-out.md` gives CLI-backed tools two behaviours and no third: an action
+    tool hands back the raw `CliResult` and never raises on a non-zero exit, and a parsed-query tool
+    raises through `raise_on_cli_failure`. Which one a tool is cannot be guessed from its name, and
+    an agent that assumes the wrong one either treats a failed call as success or wraps a call that
+    cannot fail - so the description has to say.
+
+    Fourteen tools said neither, `compose_up` among them. They were invisible because a reviewer
+    checks what a docstring claims, not what it omits, and an omission has nothing to catch the eye.
+
+    The sentence is matched, not merely the word "raise": before this guard, `buildx_build` and
+    `buildx_history_list` both mentioned raising for an unrelated special case while saying nothing
+    about the convention, which is exactly the shape a looser check would pass.
+    """
+    domains = {name.split("_")[0] for name in _tool_names()} & set(_CLI_DOMAINS)
+    conventions = (
+        "Does not raise on a non-zero CLI exit",
+        "Raises RemoteFailureError if the CLI call fails",
+    )
+    wrong = [
+        f"{path.relative_to(ROOT)}:{node.lineno} {node.name}"
+        for path, node, _ in _definitions()
+        if _is_tool(node)
+        and node.name.split("_")[0] in domains
+        and not any(c in (ast.get_docstring(node) or "") for c in conventions)
+    ]
+
+    assert not wrong, (
+        "these CLI-backed tools state neither error convention, so an agent cannot tell whether a "
+        "non-zero exit raises or comes back in the result:\n  " + "\n  ".join(wrong)
     )
 
 

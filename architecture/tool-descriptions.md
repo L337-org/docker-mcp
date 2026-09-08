@@ -81,7 +81,11 @@ legacy docstrings are cleaned opportunistically, not churned):
    ("name - The volume name") scores 2/5 on the rubric - say what makes a value valid or how it
    behaves ("name - The volume name (volumes have no separate id)"). Canonical shared-param
    prefixes in `tests/test_naming.py` still apply - append tool-specific detail after the
-   canonical prefix rather than rewording it.
+   canonical prefix rather than rewording it. Where a parameter has no semantic the schema is
+   missing and the name does not already carry - `id_or_name` on a tool whose name says which
+   resource - the entry earns nothing and is better deleted than padded. The tool's
+   `# noqa: DOC101,DOC103` already permits an undocumented parameter, and a tool whose only
+   documented parameter goes this way loses its `Args:` section entirely.
 4. **`Returns:` names the shape, not just the type.** There is no output schema, so this line is
    all an agent gets. For computed or partial returns, name the load-bearing keys (`{"Titles",
    "Processes"}`; `{"LayersSize", "Images", "Containers", "Volumes", "BuildCache"}`). For a full
@@ -117,7 +121,7 @@ future Glama pass to catch it.
 
 ## What is gated, and what is not
 
-Three of the rules above fail CI rather than waiting for a reviewer, all in
+Four of the rules above fail CI rather than waiting for a reviewer, all in
 `tests/test_docstrings.py`:
 
 - `test_every_sibling_reference_names_a_registered_tool` - a backticked tool-shaped token in a
@@ -135,7 +139,13 @@ Three of the rules above fail CI rather than waiting for a reviewer, all in
   fires, mark the definition. Error behaviour a caller can act on belongs in the usage paragraph,
   in terms of what happens rather than which class was constructed.
 
-Everything else here - the usage-guidance paragraph, the discriminators, the error-style
-qualifier, `Args:` entries that add semantics - is still prose a reviewer has to check. The byte
+- `test_every_cli_backed_tool_states_its_error_convention` - a tool in a `_CLI_DOMAINS` domain
+  names one of the two behaviours in [cli-shell-out.md](cli-shell-out.md): it returns the raw
+  `CliResult` and does not raise on a non-zero exit, or it raises through `raise_on_cli_failure`.
+  Fourteen tools stated neither, `compose_up` among them - an omission has nothing to catch a
+  reviewer's eye, which is why this one is mechanical.
+
+Everything else here - the usage-guidance paragraph, the discriminators, `Args:` entries that add
+semantics - is still prose a reviewer has to check. The byte
 budget in `tests/test_surface_budget.py` prices any addition: it is the gate that forces "is this
 worth what every session pays for it?" to be answered in the pull request.
