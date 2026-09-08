@@ -79,9 +79,6 @@ def network_inspect(id_or_name: str, host: str | None = None) -> dict:  # noqa: 
     networks use `network_list` instead - its default (non-`greedy`) response omits the
     per-network `Containers` detail for speed.
 
-    Args:
-        id_or_name: The network id or name
-
     Returns:
         dict: Full network inspect attrs (equivalent to `docker network inspect`)
     """
@@ -152,9 +149,6 @@ def network_remove(id_or_name: str, host: str | None = None) -> bool:  # noqa: D
     the containers first). Built-in networks (`bridge`, `host`, `none`) can never be removed
     and return an error regardless of attachment state. For bulk cleanup of every unused
     custom network at once use `network_prune` instead.
-
-    Args:
-        id_or_name: The network id or name
 
     Returns:
         bool: True after removal
@@ -230,7 +224,6 @@ def network_disconnect(  # noqa: DOC101,DOC103
     disconnect them before `network_remove`.
 
     Args:
-        id_or_name: The network id or name
         container: The container id or name to disconnect
         force: Force the disconnect; use to clear a stale endpoint (e.g. from a deleted container)
 

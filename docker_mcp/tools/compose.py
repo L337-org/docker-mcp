@@ -143,6 +143,8 @@ def compose_up(  # noqa: DOC101,DOC103
 
     Always runs detached (`-d`) so it can't block the server. Use `compose_ps` to confirm
     services are running, or `wait=True` to block until they're healthy.
+    Does not raise on a non-zero CLI exit (a missing compose plugin or a timeout still raises) - inspect
+    `returncode`/`stderr` in the result.
 
     Args:
         project_dir: Dir with the compose file (default: server cwd, copied to the target host if no local plugin; paths
@@ -413,6 +415,8 @@ def compose_pull(  # noqa: DOC101,DOC103
     registry-authenticated pulls ensure the daemon is logged in first with `system_login`.
     `compose_up --pull always` does the same as part of startup; use this tool when you
     want to separate the pull step.
+    Does not raise on a non-zero CLI exit (a missing compose plugin or a timeout still raises) - inspect
+    `returncode`/`stderr` in the result.
 
     Args:
         project_dir: Dir with the compose file (default: server cwd; copied to the target host if no local plugin)
@@ -450,6 +454,8 @@ def compose_restart(  # noqa: DOC101,DOC103
     in-memory state). If the compose file has changed (new image, environment, volumes,
     ports) use `compose_up` instead - it recreates affected containers to apply the diff.
     `stop_timeout_seconds` controls the SIGTERM grace period before Docker sends SIGKILL.
+    Does not raise on a non-zero CLI exit (a missing compose plugin or a timeout still raises) - inspect
+    `returncode`/`stderr` in the result.
 
     Args:
         project_dir: Dir with the compose file (default: server cwd; copied to the target host if no local plugin)
@@ -484,6 +490,8 @@ def compose_stop(  # noqa: DOC101,DOC103
     Stop services in a compose project without removing their containers.
 
     Unlike `compose_down`, containers/networks/volumes survive - use `compose_start` to bring them back.
+    Does not raise on a non-zero CLI exit (a missing compose plugin or a timeout still raises) - inspect
+    `returncode`/`stderr` in the result.
 
     Args:
         project_dir: Dir with the compose file (default: server cwd; copied to the target host if no local plugin)
@@ -518,6 +526,8 @@ def compose_start(  # noqa: DOC101,DOC103
 
     Counterpart to `compose_stop`: starts existing containers without recreating them. Use
     `compose_up` to (re)create containers from the compose file.
+    Does not raise on a non-zero CLI exit (a missing compose plugin or a timeout still raises) - inspect
+    `returncode`/`stderr` in the result.
 
     Args:
         project_dir: Dir with the compose file (default: server cwd; copied to the target host if no local plugin)
@@ -558,6 +568,8 @@ def compose_run(  # noqa: DOC101,DOC103
     Always passes `-T` (no TTY under MCP). Defaults to detached with `--rm` so the call returns
     promptly. Unlike `compose_exec`, this starts a NEW container for the service rather than
     running inside the existing one.
+    Does not raise on a non-zero CLI exit (a missing compose plugin or a timeout still raises) - inspect
+    `returncode`/`stderr` in the result.
 
     Args:
         service: Service name from the compose file
@@ -617,6 +629,8 @@ def compose_exec(  # noqa: DOC101,DOC103
 
     Always passes `-T` (no TTY). Pass an exec-form argv (e.g. `["python", "-V"]`); a
     `["sh", "-c", "..."]` form interprets shell metacharacters in untrusted substrings.
+    Does not raise on a non-zero CLI exit (a missing compose plugin or a timeout still raises) - inspect
+    `returncode`/`stderr` in the result.
 
     Args:
         service: Service name from the compose file
@@ -761,6 +775,8 @@ def compose_wait(  # noqa: DOC101,DOC103,DOC501,DOC503
     `timeout_seconds`, then the subprocess is killed (TimeoutExpired) - bound it sensibly.
     Exit codes are on stdout. For a single container use `container_wait`; for swarm services
     use `service_wait`.
+    Does not raise on a non-zero CLI exit (a missing compose plugin or a timeout still raises) - inspect
+    `returncode`/`stderr` in the result.
 
     Args:
         services: One or more services to wait on. At least one is required.

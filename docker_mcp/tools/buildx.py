@@ -347,6 +347,8 @@ def buildx_build(  # noqa: DOC101,DOC103,DOC501,DOC503
     paths. Raises ToolInputError in that case for `output`/`cache_to` with a filesystem `dest=`,
     `cache_from` with a local `src=`, or any `ssh=` - each would resolve on the remote machine, losing
     the output or silently changing the build.
+    Does not raise on a non-zero CLI exit (a missing buildx plugin or a timeout still raises) - inspect
+    `returncode`/`stderr` in the result.
 
     Args:
         context: Build context: a filesystem path or Git/HTTP URL (verbatim; no `~`/glob expansion). The `-`
@@ -628,6 +630,8 @@ def buildx_imagetools_inspect(  # noqa: DOC101,DOC103,DOC501,DOC503
     single-platform manifests and multi-platform manifest lists / OCI indexes. Uses the docker
     CLI's credential store; `registry_manifest` answers the same question over direct HTTPS
     with no daemon or plugin.
+    Does not raise on a non-zero CLI exit (a missing buildx plugin or a timeout still raises) - inspect
+    `returncode`/`stderr` in the result.
 
     Args:
         image: Image reference, e.g. "alpine:3.19" or "ghcr.io/org/repo@sha256:..."
@@ -738,6 +742,7 @@ def buildx_history_list(builder: str | None = None, host: str | None = None) -> 
     Each record is a past build with its ref, name, status, step counts, and timestamps - useful for
     finding a build to drill into with `buildx_history_inspect`. Requires buildx >= v0.13 (older
     versions have no `history` subcommand and this raises with the CLI's "unknown command" error).
+    Raises RemoteFailureError if the CLI call fails.
 
     Args:
         builder: Builder instance to read history from (defaults to the active builder)
@@ -872,6 +877,8 @@ def buildx_prune(  # noqa: DOC101,DOC103
 
     Destructive: this tool always passes `--force` because no interactive prompt is
     available under MCP. Pair with `buildx_du` first to inventory what would be removed.
+    Does not raise on a non-zero CLI exit (a missing buildx plugin or a timeout still raises) - inspect
+    `returncode`/`stderr` in the result.
 
     Args:
         all: Include internal/frontend images
@@ -982,6 +989,8 @@ def buildx_use(  # noqa: DOC101,DOC103
     persists across all Docker contexts. Use `buildx_list` to see available builders and their
     current status. To avoid switching the global default, pass a specific builder name
     directly via `buildx_build`'s `builder` parameter instead.
+    Does not raise on a non-zero CLI exit (a missing buildx plugin or a timeout still raises) - inspect
+    `returncode`/`stderr` in the result.
 
     Args:
         name: Builder name to activate (from `buildx_list`)

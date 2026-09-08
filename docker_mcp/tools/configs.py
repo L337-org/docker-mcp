@@ -48,9 +48,6 @@ def config_inspect(id_or_name: str, host: str | None = None) -> dict:  # noqa: D
     `Spec.Data` in the result holds the base64-encoded contents. Use `config_list` to enumerate
     configs; use this to read one config's contents and metadata.
 
-    Args:
-        id_or_name: The config id or name
-
     Returns:
         dict: The config's full document (ID, CreatedAt, UpdatedAt, Spec{Name, Labels, Data base64})
     """
@@ -82,9 +79,6 @@ def config_remove(id_or_name: str, host: str | None = None) -> bool:  # noqa: DO
 
     Requires a swarm manager, and fails while any service still references the config - update or
     remove those services first. The last step of the rotation flow described in `config_create`.
-
-    Args:
-        id_or_name: The config id or name
 
     Returns:
         bool: True after removal

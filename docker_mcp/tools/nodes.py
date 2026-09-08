@@ -56,7 +56,6 @@ def node_update(id_or_name: str, spec: dict, host: str | None = None) -> bool:  
     dict - e.g. sending just {"Availability": "drain"} would also wipe the node's role and labels.
 
     Args:
-        id_or_name: The node id or name
         spec: The complete new node spec (see description - omitted keys are cleared)
 
     Returns:
@@ -141,7 +140,6 @@ def node_wait(  # noqa: DOC101,DOC103,DOC501,DOC503
     service convergence; `node_list` shows every node's state at once.
 
     Args:
-        id_or_name: The node id or name
         until: Target Status.State to wait for: "ready" (default), "down", "disconnected", "unknown"
         timeout_seconds: Max seconds to wait before returning with timed_out=true (default 300)
         poll_interval: Seconds between re-inspections (default 2, > 0); capped by the time left so a large value can't

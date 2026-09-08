@@ -302,7 +302,6 @@ def container_stop(  # noqa: DOC101,DOC103
     it refuses to stop its own container.
 
     Args:
-        id_or_name: The container id or name
         stop_timeout_seconds: Seconds between the stop signal and SIGKILL (default 10)
 
     Returns:
@@ -330,7 +329,6 @@ def container_restart(  # noqa: DOC101,DOC103
     container.
 
     Args:
-        id_or_name: The container id or name
         stop_timeout_seconds: Seconds between the stop signal and SIGKILL (default 10)
 
     Returns:
@@ -355,7 +353,6 @@ def container_kill(id_or_name: str, signal: str | None = None, host: str | None 
     to signal its own container.
 
     Args:
-        id_or_name: The container id or name
         signal: Signal name or number as a string (e.g. "SIGHUP", "9"); default SIGKILL
 
     Returns:
@@ -378,9 +375,6 @@ def container_pause(id_or_name: str, host: str | None = None) -> dict:  # noqa: 
     open file descriptors) but consumes no CPU. Resume with `container_unpause` -
     `container_exec` fails against a paused container until it is unpaused.
 
-    Args:
-        id_or_name: The container id or name
-
     Returns:
         dict: The container's full inspect payload after pause (State.Paused true)
     """
@@ -398,9 +392,6 @@ def container_unpause(id_or_name: str, host: str | None = None) -> dict:  # noqa
 
     Only valid on a paused container - it fails if the container is merely stopped; use
     `container_start` for stopped containers. Processes continue from where they were frozen.
-
-    Args:
-        id_or_name: The container id or name
 
     Returns:
         dict: The container's full inspect payload after unpause (State.Paused becomes false)
@@ -424,7 +415,6 @@ def container_remove(  # noqa: DOC101,DOC103
     container.
 
     Args:
-        id_or_name: The container id or name
         volumes: Also remove anonymous volumes (the CLI's `--volumes`); named volumes persist
         link: Remove the specified link
         force: Kill a running container before removing it (default False: running is an error)
@@ -500,7 +490,6 @@ def container_logs(  # noqa: DOC101,DOC103
     there if you need a hard time bound.
 
     Args:
-        id_or_name: The container id or name
         stdout: Include stdout
         stderr: Include stderr
         timestamps: Include timestamps
@@ -567,7 +556,6 @@ def container_stats(id_or_name: str, one_shot: bool = False, host: str | None = 
     prefer the `docker-stats://{id_or_name}` resource; for a process listing use `container_top`.
 
     Args:
-        id_or_name: The container id or name
         one_shot: Skip the second collection cycle for a faster answer, at the cost of an empty
             `precpu_stats` (so no CPU percent); needs daemon API v1.41+
 
@@ -714,7 +702,6 @@ def container_top(id_or_name: str, ps_args: str | None = None, host: str | None 
     usage rather than process lists. Fails if the container is not running.
 
     Args:
-        id_or_name: The container id or name
         ps_args: Extra ps arguments (e.g. "aux"); default is the daemon's standard ps invocation
 
     Returns:
@@ -748,7 +735,6 @@ def container_exec(  # noqa: DOC101,DOC103
     `["sh", "-c", template]`, interprets shell metacharacters in the untrusted parts.
 
     Args:
-        id_or_name: The container id or name
         cmd: Command to execute (prefer exec-form argv, no shell, when any element is agent-controlled)
         stdout: Attach to stdout
         stderr: Attach to stderr
@@ -843,9 +829,6 @@ def container_diff(id_or_name: str, host: str | None = None) -> list:  # noqa: D
     or to debug unexpected writes. Only the writable container layer is compared - files in
     volumes and bind mounts never show up.
 
-    Args:
-        id_or_name: The container id or name
-
     Returns:
         list: Dicts of {"Path", "Kind"}; Kind 0=modified, 1=added, 2=deleted
     """
@@ -863,7 +846,6 @@ def container_rename(id_or_name: str, name: str, host: str | None = None) -> dic
     already taken. Not related to `image_tag`, which names images.
 
     Args:
-        id_or_name: The container id or name
         name: The new name; must not be in use by any other container
 
     Returns:
@@ -984,7 +966,6 @@ def container_wait(  # noqa: DOC101,DOC103,DOC501,DOC503
     arrive, so there's nothing to keep polling for.
 
     Args:
-        id_or_name: The container id or name
         until: Condition to wait for: "not-running" (default), "next-exit", "removed", "healthy", or "log-match"
             (requires `pattern`)
         timeout_seconds: Max seconds to wait before returning with timed_out=true (default 600)
@@ -1089,7 +1070,6 @@ def container_export(  # noqa: DOC101,DOC103
     writable host path exists (e.g. a containerized server without a bind mount).
 
     Args:
-        id_or_name: The container id or name
         dest_path: Destination path on the server host; omit to return the bytes in band
         overwrite: Replace dest_path if it already exists (default False)
         max_bytes: In-band mode: abort with ToolInputError beyond this many bytes (default 32 MiB)
@@ -1115,7 +1095,6 @@ def container_archive_get(  # noqa: DOC101,DOC103
     `container_archive_get_to_file` streams to a host path instead.
 
     Args:
-        id_or_name: The container id or name
         path: Path inside the container
         max_bytes: Abort with ToolInputError if the archive exceeds this many bytes (defaults to 32 MiB)
 
@@ -1140,7 +1119,6 @@ def container_archive_get_to_file(  # noqa: DOC101,DOC103
     expanded and an existing file is refused unless `overwrite=True`.
 
     Args:
-        id_or_name: The container id or name
         path: Path inside the container
         dest_path: Destination path on the server host for the tarball
         overwrite: Replace dest_path if it already exists (default False)
@@ -1171,7 +1149,6 @@ def container_archive_put(  # noqa: DOC101,DOC103,DOC501,DOC503
     MCP). `from_file` is read by the server's user; `~` is expanded.
 
     Args:
-        id_or_name: The container id or name
         path: Destination path inside the container (must already exist)
         data: Tar archive bytes; exactly one of data/from_file
         from_file: Path on the server host to the tar archive to upload; exactly one of data/from_file

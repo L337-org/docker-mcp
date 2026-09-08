@@ -125,6 +125,8 @@ def context_use(name: str) -> dict:
     endpoint they connected to at startup. To retarget those, restart the server with a different
     DOCKER_HOST / DOCKER_CONTEXT. Create contexts with `context_create`; list them with
     `context_list`.
+    Does not raise on a non-zero CLI exit (a missing `docker` binary or a timeout still raises) - inspect
+    `returncode`/`stderr` in the result.
 
     Args:
         name: Existing context name to set as default

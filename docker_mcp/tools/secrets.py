@@ -49,9 +49,6 @@ def secret_inspect(id_or_name: str, host: str | None = None) -> dict:  # noqa: D
     contents. To see which services reference it, inspect each service's spec via
     `service_inspect` (there is no server-side filter for "services using this secret").
 
-    Args:
-        id_or_name: The secret id or name
-
     Returns:
         dict: The secret's full document, excluding the actual secret data
     """
