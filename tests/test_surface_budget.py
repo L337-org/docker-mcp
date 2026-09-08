@@ -28,14 +28,24 @@ from typing import Any
 import docker_mcp.tools  # noqa: F401 - importing registers the surface
 from docker_mcp.server import DISABLED_DOMAINS, NO_DESTRUCTIVE, READONLY, mcp
 
-# Measured at the time of writing, with roughly two per cent of headroom: enough that ordinary
-# rewording does not trip the gate, little enough that real growth does.
-MAX_SINGLE_TOOL_WIRE_BYTES = 5_300  # buildx_build, 5,091
-MAX_TOOL_WIRE_BYTES = 231_000  # 226,529
+# Each ceiling was set with roughly two per cent of headroom: enough that ordinary rewording does
+# not trip the gate, little enough that real growth does.
+#
+# The trailing figure is what the surface measured when the comment was last written, and it drifts
+# the moment anything ships - it is an anchor for reading the headroom, never a claim about now. Two
+# commits took the tool figure from 226,529 to 230,555 without either raising a ceiling or being
+# noticed, because the gate only speaks at the ceiling and the stale anchor read as 4,471 bytes of
+# room when 445 remained. Re-measure before trusting one:
+#
+#   python -c "import asyncio,json;from docker_mcp.server import mcp;\
+#   print(sum(len(json.dumps(t.model_dump(mode='json'),separators=(',',':')).encode()) \
+#   for t in asyncio.run(mcp.list_tools())))"
+MAX_SINGLE_TOOL_WIRE_BYTES = 5_300  # buildx_build, 4,969
+MAX_TOOL_WIRE_BYTES = 231_000  # 229,044
 MAX_PROMPT_WIRE_BYTES = 7_900  # 7,646
-MAX_RESOURCE_WIRE_BYTES = 6_400  # 6,180, resources and templates together
+MAX_RESOURCE_WIRE_BYTES = 6_400  # 6,248, resources and templates together
 MAX_INSTRUCTIONS_BYTES = 2_900  # 2,749
-MAX_TOTAL_WIRE_BYTES = 248_000  # 243,104
+MAX_TOTAL_WIRE_BYTES = 248_000  # 245,687
 
 # Registration is gated at import time, so a switch in effect when `docker_mcp.server` was
 # imported shrinks the surface, and every budget below would pass while measuring something

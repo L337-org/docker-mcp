@@ -122,7 +122,7 @@ def _node_wait_result(
 
 
 @tool()
-def node_wait(  # noqa: DOC101,DOC103
+def node_wait(  # noqa: DOC101,DOC103,DOC501,DOC503
     id_or_name: str,
     until: Literal["ready", "down", "disconnected", "unknown"] = "ready",
     timeout_seconds: float = 300.0,
@@ -149,9 +149,6 @@ def node_wait(  # noqa: DOC101,DOC103
 
     Returns:
         dict: {"node", "until", "met", "timed_out", "state", "availability", "waited_seconds"}
-
-    Raises:
-        ToolInputError: `timeout_seconds` is negative, or `poll_interval` is not positive.
     """
     if timeout_seconds < 0:
         raise ToolInputError(f"timeout_seconds must be >= 0, got {timeout_seconds}.")

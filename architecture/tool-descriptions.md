@@ -117,7 +117,7 @@ future Glama pass to catch it.
 
 ## What is gated, and what is not
 
-Two of the rules above fail CI rather than waiting for a reviewer, both in
+Three of the rules above fail CI rather than waiting for a reviewer, all in
 `tests/test_docstrings.py`:
 
 - `test_every_sibling_reference_names_a_registered_tool` - a backticked tool-shaped token in a
@@ -128,6 +128,12 @@ Two of the rules above fail CI rather than waiting for a reviewer, both in
   inspect payload", "full document"). A tool that computes its own dict from `.attrs` returns a
   shape of its own making and is out of scope, so the guard reads the returned expression rather
   than the body.
+
+- `test_no_advertised_docstring_carries_a_raises_section` - an advertised docstring documents no
+  exceptions. The type is unobservable anyway: `_translate_failures` re-raises as
+  `error_cls(str(exc))`, so the client gets the message and never the class. Where a `DOC50x` code
+  fires, mark the definition. Error behaviour a caller can act on belongs in the usage paragraph,
+  in terms of what happens rather than which class was constructed.
 
 Everything else here - the usage-guidance paragraph, the discriminators, the error-style
 qualifier, `Args:` entries that add semantics - is still prose a reviewer has to check. The byte

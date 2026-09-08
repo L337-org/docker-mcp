@@ -175,7 +175,7 @@ def service_list(  # noqa: DOC101,DOC103
 
 
 @tool()
-def service_update(  # noqa: DOC101,DOC103
+def service_update(  # noqa: DOC101,DOC103,DOC501,DOC503
     id_or_name: str,
     updates: dict | None = None,
     force: bool = False,
@@ -196,9 +196,6 @@ def service_update(  # noqa: DOC101,DOC103
 
     Returns:
         bool: True after the update
-
-    Raises:
-        ToolInputError: neither or both of `updates` and `force` were given.
     """
     if (updates is None) == (not force):
         raise ToolInputError("Pass exactly one of `updates` (fields to change) or `force=True` (redeploy unchanged).")
@@ -324,7 +321,7 @@ def service_scale(id_or_name: str, replicas: int, host: str | None = None) -> bo
 
 
 @tool()
-def service_rollback(id_or_name: str, host: str | None = None) -> dict:  # noqa: DOC101,DOC103
+def service_rollback(id_or_name: str, host: str | None = None) -> dict:  # noqa: DOC101,DOC103,DOC501,DOC503
     """
     Roll a swarm service back to its previous spec (the docker `service rollback` equivalent).
 
@@ -339,10 +336,6 @@ def service_rollback(id_or_name: str, host: str | None = None) -> dict:  # noqa:
 
     Returns:
         dict: The daemon response (a dict with a "Warnings" key)
-
-    Raises:
-        ToolInputError: the service has no PreviousSpec - it was never updated, or has already
-            been rolled back.
     """
     api = _get_client(host).api
     info = api.inspect_service(id_or_name)
@@ -413,7 +406,7 @@ def _service_wait_result(
 
 
 @tool()
-def service_wait(  # noqa: DOC101,DOC103
+def service_wait(  # noqa: DOC101,DOC103,DOC501,DOC503
     id_or_name: str,
     until: Literal["running", "update-converged"] = "running",
     replicas: int | None = None,
@@ -445,10 +438,6 @@ def service_wait(  # noqa: DOC101,DOC103
     Returns:
         dict: {"service", "until", "met", "timed_out", "running_tasks", "desired_tasks", "failed_tasks", "update_state",
             "waited_seconds"}
-
-    Raises:
-        ToolInputError: `timeout_seconds` is negative, `poll_interval` is not positive, or
-            `replicas` is negative.
     """
     if timeout_seconds < 0:
         raise ToolInputError(f"timeout_seconds must be >= 0, got {timeout_seconds}.")

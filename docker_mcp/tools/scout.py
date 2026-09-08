@@ -241,7 +241,7 @@ def scout_recommendations(  # noqa: DOC101,DOC103
 
 
 @tool()
-def scout_compare(  # noqa: DOC101,DOC103
+def scout_compare(  # noqa: DOC101,DOC103,DOC501,DOC503
     image: str,
     to: str | None = None,
     to_env: str | None = None,
@@ -276,9 +276,6 @@ def scout_compare(  # noqa: DOC101,DOC103
 
     Returns:
         dict: {"format": <format>, "result": <parsed-json-or-raw-text>, "raw": <CliResult dict>}
-
-    Raises:
-        ToolInputError: not exactly one of `to`, `to_env` or `to_latest` was given.
     """
     targets = [bool(to), bool(to_env), bool(to_latest)]
     if sum(targets) != 1:

@@ -117,7 +117,7 @@ def _parse_stack_list(stdout: str, *, truncated: bool, what: str) -> list[dict]:
 
 
 @tool()
-def stack_deploy(  # noqa: DOC101,DOC103
+def stack_deploy(  # noqa: DOC101,DOC103,DOC501,DOC503
     name: str,
     compose_files: list[str],
     with_registry_auth: bool = False,
@@ -136,7 +136,8 @@ def stack_deploy(  # noqa: DOC101,DOC103
     convergence); set `detach=False` to wait for the rollout (give it a generous
     `timeout_seconds`). The swarm analogue of `compose_up`; watch the rollout with
     `stack_services` / `stack_ps`.
-    Does not raise on a non-zero CLI exit - inspect `returncode`/`stderr` in the result.
+    Does not raise on a non-zero CLI exit (a missing `docker` binary or a timeout still raises) - inspect
+    `returncode`/`stderr` in the result.
 
     Args:
         name: Name of the stack to create or update
@@ -151,10 +152,6 @@ def stack_deploy(  # noqa: DOC101,DOC103
 
     Returns:
         dict: {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
-
-    Raises:
-        ToolInputError: `compose_files` is empty, or `resolve_image` is not one of the accepted
-            values.
     """
     if not compose_files:
         raise ToolInputError("stack_deploy requires at least one entry in compose_files.")
@@ -248,7 +245,7 @@ def stack_services(name: str, filters: dict | None = None, host: str | None = No
 
 
 @tool()
-def stack_remove(  # noqa: DOC101,DOC103
+def stack_remove(  # noqa: DOC101,DOC103,DOC501,DOC503
     names: list[str], detach: bool = True, timeout_seconds: float = _TIMEOUT_RM, host: str | None = None
 ) -> dict:
     """
@@ -257,7 +254,8 @@ def stack_remove(  # noqa: DOC101,DOC103
     Destructive: this stops and deletes every service in the named stack(s) - the reverse of
     `stack_deploy` and the swarm analogue of `compose_down`. Defaults to `detach=True` so the call
     returns once removal is requested rather than waiting for teardown.
-    Does not raise on a non-zero CLI exit - inspect `returncode`/`stderr` in the result.
+    Does not raise on a non-zero CLI exit (a missing `docker` binary or a timeout still raises) - inspect
+    `returncode`/`stderr` in the result.
 
     Args:
         names: One or more stack names to remove. At least one is required.
@@ -266,9 +264,6 @@ def stack_remove(  # noqa: DOC101,DOC103
 
     Returns:
         dict: {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
-
-    Raises:
-        ToolInputError: no stack name was given.
     """
     if not names:
         raise ToolInputError("stack_remove requires at least one entry in names.")

@@ -306,7 +306,7 @@ def _stage_composite_paths(session: RemoteStagingSession, args: list[str], flag:
 
 
 @tool()
-def buildx_build(  # noqa: DOC101,DOC103
+def buildx_build(  # noqa: DOC101,DOC103,DOC501,DOC503
     context: str,
     tags: list[str] | None = None,
     platforms: list[str] | None = None,
@@ -383,10 +383,6 @@ def buildx_build(  # noqa: DOC101,DOC103
 
     Returns:
         dict: {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
-
-    Raises:
-        ToolInputError: `context` is '-' (a tarball on stdin), which this tool does not forward,
-            or `push` and `load` were both given - `--load` only works for a single-platform build.
     """
     if context == "-":
         raise ToolInputError(
@@ -565,7 +561,8 @@ def buildx_bake(  # noqa: DOC101,DOC103
 
     Use it for multi-target builds declared in `docker-bake.hcl`/compose files; for a single
     Dockerfile target use `buildx_build`.
-    Does not raise on a non-zero CLI exit - inspect `returncode`/`stderr` in the result.
+    Does not raise on a non-zero CLI exit (a missing buildx plugin or a timeout still raises) - inspect
+    `returncode`/`stderr` in the result.
 
     Args:
         targets: Bake targets to build (default: the `default` group)
@@ -615,7 +612,7 @@ def buildx_bake(  # noqa: DOC101,DOC103
 
 
 @tool()
-def buildx_imagetools_inspect(  # noqa: DOC101,DOC103
+def buildx_imagetools_inspect(  # noqa: DOC101,DOC103,DOC501,DOC503
     image: str,
     raw: bool = False,
     format: str | None = None,
@@ -641,10 +638,6 @@ def buildx_imagetools_inspect(  # noqa: DOC101,DOC103
     Returns:
         dict: {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}. When `raw=True` or `format="{{json
             .}}"`, `stdout` is a JSON document the caller can parse.
-
-    Raises:
-        ToolInputError: `raw` and `format` were both given - `raw` always emits the unmodified
-            manifest JSON, so a format would be ignored rather than applied.
     """
     if raw and format is not None:
         raise ToolInputError(
@@ -664,7 +657,7 @@ def buildx_imagetools_inspect(  # noqa: DOC101,DOC103
 
 
 @tool()
-def buildx_imagetools_create(  # noqa: DOC101,DOC103
+def buildx_imagetools_create(  # noqa: DOC101,DOC103,DOC501,DOC503
     target: str,
     sources: list[str],
     append: bool = False,
@@ -682,7 +675,8 @@ def buildx_imagetools_create(  # noqa: DOC101,DOC103
     Replaces `docker manifest create` + `docker manifest push` - builds the index and pushes it in
     one operation. Source tags must already be pushed; this only stitches them together. Verify
     the result with `buildx_imagetools_inspect`.
-    Does not raise on a non-zero CLI exit - inspect `returncode`/`stderr` in the result.
+    Does not raise on a non-zero CLI exit (a missing buildx plugin or a timeout still raises) - inspect
+    `returncode`/`stderr` in the result.
 
     Args:
         target: Tag for the new manifest list (`-t`)
@@ -698,9 +692,6 @@ def buildx_imagetools_create(  # noqa: DOC101,DOC103
 
     Returns:
         dict: {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
-
-    Raises:
-        ToolInputError: no source ref or file was given.
     """
     if not sources and not descriptor_files:
         raise ToolInputError("buildx_imagetools_create requires at least one source ref or file")
@@ -820,7 +811,8 @@ def buildx_inspect(  # noqa: DOC101,DOC103
 
     Human-readable detail (driver, status, supported platforms) for one builder; `buildx_list`
     returns machine-parsed JSON for all builders.
-    Does not raise on a non-zero CLI exit - inspect `returncode`/`stderr` in the result.
+    Does not raise on a non-zero CLI exit (a missing buildx plugin or a timeout still raises) - inspect
+    `returncode`/`stderr` in the result.
 
     Args:
         name: Builder name (defaults to the active builder)
@@ -930,7 +922,8 @@ def buildx_create(  # noqa: DOC101,DOC103
     require a `docker-container` (or `kubernetes`/`remote`) builder. Pass `use=True` to make it
     the default for later `buildx_build` calls (else switch with `buildx_use`); `bootstrap=True`
     starts the builder now rather than on first build.
-    Does not raise on a non-zero CLI exit - inspect `returncode`/`stderr` in the result.
+    Does not raise on a non-zero CLI exit (a missing buildx plugin or a timeout still raises) - inspect
+    `returncode`/`stderr` in the result.
 
     Args:
         name: Name for the new builder (defaults to a generated name)
@@ -1008,7 +1001,7 @@ def buildx_use(  # noqa: DOC101,DOC103
 
 
 @tool()
-def buildx_remove(  # noqa: DOC101,DOC103
+def buildx_remove(  # noqa: DOC101,DOC103,DOC501,DOC503
     name: str | None = None,
     all_inactive: bool = False,
     keep_state: bool = False,
@@ -1021,7 +1014,8 @@ def buildx_remove(  # noqa: DOC101,DOC103
 
     Deletes a builder made by `buildx_create`, including its build cache unless keep_state=True;
     use `buildx_prune` to reclaim cache while keeping the builder.
-    Does not raise on a non-zero CLI exit - inspect `returncode`/`stderr` in the result.
+    Does not raise on a non-zero CLI exit (a missing buildx plugin or a timeout still raises) - inspect
+    `returncode`/`stderr` in the result.
 
     Args:
         name: Builder name to remove (mutually exclusive with `all_inactive`)
@@ -1032,9 +1026,6 @@ def buildx_remove(  # noqa: DOC101,DOC103
 
     Returns:
         dict: {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
-
-    Raises:
-        ToolInputError: neither or both of `name` and `all_inactive` were given.
     """
     if not name and not all_inactive:
         raise ToolInputError("buildx_remove requires either `name` or `all_inactive=True`")

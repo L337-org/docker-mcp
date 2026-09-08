@@ -363,7 +363,7 @@ def image_prune_builds(  # noqa: DOC101,DOC103
 
 
 @tool()
-def image_load(  # noqa: DOC101,DOC103
+def image_load(  # noqa: DOC101,DOC103,DOC501,DOC503
     data: bytes | None = None,
     from_file: str | None = None,
     host: str | None = None,
@@ -383,9 +383,6 @@ def image_load(  # noqa: DOC101,DOC103
 
     Returns:
         list: One full inspect payload per loaded image
-
-    Raises:
-        ToolInputError: neither or both of `data` and `from_file` were given.
     """
     if (data is None) == (from_file is None):
         raise ToolInputError("Pass exactly one of `data` (in-band tarball bytes) or `from_file` (a server-host path).")
@@ -396,7 +393,7 @@ def image_load(  # noqa: DOC101,DOC103
 
 
 @tool()
-def image_import(  # noqa: DOC101,DOC103
+def image_import(  # noqa: DOC101,DOC103,DOC501,DOC503
     repository: str | None = None,
     tag: str | None = None,
     from_file: str | None = None,
@@ -444,11 +441,6 @@ def image_import(  # noqa: DOC101,DOC103
     Returns:
         str: The daemon's raw newline-delimited JSON progress records; the final record carries the new image id as its
             `status`
-
-    Raises:
-        ToolInputError: the source is not exactly one of `from_file`, `data`, `from_url` or
-            `from_image`; `repository` or `tag` is blank; `tag` was given without `repository`;
-            or the named tarball does not exist.
     """
     sources = {"from_file": from_file, "data": data, "from_url": from_url, "from_image": from_image}
     supplied = [name for name, value in sources.items() if value is not None]

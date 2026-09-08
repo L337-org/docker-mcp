@@ -126,7 +126,7 @@ def swarm_leave(force: bool = False, host: str | None = None) -> bool:  # noqa: 
 
 
 @tool()
-def swarm_update(  # noqa: DOC101,DOC103
+def swarm_update(  # noqa: DOC101,DOC103,DOC501,DOC503
     rotate_worker_token: bool = False,
     rotate_manager_token: bool = False,
     rotate_manager_unlock_key: bool = False,
@@ -159,10 +159,6 @@ def swarm_update(  # noqa: DOC101,DOC103
 
     Returns:
         bool: True after the update completes
-
-    Raises:
-        RemoteFailureError: swarm inspect returned no version index, so the update cannot be
-            version-guarded - this node may not be a manager.
     """
     client = _get_client(host)
     swarm = client.swarm

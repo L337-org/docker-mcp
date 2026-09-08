@@ -298,6 +298,33 @@ def test_the_raises_markers_sit_on_real_exemptions():
     assert not wrong, "the propagated-exception markers are out of step:\n  " + "\n  ".join(wrong)
 
 
+def test_no_advertised_docstring_carries_a_raises_section():
+    """An advertised docstring documents no exceptions, because the client cannot use them.
+
+    `pyproject.toml` records this as a decision rather than a backlog, and the DOC501/DOC502/DOC503
+    marker on the definition is how it is expressed. What makes it more than a byte argument is that
+    the class name is unobservable: `_translate_failures` re-raises as `error_cls(str(exc))`, so a
+    client receives the message and never the type. A `Raises:` block advertises `ToolInputError` and
+    `RemoteFailureError` to a reader who only ever sees a `ToolError`.
+
+    `test_the_raises_markers_sit_on_real_exemptions` guards the other direction and only inspects
+    definitions that carry a marker, so adding the section instead of the marker slipped past it -
+    which is how 24 tools grew one, at 2,785 bytes of every session, in a pull request whose subject
+    was clearing an unrelated lint code. Error behaviour a caller can act on belongs in the usage
+    paragraph, in terms of what happens rather than which class was constructed.
+    """
+    wrong = [
+        f"{path.relative_to(ROOT)}:{node.lineno} {node.name}"
+        for path, node, _ in _definitions()
+        if _is_advertised(node) and re.search(r"^Raises:\n", ast.get_docstring(node) or "", re.MULTILINE)
+    ]
+
+    assert not wrong, (
+        "these advertised docstrings carry a Raises section, which is wire cost on every session "
+        "for a type the client never sees - mark the definition instead:\n  " + "\n  ".join(wrong)
+    )
+
+
 def test_no_tracked_line_exceeds_the_documented_limit():
     """No tracked `.py` line is over 120 characters.
 
@@ -401,8 +428,7 @@ def _returns_attrs(node):
         return False
 
     return any(
-        isinstance(stmt, ast.Return) and stmt.value is not None and is_attrs(stmt.value)
-        for stmt in ast.walk(node)
+        isinstance(stmt, ast.Return) and stmt.value is not None and is_attrs(stmt.value) for stmt in ast.walk(node)
     )
 
 
@@ -453,6 +479,4 @@ def test_every_verbatim_attrs_return_names_its_document():
         if "inspect" not in entry.lower() and "document" not in entry.lower():
             wrong.append(f"{path.relative_to(ROOT)}:{node.lineno} {node.name}: {entry[:70]!r}")
 
-    assert not wrong, (
-        "these tools return `.attrs` but their Returns entry names no document:\n  " + "\n  ".join(wrong)
-    )
+    assert not wrong, "these tools return `.attrs` but their Returns entry names no document:\n  " + "\n  ".join(wrong)

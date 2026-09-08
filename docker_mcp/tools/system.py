@@ -623,7 +623,7 @@ def system_close(host: str | None = None) -> bool:  # noqa: DOC101,DOC103
 
 
 @tool()
-def system_reconnect(host: str | None = None) -> dict:  # noqa: DOC101,DOC103
+def system_reconnect(host: str | None = None) -> dict:  # noqa: DOC101,DOC103,DOC501,DOC503
     """
     Rebuild a pooled Docker client from its configured endpoint, to recover a wedged connection.
 
@@ -635,10 +635,6 @@ def system_reconnect(host: str | None = None) -> dict:  # noqa: DOC101,DOC103
 
     Returns:
         dict: the rebuilt host's version info (same shape as `system_version`), confirming connectivity
-
-    Raises:
-        RemoteFailureError: a client could not be built for the host, or was built but the daemon
-            is unreachable - in which case the previous client is kept.
     """
     resolved = _resolve_host(host)
     label = resolved.label

@@ -951,7 +951,7 @@ _LOG_MATCH_TAIL_LINES = 1000
 
 
 @tool()
-def container_wait(  # noqa: DOC101,DOC103
+def container_wait(  # noqa: DOC101,DOC103,DOC501,DOC503
     id_or_name: str,
     until: Literal["not-running", "next-exit", "removed", "healthy", "log-match"] = "not-running",
     timeout_seconds: float = 600.0,
@@ -999,10 +999,6 @@ def container_wait(  # noqa: DOC101,DOC103
             "waited_seconds"}; stop modes fill status_code/error, "healthy" fills health
             ("starting"/"healthy"/"unhealthy", or null with no healthcheck) and status, "log-match" fills matched_line
             when met and status if the container exited without matching.
-
-    Raises:
-        ToolInputError: `timeout_seconds` is negative, `poll_interval` is not positive, or
-            `pattern` is missing for `until='log-match'`.
     """
     if timeout_seconds < 0:
         raise ToolInputError(f"timeout_seconds must be >= 0, got {timeout_seconds}.")
@@ -1159,7 +1155,7 @@ def container_archive_get_to_file(  # noqa: DOC101,DOC103
 
 
 @tool()
-def container_archive_put(  # noqa: DOC101,DOC103
+def container_archive_put(  # noqa: DOC101,DOC103,DOC501,DOC503
     id_or_name: str,
     path: str,
     data: bytes | None = None,
@@ -1182,9 +1178,6 @@ def container_archive_put(  # noqa: DOC101,DOC103
 
     Returns:
         bool: True if the upload succeeded
-
-    Raises:
-        ToolInputError: neither or both of `data` and `from_file` were given.
     """
     if (data is None) == (from_file is None):
         raise ToolInputError("Pass exactly one of `data` (in-band tar bytes) or `from_file` (a server-host path).")

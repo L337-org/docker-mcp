@@ -449,9 +449,13 @@ several resources as `resource(...)(fn)`, which is invisible to it and to the te
 prompt registered that way would silently lose its exemption.
 
 DOC501/DOC502/DOC503 markers are a decision, not a backlog. Where a marker sits on an advertised
-docstring the omission is deliberate, because a `Raises:` section is wire cost every client pays.
-Some tools carry one regardless, where the failure is worth advertising. Do not add a section to
-clear a code, and read the raise site first rather than trusting the name already written there.
+docstring the omission is deliberate, because a `Raises:` section is wire cost every client pays -
+and the type it names is unobservable, since `_translate_failures` re-raises as
+`error_cls(str(exc))` and the client only ever sees the message. No advertised docstring carries a
+section, and `test_no_advertised_docstring_carries_a_raises_section` keeps it that way. Do not add
+one to clear a code, and read the raise site first rather than trusting the name already written
+there. Error behaviour a caller can act on goes in the usage paragraph instead, in terms of what
+happens rather than which class was constructed.
 
 **`scripts/check-repo-hygiene.py` is vendored byte-identically across repositories** and
 self-verifies against a shared digest, so a change to it must land in every one of them with each
