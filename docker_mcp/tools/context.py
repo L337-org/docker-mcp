@@ -41,7 +41,7 @@ def context_list() -> list:
 
 
 @tool()
-def context_inspect(name: str) -> dict:
+def context_inspect(name: str) -> dict:  # noqa: DOC501,DOC503
     """
     Return the full configuration for a single Docker context.
 
@@ -53,9 +53,6 @@ def context_inspect(name: str) -> dict:
 
     Returns:
         dict: The parsed `docker context inspect` entry (keys include "Name" and "Endpoints" with the daemon URL)
-
-    Raises:
-        RemoteFailureError: the context does not exist, so inspect returned nothing.
     """
     result = run_docker(["context", "inspect", safe_positional(name, "context name")])
     raise_on_cli_failure(result, "context inspect")
@@ -83,14 +80,15 @@ def context_create(
 
     Registers a named endpoint for the CLI; switch with `context_use`, enumerate with
     `context_list`. It does not retarget this server's docker-py client (pinned at startup).
-    Does not raise on a non-zero CLI exit - inspect `returncode`/`stderr` in the result. It does
-    raise ToolInputError before running anything if `docker_host` or a TLS path contains a comma, which
-    would inject extra keys (including `skip-tls-verify`) into the endpoint spec.
+    Does not raise on a non-zero CLI exit (a missing `docker` binary or a timeout still raises) - inspect
+    `returncode`/`stderr` in the result. It does raise ToolInputError before running anything if `docker_host`
+    or a TLS path contains a comma, which would inject extra keys (including `skip-tls-verify`) into the
+    endpoint spec.
 
     Args:
         name: Name for the new context (must not already exist)
         docker_host: Daemon URL, e.g. "tcp://10.0.0.5:2376" or "unix:///var/run/docker.sock"; no commas
-        description: Optional human description shown in `context ls`
+        description: Human description shown in `context ls`
         tls_ca: Path on the local host to the CA cert (for TLS daemons); no commas
         tls_cert: Path on the local host to the client cert; no commas
         tls_key: Path on the local host to the client key; no commas
@@ -127,6 +125,8 @@ def context_use(name: str) -> dict:
     endpoint they connected to at startup. To retarget those, restart the server with a different
     DOCKER_HOST / DOCKER_CONTEXT. Create contexts with `context_create`; list them with
     `context_list`.
+    Does not raise on a non-zero CLI exit (a missing `docker` binary or a timeout still raises) - inspect
+    `returncode`/`stderr` in the result.
 
     Args:
         name: Existing context name to set as default
@@ -144,7 +144,8 @@ def context_remove(name: str, force: bool = False) -> dict:
 
     Deletes only the CLI's connection metadata - the daemon it pointed at is untouched. The
     current context needs force=True (or `context_use` another first).
-    Does not raise on a non-zero CLI exit - inspect `returncode`/`stderr` in the result.
+    Does not raise on a non-zero CLI exit (a missing `docker` binary or a timeout still raises) - inspect
+    `returncode`/`stderr` in the result.
 
     Args:
         name: Context name to remove

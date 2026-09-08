@@ -21,6 +21,8 @@ import shutil
 import subprocess
 import tokenize
 
+from docker_mcp.server import _CLI_DOMAINS
+
 PACKAGE = pathlib.Path(__file__).resolve().parent.parent / "docker_mcp"
 NOQA = re.compile(r"#\s*noqa:\s*([\w,]+)")
 ROOT = PACKAGE.parent
@@ -298,6 +300,68 @@ def test_the_raises_markers_sit_on_real_exemptions():
     assert not wrong, "the propagated-exception markers are out of step:\n  " + "\n  ".join(wrong)
 
 
+def test_no_advertised_docstring_carries_a_raises_section():
+    """An advertised docstring documents no exceptions, because the client cannot use them.
+
+    `pyproject.toml` records this as a decision rather than a backlog, and the DOC501/DOC502/DOC503
+    marker on the definition is how it is expressed. What makes it more than a byte argument is that
+    the class name is unobservable: `_translate_failures` re-raises as `error_cls(str(exc))`, so a
+    client receives the message and never the type. A `Raises:` block advertises `ToolInputError` and
+    `RemoteFailureError` to a reader who only ever sees a `ToolError`.
+
+    `test_the_raises_markers_sit_on_real_exemptions` guards the other direction and only inspects
+    definitions that carry a marker, so adding the section instead of the marker slipped past it -
+    which is how 24 tools grew one, at 2,785 bytes of every session, in a pull request whose subject
+    was clearing an unrelated lint code. Error behaviour a caller can act on belongs in the usage
+    paragraph, in terms of what happens rather than which class was constructed.
+    """
+    wrong = [
+        f"{path.relative_to(ROOT)}:{node.lineno} {node.name}"
+        for path, node, _ in _definitions()
+        if _is_advertised(node) and re.search(r"^Raises:", ast.get_docstring(node) or "", re.MULTILINE)
+    ]
+
+    assert not wrong, (
+        "these advertised docstrings carry a Raises section, which is wire cost on every session "
+        "for a type the client never sees - mark the definition instead:\n  " + "\n  ".join(wrong)
+    )
+
+
+def test_every_cli_backed_tool_states_its_error_convention():
+    """A CLI-backed tool says which of the two error conventions it follows.
+
+    `architecture/cli-shell-out.md` gives CLI-backed tools two behaviours and no third: an action
+    tool hands back the raw `CliResult` and never raises on a non-zero exit, and a parsed-query tool
+    raises through `raise_on_cli_failure`. Which one a tool is cannot be guessed from its name, and
+    an agent that assumes the wrong one either treats a failed call as success or wraps a call that
+    cannot fail - so the description has to say.
+
+    Fourteen tools said neither, `compose_up` among them. They were invisible because a reviewer
+    checks what a docstring claims, not what it omits, and an omission has nothing to catch the eye.
+
+    The sentence is matched, not merely the word "raise": before this guard, `buildx_build` and
+    `buildx_history_list` both mentioned raising for an unrelated special case while saying nothing
+    about the convention, which is exactly the shape a looser check would pass.
+    """
+    domains = {name.split("_")[0] for name in _tool_names()} & set(_CLI_DOMAINS)
+    conventions = (
+        "Does not raise on a non-zero CLI exit",
+        "Raises RemoteFailureError if the CLI call fails",
+    )
+    wrong = [
+        f"{path.relative_to(ROOT)}:{node.lineno} {node.name}"
+        for path, node, _ in _definitions()
+        if _is_tool(node)
+        and node.name.split("_")[0] in domains
+        and not any(c in (ast.get_docstring(node) or "") for c in conventions)
+    ]
+
+    assert not wrong, (
+        "these CLI-backed tools state neither error convention, so an agent cannot tell whether a "
+        "non-zero exit raises or comes back in the result:\n  " + "\n  ".join(wrong)
+    )
+
+
 def test_no_tracked_line_exceeds_the_documented_limit():
     """No tracked `.py` line is over 120 characters.
 
@@ -362,3 +426,112 @@ def test_no_args_entry_carries_its_type_in_the_dash_form():
             ]
 
     assert not wrong, "these entries carry a type in the dash form:\n  " + "\n  ".join(wrong)
+
+
+# ---------- references and return shapes in advertised tool docstrings ----------
+
+
+def _tool_names():
+    """Every registered tool's name.
+
+    Returns:
+        set: the tool names, taken from the definitions `_is_tool` accepts while walking the
+            AST, rather than by importing the server
+    """
+    return {node.name for _, node, _ in _definitions() if _is_tool(node)}
+
+
+def _returns_attrs(node):
+    """Whether the tool hands back a docker-py model's `.attrs` verbatim.
+
+    Only a `return` whose expression is recognisably `<model>.attrs` counts - directly, through a
+    comprehension, or through a conditional. A tool that computes its own dict from `.attrs`
+    (`container_wait`, `node_wait`, `swarm_update`) returns a shape of its own making and is not
+    covered here, which is why this looks at the returned expression and not at the body.
+
+    A return inside a nested definition is the tool's helper returning, not the tool, so those are
+    excluded the same way `test_the_raises_markers_sit_on_real_exemptions` excludes nested raises.
+    `ast.walk` descends into an inner `def`, so without this an inner helper handing back `.attrs`
+    would put a documentation requirement on a tool that returns something else entirely.
+
+    Args:
+        node: the function definition to inspect
+
+    Returns:
+        bool: True when at least one return hands back `.attrs` unchanged
+    """
+
+    def is_attrs(expr):
+        if isinstance(expr, ast.Attribute) and expr.attr == "attrs":
+            return True
+        if isinstance(expr, (ast.ListComp, ast.SetComp, ast.GeneratorExp)):
+            return is_attrs(expr.elt)
+        # A dict comprehension carries the document in its value, so `elt` does not exist here.
+        if isinstance(expr, ast.DictComp):
+            return is_attrs(expr.value)
+        if isinstance(expr, ast.IfExp):
+            return is_attrs(expr.body) or is_attrs(expr.orelse)
+        return False
+
+    nested = {
+        id(stmt)
+        for inner in ast.walk(node)
+        if isinstance(inner, (ast.FunctionDef, ast.AsyncFunctionDef)) and inner is not node
+        for stmt in ast.walk(inner)
+    }
+    return any(
+        isinstance(stmt, ast.Return) and id(stmt) not in nested and stmt.value is not None and is_attrs(stmt.value)
+        for stmt in ast.walk(node)
+    )
+
+
+def test_every_sibling_reference_names_a_registered_tool():
+    """A backticked tool-shaped token in a tool docstring resolves to a tool that exists.
+
+    Sibling references are how a lazy-loading client picks between neighbours, and the naming
+    convention makes them retrieval anchors too - so a reference to a tool that was renamed or
+    never existed sends the agent after something uncallable. `compose_images` carried
+    "`compose_up`/`compose_create` first" for exactly this reason: `compose_create` is not
+    registered and that line was its only occurrence in the repo.
+
+    A token matching one of the function's own parameters is skipped: `plugin_data_dir` and
+    `compose_files` are parameters that happen to share the domain-prefixed shape.
+    """
+    names = _tool_names()
+    prefixes = {name.split("_")[0] for name in names}
+    token = re.compile(r"`([a-z][a-z0-9_]*)\s*(?:\([^`]*\))?`")
+    wrong = []
+    for path, node, _ in _definitions():
+        if not _is_tool(node):
+            continue
+        spec = node.args
+        params = {a.arg for a in spec.posonlyargs + spec.args + spec.kwonlyargs}
+        params |= {a.arg for a in (spec.vararg, spec.kwarg) if a is not None}
+        for found in token.findall(ast.get_docstring(node) or ""):
+            if "_" not in found or found in params or found in names:
+                continue
+            if found.split("_")[0] in prefixes:
+                wrong.append(f"{path.relative_to(ROOT)}:{node.lineno} {node.name} -> `{found}`")
+
+    assert not wrong, "these docstrings reference a tool that is not registered:\n  " + "\n  ".join(wrong)
+
+
+def test_every_verbatim_attrs_return_names_its_document():
+    """A tool returning `.attrs` unchanged says which document that is.
+
+    There is no output schema, so the `Returns:` line is all an agent gets. Naming the document
+    ("full inspect payload", "full document") tells it what it is holding; "the X's attrs" names
+    neither the form nor the contents, which is the shapeless form tool-descriptions.md bans. The
+    surface had both vocabularies for one payload - seven `container_*` tools said "full inspect
+    payload" while four beside them said "attrs" for the identical document.
+    """
+    wrong = []
+    for path, node, _ in _definitions():
+        if not (_is_tool(node) and _returns_attrs(node)):
+            continue
+        section = re.search(r"^Returns:\n((?:    .*\n?)+)", ast.get_docstring(node) or "", re.MULTILINE)
+        entry = " ".join(section.group(1).split()) if section else ""
+        if "inspect" not in entry.lower() and "document" not in entry.lower():
+            wrong.append(f"{path.relative_to(ROOT)}:{node.lineno} {node.name}: {entry[:70]!r}")
+
+    assert not wrong, "these tools return `.attrs` but their Returns entry names no document:\n  " + "\n  ".join(wrong)

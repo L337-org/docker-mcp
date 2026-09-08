@@ -137,7 +137,7 @@ def scout_cves(  # noqa: DOC101,DOC103
     `docker login` on the host that runs the CLI - this server's host, or the target `ssh://` host
     itself when no local scout plugin is installed. Start with `scout_quickview` for a
     per-severity summary; `scout_sbom` inventories packages without vulnerability matching.
-    Does not raise on a non-zero CLI exit (a missing scout plugin still raises) - inspect
+    Does not raise on a non-zero CLI exit (a missing scout plugin or a timeout still raises) - inspect
     `raw.stderr`.
 
     Args:
@@ -177,11 +177,10 @@ def scout_quickview(image: str, platform: str | None = None, host: str | None = 
     suggestions with `scout_recommendations`.
     Output is plain text only: `docker scout quickview` has no output-format option, so `result`
     is always the rendered text rather than a parsed document.
-    Does not raise on a non-zero CLI exit (a missing scout plugin still raises) - inspect
+    Does not raise on a non-zero CLI exit (a missing scout plugin or a timeout still raises) - inspect
     `raw.stderr`.
 
     Args:
-        image: Image reference
         platform: Platform of the image to analyze, e.g. "linux/amd64"
 
     Returns:
@@ -213,11 +212,10 @@ def scout_recommendations(  # noqa: DOC101,DOC103
     fix is a newer base image.
     Output is plain text only: `docker scout recommendations` has no output-format option, so
     `result` is always the rendered text rather than a parsed document.
-    Does not raise on a non-zero CLI exit (a missing scout plugin still raises) - inspect
+    Does not raise on a non-zero CLI exit (a missing scout plugin or a timeout still raises) - inspect
     `raw.stderr`.
 
     Args:
-        image: Image reference
         only_refresh: Only show "refresh" recommendations (same major/minor)
         only_update: Only show "update" recommendations (newer minor/major)
         tag: Restrict to suggestions matching this tag pattern
@@ -241,7 +239,7 @@ def scout_recommendations(  # noqa: DOC101,DOC103
 
 
 @tool()
-def scout_compare(  # noqa: DOC101,DOC103
+def scout_compare(  # noqa: DOC101,DOC103,DOC501,DOC503
     image: str,
     to: str | None = None,
     to_env: str | None = None,
@@ -258,7 +256,7 @@ def scout_compare(  # noqa: DOC101,DOC103
     Exactly one of `to`, `to_env`, or `to_latest=True` must be supplied to identify the comparison
     target. Use it after a rebuild to check the new image against the old (`scout_cves` scans a
     single image).
-    Does not raise on a non-zero CLI exit (a missing scout plugin still raises) - inspect
+    Does not raise on a non-zero CLI exit (a missing scout plugin or a timeout still raises) - inspect
     `raw.stderr`. Raises ToolInputError if `to` names a local directory/archive while the call has to run
     on a remote `ssh://` host (no local scout plugin): the file is not staged, so it would resolve
     against that host's filesystem instead.
@@ -276,9 +274,6 @@ def scout_compare(  # noqa: DOC101,DOC103
 
     Returns:
         dict: {"format": <format>, "result": <parsed-json-or-raw-text>, "raw": <CliResult dict>}
-
-    Raises:
-        ToolInputError: not exactly one of `to`, `to_env` or `to_latest` was given.
     """
     targets = [bool(to), bool(to_env), bool(to_latest)]
     if sum(targets) != 1:
@@ -315,11 +310,10 @@ def scout_sbom(  # noqa: DOC101,DOC103
     captured stdout is subject to MAX_CLI_OUTPUT_BYTES and may be truncated for big images. If
     that's a concern, run `docker scout sbom -o file.json ...` on the host and load the file
     separately.
-    Does not raise on a non-zero CLI exit (a missing scout plugin still raises) - inspect
+    Does not raise on a non-zero CLI exit (a missing scout plugin or a timeout still raises) - inspect
     `raw.stderr`.
 
     Args:
-        image: Image reference
         format: "spdx" (default, SPDX JSON), "cyclonedx" (CycloneDX JSON), "json" (Scout's native JSON), or "list"
             (plain-text package list)
         platform: Platform of the image to analyze

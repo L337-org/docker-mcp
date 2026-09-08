@@ -24,7 +24,7 @@ def node_inspect(id_or_name: str, host: str | None = None) -> dict:  # noqa: DOC
         id_or_name: The node id or hostname (as shown by `node_list`)
 
     Returns:
-        dict: The node's attrs (Spec{Role, Availability}, Status, ManagerStatus for managers)
+        dict: The node's full document (Spec{Role, Availability}, Status, ManagerStatus for managers)
     """
     return _get_client(host).nodes.get(id_or_name).attrs
 
@@ -56,7 +56,6 @@ def node_update(id_or_name: str, spec: dict, host: str | None = None) -> bool:  
     dict - e.g. sending just {"Availability": "drain"} would also wipe the node's role and labels.
 
     Args:
-        id_or_name: The node id or name
         spec: The complete new node spec (see description - omitted keys are cleared)
 
     Returns:
@@ -122,7 +121,7 @@ def _node_wait_result(
 
 
 @tool()
-def node_wait(  # noqa: DOC101,DOC103
+def node_wait(  # noqa: DOC101,DOC103,DOC501,DOC503
     id_or_name: str,
     until: Literal["ready", "down", "disconnected", "unknown"] = "ready",
     timeout_seconds: float = 300.0,
@@ -141,17 +140,13 @@ def node_wait(  # noqa: DOC101,DOC103
     service convergence; `node_list` shows every node's state at once.
 
     Args:
-        id_or_name: The node id or name
         until: Target Status.State to wait for: "ready" (default), "down", "disconnected", "unknown"
-        timeout_seconds: Max seconds to wait before returning with timed_out=true (default 300)
+        timeout_seconds: Max seconds to wait before returning with timed_out=true
         poll_interval: Seconds between re-inspections (default 2, > 0); capped by the time left so a large value can't
             push the total wait past the timeout
 
     Returns:
         dict: {"node", "until", "met", "timed_out", "state", "availability", "waited_seconds"}
-
-    Raises:
-        ToolInputError: `timeout_seconds` is negative, or `poll_interval` is not positive.
     """
     if timeout_seconds < 0:
         raise ToolInputError(f"timeout_seconds must be >= 0, got {timeout_seconds}.")

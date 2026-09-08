@@ -1,3 +1,4 @@
+import inspect
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -298,7 +299,23 @@ def test_image_tag():
     with _patch() as mock_client:
         mock_client.return_value.images.get.return_value = image
         assert image_tag("nginx", "myrepo", tag="v1") is True
-    image.tag.assert_called_once_with("myrepo", tag="v1", force=False)
+    image.tag.assert_called_once_with("myrepo", tag="v1")
+
+
+def test_image_tag_does_not_forward_the_dead_force_parameter():
+    # The Engine dropped `force` from the tag endpoint well before API v1.40, this server's minimum,
+    # and overwrites an existing tag regardless: verified against Engine 29.7.2 (API 1.55), where
+    # re-pointing a tag at a different image with force=False succeeded. docker-py still sends
+    # `force=1|0` as a query parameter, so forwarding it advertised a guard no daemon applies - an
+    # agent passing force=False to avoid clobbering a tag clobbered it anyway. Guard both directions:
+    # that we stop sending it, and that the tool no longer accepts it.
+    image = MagicMock()
+    image.tag.return_value = True
+    with _patch() as mock_client:
+        mock_client.return_value.images.get.return_value = image
+        image_tag("nginx", "myrepo", tag="v1")
+    assert "force" not in image.tag.call_args.kwargs
+    assert "force" not in inspect.signature(image_tag).parameters
 
 
 def test_image_history():

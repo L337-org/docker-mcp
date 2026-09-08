@@ -29,12 +29,11 @@ def network_create(  # noqa: DOC101,DOC103
 
     The daemon default driver is `bridge` (single-host); use `overlay` for swarm-wide networks.
     Creating a network attaches nothing - connect containers afterwards with `network_connect` or
-    at start via `container_run(network=...)`. Created networks are stamped with provenance labels
-    (find them later via `network_list(managed_only=True)`). A duplicate `name` is always rejected,
+    at start via `container_run(network=...)`. Created networks carry provenance labels.
+    A duplicate `name` is always rejected,
     so creating is not idempotent - check `network_list` first when the network may already exist.
 
     Args:
-        name: The name of the network
         driver: Driver name (daemon default `bridge`; `overlay` for swarm scope)
         options: Driver-specific options dict
         ipam: IPAM configuration as a dict (engine shape: {"Driver", "Config": [{"Subnet", "Gateway", ...}]})
@@ -46,7 +45,7 @@ def network_create(  # noqa: DOC101,DOC103
         ingress: Make this an ingress network for swarm routing-mesh
 
     Returns:
-        dict: The created network's attrs (Id, Name, Driver, Scope, IPAM)
+        dict: The created network's full inspect payload
     """
     # No `check_duplicate`: the Engine removed `CheckDuplicate` from NetworkCreateRequest at API
     # v1.44 and now rejects a duplicate name unconditionally (moby's postNetworkCreate errors on a
@@ -78,9 +77,6 @@ def network_inspect(id_or_name: str, host: str | None = None) -> dict:  # noqa: 
     entry's assigned IP), IPAM config, and driver options. For a quick overview of many
     networks use `network_list` instead - its default (non-`greedy`) response omits the
     per-network `Containers` detail for speed.
-
-    Args:
-        id_or_name: The network id or name
 
     Returns:
         dict: Full network inspect attrs (equivalent to `docker network inspect`)
@@ -152,9 +148,6 @@ def network_remove(id_or_name: str, host: str | None = None) -> bool:  # noqa: D
     the containers first). Built-in networks (`bridge`, `host`, `none`) can never be removed
     and return an error regardless of attachment state. For bulk cleanup of every unused
     custom network at once use `network_prune` instead.
-
-    Args:
-        id_or_name: The network id or name
 
     Returns:
         bool: True after removal
@@ -230,7 +223,6 @@ def network_disconnect(  # noqa: DOC101,DOC103
     disconnect them before `network_remove`.
 
     Args:
-        id_or_name: The network id or name
         container: The container id or name to disconnect
         force: Force the disconnect; use to clear a stale endpoint (e.g. from a deleted container)
 

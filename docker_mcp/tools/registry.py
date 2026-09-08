@@ -566,7 +566,7 @@ def _next_link(link_header: str | None) -> str | None:
 
 
 @tool()
-def registry_tags(
+def registry_tags(  # noqa: DOC501,DOC503
     repository: str,
     username: str | None = None,
     password: str | None = None,
@@ -584,15 +584,12 @@ def registry_tags(
 
     Args:
         repository: Image/repository ref, e.g. "alpine", "ghcr.io/org/repo"; any `:tag`/`@digest` is stripped
-        username: Optional registry username (overrides DOCKER_MCP_SERVER_REGISTRY_USERNAME)
-        password: Optional registry password/token (overrides DOCKER_MCP_SERVER_REGISTRY_PASSWORD)
+        username: Registry username (overrides DOCKER_MCP_SERVER_REGISTRY_USERNAME)
+        password: Registry password/token (overrides DOCKER_MCP_SERVER_REGISTRY_PASSWORD)
         limit: Max tags to return (default 1000, >= 1); pagination capped at 50 pages
 
     Returns:
         dict: {"name": <repo>, "registry": <host>, "tags": [..], "truncated": bool}
-
-    Raises:
-        ToolInputError: `limit` is less than 1.
     """
     if limit < 1:
         raise ToolInputError(f"limit must be >= 1, got {limit}")
@@ -628,7 +625,7 @@ def registry_tags(
 
 
 @tool()
-def registry_tag_wait(
+def registry_tag_wait(  # noqa: DOC501,DOC503
     repository: str,
     tag: str,
     username: str | None = None,
@@ -653,18 +650,15 @@ def registry_tag_wait(
     Args:
         repository: Image/repository ref, e.g. "alpine", "ghcr.io/org/repo"; any `:tag`/`@digest` is stripped
         tag: The exact tag name to wait for
-        username: Optional registry username (overrides DOCKER_MCP_SERVER_REGISTRY_USERNAME)
-        password: Optional registry password/token (overrides DOCKER_MCP_SERVER_REGISTRY_PASSWORD)
+        username: Registry username (overrides DOCKER_MCP_SERVER_REGISTRY_USERNAME)
+        password: Registry password/token (overrides DOCKER_MCP_SERVER_REGISTRY_PASSWORD)
         limit: Max tags to scan per poll (default 1000, >= 1); forwarded to `registry_tags`
-        timeout_seconds: Max seconds to wait before returning with timed_out=true (default 600)
+        timeout_seconds: Max seconds to wait before returning with timed_out=true
         poll_interval: Seconds between re-checks (default 5, > 0); capped by the time left so a large value can't push
             the total wait past the timeout
 
     Returns:
         dict: {"repository", "tag", "met", "timed_out", "waited_seconds"}
-
-    Raises:
-        ToolInputError: `timeout_seconds` is negative, or `poll_interval` is not positive.
     """
     if timeout_seconds < 0:
         raise ToolInputError(f"timeout_seconds must be >= 0, got {timeout_seconds}.")
@@ -712,9 +706,9 @@ def registry_manifest(
 
     Args:
         repository: Image/repository ref, e.g. "ghcr.io/org/repo"; `:tag`/`@digest` is stripped - pass via `reference`
-        reference: Tag or digest (default "latest")
-        username: Optional registry username (overrides DOCKER_MCP_SERVER_REGISTRY_USERNAME; no config.json)
-        password: Optional registry password/token (overrides DOCKER_MCP_SERVER_REGISTRY_PASSWORD)
+        reference: Tag or digest
+        username: Registry username (overrides DOCKER_MCP_SERVER_REGISTRY_USERNAME; no config.json)
+        password: Registry password/token (overrides DOCKER_MCP_SERVER_REGISTRY_PASSWORD)
 
     Returns:
         dict: {"name", "registry", "reference", "media_type", "digest", "manifest": <JSON body>}
@@ -740,7 +734,7 @@ def registry_manifest(
 
 
 @tool()
-def registry_image_config(
+def registry_image_config(  # noqa: DOC501,DOC503
     repository: str,
     reference: str = "latest",
     platform: str = "linux/amd64",
@@ -753,23 +747,20 @@ def registry_image_config(
     Answers "what's inside this image?" - env vars, entrypoint/cmd, workdir, exposed ports, user,
     labels, layer history (what `registry_manifest` only points at via `config.digest`).
     Resolves in up to three hops: manifest -> (if multi-platform) the `platform` entry's manifest
-    -> the config blob.
+    -> the config blob. Fails where that resolves to no config descriptor, which means the
+    reference is a manifest list rather than an image - `registry_manifest` reads those.
 
     Args:
         repository: Image/repository ref, e.g. "ghcr.io/org/repo"; `:tag`/`@digest` is stripped - pass via `reference`
-        reference: Tag or digest (default "latest")
-        platform: Platform to select from a multi-platform image, "os/arch[/variant]" (default "linux/amd64"); ignored
+        reference: Tag or digest
+        platform: Platform to select from a multi-platform image, "os/arch[/variant]"; ignored
             for single-platform images
-        username: Optional registry username (overrides DOCKER_MCP_SERVER_REGISTRY_USERNAME)
-        password: Optional registry password/token (overrides DOCKER_MCP_SERVER_REGISTRY_PASSWORD)
+        username: Registry username (overrides DOCKER_MCP_SERVER_REGISTRY_USERNAME)
+        password: Registry password/token (overrides DOCKER_MCP_SERVER_REGISTRY_PASSWORD)
 
     Returns:
         dict: {"name", "registry", "reference", "platform", "config_digest", "config": <parsed>}; `platform` is the
             selected platform (None if single-platform)
-
-    Raises:
-        RemoteFailureError: the manifest carries no config descriptor, so there is no config
-            blob to fetch - the reference is a manifest list rather than an image.
     """
     username, password = _env_credentials(username, password)
     registry, repo = _parse_image_ref(repository)
@@ -918,7 +909,7 @@ def _hub_normalize(repository: str) -> str:
 
 
 @tool()
-def hub_tags(repository: str, limit: int = 100) -> dict:
+def hub_tags(repository: str, limit: int = 100) -> dict:  # noqa: DOC501,DOC503
     """
     List tags on a Docker Hub repository with Hub-specific metadata.
 
@@ -933,9 +924,6 @@ def hub_tags(repository: str, limit: int = 100) -> dict:
 
     Returns:
         dict: {"name": <repo>, "tags": [{name, full_size, last_updated, digest, images}, ...], "truncated": bool}
-
-    Raises:
-        ToolInputError: `limit` is less than 1.
     """
     if limit < 1:
         raise ToolInputError(f"limit must be >= 1, got {limit}")
@@ -1016,8 +1004,8 @@ def hub_rate_limit(username: str | None = None, password: str | None = None) -> 
     Plans with no limit return no headers - reported as `"unlimited": true`.
 
     Args:
-        username: Optional Hub username (overrides DOCKER_MCP_SERVER_REGISTRY_USERNAME)
-        password: Optional Hub password/token (overrides DOCKER_MCP_SERVER_REGISTRY_PASSWORD)
+        username: Hub username (overrides DOCKER_MCP_SERVER_REGISTRY_USERNAME)
+        password: Hub password/token (overrides DOCKER_MCP_SERVER_REGISTRY_PASSWORD)
 
     Returns:
         dict: {"authenticated", "limit", "remaining", "window_seconds", "unlimited"}

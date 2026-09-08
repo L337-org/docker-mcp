@@ -139,7 +139,6 @@ def service_inspect(  # noqa: DOC101,DOC103
     computed rollout summary.
 
     Args:
-        id_or_name: The service id or name
         insert_defaults: Merge default values into the output
 
     Returns:
@@ -175,7 +174,7 @@ def service_list(  # noqa: DOC101,DOC103
 
 
 @tool()
-def service_update(  # noqa: DOC101,DOC103
+def service_update(  # noqa: DOC101,DOC103,DOC501,DOC503
     id_or_name: str,
     updates: dict | None = None,
     force: bool = False,
@@ -190,15 +189,11 @@ def service_update(  # noqa: DOC101,DOC103
     re-pull a mutable tag).
 
     Args:
-        id_or_name: The service id or name
         updates: Fields to update on the service; exactly one of updates/force
         force: Redeploy the service without changing its spec; exactly one of updates/force
 
     Returns:
         bool: True after the update
-
-    Raises:
-        ToolInputError: neither or both of `updates` and `force` were given.
     """
     if (updates is None) == (not force):
         raise ToolInputError("Pass exactly one of `updates` (fields to change) or `force=True` (redeploy unchanged).")
@@ -217,9 +212,6 @@ def service_remove(id_or_name: str, host: str | None = None) -> bool:  # noqa: D
 
     Requires a swarm manager. Deletes the service definition and shuts down its tasks - no
     confirmation, no undo. To stop work but keep the definition, `service_scale` to 0 replicas.
-
-    Args:
-        id_or_name: The service id or name
 
     Returns:
         bool: True after the service is removed
@@ -240,7 +232,6 @@ def service_ps(id_or_name: str, filters: dict | None = None, host: str | None = 
     swarm manager.
 
     Args:
-        id_or_name: The service id or name
         filters: Filter dict; keys: id, name, node, label, desired-state (running|shutdown|accepted)
 
     Returns:
@@ -274,13 +265,9 @@ def service_logs(  # noqa: DOC101,DOC103
     `service-logs://{id_or_name}` resource is the resource-flavored equivalent of this tool.
 
     Args:
-        id_or_name: The service id or name
         details: Show extra details
-        stdout: Include stdout
-        stderr: Include stderr
         since: Show logs since this Unix timestamp
-        timestamps: Include timestamps
-        tail: Number of lines from the end (default 200), or the literal "all" for everything
+        tail: Number of lines from the end, or the literal "all" for everything
         max_bytes: Abort with ToolInputError if the buffered logs exceed this many bytes (default 32 MiB)
 
     Returns:
@@ -314,7 +301,6 @@ def service_scale(id_or_name: str, replicas: int, host: str | None = None) -> bo
     `service_update` instead.
 
     Args:
-        id_or_name: The service id or name
         replicas: The desired number of running task replicas
 
     Returns:
@@ -324,7 +310,7 @@ def service_scale(id_or_name: str, replicas: int, host: str | None = None) -> bo
 
 
 @tool()
-def service_rollback(id_or_name: str, host: str | None = None) -> dict:  # noqa: DOC101,DOC103
+def service_rollback(id_or_name: str, host: str | None = None) -> dict:  # noqa: DOC101,DOC103,DOC501,DOC503
     """
     Roll a swarm service back to its previous spec (the docker `service rollback` equivalent).
 
@@ -334,15 +320,8 @@ def service_rollback(id_or_name: str, host: str | None = None) -> dict:  # noqa:
     so this reads the current version and previous spec via the low-level APIClient and submits them
     with the low-level `update_service` API call.
 
-    Args:
-        id_or_name: The service id or name
-
     Returns:
         dict: The daemon response (a dict with a "Warnings" key)
-
-    Raises:
-        ToolInputError: the service has no PreviousSpec - it was never updated, or has already
-            been rolled back.
     """
     api = _get_client(host).api
     info = api.inspect_service(id_or_name)
@@ -413,7 +392,7 @@ def _service_wait_result(
 
 
 @tool()
-def service_wait(  # noqa: DOC101,DOC103
+def service_wait(  # noqa: DOC101,DOC103,DOC501,DOC503
     id_or_name: str,
     until: Literal["running", "update-converged"] = "running",
     replicas: int | None = None,
@@ -434,21 +413,16 @@ def service_wait(  # noqa: DOC101,DOC103
     as `container_wait`'s no-healthcheck case.
 
     Args:
-        id_or_name: The service id or name
         until: Condition to wait for: "running" (default) or "update-converged"
         replicas: "running" mode only: override the desired replica count (e.g. right after a same-turn `service_scale`
             call, before polling reflects the new target)
-        timeout_seconds: Max seconds to wait before returning with timed_out=true (default 600)
+        timeout_seconds: Max seconds to wait before returning with timed_out=true
         poll_interval: Seconds between re-checks (default 2, > 0); capped by the time left so a large value can't push
             the total wait past the timeout
 
     Returns:
         dict: {"service", "until", "met", "timed_out", "running_tasks", "desired_tasks", "failed_tasks", "update_state",
             "waited_seconds"}
-
-    Raises:
-        ToolInputError: `timeout_seconds` is negative, `poll_interval` is not positive, or
-            `replicas` is negative.
     """
     if timeout_seconds < 0:
         raise ToolInputError(f"timeout_seconds must be >= 0, got {timeout_seconds}.")

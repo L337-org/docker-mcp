@@ -71,7 +71,7 @@ def image_build(  # noqa: DOC101,DOC103
         tag: Name and optional tag in "name:tag" format to apply to the built image
         quiet: Suppress verbose build output (final image id still returned)
         nocache: Ignore the layer cache and rebuild all layers
-        rm: Remove intermediate containers on success (default True)
+        rm: Remove intermediate containers on success
         pull: Always pull a newer version of each FROM base image before building
         forcerm: Remove intermediate containers even on build failure
         dockerfile: Dockerfile filename relative to path (default: "Dockerfile"); an absolute path or one containing
@@ -160,10 +160,11 @@ def image_registry_data(  # noqa: DOC101,DOC103
 
     Args:
         repository: Image reference
-        auth_config: Optional registry authentication config
+        auth_config: Registry authentication config
 
     Returns:
-        dict: {"Descriptor", "Platforms"} - the OCI descriptor and the platforms available for the reference
+        dict: The registry data document {"Descriptor", "Platforms"} - the OCI descriptor and
+            the platforms available for the reference
     """
     return _get_client(host).images.get_registry_data(repository, auth_config=auth_config).attrs
 
@@ -212,7 +213,6 @@ def image_pull(  # noqa: DOC101,DOC103
     `~/.docker/config.json`, and leave `auth_config` unset.
 
     Args:
-        repository: The image repository
         tag: The image tag (ignored when all_tags=True)
         all_tags: Pull all tags from the repository
         platform: Platform in os/arch format
@@ -220,7 +220,7 @@ def image_pull(  # noqa: DOC101,DOC103
             overrides the cached credential for this pull only
 
     Returns:
-        dict | list: Pulled image attrs (or a list of attrs if all_tags=True)
+        dict | list: The pulled image's full inspect payload, or one per image if all_tags=True
     """
     result = _get_client(host).images.pull(
         repository, tag=tag, all_tags=all_tags, platform=platform, auth_config=auth_config
@@ -246,9 +246,7 @@ def image_push(  # noqa: DOC101,DOC103
     `~/.docker/config.json`, and leave `auth_config` unset.
 
     Args:
-        repository: The image repository
-        tag: The tag to push
-        auth_config: Optional registry authentication config
+        auth_config: Registry authentication config
 
     Returns:
         str: Push output as a string
@@ -362,7 +360,7 @@ def image_prune_builds(  # noqa: DOC101,DOC103
 
 
 @tool()
-def image_load(  # noqa: DOC101,DOC103
+def image_load(  # noqa: DOC101,DOC103,DOC501,DOC503
     data: bytes | None = None,
     from_file: str | None = None,
     host: str | None = None,
@@ -382,9 +380,6 @@ def image_load(  # noqa: DOC101,DOC103
 
     Returns:
         list: One full inspect payload per loaded image
-
-    Raises:
-        ToolInputError: neither or both of `data` and `from_file` were given.
     """
     if (data is None) == (from_file is None):
         raise ToolInputError("Pass exactly one of `data` (in-band tarball bytes) or `from_file` (a server-host path).")
@@ -395,7 +390,7 @@ def image_load(  # noqa: DOC101,DOC103
 
 
 @tool()
-def image_import(  # noqa: DOC101,DOC103
+def image_import(  # noqa: DOC101,DOC103,DOC501,DOC503
     repository: str | None = None,
     tag: str | None = None,
     from_file: str | None = None,
@@ -443,11 +438,6 @@ def image_import(  # noqa: DOC101,DOC103
     Returns:
         str: The daemon's raw newline-delimited JSON progress records; the final record carries the new image id as its
             `status`
-
-    Raises:
-        ToolInputError: the source is not exactly one of `from_file`, `data`, `from_url` or
-            `from_image`; `repository` or `tag` is blank; `tag` was given without `repository`;
-            or the named tarball does not exist.
     """
     sources = {"from_file": from_file, "data": data, "from_url": from_url, "from_image": from_image}
     supplied = [name for name, value in sources.items() if value is not None]
@@ -521,10 +511,9 @@ def image_save(  # noqa: DOC101,DOC103
     exists (e.g. a containerized server without a bind mount).
 
     Args:
-        id_or_name: Image name or id
         dest_path: Destination path on the server host; omit to return the bytes in band
         named: Whether to retain repository/tag names in the saved archive
-        overwrite: Replace dest_path if it already exists (default False)
+        overwrite: Replace dest_path if it already exists
         max_bytes: In-band mode: abort with ToolInputError beyond this many bytes (default 32 MiB)
 
     Returns:
@@ -539,26 +528,30 @@ def image_save(  # noqa: DOC101,DOC103
 
 @tool()
 def image_tag(  # noqa: DOC101,DOC103
-    id_or_name: str, repository: str, tag: str | None = None, force: bool = False, host: str | None = None
+    id_or_name: str, repository: str, tag: str | None = None, host: str | None = None
 ) -> bool:
     """
     Tag an image into a repository (add a name to an existing local image).
 
     The image id stays the same and no data is copied - a tag is an alias. Typical flow: tag with
     the registry-qualified name, then `image_push`. `image_remove` on a tag merely untags while
-    other names remain.
+    other names remain. Tagging over a name that already exists repoints it, without asking.
 
     Args:
         id_or_name: The source image name or id
         repository: Target repository name (registry-qualified for pushing, e.g. "ghcr.io/o/r")
-        tag: Optional tag for the new image (default "latest")
-        force: Force the tag
+        tag: Tag for the new image (default "latest")
 
     Returns:
         bool: True if the image was tagged
     """
+    # No `force`: the Engine dropped it from the tag endpoint long before API v1.40, this server's
+    # minimum, and overwrites an existing tag either way - verified against Engine 29.7.2 (API 1.55),
+    # where re-pointing a tag at a different image with force=False succeeded. docker-py still sends
+    # `force=1|0` as a query parameter, so passing it through advertised a guard no daemon applies:
+    # an agent setting force=False to avoid clobbering a tag clobbered it anyway. Do not re-add it.
     image = _get_client(host).images.get(id_or_name)
-    return image.tag(repository, tag=tag, force=force)
+    return image.tag(repository, tag=tag)
 
 
 @tool()

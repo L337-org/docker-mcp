@@ -77,11 +77,28 @@ legacy docstrings are cleaned opportunistically, not churned):
      raises" - a missing binary/plugin or a subprocess timeout still raises even in action tools.
    Scale it to the tool: a trivial read-only tool needs one discriminator sentence, not five.
 3. **Every `Args:` entry adds semantics the schema cannot carry**: format, accepted values/ranges,
-   defaults, units, and interactions with other parameters. A line that echoes the parameter name
+   units, and interactions with other parameters.
+
+   Know what the client already has. The two halves of a tool are built independently: the
+   description is `fn.__doc__` verbatim and unparsed, while the input schema comes from the
+   signature via pydantic and never reads the docstring. Nothing bridges them, so the `Args:` block
+   is prose whose only reader is the model - and the schema has already told that model each
+   parameter's **name, type, default and enum**, structurally. Repeating any of those buys nothing
+   and is paid for every session: `stdout: Include stdout` against `{"type": "boolean", "default":
+   true}` is the name a second time. Say what JSON Schema cannot: the shape inside a permissive
+   container type, a unit, a range, what makes a value valid, how two parameters interact.
+
+   This is a rule about tools, not about prompts. A prompt argument carries only `name`, `title`,
+   `description` and `required` on the wire - no type and no default - so a default written into a
+   prompt's prose is the only copy there is, and stays. A line that echoes the parameter name
    ("name - The volume name") scores 2/5 on the rubric - say what makes a value valid or how it
    behaves ("name - The volume name (volumes have no separate id)"). Canonical shared-param
    prefixes in `tests/test_naming.py` still apply - append tool-specific detail after the
-   canonical prefix rather than rewording it.
+   canonical prefix rather than rewording it. Where a parameter has no semantic the schema is
+   missing and the name does not already carry - `id_or_name` on a tool whose name says which
+   resource - the entry earns nothing and is better deleted than padded. The tool's
+   `# noqa: DOC101,DOC103` already permits an undocumented parameter, and a tool whose only
+   documented parameter goes this way loses its `Args:` section entirely.
 4. **`Returns:` names the shape, not just the type.** There is no output schema, so this line is
    all an agent gets. For computed or partial returns, name the load-bearing keys (`{"Titles",
    "Processes"}`; `{"LayersSize", "Images", "Containers", "Volumes", "BuildCache"}`). For a full
@@ -114,3 +131,34 @@ Self-check before opening the PR: read the docstring as an agent holding 150+ to
 nothing else - could you pick this tool over its neighbours and call it correctly on the first try?
 **Write it this way the first time a tool is added or its behaviour changes** - don't wait for a
 future Glama pass to catch it.
+
+## What is gated, and what is not
+
+Four of the rules above fail CI rather than waiting for a reviewer, all in
+`tests/test_docstrings.py`:
+
+- `test_every_sibling_reference_names_a_registered_tool` - a backticked tool-shaped token in a
+  tool docstring must name a registered tool. Tokens matching one of the function's own
+  parameters are skipped, so a parameter like `compose_files` does not trip it.
+- `test_every_verbatim_attrs_return_names_its_document` - a tool whose `return` hands back a
+  docker-py model's `.attrs` unchanged must name the document in its `Returns:` entry ("full
+  inspect payload", "full document"). A tool that computes its own dict from `.attrs` returns a
+  shape of its own making and is out of scope, so the guard reads the returned expression rather
+  than the body.
+
+- `test_no_advertised_docstring_carries_a_raises_section` - an advertised docstring documents no
+  exceptions. The type is unobservable anyway: `_translate_failures` re-raises as
+  `error_cls(str(exc))`, so the client gets the message and never the class. Where a `DOC50x` code
+  fires, mark the definition. Error behaviour a caller can act on belongs in the usage paragraph,
+  in terms of what happens rather than which class was constructed.
+
+- `test_every_cli_backed_tool_states_its_error_convention` - a tool in a `_CLI_DOMAINS` domain
+  names one of the two behaviours in [cli-shell-out.md](cli-shell-out.md): it returns the raw
+  `CliResult` and does not raise on a non-zero exit, or it raises through `raise_on_cli_failure`.
+  Fourteen tools stated neither, `compose_up` among them - an omission has nothing to catch a
+  reviewer's eye, which is why this one is mechanical.
+
+Everything else here - the usage-guidance paragraph, the discriminators, `Args:` entries that add
+semantics - is still prose a reviewer has to check. The byte
+budget in `tests/test_surface_budget.py` prices any addition: it is the gate that forces "is this
+worth what every session pays for it?" to be answered in the pull request.

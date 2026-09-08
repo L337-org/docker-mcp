@@ -35,6 +35,7 @@ def swarm_init(  # noqa: DOC101,DOC103
     securely immediately, since it is only shown once autolock is enabled.
 
     Args:
+        name: Name for the swarm cluster itself, not for the node running init
         advertise_addr: Externally reachable address advertised to other nodes
         listen_addr: Listen address used for inter-manager communication
         force_new_cluster: Force a new single-node cluster from this node's current state (disaster recovery when a
@@ -43,7 +44,6 @@ def swarm_init(  # noqa: DOC101,DOC103
         subnet_size: Subnet size for the IP pool
         data_path_addr: Address to use for data path traffic
         data_path_port: Port number for data path traffic
-        name: Name of the swarm
         labels: Labels to set on the swarm
         autolock_managers: Require the unlock key after every manager restart
         log_driver: Default log driver configuration
@@ -126,7 +126,7 @@ def swarm_leave(force: bool = False, host: str | None = None) -> bool:  # noqa: 
 
 
 @tool()
-def swarm_update(  # noqa: DOC101,DOC103
+def swarm_update(  # noqa: DOC101,DOC103,DOC501,DOC503
     rotate_worker_token: bool = False,
     rotate_manager_token: bool = False,
     rotate_manager_unlock_key: bool = False,
@@ -159,10 +159,6 @@ def swarm_update(  # noqa: DOC101,DOC103
 
     Returns:
         bool: True after the update completes
-
-    Raises:
-        RemoteFailureError: swarm inspect returned no version index, so the update cannot be
-            version-guarded - this node may not be a manager.
     """
     client = _get_client(host)
     swarm = client.swarm

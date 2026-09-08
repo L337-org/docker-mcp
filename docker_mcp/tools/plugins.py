@@ -42,10 +42,10 @@ def plugin_create(  # noqa: DOC101,DOC103
         name: Local name for the plugin, `author/name:tag`; the `:latest` tag is optional and is the default if omitted
         plugin_data_dir: Path on this server's filesystem to the plugin data directory (containing `config.json` and
             `rootfs`)
-        gzip: Compress the uploaded directory with gzip (default False)
+        gzip: Compress the uploaded directory with gzip
 
     Returns:
-        dict: The created plugin's attrs ({"Id", "Name", "Enabled", "Settings", "Config"})
+        dict: The created plugin's full document ({"Id", "Name", "Enabled", "Settings", "Config"})
     """
     path = host_read_path(plugin_data_dir)
     return _get_client(host).plugins.create(name, str(path), gzip=gzip).attrs
@@ -64,7 +64,7 @@ def plugin_inspect(name: str, host: str | None = None) -> dict:  # noqa: DOC101,
         name: Plugin name, e.g. "vieux/sshfs:latest"
 
     Returns:
-        dict: The plugin's attrs, including `Enabled` and `Settings`
+        dict: The plugin's full document (Id, Name, Enabled, Settings, Config)
     """
     return _get_client(host).plugins.get(name).attrs
 
@@ -87,7 +87,7 @@ def plugin_install(remote: str, local_name: str | None = None, host: str | None 
         local_name: Alias to refer to the plugin locally; defaults to remote
 
     Returns:
-        dict: The installed plugin's attrs ({"Id", "Name", "Enabled", "Settings", "Config"})
+        dict: The installed plugin's full document ({"Id", "Name", "Enabled", "Settings", "Config"})
     """
     return _get_client(host).plugins.install(remote, local_name=local_name).attrs
 
@@ -119,7 +119,9 @@ def plugin_privileges(remote: str, host: str | None = None) -> list:  # noqa: DO
 
 
 @tool()
-def plugin_push(name: str, timeout_seconds: float = 300.0, host: str | None = None) -> dict:  # noqa: DOC101,DOC103
+def plugin_push(  # noqa: DOC101,DOC103,DOC501,DOC503
+    name: str, timeout_seconds: float = 300.0, host: str | None = None
+) -> dict:
     """
     Push an installed plugin to its registry.
 
@@ -154,10 +156,6 @@ def plugin_push(name: str, timeout_seconds: float = 300.0, host: str | None = No
     Returns:
         dict: {"name", "progress": [<decoded status dicts>], "truncated": bool, "error": str or None} - `error` is
             non-None only when the registry reported a failure
-
-    Raises:
-        CapabilityError: the installed docker-py no longer exposes the APIClient methods this
-            tool needs to reach the plugin push endpoint.
     """
     api = _get_client(host).api
     # docker-py exposes no working public path here (see docstring), so we drive its private request
@@ -231,7 +229,7 @@ def plugin_list(host: str | None = None) -> list:  # noqa: DOC101,DOC103
     each plugin's state.
 
     Returns:
-        list: One attrs dict per installed plugin (Id, Name, Enabled, Settings, Config)
+        list: One full document per installed plugin (Id, Name, Enabled, Settings, Config)
     """
     return [p.attrs for p in _get_client(host).plugins.list()]
 
@@ -268,7 +266,6 @@ def plugin_disable(name: str, force: bool = False, host: str | None = None) -> b
     resources (e.g. a volume driver). Re-enable with `plugin_enable`.
 
     Args:
-        name: The plugin name
         force: Disable even if active containers are using the plugin (may disrupt them)
 
     Returns:
@@ -311,7 +308,7 @@ def plugin_remove(name: str, force: bool = False, host: str | None = None) -> bo
 
     Args:
         name: The plugin name (e.g. "vieux/sshfs:latest")
-        force: Remove even if the plugin is enabled (default False)
+        force: Remove even if the plugin is enabled
 
     Returns:
         bool: True after removal
