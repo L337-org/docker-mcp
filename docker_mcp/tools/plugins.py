@@ -45,7 +45,7 @@ def plugin_create(  # noqa: DOC101,DOC103
         gzip: Compress the uploaded directory with gzip (default False)
 
     Returns:
-        dict: The created plugin's attrs ({"Id", "Name", "Enabled", "Settings", "Config"})
+        dict: The created plugin's full document ({"Id", "Name", "Enabled", "Settings", "Config"})
     """
     path = host_read_path(plugin_data_dir)
     return _get_client(host).plugins.create(name, str(path), gzip=gzip).attrs
@@ -64,7 +64,7 @@ def plugin_inspect(name: str, host: str | None = None) -> dict:  # noqa: DOC101,
         name: Plugin name, e.g. "vieux/sshfs:latest"
 
     Returns:
-        dict: The plugin's attrs, including `Enabled` and `Settings`
+        dict: The plugin's full document (Id, Name, Enabled, Settings, Config)
     """
     return _get_client(host).plugins.get(name).attrs
 
@@ -87,7 +87,7 @@ def plugin_install(remote: str, local_name: str | None = None, host: str | None 
         local_name: Alias to refer to the plugin locally; defaults to remote
 
     Returns:
-        dict: The installed plugin's attrs ({"Id", "Name", "Enabled", "Settings", "Config"})
+        dict: The installed plugin's full document ({"Id", "Name", "Enabled", "Settings", "Config"})
     """
     return _get_client(host).plugins.install(remote, local_name=local_name).attrs
 
@@ -231,7 +231,7 @@ def plugin_list(host: str | None = None) -> list:  # noqa: DOC101,DOC103
     each plugin's state.
 
     Returns:
-        list: One attrs dict per installed plugin (Id, Name, Enabled, Settings, Config)
+        list: One full document per installed plugin (Id, Name, Enabled, Settings, Config)
     """
     return [p.attrs for p in _get_client(host).plugins.list()]
 

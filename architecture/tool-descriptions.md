@@ -114,3 +114,22 @@ Self-check before opening the PR: read the docstring as an agent holding 150+ to
 nothing else - could you pick this tool over its neighbours and call it correctly on the first try?
 **Write it this way the first time a tool is added or its behaviour changes** - don't wait for a
 future Glama pass to catch it.
+
+## What is gated, and what is not
+
+Two of the rules above fail CI rather than waiting for a reviewer, both in
+`tests/test_docstrings.py`:
+
+- `test_every_sibling_reference_names_a_registered_tool` - a backticked tool-shaped token in a
+  tool docstring must name a registered tool. Tokens matching one of the function's own
+  parameters are skipped, so a parameter like `compose_files` does not trip it.
+- `test_every_verbatim_attrs_return_names_its_document` - a tool whose `return` hands back a
+  docker-py model's `.attrs` unchanged must name the document in its `Returns:` entry ("full
+  inspect payload", "full document"). A tool that computes its own dict from `.attrs` returns a
+  shape of its own making and is out of scope, so the guard reads the returned expression rather
+  than the body.
+
+Everything else here - the usage-guidance paragraph, the discriminators, the error-style
+qualifier, `Args:` entries that add semantics - is still prose a reviewer has to check. The byte
+budget in `tests/test_surface_budget.py` prices any addition: it is the gate that forces "is this
+worth what every session pays for it?" to be answered in the pull request.

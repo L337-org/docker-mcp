@@ -95,13 +95,13 @@ def container_run(  # noqa: DOC101,DOC103
         privileged: Give extended privileges to the container
         tty: Allocate a pseudo-TTY
         stdin_open: Keep STDIN open
-        mem_limit: Memory limit
+        mem_limit: Memory limit: bytes as an int, or a units string ("100000b", "1000k", "128m", "1g")
         cpu_count: Number of CPUs
         extra_kwargs: Additional keyword arguments forwarded to ContainerCollection.run (call
             `docs_lookup(section="containers")` for the full accepted set)
 
     Returns:
-        dict | str: Container attrs when detach=True, otherwise stdout/stderr as a string
+        dict | str: The container's full inspect payload when detach=True, else stdout/stderr as a string
     """
     kwargs: dict = {
         "detach": detach,
@@ -170,7 +170,7 @@ def container_create(  # noqa: DOC101,DOC103
         extra_kwargs: Additional docker-py ContainerCollection.create keyword arguments
 
     Returns:
-        dict: The created container's attrs (not yet running)
+        dict: The created container's full inspect payload (not yet running)
     """
     kwargs = dict(extra_kwargs or {})
     labels = with_provenance(kwargs.get("labels"), "container_create")
@@ -306,7 +306,7 @@ def container_stop(  # noqa: DOC101,DOC103
         stop_timeout_seconds: Seconds between the stop signal and SIGKILL (default 10)
 
     Returns:
-        dict: The container's attrs after the stop (exit code under State.ExitCode)
+        dict: The container's full inspect payload after the stop (exit code under State.ExitCode)
     """
     container = _get_client(host).containers.get(id_or_name)
     guard_not_self(container, host=host)
@@ -403,7 +403,7 @@ def container_unpause(id_or_name: str, host: str | None = None) -> dict:  # noqa
         id_or_name: The container id or name
 
     Returns:
-        dict: The container's attrs after unpause (State.Paused becomes false)
+        dict: The container's full inspect payload after unpause (State.Paused becomes false)
     """
     container = _get_client(host).containers.get(id_or_name)
     container.unpause()
@@ -1115,8 +1115,8 @@ def container_archive_get(  # noqa: DOC101,DOC103
     """
     Retrieve a file or directory from a container as a tar archive, returned in band.
 
-    For large paths prefer `container_archive_get_to_file`, which streams to a host path; the in-band
-    bytes here are capped (default 32 MiB) because MCP base64-encodes them.
+    In-band bytes are capped (default 32 MiB) because MCP base64-encodes them;
+    `container_archive_get_to_file` streams to a host path instead.
 
     Args:
         id_or_name: The container id or name

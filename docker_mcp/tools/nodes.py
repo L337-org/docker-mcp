@@ -24,7 +24,7 @@ def node_inspect(id_or_name: str, host: str | None = None) -> dict:  # noqa: DOC
         id_or_name: The node id or hostname (as shown by `node_list`)
 
     Returns:
-        dict: The node's attrs (Spec{Role, Availability}, Status, ManagerStatus for managers)
+        dict: The node's full document (Spec{Role, Availability}, Status, ManagerStatus for managers)
     """
     return _get_client(host).nodes.get(id_or_name).attrs
 

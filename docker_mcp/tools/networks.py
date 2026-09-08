@@ -29,8 +29,8 @@ def network_create(  # noqa: DOC101,DOC103
 
     The daemon default driver is `bridge` (single-host); use `overlay` for swarm-wide networks.
     Creating a network attaches nothing - connect containers afterwards with `network_connect` or
-    at start via `container_run(network=...)`. Created networks are stamped with provenance labels
-    (find them later via `network_list(managed_only=True)`). A duplicate `name` is always rejected,
+    at start via `container_run(network=...)`. Created networks carry provenance labels.
+    A duplicate `name` is always rejected,
     so creating is not idempotent - check `network_list` first when the network may already exist.
 
     Args:
@@ -46,7 +46,7 @@ def network_create(  # noqa: DOC101,DOC103
         ingress: Make this an ingress network for swarm routing-mesh
 
     Returns:
-        dict: The created network's attrs (Id, Name, Driver, Scope, IPAM)
+        dict: The created network's full inspect payload
     """
     # No `check_duplicate`: the Engine removed `CheckDuplicate` from NetworkCreateRequest at API
     # v1.44 and now rejects a duplicate name unconditionally (moby's postNetworkCreate errors on a

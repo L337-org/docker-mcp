@@ -163,7 +163,8 @@ def image_registry_data(  # noqa: DOC101,DOC103
         auth_config: Optional registry authentication config
 
     Returns:
-        dict: {"Descriptor", "Platforms"} - the OCI descriptor and the platforms available for the reference
+        dict: The registry data document {"Descriptor", "Platforms"} - the OCI descriptor and
+            the platforms available for the reference
     """
     return _get_client(host).images.get_registry_data(repository, auth_config=auth_config).attrs
 
@@ -220,7 +221,7 @@ def image_pull(  # noqa: DOC101,DOC103
             overrides the cached credential for this pull only
 
     Returns:
-        dict | list: Pulled image attrs (or a list of attrs if all_tags=True)
+        dict | list: The pulled image's full inspect payload, or one per image if all_tags=True
     """
     result = _get_client(host).images.pull(
         repository, tag=tag, all_tags=all_tags, platform=platform, auth_config=auth_config

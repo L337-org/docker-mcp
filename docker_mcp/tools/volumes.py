@@ -37,7 +37,7 @@ def volume_create(  # noqa: DOC101,DOC103
         labels: Labels to set on the volume
 
     Returns:
-        dict: The created volume's attrs ({"Name", "Driver", "Mountpoint", "Labels", ...})
+        dict: The created volume's full document (Name, Driver, Mountpoint, CreatedAt, Labels, Options, Scope)
     """
     kwargs = drop_none(
         name=name, driver=driver, driver_opts=driver_opts, labels=with_provenance(labels, "volume_create")
@@ -58,7 +58,7 @@ def volume_inspect(name: str, host: str | None = None) -> dict:  # noqa: DOC101,
         name: The volume name (volumes have no ids)
 
     Returns:
-        dict: The volume's attrs (Name, Driver, Mountpoint, CreatedAt, Labels, Options, Scope)
+        dict: The volume's full document (Name, Driver, Mountpoint, CreatedAt, Labels, Options, Scope)
     """
     return _get_client(host).volumes.get(name).attrs
 

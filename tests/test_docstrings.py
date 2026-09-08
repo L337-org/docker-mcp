@@ -362,3 +362,97 @@ def test_no_args_entry_carries_its_type_in_the_dash_form():
             ]
 
     assert not wrong, "these entries carry a type in the dash form:\n  " + "\n  ".join(wrong)
+
+
+# ---------- references and return shapes in advertised tool docstrings ----------
+
+
+def _tool_names():
+    """Every registered tool's name.
+
+    Returns:
+        set: the tool names, collected from the decorators rather than by importing the server
+    """
+    return {node.name for _, node, _ in _definitions() if _is_tool(node)}
+
+
+def _returns_attrs(node):
+    """Whether the tool hands back a docker-py model's `.attrs` verbatim.
+
+    Only a `return` whose expression is recognisably `<model>.attrs` counts - directly, through a
+    comprehension, or through a conditional. A tool that computes its own dict from `.attrs`
+    (`container_wait`, `node_wait`, `swarm_update`) returns a shape of its own making and is not
+    covered here, which is why this looks at the returned expression and not at the body.
+
+    Args:
+        node: the function definition to inspect
+
+    Returns:
+        bool: True when at least one return hands back `.attrs` unchanged
+    """
+
+    def is_attrs(expr):
+        if isinstance(expr, ast.Attribute) and expr.attr == "attrs":
+            return True
+        if isinstance(expr, (ast.ListComp, ast.GeneratorExp)):
+            return is_attrs(expr.elt)
+        if isinstance(expr, ast.IfExp):
+            return is_attrs(expr.body) or is_attrs(expr.orelse)
+        return False
+
+    return any(
+        isinstance(stmt, ast.Return) and stmt.value is not None and is_attrs(stmt.value)
+        for stmt in ast.walk(node)
+    )
+
+
+def test_every_sibling_reference_names_a_registered_tool():
+    """A backticked tool-shaped token in a tool docstring resolves to a tool that exists.
+
+    Sibling references are how a lazy-loading client picks between neighbours, and the naming
+    convention makes them retrieval anchors too - so a reference to a tool that was renamed or
+    never existed sends the agent after something uncallable. `compose_images` carried
+    "`compose_up`/`compose_create` first" for exactly this reason: `compose_create` is not
+    registered and that line was its only occurrence in the repo.
+
+    A token matching one of the function's own parameters is skipped: `plugin_data_dir` and
+    `compose_files` are parameters that happen to share the domain-prefixed shape.
+    """
+    names = _tool_names()
+    prefixes = {name.split("_")[0] for name in names}
+    token = re.compile(r"`([a-z][a-z0-9_]*)\s*(?:\([^`]*\))?`")
+    wrong = []
+    for path, node, _ in _definitions():
+        if not _is_tool(node):
+            continue
+        params = {a.arg for a in node.args.args + node.args.kwonlyargs}
+        for found in token.findall(ast.get_docstring(node) or ""):
+            if "_" not in found or found in params or found in names:
+                continue
+            if found.split("_")[0] in prefixes:
+                wrong.append(f"{path.relative_to(ROOT)}:{node.lineno} {node.name} -> `{found}`")
+
+    assert not wrong, "these docstrings reference a tool that is not registered:\n  " + "\n  ".join(wrong)
+
+
+def test_every_verbatim_attrs_return_names_its_document():
+    """A tool returning `.attrs` unchanged says which document that is.
+
+    There is no output schema, so the `Returns:` line is all an agent gets. Naming the document
+    ("full inspect payload", "full document") tells it what it is holding; "the X's attrs" names
+    neither the form nor the contents, which is the shapeless form tool-descriptions.md bans. The
+    surface had both vocabularies for one payload - seven `container_*` tools said "full inspect
+    payload" while four beside them said "attrs" for the identical document.
+    """
+    wrong = []
+    for path, node, _ in _definitions():
+        if not (_is_tool(node) and _returns_attrs(node)):
+            continue
+        section = re.search(r"^Returns:\n((?:    .*\n?)+)", ast.get_docstring(node) or "", re.MULTILINE)
+        entry = " ".join(section.group(1).split()) if section else ""
+        if "inspect" not in entry.lower() and "document" not in entry.lower():
+            wrong.append(f"{path.relative_to(ROOT)}:{node.lineno} {node.name}: {entry[:70]!r}")
+
+    assert not wrong, (
+        "these tools return `.attrs` but their Returns entry names no document:\n  " + "\n  ".join(wrong)
+    )

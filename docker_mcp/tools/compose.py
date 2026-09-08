@@ -655,7 +655,7 @@ def compose_images(  # noqa: DOC101,DOC103
     List the images used by a compose project's services, parsed from `--format json`.
 
     Answers "what image and tag does each service container actually run?" - the containers must
-    exist (`compose_up`/`compose_create` first). Use `compose_ps` for container state and
+    exist (`compose_up` first). Use `compose_ps` for container state and
     `image_list` for daemon-wide images.
     Raises RemoteFailureError if the CLI call fails.
 

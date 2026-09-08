@@ -28,7 +28,7 @@ def secret_create(  # noqa: DOC101,DOC103
         driver: Optional secret-driver config for values held in an external store
 
     Returns:
-        dict: The created secret's attrs (ID and Spec metadata; never the payload)
+        dict: The created secret's full document (ID and Spec metadata; never the payload)
     """
     kwargs: dict = {
         "name": name,
@@ -53,7 +53,7 @@ def secret_inspect(id_or_name: str, host: str | None = None) -> dict:  # noqa: D
         id_or_name: The secret id or name
 
     Returns:
-        dict: The secret's attrs, excluding the actual secret data
+        dict: The secret's full document, excluding the actual secret data
     """
     return _get_client(host).secrets.get(id_or_name).attrs
 
@@ -71,7 +71,7 @@ def secret_list(filters: dict | None = None, host: str | None = None) -> list:  
         filters: Narrow the list; omit to return every secret
 
     Returns:
-        list: A list of secret attrs dicts (data-free)
+        list: One full secret document per secret (data-free)
     """
     return [s.attrs for s in _get_client(host).secrets.list(**drop_none(filters=filters))]
 
