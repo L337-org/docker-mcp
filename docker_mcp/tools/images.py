@@ -528,14 +528,14 @@ def image_save(  # noqa: DOC101,DOC103
 
 @tool()
 def image_tag(  # noqa: DOC101,DOC103
-    id_or_name: str, repository: str, tag: str | None = None, force: bool = False, host: str | None = None
+    id_or_name: str, repository: str, tag: str | None = None, host: str | None = None
 ) -> bool:
     """
     Tag an image into a repository (add a name to an existing local image).
 
     The image id stays the same and no data is copied - a tag is an alias. Typical flow: tag with
     the registry-qualified name, then `image_push`. `image_remove` on a tag merely untags while
-    other names remain.
+    other names remain. Tagging over a name that already exists repoints it, without asking.
 
     Args:
         id_or_name: The source image name or id
@@ -545,8 +545,13 @@ def image_tag(  # noqa: DOC101,DOC103
     Returns:
         bool: True if the image was tagged
     """
+    # No `force`: the Engine dropped it from the tag endpoint long before API v1.40, this server's
+    # minimum, and overwrites an existing tag either way - verified against Engine 29.7.2 (API 1.55),
+    # where re-pointing a tag at a different image with force=False succeeded. docker-py still sends
+    # `force=1|0` as a query parameter, so passing it through advertised a guard no daemon applies:
+    # an agent setting force=False to avoid clobbering a tag clobbered it anyway. Do not re-add it.
     image = _get_client(host).images.get(id_or_name)
-    return image.tag(repository, tag=tag, force=force)
+    return image.tag(repository, tag=tag)
 
 
 @tool()

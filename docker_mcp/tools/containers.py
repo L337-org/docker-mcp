@@ -223,7 +223,8 @@ def container_list(  # noqa: DOC101,DOC103
         limit: Maximum number of results
         filters: Filter by attributes (e.g. status, label)
         sparse: Skip inspect calls and return less detail
-        ignore_removed: Ignore containers removed during listing
+        ignore_removed: Ignore containers removed during listing; inert when `sparse=True`, which
+            skips the inspect calls that would fail
         managed_only: Only return containers created by this MCP server (filters on the docker-mcp-server.managed
             label); combines with any `filters` given
 
