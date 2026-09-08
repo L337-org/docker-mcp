@@ -42,11 +42,11 @@ from docker_mcp.server import DISABLED_DOMAINS, NO_DESTRUCTIVE, READONLY, mcp
 #   print(sum(len(json.dumps(t.model_dump(mode='json'),separators=(',',':')).encode()) \
 #   for t in asyncio.run(mcp.list_tools())))"
 MAX_SINGLE_TOOL_WIRE_BYTES = 5_300  # buildx_build, 5,108
-MAX_TOOL_WIRE_BYTES = 231_000  # 228,477
+MAX_TOOL_WIRE_BYTES = 231_000  # 228,586
 MAX_PROMPT_WIRE_BYTES = 7_900  # 7,646
 MAX_RESOURCE_WIRE_BYTES = 6_400  # 6,248, resources and templates together
 MAX_INSTRUCTIONS_BYTES = 2_900  # 2,749
-MAX_TOTAL_WIRE_BYTES = 248_000  # 245,120
+MAX_TOTAL_WIRE_BYTES = 248_000  # 245,229
 
 # Registration is gated at import time, so a switch in effect when `docker_mcp.server` was
 # imported shrinks the surface, and every budget below would pass while measuring something

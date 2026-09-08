@@ -35,6 +35,7 @@ def swarm_init(  # noqa: DOC101,DOC103
     securely immediately, since it is only shown once autolock is enabled.
 
     Args:
+        name: Name for the swarm cluster itself, not for the node running init
         advertise_addr: Externally reachable address advertised to other nodes
         listen_addr: Listen address used for inter-manager communication
         force_new_cluster: Force a new single-node cluster from this node's current state (disaster recovery when a

@@ -491,6 +491,7 @@ def system_login(  # noqa: DOC101,DOC103
     `image_pull` / `image_push` reach private repositories; `system_logout` clears them.
 
     Args:
+        username: Registry username
         password: Registry password or token
         email: Registry account email
         registry: URL to the registry (defaults to Docker Hub)
