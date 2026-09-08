@@ -464,8 +464,11 @@ def _returns_attrs(node):
     def is_attrs(expr):
         if isinstance(expr, ast.Attribute) and expr.attr == "attrs":
             return True
-        if isinstance(expr, (ast.ListComp, ast.GeneratorExp)):
+        if isinstance(expr, (ast.ListComp, ast.SetComp, ast.GeneratorExp)):
             return is_attrs(expr.elt)
+        # A dict comprehension carries the document in its value, so `elt` does not exist here.
+        if isinstance(expr, ast.DictComp):
+            return is_attrs(expr.value)
         if isinstance(expr, ast.IfExp):
             return is_attrs(expr.body) or is_attrs(expr.orelse)
         return False
