@@ -11,7 +11,7 @@ import docker_mcp._hosts as _hosts
 from docker_mcp.exceptions import CapabilityError, ToolInputError, ToolRefusalError
 from docker_mcp.server import is_domain_disabled, query_catalog, register_resource_domains, resource, tool, tool_catalog
 from docker_mcp.tools._utils import package_version
-from docker_mcp.tools.system import _get_client, host_list
+from docker_mcp.tools.system import host_list
 from docker_mcp.tools.containers import _read_log_tail, _read_stats_summary
 from docker_mcp.tools.services import _read_service_log_tail, _read_service_task_summary
 
@@ -247,75 +247,6 @@ def _require_containers_domain() -> None:
         )
 
 
-def _child_uri(scheme: str, ref: str, host: str | None) -> str:
-    """The child logs/stats URI matching the index's host context.
-
-    Host-qualified when an index is host-scoped, else empty-authority (multi-host default) or bare
-    (single-host).
-
-    Args:
-        scheme: the child resource's scheme
-        ref: the container reference
-        host: the host label to target, or None for the default
-
-    Returns:
-        str: the child URI, matching the index's host context
-    """
-    if host is not None:
-        return f"{scheme}://{host}/{ref}"
-    return f"{scheme}:///{ref}" if _hosts.is_multi() else f"{scheme}://{ref}"
-
-
-def _render_index(host: str | None) -> str:
-    _require_containers_domain()
-    entries = []
-    for container in _get_client(host).containers.list(all=True):
-        state = container.attrs.get("State", {}) or {}
-        status = state.get("Status")
-        ref = container.name or container.short_id
-        entry: dict = {
-            "id": container.short_id,
-            "name": container.name,
-            "image": (container.attrs.get("Config", {}) or {}).get("Image"),
-            "status": status,
-            "logs": _child_uri("docker-logs", ref, host),
-            "stats": _child_uri("docker-stats", ref, host) if status == "running" else None,
-        }
-        if status == "exited":
-            entry["exit_code"] = state.get("ExitCode")
-        entries.append(entry)
-    return json.dumps({"containers": entries}, indent=2)
-
-
-def list_container_resources() -> str:
-    """Index every container with the resource URIs for reading its logs and live stats.
-
-    Lists all containers (running and stopped). Each entry carries a `logs` URI (readable in any
-    state - useful for diagnosing why a container exited) and, for running containers only, a `stats`
-    URI (a stopped container has no live cgroup to sample). Exited containers include their
-    `exit_code` as a triage signal.
-
-    Returns:
-        str: JSON object {"containers": [{id, name, image, status, exit_code?, logs, stats?}, ...]}
-    """
-    return _render_index(None)
-
-
-def list_host_container_resources(host: str) -> str:
-    """Index every container on a named host (the host-qualified container index).
-
-    Same shape as the default container index, but the child logs/stats URIs stay on `host` so
-    following them reads the same daemon.
-
-    Args:
-        host: Configured host label (from the docker-mcp://hosts resource)
-
-    Returns:
-        str: JSON object {"containers": [...]}
-    """
-    return _render_index(host)
-
-
 def get_container_logs_resource(id_or_name: str) -> str:
     """Read a bounded tail of a container's combined stdout/stderr logs.
 
@@ -377,18 +308,15 @@ def get_host_container_stats_resource(host: str, id_or_name: str) -> str:
     return json.dumps(_read_stats_summary(id_or_name, host=host), indent=2)
 
 
-# Single-host keeps today's bare URIs (back-compat); multi-host uses empty-authority (`docker:///...`) for
-# the default host plus host-qualified (`docker://{host}/...`) variants, disambiguated by path-segment
-# count. The default index emits child URIs matching its own scheme (see `_child_uri`).
+# Single-host keeps today's bare URIs (back-compat); multi-host uses empty-authority
+# (`docker-logs:///...`) for the default host plus host-qualified (`docker-logs://{host}/...`)
+# variants, disambiguated by path-segment count.
 if _hosts.is_multi():
-    resource("docker:///containers", mime_type="application/json")(list_container_resources)
-    resource("docker://{host}/containers", mime_type="application/json")(list_host_container_resources)
     resource("docker-logs:///{id_or_name}", mime_type="text/plain")(get_container_logs_resource)
     resource("docker-logs://{host}/{id_or_name}", mime_type="text/plain")(get_host_container_logs_resource)
     resource("docker-stats:///{id_or_name}", mime_type="application/json")(get_container_stats_resource)
     resource("docker-stats://{host}/{id_or_name}", mime_type="application/json")(get_host_container_stats_resource)
 else:
-    resource("docker://containers", mime_type="application/json")(list_container_resources)
     resource("docker-logs://{id_or_name}", mime_type="text/plain")(get_container_logs_resource)
     resource("docker-stats://{id_or_name}", mime_type="application/json")(get_container_stats_resource)
 
@@ -409,49 +337,6 @@ def _require_services_domain() -> None:
             "Service observability resources are unavailable because the 'services' domain is "
             "disabled via DOCKER_MCP_SERVER_DISABLE."
         )
-
-
-def _render_services_index(host: str | None) -> str:
-    _require_services_domain()
-    entries = []
-    for service in _get_client(host).services.list():
-        spec = service.attrs.get("Spec", {}) or {}
-        mode = spec.get("Mode", {}) or {}
-        container_spec = (spec.get("TaskTemplate", {}) or {}).get("ContainerSpec", {}) or {}
-        ref = service.name or service.short_id
-        entries.append(
-            {
-                "id": service.short_id,
-                "name": service.name,
-                "image": container_spec.get("Image"),
-                "mode": "replicated" if "Replicated" in mode else ("global" if "Global" in mode else None),
-                "desired_replicas": mode.get("Replicated", {}).get("Replicas") if "Replicated" in mode else None,
-                "logs": _child_uri("service-logs", ref, host),
-                "tasks": _child_uri("service-tasks", ref, host),
-            }
-        )
-    return json.dumps({"services": entries}, indent=2)
-
-
-def list_service_resources() -> str:
-    """Index every swarm service with the resource URIs for reading its logs and task/rollout status.
-
-    Returns:
-        str: JSON object {"services": [{id, name, image, mode, desired_replicas, logs, tasks}, ...]}
-    """
-    return _render_services_index(None)
-
-
-def list_host_service_resources(host: str) -> str:
-    """Index every swarm service on a named host (the host-qualified service index).
-
-    Args:
-        host: Configured host label (from the docker-mcp://hosts resource)
-
-    Returns:
-        str: JSON object {"services": [...]}
-    """
-    return _render_services_index(host)
 
 
 def get_service_logs_resource(id_or_name: str) -> str:
@@ -513,86 +398,13 @@ def get_host_service_tasks_resource(host: str, id_or_name: str) -> str:
 
 
 if _hosts.is_multi():
-    resource("docker:///services", mime_type="application/json")(list_service_resources)
-    resource("docker://{host}/services", mime_type="application/json")(list_host_service_resources)
     resource("service-logs:///{id_or_name}", mime_type="text/plain")(get_service_logs_resource)
     resource("service-logs://{host}/{id_or_name}", mime_type="text/plain")(get_host_service_logs_resource)
     resource("service-tasks:///{id_or_name}", mime_type="application/json")(get_service_tasks_resource)
     resource("service-tasks://{host}/{id_or_name}", mime_type="application/json")(get_host_service_tasks_resource)
 else:
-    resource("docker://services", mime_type="application/json")(list_service_resources)
     resource("service-logs://{id_or_name}", mime_type="text/plain")(get_service_logs_resource)
     resource("service-tasks://{id_or_name}", mime_type="application/json")(get_service_tasks_resource)
-
-
-# Node observability resource. Index only (see architecture/server.md for why: a per-node child resource would
-# need an expensive per-service task fan-out with no single cheap call, unlike containers/services).
-_NODES_DOMAIN = "nodes"
-
-
-def _require_nodes_domain() -> None:
-    """Refuse a node resource read when the `nodes` domain is disabled via DOCKER_MCP_SERVER_DISABLE.
-
-    Raises:
-        CapabilityError: the ``nodes`` domain is disabled.
-    """
-    if is_domain_disabled(_NODES_DOMAIN):
-        raise CapabilityError(
-            "Node observability resources are unavailable because the 'nodes' domain is disabled "
-            "via DOCKER_MCP_SERVER_DISABLE."
-        )
-
-
-def _render_nodes_index(host: str | None) -> str:
-    _require_nodes_domain()
-    entries = []
-    for node in _get_client(host).nodes.list():
-        attrs = node.attrs
-        status = attrs.get("Status", {}) or {}
-        spec = attrs.get("Spec", {}) or {}
-        manager_status = attrs.get("ManagerStatus") or {}
-        entries.append(
-            {
-                "id": node.short_id,
-                "hostname": (attrs.get("Description", {}) or {}).get("Hostname"),
-                "state": status.get("State"),
-                "availability": spec.get("Availability"),
-                "role": spec.get("Role"),
-                "manager_reachability": manager_status.get("Reachability"),
-            }
-        )
-    return json.dumps({"nodes": entries}, indent=2)
-
-
-def list_node_resources() -> str:
-    """Index every swarm node with its state, availability, role, and (for managers) reachability.
-
-    Index only - no per-node child resource. Watch this to notice a node flapping between
-    ready/down, or an unexpected availability/role change, without re-querying `node_list`.
-
-    Returns:
-        str: JSON object {"nodes": [{id, hostname, state, availability, role, manager_reachability}, ...]}
-    """
-    return _render_nodes_index(None)
-
-
-def list_host_node_resources(host: str) -> str:
-    """Index every swarm node on a named host (the host-qualified node index).
-
-    Args:
-        host: Configured host label (from the docker-mcp://hosts resource)
-
-    Returns:
-        str: JSON object {"nodes": [...]}
-    """
-    return _render_nodes_index(host)
-
-
-if _hosts.is_multi():
-    resource("docker:///nodes", mime_type="application/json")(list_node_resources)
-    resource("docker://{host}/nodes", mime_type="application/json")(list_host_node_resources)
-else:
-    resource("docker://nodes", mime_type="application/json")(list_node_resources)
 
 
 @resource("docker-docs://{section}", mime_type="text/html")

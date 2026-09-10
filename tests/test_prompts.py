@@ -66,14 +66,14 @@ def test_troubleshoot_container_covers_logs_and_state():
         assert tool in out
 
 
-def test_monitor_container_fleet_enumerates_via_resource_and_ranks():
+def test_monitor_container_fleet_enumerates_via_tool_and_ranks():
     out = monitor_container_fleet()
-    # Enumeration starts from the index resource, then drills via the per-container resources.
-    assert "docker://containers" in out
+    # Enumeration starts from container_list, then drills via the per-container resources.
+    assert "container_list(all=True)" in out
     assert "docker-stats://" in out
     assert "docker-logs://" in out
     # It's a read-only sweep that ranks by pressure, not a single-target tool.
-    assert out.index("docker://containers") < out.index("docker-stats://")
+    assert out.index("container_list(all=True)") < out.index("docker-stats://")
     assert "troubleshoot_container" in out  # hands off the deep dive
     assert "destructive" in out.lower() or "read-only" in out.lower()
     # Points at the wait-for-next-event idiom rather than re-running this sweep on a timer.
@@ -88,10 +88,10 @@ def test_monitor_container_fleet_threads_top_argument():
 
 def test_triage_incident_correlates_events_with_current_state():
     out = triage_incident()
-    # Symptom-first: start from what changed (events) and reconcile with the live index.
+    # Symptom-first: start from what changed (events) and reconcile with current state.
     assert "events" in out
-    assert "docker://containers" in out
-    assert out.index("events") < out.index("docker://containers")
+    assert "container_list(all=True)" in out
+    assert out.index("events") < out.index("container_list(all=True)")
     # Must separate a single-container fault from host-wide pressure, and hand off the deep dive.
     assert "df" in out
     assert "troubleshoot_container" in out
@@ -408,7 +408,7 @@ def test_survey_hosts_explains_model_and_per_host_sweep():
     out = survey_hosts()
     assert "host_list" in out or "docker-mcp://hosts" in out
     assert "host=<name>" in out
-    assert "docker://{host}/containers" in out
+    assert "container_list(all=True, host=<name>)" in out
     assert "read-only" in out.lower() and "require" in out.lower()
 
 
@@ -418,7 +418,7 @@ def test_monitor_fleet_host_note_only_in_multi_host(monkeypatch):
     multi = monitor_container_fleet()
     assert "Multi-host" in multi and "host=<name>" in multi
     # The note must correct the single-host URIs the body uses to the empty-authority / host forms.
-    assert "docker:///containers" in multi and "docker://{host}/containers" in multi
+    assert "docker-logs:///{name}" in multi and "docker-logs://{host}/{name}" in multi
 
 
 def test_triage_incident_host_note_only_in_multi_host(monkeypatch):

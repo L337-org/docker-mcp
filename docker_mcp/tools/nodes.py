@@ -17,8 +17,8 @@ def node_inspect(id_or_name: str, host: str | None = None) -> dict:  # noqa: DOC
     Get a swarm node's full inspect payload by id or name.
 
     Must run against a swarm manager. Shows role, availability, status, and manager reachability -
-    use `node_list` to enumerate nodes first, or the `docker://nodes` resource for a fleet
-    summary; `service_ps(filters={"node": ...})` shows what a service runs on one node.
+    use `node_list` to enumerate nodes first; `service_ps(filters={"node": ...})` shows what a
+    service runs on one node.
 
     Args:
         id_or_name: The node id or hostname (as shown by `node_list`)
@@ -35,7 +35,7 @@ def node_list(filters: dict | None = None, host: str | None = None) -> list:  # 
     List swarm nodes.
 
     Must run against a swarm manager. The fleet view of membership, role, and state; drill into
-    one node with `node_inspect`, or read the `docker://nodes` resource for a computed summary.
+    one node with `node_inspect`.
 
     Args:
         filters: Filter by attributes (id, name, membership, role)

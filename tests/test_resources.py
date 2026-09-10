@@ -9,8 +9,6 @@ import pytest
 
 from docker_mcp.exceptions import CapabilityError, ToolInputError, ToolRefusalError
 import docker_mcp  # noqa: F401 — side-effect import: docker_mcp/__init__ runs _hosts.load() to pin the registry
-import docker_mcp._hosts as _hosts_mod
-from docker_mcp._hosts import parse_registry
 from docker_mcp.server import query_catalog, TOOL_CATEGORIES
 from docker_mcp.tools.resources import (
     DOCKER_DOCS_BASE_URL,
@@ -30,13 +28,7 @@ from docker_mcp.tools.resources import (
     get_service_logs_resource,
     get_service_tasks_resource,
     get_tool_catalog,
-    list_container_resources,
     list_docs_sections,
-    list_host_container_resources,
-    list_host_node_resources,
-    list_host_service_resources,
-    list_node_resources,
-    list_service_resources,
 )
 
 
@@ -189,36 +181,7 @@ def test_docs_lookup_still_refuses_a_disabled_section(monkeypatch):
         docs_lookup("scout")
 
 
-# ---------- container observability resources (docker://containers, docker-logs://, docker-stats://) ----------
-
-
-def _container(name, short_id, status, image, exit_code=None):
-    c = MagicMock()
-    c.name = name
-    c.short_id = short_id
-    state = {"Status": status}
-    if exit_code is not None:
-        state["ExitCode"] = exit_code
-    c.attrs = {"State": state, "Config": {"Image": image}}
-    return c
-
-
-def test_list_container_resources_indexes_running_and_stopped():
-    running = _container("web", "abc123", "running", "nginx")
-    exited = _container("job", "def456", "exited", "alpine", exit_code=1)
-    with patch("docker_mcp.tools.resources._get_client") as mock_client:
-        mock_client.return_value.containers.list.return_value = [running, exited]
-        payload = json.loads(list_container_resources())
-    mock_client.return_value.containers.list.assert_called_once_with(all=True)
-    by_name = {c["name"]: c for c in payload["containers"]}
-    # Running container: both logs and stats URIs.
-    assert by_name["web"]["logs"] == "docker-logs://web"
-    assert by_name["web"]["stats"] == "docker-stats://web"
-    assert by_name["web"]["image"] == "nginx"
-    # Stopped container: logs URI but no stats URI, plus the exit code as a triage signal.
-    assert by_name["job"]["logs"] == "docker-logs://job"
-    assert by_name["job"]["stats"] is None
-    assert by_name["job"]["exit_code"] == 1
+# ---------- container observability resources (docker-logs://, docker-stats://) ----------
 
 
 def test_container_logs_resource_returns_tail():
@@ -237,7 +200,6 @@ def test_container_stats_resource_returns_json_summary():
 def test_container_resources_refused_when_containers_domain_disabled(monkeypatch):
     monkeypatch.setattr("docker_mcp.server.DISABLED_DOMAINS", frozenset({"containers"}))
     for call in (
-        list_container_resources,
         lambda: get_container_logs_resource("web"),
         lambda: get_container_stats_resource("web"),
     ):
@@ -246,31 +208,6 @@ def test_container_resources_refused_when_containers_domain_disabled(monkeypatch
 
 
 # ---------- slice 5: host-qualified container resource URIs ----------
-
-
-def _set_multi(monkeypatch):
-    monkeypatch.setattr(_hosts_mod, "_registry", parse_registry("local=unix:///l.sock, prod=tcp://p:2376"))
-
-
-def test_default_index_emits_empty_authority_children_in_multi_host(monkeypatch):
-    _set_multi(monkeypatch)
-    running = _container("web", "abc123", "running", "nginx")
-    with patch("docker_mcp.tools.resources._get_client") as mock_client:
-        mock_client.return_value.containers.list.return_value = [running]
-        web = json.loads(list_container_resources())["containers"][0]
-    assert web["logs"] == "docker-logs:///web"  # empty authority = default host
-    assert web["stats"] == "docker-stats:///web"
-
-
-def test_host_index_emits_host_qualified_children_and_routes(monkeypatch):
-    _set_multi(monkeypatch)
-    running = _container("web", "abc123", "running", "nginx")
-    with patch("docker_mcp.tools.resources._get_client") as mock_client:
-        mock_client.return_value.containers.list.return_value = [running]
-        web = json.loads(list_host_container_resources("prod"))["containers"][0]
-    assert web["logs"] == "docker-logs://prod/web"
-    assert web["stats"] == "docker-stats://prod/web"
-    mock_client.assert_called_once_with("prod")  # index routed to the named host
 
 
 def test_host_logs_resource_routes_to_host():
@@ -305,46 +242,18 @@ def _registered_resource_uris(hosts_value: str | None) -> set[str]:
 
 def test_single_host_registers_bare_container_uris_end_to_end():
     uris = _registered_resource_uris(None)
-    assert "docker://containers" in uris
     assert "docker-logs://{id_or_name}" in uris
+    assert "docker-stats://{id_or_name}" in uris
     assert not any("{host}" in u for u in uris)  # no host-qualified variants single-host
 
 
 def test_multi_host_registers_empty_authority_and_host_qualified_uris_end_to_end():
     uris = _registered_resource_uris("local=ssh://a, prod=ssh://b")
-    assert {"docker:///containers", "docker://{host}/containers"} <= uris
     assert {"docker-logs:///{id_or_name}", "docker-logs://{host}/{id_or_name}"} <= uris
     assert {"docker-stats:///{id_or_name}", "docker-stats://{host}/{id_or_name}"} <= uris
-    assert "docker://containers" not in uris  # bare form replaced by empty-authority in multi-host
 
 
-# ---------- service observability resources (docker://services, service-logs://, service-tasks://) ----------
-
-
-def _service(name, short_id, mode, image, replicas=None):
-    s = MagicMock()
-    s.name = name
-    s.short_id = short_id
-    mode_spec = {"Replicated": {"Replicas": replicas}} if mode == "replicated" else {"Global": {}}
-    s.attrs = {"Spec": {"Mode": mode_spec, "TaskTemplate": {"ContainerSpec": {"Image": image}}}}
-    return s
-
-
-def test_list_service_resources_indexes_replicated_and_global():
-    replicated = _service("web", "abc123", "replicated", "nginx", replicas=3)
-    global_svc = _service("agent", "def456", "global", "fluentd")
-    with patch("docker_mcp.tools.resources._get_client") as mock_client:
-        mock_client.return_value.services.list.return_value = [replicated, global_svc]
-        payload = json.loads(list_service_resources())
-    mock_client.return_value.services.list.assert_called_once_with()
-    by_name = {s["name"]: s for s in payload["services"]}
-    assert by_name["web"]["mode"] == "replicated"
-    assert by_name["web"]["desired_replicas"] == 3
-    assert by_name["web"]["image"] == "nginx"
-    assert by_name["web"]["logs"] == "service-logs://web"
-    assert by_name["web"]["tasks"] == "service-tasks://web"
-    assert by_name["agent"]["mode"] == "global"
-    assert by_name["agent"]["desired_replicas"] is None
+# ---------- service observability resources (service-logs://, service-tasks://) ----------
 
 
 def test_service_logs_resource_returns_tail():
@@ -362,33 +271,11 @@ def test_service_tasks_resource_returns_json_summary():
 def test_service_resources_refused_when_services_domain_disabled(monkeypatch):
     monkeypatch.setattr("docker_mcp.server.DISABLED_DOMAINS", frozenset({"services"}))
     for call in (
-        list_service_resources,
         lambda: get_service_logs_resource("web"),
         lambda: get_service_tasks_resource("web"),
     ):
         with pytest.raises(CapabilityError, match="disabled via DOCKER_MCP_SERVER_DISABLE"):
             call()
-
-
-def test_service_default_index_emits_empty_authority_children_in_multi_host(monkeypatch):
-    _set_multi(monkeypatch)
-    svc = _service("web", "abc123", "replicated", "nginx", replicas=1)
-    with patch("docker_mcp.tools.resources._get_client") as mock_client:
-        mock_client.return_value.services.list.return_value = [svc]
-        web = json.loads(list_service_resources())["services"][0]
-    assert web["logs"] == "service-logs:///web"
-    assert web["tasks"] == "service-tasks:///web"
-
-
-def test_service_host_index_emits_host_qualified_children_and_routes(monkeypatch):
-    _set_multi(monkeypatch)
-    svc = _service("web", "abc123", "replicated", "nginx", replicas=1)
-    with patch("docker_mcp.tools.resources._get_client") as mock_client:
-        mock_client.return_value.services.list.return_value = [svc]
-        web = json.loads(list_host_service_resources("prod"))["services"][0]
-    assert web["logs"] == "service-logs://prod/web"
-    assert web["tasks"] == "service-tasks://prod/web"
-    mock_client.assert_called_once_with("prod")
 
 
 def test_host_service_logs_resource_routes_to_host():
@@ -403,78 +290,31 @@ def test_host_service_tasks_resource_routes_to_host():
     mock_read.assert_called_once_with("web", host="prod")
 
 
+def test_no_container_service_or_node_index_resource_is_registered():
+    # The three `docker://` listing indexes were removed as duplicates of container_list /
+    # service_list / node_list. Nothing else would notice them coming back: every other resource
+    # test asserts what IS registered, so a reintroduced index would pass the whole suite.
+    # Both modes, because the bare and empty-authority/host-qualified forms register separately.
+    for hosts_value in (None, "local=ssh://a, prod=ssh://b"):
+        uris = _registered_resource_uris(hosts_value)
+        # Matches on the final path segment under the `docker://` scheme, so it catches the bare,
+        # empty-authority and host-qualified spellings alike without listing all nine.
+        offenders = {
+            u for u in uris if u.startswith("docker://") and u.rsplit("/", 1)[-1] in {"containers", "services", "nodes"}
+        }
+        assert not offenders, f"listing index resource(s) registered with hosts={hosts_value!r}: {offenders}"
+
+
 def test_single_host_registers_bare_service_uris_end_to_end():
     uris = _registered_resource_uris(None)
-    assert "docker://services" in uris
     assert "service-logs://{id_or_name}" in uris
     assert "service-tasks://{id_or_name}" in uris
 
 
 def test_multi_host_registers_service_uris_end_to_end():
     uris = _registered_resource_uris("local=ssh://a, prod=ssh://b")
-    assert {"docker:///services", "docker://{host}/services"} <= uris
     assert {"service-logs:///{id_or_name}", "service-logs://{host}/{id_or_name}"} <= uris
     assert {"service-tasks:///{id_or_name}", "service-tasks://{host}/{id_or_name}"} <= uris
-    assert "docker://services" not in uris
-
-
-# ---------- node observability resource (docker://nodes — index only) ----------
-
-
-def _node(short_id, hostname, state, availability, role, reachability=None):
-    n = MagicMock()
-    n.short_id = short_id
-    attrs = {
-        "Description": {"Hostname": hostname},
-        "Status": {"State": state},
-        "Spec": {"Availability": availability, "Role": role},
-    }
-    if reachability is not None:
-        attrs["ManagerStatus"] = {"Reachability": reachability}
-    n.attrs = attrs
-    return n
-
-
-def test_list_node_resources_indexes_state_availability_role():
-    manager = _node("n1", "host-a", "ready", "active", "manager", reachability="reachable")
-    worker = _node("n2", "host-b", "down", "drain", "worker")
-    with patch("docker_mcp.tools.resources._get_client") as mock_client:
-        mock_client.return_value.nodes.list.return_value = [manager, worker]
-        payload = json.loads(list_node_resources())
-    mock_client.return_value.nodes.list.assert_called_once_with()
-    by_host = {n["hostname"]: n for n in payload["nodes"]}
-    assert by_host["host-a"]["state"] == "ready"
-    assert by_host["host-a"]["role"] == "manager"
-    assert by_host["host-a"]["manager_reachability"] == "reachable"
-    assert by_host["host-b"]["state"] == "down"
-    assert by_host["host-b"]["availability"] == "drain"
-    assert by_host["host-b"]["manager_reachability"] is None
-
-
-def test_node_resources_refused_when_nodes_domain_disabled(monkeypatch):
-    monkeypatch.setattr("docker_mcp.server.DISABLED_DOMAINS", frozenset({"nodes"}))
-    with pytest.raises(CapabilityError, match="disabled via DOCKER_MCP_SERVER_DISABLE"):
-        list_node_resources()
-
-
-def test_node_host_index_routes_to_host(monkeypatch):
-    _set_multi(monkeypatch)
-    node = _node("n1", "host-a", "ready", "active", "manager")
-    with patch("docker_mcp.tools.resources._get_client") as mock_client:
-        mock_client.return_value.nodes.list.return_value = [node]
-        list_host_node_resources("prod")
-    mock_client.assert_called_once_with("prod")
-
-
-def test_single_host_registers_bare_node_uri_end_to_end():
-    uris = _registered_resource_uris(None)
-    assert "docker://nodes" in uris
-
-
-def test_multi_host_registers_node_uris_end_to_end():
-    uris = _registered_resource_uris("local=ssh://a, prod=ssh://b")
-    assert {"docker:///nodes", "docker://{host}/nodes"} <= uris
-    assert "docker://nodes" not in uris
 
 
 # ---------- tool_list: tool-callable mirror of docker-mcp://tool-catalog ----------

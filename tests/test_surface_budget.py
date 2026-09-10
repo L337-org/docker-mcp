@@ -1,7 +1,7 @@
 """A budget on the advertised surface, because AC.1.2 makes its size a tracked metric.
 
 Every byte here is paid for by every client on every session, before it has asked for anything.
-This server advertises 164 tools, and at that size the surface is the dominant cost of using it
+This server advertises 165 tools, and at that size the surface is the dominant cost of using it
 at all - which is exactly why it needs a number attached rather than an intention.
 
 WHAT IS MEASURED IS THE WIRE FORM, not the docstring. A tool costs its name, its description and
@@ -44,11 +44,13 @@ from docker_mcp.server import DISABLED_DOMAINS, NO_DESTRUCTIVE, READONLY, mcp
 MAX_SINGLE_TOOL_WIRE_BYTES = 5_300  # buildx_build, 5,108
 # Raised from 231,000 deliberately, for `swarm_task_logs`: a capability with no other route through
 # this server, priced at ~2,300 bytes and paid for once here rather than trimmed to fit.
-MAX_TOOL_WIRE_BYTES = 236_000  # 230,899
+MAX_TOOL_WIRE_BYTES = 236_000  # 230,783
 MAX_PROMPT_WIRE_BYTES = 7_900  # 7,646
-MAX_RESOURCE_WIRE_BYTES = 6_400  # 6,248, resources and templates together
+# Lowered from 6,400 with the three `docker://` listing indexes: the saving is ratcheted in here
+# rather than left as headroom, so re-adding an index has to argue for itself the same way.
+MAX_RESOURCE_WIRE_BYTES = 4_700  # 4,614, resources and templates together
 MAX_INSTRUCTIONS_BYTES = 2_900  # 2,808
-MAX_TOTAL_WIRE_BYTES = 248_000  # 247,601
+MAX_TOTAL_WIRE_BYTES = 248_000  # 245,851
 
 # Registration is gated at import time, so a switch in effect when `docker_mcp.server` was
 # imported shrinks the surface, and every budget below would pass while measuring something

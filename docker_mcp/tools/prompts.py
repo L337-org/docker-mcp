@@ -12,9 +12,8 @@ from docker_mcp.server import prompt
 def _host_targeting_note() -> str:
     """A trailing block (multi-host only) correcting the resource URIs and explaining host targeting.
 
-    The prompt bodies use the single-host `docker://containers` / `docker-...://{name}` forms, which are
-    NOT registered in multi-host mode (the index becomes empty-authority/host-qualified), so this note
-    redirects the agent to the right forms and to the URIs the index already carries per entry.
+    The prompt bodies use the single-host `docker-...://{name}` forms, which are NOT registered in
+    multi-host mode, so this note gives the empty-authority and host-qualified forms to build instead.
 
     Returns:
         str: the note, or an empty string in single-host mode where it does not apply
@@ -22,12 +21,10 @@ def _host_targeting_note() -> str:
     if not _hosts.is_multi():
         return ""
     return (
-        "\nMulti-host: the bare `docker://containers` / `docker-logs://{name}` / `docker-stats://{name}` "
-        "forms above are single-host only. Here the container index is `docker:///containers` for the "
-        "default host or `docker://{host}/containers` for a named one; pass `host=<name>` to the tools. "
-        "Don't build `docker-logs`/`docker-stats` URIs yourself - follow the `logs`/`stats` URIs each "
-        "index entry carries, which are already in the correct (empty-authority or host-qualified) form. "
-        "See `docker-mcp://hosts` for the configured hosts."
+        "\nMulti-host: the bare `docker-logs://{name}` / `docker-stats://{name}` forms above are "
+        "single-host only. Here they take an explicit host position: `docker-logs:///{name}` targets "
+        "the default host and `docker-logs://{host}/{name}` a named one (likewise `docker-stats`). "
+        "Pass `host=<name>` to the tools. See `docker-mcp://hosts` for the configured hosts."
     )
 
 
@@ -129,7 +126,7 @@ def monitor_container_fleet(top: int = 5) -> str:
 
     Unlike `troubleshoot_container` (which needs a named target), this starts from the whole fleet and
     surfaces what is unhealthy or under load - the entry point when you don't yet know what's wrong.
-    It leans on the observability resources: `docker://containers` to enumerate, then `docker-stats://`
+    It enumerates with `container_list`, then leans on the observability resources: `docker-stats://`
     and `docker-logs://` per container.
 
     Args:
@@ -140,12 +137,12 @@ def monitor_container_fleet(top: int = 5) -> str:
     """
     return (
         "Take a read-only health and load snapshot of every container on this host. Change nothing:\n"
-        "1. Read the MCP resource `docker://containers` to enumerate every container. Each entry carries "
-        "its `status`, an `exit_code` when it has exited, and per-container `logs`/`stats` resource URIs.\n"
-        "2. Immediately flag the non-healthy set: anything `exited` with a non-zero `exit_code`, "
+        "1. Call `container_list(all=True)` to enumerate every container, running and stopped. Entries "
+        "are full inspect payloads: read `Name`, `State.Status` and `State.ExitCode` from each.\n"
+        "2. Immediately flag the non-healthy set: anything `exited` with a non-zero `State.ExitCode`, "
         "`restarting` (a likely crash loop), `paused`, or `dead`. List those first - they matter more "
         "than load.\n"
-        "3. For each container whose `status` is `running`, read its `docker-stats://{name}` resource for "
+        "3. For each container whose `State.Status` is `running`, read its `docker-stats://{name}` resource for "
         "a CPU%, memory used/limit/%, and net/block I/O snapshot. Note that this is a single instantaneous "
         "sample, not an average - a one-off spike is not the same as sustained pressure.\n"
         f"4. Rank the running containers by resource pressure and drill into the top {top}: read each "
@@ -170,7 +167,7 @@ def triage_incident(window_minutes: int = 30) -> str:
     """Generate a symptom-first incident-triage plan that narrows from the whole host to a suspect.
 
     The on-call entry point: start from what just changed (`system_events`) and the current fleet state
-    (`docker://containers`), narrow to the likely culprit, then hand off to `troubleshoot_container`.
+    (`container_list`), narrow to the likely culprit, then hand off to `troubleshoot_container`.
 
     Args:
         window_minutes: How far back to pull the daemon event log (default 30)
@@ -187,9 +184,9 @@ def triage_incident(window_minutes: int = 30) -> str:
         f"and pass it: `system_events(since=<unix epoch for {window_minutes} minutes ago>, "
         'filters={"type": "container"}, limit=200)`. Scan for `die`, `oom`, `kill`, '
         "`health_status: unhealthy`, and tight `start`/`die` cycles (a crash loop).\n"
-        "2. Read the MCP resource `docker://containers` for current state. Reconcile it with the event "
-        "timeline: a container that has a recent `die` event and is now `restarting` or `exited` with a "
-        "non-zero `exit_code` is the prime suspect.\n"
+        "2. Call `container_list(all=True)` for current state. Reconcile it with the event timeline: a "
+        "container that has a recent `die` event and is now `restarting`, or `exited` with a non-zero "
+        "`State.ExitCode`, is the prime suspect.\n"
         "3. Separate cause from symptom. A host under memory or disk pressure takes down healthy "
         "containers too - read `docker-stats://{name}` for the running set to spot a resource hog, and "
         "call `system_df` if you suspect the daemon itself is out of disk. If many unrelated containers failed "
@@ -976,9 +973,8 @@ def survey_hosts() -> str:
         "2. For each host, ping it and read `system_info` with `host=<name>`: report reachability, ServerVersion, "
         "OperatingSystem, and container/image counts. A host may be unreachable - note it and move on; the "
         "others are independent.\n"
-        "3. For each reachable host, read its container index - the default host's is `docker:///containers`, "
-        "a named host's is `docker://{host}/containers` - and summarize running vs stopped, flagging any "
-        "`exited` with a non-zero `exit_code` or `restarting`.\n"
+        "3. For each reachable host, call `container_list(all=True, host=<name>)` and summarize running vs "
+        "stopped, flagging any `restarting` or `exited` with a non-zero `State.ExitCode`.\n"
         "4. Render one table across all hosts: host, reachable?, version, #running, #stopped, #problems, "
         "read-only?.\n"
         "Driving multi-host tools: read-only tools take `host=<name>` (omit to use the default - the first "
