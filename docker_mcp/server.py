@@ -661,8 +661,8 @@ def build_instructions(registered_domains: set[str] | None = None) -> str:
             caveat += f"; no fallback for {', '.join(no_fallback)}, which raises instead." if no_fallback else "."
             caveats.append(caveat)
     # No swarm caveat: every domain in that family carries "manager node only" in its own blurb
-    # above, so a group-level restatement is a sixth copy of a fact already on five lines. Do not
-    # re-add it - if the requirement ever stops being per-domain, change the blurbs instead.
+    # above, so a group-level restatement is a sixth copy of a fact already on five lines. If the
+    # requirement ever stops being per-domain, change the blurbs rather than adding a caveat back.
     if _hosts.is_multi():
         caveats.append(
             f"Multiple hosts are configured ({_hosts.labels()}): read-only tools take `host=<label>` "
@@ -684,8 +684,8 @@ def build_instructions(registered_domains: set[str] | None = None) -> str:
         "To survey an unfamiliar domain, check which tools are destructive, or confirm that nothing "
         "matches, call `tool_list`; the registered surface changes with env switches. Before guessing "
         "a docker-py keyword for an `extra_kwargs` passthrough, or writing Compose/Dockerfile/buildx "
-        "bake syntax, call `docs_lookup`. Both mirror resources (`docker-mcp://tool-catalog`, "
-        "`docker-docs://contents`) for clients that read them. For multi-step jobs (deploy, "
+        "bake syntax, call `docs_lookup`. Each has a resource equivalent "
+        "(`docker-mcp://tool-catalog`, `docker-docs://contents`). For multi-step jobs (deploy, "
         "troubleshoot, prune, audit, migrate, multi-arch build, volume backup/restore) prefer the "
         "matching MCP prompt.",
     ]

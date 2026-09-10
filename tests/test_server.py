@@ -730,7 +730,13 @@ def test_instructions_drop_cli_and_swarm_guidance_when_those_domains_are_absent(
     # so it appears exactly where a domain that needs it registered — and nowhere else.
     swarm = build_instructions(registered_domains={"secrets", "containers"})
     assert "manager node only" in swarm
-    assert "Swarm-family" not in swarm, "the group-level restatement was removed; do not re-add it"
+    # Any wording, not just the one that was removed: the requirement belongs on each domain's blurb,
+    # and a caveat repeating it is a sixth copy of what five lines already say.
+    lines = swarm.splitlines()
+    caveats = [line for line in lines[lines.index("Picking the right tool:") + 1 :] if line.startswith("- ")]
+    assert not [line for line in caveats if "manager node" in line], (
+        f"the manager-node requirement is restated as a caveat: {caveats}"
+    )
     # The caveat no longer re-lists the CLI domains: each one is already marked in its own blurb.
     text = build_instructions(registered_domains={"compose", "buildx"})
     assert "CLI-backed domains (marked above)" in text
@@ -757,6 +763,11 @@ def test_every_tool_named_in_the_router_is_registered():
     }
 
     assert named, "no tool names found in the router - the extraction pattern has probably rotted"
+    # The router writes one shorthand that is not a tool: `list_*(managed_only=True)`. It is excluded
+    # because the pattern requires a closing backtick straight after the identifier, which a wildcard
+    # does not give it - implicit enough to be worth pinning, so loosening the pattern fails here
+    # rather than turning the shorthand into a phantom tool name.
+    assert "list_" not in named and "list" not in named
     missing = sorted(name for name in named if name not in TOOL_CATEGORIES)
     assert not missing, f"the router names tools that are not registered: {missing}"
     overlap = sorted(name for name in not_tools if name in TOOL_CATEGORIES)
@@ -924,7 +935,7 @@ def test_live_instructions_exclude_a_disabled_domain_end_to_end():
     text = _live_instructions(["DOCKER_MCP_SERVER_DISABLE=swarm,services,nodes,secrets,configs"])
     assert "- swarm -" not in text
     assert "- services -" not in text
-    assert "Swarm-family tools require" not in text
+    assert "manager node only" not in text  # the fact rides on the domain blurbs, which are gone too
     assert "- containers -" in text  # untouched domains survive
 
 
