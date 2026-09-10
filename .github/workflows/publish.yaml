@@ -548,10 +548,21 @@ jobs:
     # `skill` is listed explicitly: it hangs off `preflight` alone and is not in `registry`'s
     # needs (the registry entry does not reference the skill archives), so without it here verify
     # could run while the skill job is still packing and report a missing asset.
-    needs: [preflight, registry, skill]
+    #
+    # `images` and `dockerhub-description` likewise. `images` does arrive transitively through
+    # `registry`, but this job now asserts against the images directly, so it should say so rather
+    # than depend on another job's needs list staying as it is. `dockerhub-description` was in no
+    # chain at all: verify could pass while the description sync was still running or had failed.
+    # A failure there did reach `notify`, but "the release converged" was reported before anyone
+    # knew, which is the wrong order for a final gate.
+    needs: [preflight, images, dockerhub-description, registry, skill]
     env:
       TAG: ${{ needs.preflight.outputs.tag }}
       VERSION: ${{ needs.preflight.outputs.version }}
+      # Hoisted for the same reason as in the `images` job: a step `if:` is resolved before
+      # step-scoped env exists, and referencing `secrets.*` there is rejected at validation time.
+      DOCKERHUB_USER: ${{ secrets.DOCKERHUB_USER }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
     steps:
       - name: Verify PyPI has the version
         run: |
@@ -566,23 +577,89 @@ jobs:
           echo "::error::PyPI never served docker-mcp-server ${VERSION}"
           exit 1
 
-      - name: Verify GHCR has both image tags
+      # Anonymous manifest reads from Docker Hub are rate-limited per source IP, and hosted runners
+      # share those. Four extra reads is nothing on its own, but the budget may already be spent by
+      # someone else, and a release gate that fails on a neighbour's traffic is worse than no gate.
+      - name: Log in to Docker Hub
+        if: env.DOCKERHUB_USER != '' && env.DOCKERHUB_TOKEN != ''
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          username: ${{ secrets.DOCKERHUB_USER }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Verify every image tag on every registry resolves to the released build
         run: |
           set -euo pipefail
-          for tag in "${VERSION}" "${VERSION}-no-scout"; do
-            ok=""
+
+          # `imagetools inspect` reads the registry directly and needs no builder, so this job
+          # deliberately sets none up - but it does need the runner's buildx to carry `--format`.
+          # Without this probe an unsupported flag prints to stderr and returns nothing, which
+          # reads downstream as "every tag is missing" and would blame the release for a tooling
+          # change. Named version in the log so the next person can see what resolved the digests.
+          docker buildx version
+          docker buildx imagetools inspect --help 2>&1 | grep -q -- '--format' || {
+            echo "::error::this runner's buildx has no --format on imagetools inspect, so digests cannot be read"
+            exit 1
+          }
+
+          # The same registry list the `images` job builds, gated on the same secret presence, so
+          # the Hub mirror is verified whenever it was published and skipped loudly when it was not.
+          registries="ghcr.io/l337-org/docker-mcp-server"
+          if [ -n "$DOCKERHUB_USER" ] && [ -n "$DOCKERHUB_TOKEN" ]; then
+            registries="$registries docker.io/gavinlucas/docker-mcp-server"
+          else
+            echo "::notice::Docker Hub secrets are unset, so no Hub mirror was published; verifying GHCR only"
+            echo "Docker Hub mirror: not configured, skipped" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          # Reads the manifest-list digest a tag resolves to, retrying to absorb registry lag.
+          # Empty output means the tag never became readable; the caller decides if that is fatal.
+          digest_of() {
             for i in $(seq 1 5); do
-              if docker buildx imagetools inspect "ghcr.io/l337-org/docker-mcp-server:${tag}" >/dev/null 2>&1; then
-                echo "GHCR OK: :${tag}"; ok=1; break
-              fi
-              echo "::notice::GHCR tag :${tag} not readable yet (attempt $i/5); waiting 15s"
+              d="$(docker buildx imagetools inspect --format '{{.Manifest.Digest}}' "$1" 2>/dev/null || true)"
+              if [ -n "$d" ]; then printf '%s' "$d"; return 0; fi
+              # No sleep after the last attempt. This step calls `digest_of` up to ten times (two
+              # variants, each resolving an anchor plus two tags on each of two registries), so a
+              # trailing 15s wait on every reference that never resolves would burn two and a half
+              # minutes of the job timeout waiting after the answer is already known.
+              [ "$i" -lt 5 ] || return 0
+              echo "::notice::$1 not readable yet (attempt $i/5); waiting 15s" >&2
               sleep 15
             done
-            if [ -z "$ok" ]; then
-              echo "::error::GHCR tag :${tag} missing"
-              exit 1
+          }
+
+          # Both variants publish a pinned tag and a moving one in a single push, so every tag of a
+          # variant must resolve to one digest - across registries too, since the mirror is pushed
+          # from the same call. Anchoring on the GHCR pinned tag rather than comparing pairwise
+          # catches three faults with one assertion: a missing tag, a moving tag left behind by a
+          # re-run of an older release, and a mirror that somehow carries a different build.
+          rc=0
+          for variant in "full:latest:" "no-scout:no-scout:-no-scout"; do
+            IFS=: read -r name moving suffix <<< "$variant"
+            expected="$(digest_of "ghcr.io/l337-org/docker-mcp-server:${VERSION}${suffix}")"
+            if [ -z "$expected" ]; then
+              echo "::error::GHCR has no :${VERSION}${suffix} - the ${name} image did not publish"
+              rc=1
+              continue
             fi
+            echo "${name}: released digest ${expected}"
+            for reg in $registries; do
+              for tag in "${VERSION}${suffix}" "${moving}"; do
+                actual="$(digest_of "${reg}:${tag}")"
+                if [ -z "$actual" ]; then
+                  echo "::error::${reg}:${tag} is missing"
+                  rc=1
+                elif [ "$actual" != "$expected" ]; then
+                  # The re-run case: :latest still points at whatever shipped last.
+                  echo "::error::${reg}:${tag} resolves to ${actual}, not this release's ${expected}"
+                  rc=1
+                else
+                  echo "  OK ${reg}:${tag}"
+                fi
+              done
+            done
           done
+          exit "$rc"
 
       - name: Verify the .mcpb release asset and its checksum
         env:
