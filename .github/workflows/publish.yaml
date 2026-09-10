@@ -612,11 +612,17 @@ jobs:
             echo "Docker Hub mirror: not configured, skipped" >> "$GITHUB_STEP_SUMMARY"
           fi
 
-          # Reads the manifest-list digest a tag resolves to, retrying to absorb registry lag.
-          # Empty output means the tag never became readable; the caller decides if that is fatal.
+          # Keeps the last registry error so a failed read can say what the registry actually said.
+          # Without it a 429 or a 5xx is indistinguishable from an absent tag, and the gate blames
+          # the release for a throttle - which invites a re-run, and a re-run repoints the tags.
+          err="$(mktemp)"
+
+          # Reads the manifest-list digest a tag resolves to, retrying to absorb registry lag and
+          # transient refusals alike. Empty output means it never resolved; the caller decides if
+          # that is fatal and reports `$err` alongside.
           digest_of() {
             for i in $(seq 1 5); do
-              d="$(docker buildx imagetools inspect --format '{{.Manifest.Digest}}' "$1" 2>/dev/null || true)"
+              d="$(docker buildx imagetools inspect --format '{{.Manifest.Digest}}' "$1" 2>"$err" || true)"
               if [ -n "$d" ]; then printf '%s' "$d"; return 0; fi
               # No sleep after the last attempt. This step calls `digest_of` up to ten times (two
               # variants, each resolving an anchor plus two tags on each of two registries), so a
@@ -638,7 +644,7 @@ jobs:
             IFS=: read -r name moving suffix <<< "$variant"
             expected="$(digest_of "ghcr.io/l337-org/docker-mcp-server:${VERSION}${suffix}")"
             if [ -z "$expected" ]; then
-              echo "::error::GHCR has no :${VERSION}${suffix} - the ${name} image did not publish"
+              echo "::error::could not read ghcr.io/l337-org/docker-mcp-server:${VERSION}${suffix} for the ${name} image: $(tail -n 1 "$err")"
               rc=1
               continue
             fi
@@ -647,7 +653,7 @@ jobs:
               for tag in "${VERSION}${suffix}" "${moving}"; do
                 actual="$(digest_of "${reg}:${tag}")"
                 if [ -z "$actual" ]; then
-                  echo "::error::${reg}:${tag} is missing"
+                  echo "::error::could not read ${reg}:${tag}: $(tail -n 1 "$err")"
                   rc=1
                 elif [ "$actual" != "$expected" ]; then
                   # The re-run case: :latest still points at whatever shipped last.
