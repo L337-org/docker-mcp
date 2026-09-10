@@ -607,8 +607,10 @@ jobs:
             for i in $(seq 1 5); do
               d="$(docker buildx imagetools inspect --format '{{.Manifest.Digest}}' "$1" 2>/dev/null || true)"
               if [ -n "$d" ]; then printf '%s' "$d"; return 0; fi
-              # No sleep after the last attempt: ten lookups can go unanswered here, and a trailing
-              # wait on each is over a minute of the job timeout spent learning nothing.
+              # No sleep after the last attempt. This step calls `digest_of` up to ten times (two
+              # variants, each resolving an anchor plus two tags on each of two registries), so a
+              # trailing 15s wait on every reference that never resolves would burn two and a half
+              # minutes of the job timeout waiting after the answer is already known.
               [ "$i" -lt 5 ] || return 0
               echo "::notice::$1 not readable yet (attempt $i/5); waiting 15s" >&2
               sleep 15
