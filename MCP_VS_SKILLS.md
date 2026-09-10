@@ -453,7 +453,7 @@ All ✓ - each maps to the identically-named `docker compose <sub>`: `up`, `down
 `logs`, `build`, `pull`, `config`, `cp`, `exec`, `run`, `start`, `stop`, `restart`, `kill`,
 `pause`, `unpause`, `port`, `top`, `images`, `wait`. (`compose_list` -> `docker compose ls`.)
 
-### swarm (10) / services (10) / nodes (5) / secrets (4) / configs (4) / stack (5) - `reference/swarm.md`
+### swarm (11) / services (10) / nodes (5) / secrets (4) / configs (4) / stack (5) - `reference/swarm.md`
 
 | Tool | CLI |
 |---|---|
@@ -463,6 +463,7 @@ All ✓ - each maps to the identically-named `docker compose <sub>`: `up`, `down
 | swarm_inspect ✓ | `docker info --format '{{json .Swarm}}'` |
 | swarm_task_list ≈ | `docker service ps $(docker service ls -q)`, `reference/swarm.md` - no CLI command lists the cluster's tasks in one shot |
 | swarm_task_inspect ✓ | `docker inspect --type task` |
+| swarm_task_logs ✓ | `docker service logs <task-id>` - the CLI takes SERVICE\|TASK; docker-py has no task-logs method |
 | service_create / update / remove / logs / ps / inspect / list ✓ | `docker service <sub>` |
 | service_scale ✓ | `docker service scale` |
 | service_rollback ✓ | `docker service rollback` |

@@ -2,9 +2,17 @@
 
 # library of mcp tools relating to docker swarm
 
-from docker_mcp.exceptions import RemoteFailureError
+from typing import Literal
+
+from docker_mcp.exceptions import CapabilityError, RemoteFailureError
 from docker_mcp.server import tool
-from docker_mcp.tools._utils import drop_none
+from docker_mcp.tools._utils import (
+    MAX_PAYLOAD_BYTES,
+    as_byte_chunks,
+    close_stream_quietly,
+    drop_none,
+    join_bounded,
+)
 from docker_mcp.tools.system import _get_client
 
 
@@ -301,13 +309,13 @@ def swarm_task_list(filters: dict | None = None, host: str | None = None) -> lis
 
     The cluster-wide view of what is actually scheduled. `service_ps` covers one service and
     `stack_ps` one stack, so answering "what is failing anywhere" or "what is running on this node"
-    through those means looping over every service; this is one call. Filter by `node` for a node's
-    workload (the CLI's `docker node ps`), `desired-state` to separate what should be running from
-    what is shutting down, or `service` for a single service -- for which `service_ps` is the
-    simpler call. Each task carries its full `Spec`, including the `ContainerSpec` (image, command,
-    env), so this returns much more per task than the `service-tasks://{id_or_name}` resource's
-    computed rollout summary. Read-only. Requires a swarm manager: on any other node the daemon
-    refuses, and its refusal is what comes back.
+    through those means looping over every service; this is one call, and `swarm_task_logs` reads
+    what a failing one printed. Filter by `node` for a node's workload (the CLI's `docker node ps`),
+    `desired-state` to separate what should be running from what is shutting down, or `service` for
+    a single service -- for which `service_ps` is the simpler call. Each task carries its full
+    `Spec`, including the `ContainerSpec` (image, command, env), so this returns much more per task
+    than the `service-tasks://{id_or_name}` resource's computed rollout summary. Read-only. Requires
+    a swarm manager: on any other node the daemon refuses, and its refusal is what comes back.
 
     Args:
         filters: Filter dict; keys: id, name, service, node, label, desired-state (running|shutdown|accepted); omit for
@@ -330,7 +338,8 @@ def swarm_task_inspect(id_or_name: str, host: str | None = None) -> dict:  # noq
     same document for every task, so prefer it when scanning; this is the single-object fetch.
     To reach the container behind a running task, read `Status.ContainerStatus.ContainerID` and pass
     it to `container_inspect` / `container_logs` -- but note the container may be on another node,
-    where those tools cannot see it, and `service_logs` aggregates across tasks instead. Read-only.
+    where those tools cannot see it, and `service_logs` aggregates across tasks instead;
+    `swarm_task_logs` reads that one task's output wherever it landed. Read-only.
     Requires a swarm manager; reports the daemon's own error if the task does not exist, if a
     prefix matches more than one task, or if this node is not a manager.
 
@@ -345,3 +354,114 @@ def swarm_task_inspect(id_or_name: str, host: str | None = None) -> dict:  # noq
             from `ServiceID`/`Slot` if you need it
     """
     return _get_client(host).api.inspect_task(id_or_name)
+
+
+@tool()
+def swarm_task_logs(  # noqa: DOC101,DOC103,DOC501,DOC503
+    id_or_name: str,
+    details: bool = False,
+    stdout: bool = True,
+    stderr: bool = True,
+    since: int = 0,
+    timestamps: bool = False,
+    tail: int | Literal["all"] = 200,
+    max_bytes: int = MAX_PAYLOAD_BYTES,
+    host: str | None = None,
+) -> str:
+    """
+    Get a bounded snapshot of one swarm task's logs (never follows).
+
+    The per-replica counterpart to `service_logs`, which interleaves every task in the service: use
+    this to read the replica that actually failed, found with `swarm_task_list` or `service_ps`.
+    `container_logs` is no substitute on a multi-node swarm - the task's container lives on
+    whichever node the scheduler placed it on, and this server talks to one daemon.
+
+    As with `service_logs`, `follow` is not exposed (the stream is joined into one string before
+    returning, so following would never finish) and collection is capped at `max_bytes`. The Engine
+    offers no `until` bound here, unlike `container_logs`, so narrow with `since` or an integer
+    `tail`.
+
+    docker-py has no task collection and no `APIClient.task_logs`, so this drives its private
+    request helpers against the published `GET /tasks/{id}/logs`, raising `CapabilityError` if those
+    internals move. Drop the reach-in if docker-py grows a public method.
+
+    Args:
+        id_or_name: The task id, an unambiguous id prefix, or its full `<service>.<slot>.<taskid>` name; see
+            `swarm_task_inspect` for how the daemon resolves these and which name forms do not work
+        since: Show logs since this Unix timestamp
+        tail: Number of lines from the end, or the literal "all" for everything
+        max_bytes: Abort with ToolInputError if the buffered logs exceed this many bytes (default 32 MiB)
+
+    Returns:
+        str: Decoded log output
+    """
+    api = _get_client(host).api
+    # Resolved via getattr - as plugin_push does - so a docker-py that has moved these internals
+    # gives the actionable message below rather than an AttributeError from inside the call.
+    build_url = getattr(api, "_url", None)
+    get = getattr(api, "_get", None)
+    raise_for_status = getattr(api, "_raise_for_status", None)
+    result_tty = getattr(api, "_get_result_tty", None)
+    if build_url is None or get is None or raise_for_status is None or result_tty is None:
+        missing = sorted(
+            attr
+            for attr, fn in (
+                ("_url", build_url),
+                ("_get", get),
+                ("_raise_for_status", raise_for_status),
+                ("_get_result_tty", result_tty),
+            )
+            if fn is None
+        )
+        raise CapabilityError(
+            f"the installed docker-py no longer exposes {', '.join(missing)} on APIClient, which "
+            "swarm_task_logs needs to reach GET /tasks/{id}/logs; read the whole service's logs "
+            "with service_logs, or run `docker service logs` on a manager, until this tool is updated"
+        )
+    # Without a TTY the Engine multiplexes stdout and stderr into framed chunks, so the 8-byte frame
+    # headers have to be stripped or they land in the returned text. `_get_result_tty` does that, but
+    # only if told which mode applies, and the task's own spec is the only place that records it.
+    task = api.inspect_task(id_or_name)
+    is_tty = task.get("Spec", {}).get("ContainerSpec", {}).get("TTY", False)
+    # The URL gets the resolved id, not what the caller passed. `inspect_task` accepts an id prefix
+    # or the full `<service>.<slot>.<taskid>` name and this tool advertises both, but whether the
+    # logs route resolves them too is undocumented - and there is no need to find out when the
+    # canonical id is already in hand. It also removes the chance of inspecting one task and
+    # reading another's output if the two endpoints ever disagreed about an ambiguous prefix.
+    #
+    # Not falling back to `id_or_name` when the id is absent: that is the unresolved reference this
+    # exists to avoid, so the fallback would quietly reinstate the defect on the one path where the
+    # daemon has already behaved unexpectedly. A bare KeyError would be no better - it is not in
+    # `_LIBRARY_FAILURES`, so it reaches the client as "Error executing tool" with the text withheld.
+    task_id = task.get("ID")
+    if not task_id:
+        raise RemoteFailureError(
+            f"the daemon returned a task document for {id_or_name!r} with no 'ID' field, so its "
+            "logs endpoint cannot be addressed; `swarm_task_inspect` shows what came back"
+        )
+    response = get(
+        build_url("/tasks/{0}/logs", task_id),
+        params={
+            "details": details,
+            "follow": False,
+            "stdout": stdout,
+            "stderr": stderr,
+            "since": since,
+            "timestamps": timestamps,
+            "tail": tail,
+        },
+        stream=True,
+    )
+    # `_get_result_tty` raises for status itself on the multiplexed path but not on the TTY one,
+    # where it would otherwise stream an error body back as though it were log output.
+    raise_for_status(response)
+    try:
+        raw = join_bounded(as_byte_chunks(result_tty(True, response, is_tty)), max_bytes, f"logs of task {id_or_name}")
+    finally:
+        # A fully consumed stream releases its pooled connection by itself, but `join_bounded` raises
+        # on the max_bytes abort with the body part-read, which would strand that connection for
+        # every oversized task. No `CancellableStream` here, unlike `plugin_push`: there is no
+        # watchdog to interrupt a blocked read from, because `follow` is never sent and the daemon
+        # closes the stream itself once the tail is written.
+        close_stream_quietly(response)
+    return raw.decode("utf-8", errors="replace")

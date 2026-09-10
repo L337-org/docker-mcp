@@ -2,7 +2,8 @@
 # run with: uv run pytest -m integration (requires `docker swarm init` first)
 #
 # The swarm lifecycle tools (init/join/leave/unlock) have no integration coverage on purpose -- they
-# reconfigure the daemon the whole suite runs against. These two only read, so they are testable.
+# reconfigure the daemon the whole suite runs against. `swarm_task_list`, `swarm_task_inspect` and
+# `swarm_task_logs` only read, so they are testable against the daemon the suite already uses.
 
 import uuid
 
@@ -10,7 +11,7 @@ import pytest
 from docker.errors import NotFound
 
 from docker_mcp.tools.services import service_create, service_ps, service_remove, service_wait
-from docker_mcp.tools.swarm import swarm_task_inspect, swarm_task_list
+from docker_mcp.tools.swarm import swarm_task_inspect, swarm_task_list, swarm_task_logs
 
 pytestmark = pytest.mark.usefixtures("skip_if_no_swarm")
 
@@ -67,3 +68,28 @@ def test_swarm_task_inspect_resolves_id_prefix_and_full_name_but_not_the_ps_name
     assert swarm_task_inspect(full_name)["ID"] == task["ID"]
     with pytest.raises(NotFound):
         swarm_task_inspect(f"{running_service}.{task['Slot']}")
+
+
+def test_swarm_task_logs_reads_a_real_task_through_the_hand_built_route(running_service):
+    """The route and the frame handling only prove out against a real daemon.
+
+    `swarm_task_logs` builds `/tasks/{id}/logs` itself, because docker-py exposes no task-logs
+    method to get it wrong on our behalf: a mistyped path or the wrong TTY mode is invisible to the
+    unit tests, which mock the very helpers that would reject it.
+
+    Single-node only, and deliberately so: this suite runs against one daemon. That does not weaken
+    the check, because the tool asks the manager and the manager fetches from whichever node holds
+    the task, so the code path is identical - what a multi-node cluster would add is coverage of the
+    Engine's own forwarding, not of anything here.
+    """
+    service_wait(running_service, until="running", timeout_seconds=120)
+    tasks = swarm_task_list(filters={"service": running_service})
+    assert tasks, "expected the service to have produced a task"
+
+    logs = swarm_task_logs(tasks[0]["ID"], tail=10)
+
+    assert isinstance(logs, str)
+    # `sleep 120` prints nothing, so an empty string is the correct result. What matters is that the
+    # daemon accepted the route and the demultiplexer left no 8-byte frame headers behind: those
+    # start with a stream byte of 0x01 or 0x02 followed by three NULs, which is not valid log text.
+    assert "\x00" not in logs, f"frame headers survived demultiplexing: {logs[:60]!r}"

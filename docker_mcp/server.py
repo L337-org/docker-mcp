@@ -157,6 +157,7 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "swarm_join_tokens": ToolCategory.READ_ONLY,
     "swarm_task_list": ToolCategory.READ_ONLY,
     "swarm_task_inspect": ToolCategory.READ_ONLY,
+    "swarm_task_logs": ToolCategory.READ_ONLY,
     # plugins
     "plugin_create": ToolCategory.MUTATING,
     "plugin_inspect": ToolCategory.READ_ONLY,
@@ -578,7 +579,7 @@ _DOMAIN_BLURBS: dict[str, str] = {
     "volumes": "create/list/inspect/remove",
     "compose": "Docker Compose v2 (up/down/ps/logs/build/run/exec/...); CLI-backed",
     "stack": "Compose-on-Swarm (deploy/ls/ps/rm/services); CLI-backed",
-    "swarm": "swarm init/join/leave/unlock, join-tokens, cluster-wide task list/inspect; manager node only",
+    "swarm": "swarm init/join/leave/unlock, join-tokens, cluster-wide task list/inspect/logs; manager node only",
     "services": "Swarm services (create/scale/update/rollback/logs/tasks); manager node only",
     "nodes": "Swarm nodes (list/inspect/update/remove); manager node only",
     "secrets": "Swarm secrets; manager node only",
