@@ -1,6 +1,7 @@
 import ast
 import inspect
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -720,16 +721,74 @@ def test_instructions_emit_a_line_only_for_present_domains():
     assert "- compose -" not in text
 
 
-def test_instructions_drop_cli_and_swarm_caveats_when_those_domains_are_absent():
-    # No CLI-backed or swarm domains present -> neither caveat should appear, and the CLI caveat must not
-    # name a domain that isn't registered.
+def test_instructions_drop_cli_and_swarm_guidance_when_those_domains_are_absent():
+    # No CLI-backed or swarm domains present -> neither the caveat nor the per-domain markers appear.
     text = build_instructions(registered_domains={"containers", "networks"})
-    assert "CLI-backed domains" not in text
-    assert "swarm manager node" not in text
-    # The CLI caveat lists only the CLI domains that survived.
+    assert "CLI-backed" not in text
+    assert "manager node only" not in text
+    # The manager-node requirement rides on each swarm domain's own blurb rather than a group caveat,
+    # so it appears exactly where a domain that needs it registered — and nowhere else.
+    swarm = build_instructions(registered_domains={"secrets", "containers"})
+    assert "manager node only" in swarm
+    # Any wording, not just the one that was removed: the requirement belongs on each domain's blurb,
+    # and a caveat repeating it is a sixth copy of what five lines already say.
+    lines = swarm.splitlines()
+    caveats = [line for line in lines[lines.index("Picking the right tool:") + 1 :] if line.startswith("- ")]
+    assert not [line for line in caveats if "manager node" in line], (
+        f"the manager-node requirement is restated as a caveat: {caveats}"
+    )
+    # The caveat no longer re-lists the CLI domains: each one is already marked in its own blurb.
     text = build_instructions(registered_domains={"compose", "buildx"})
-    assert "CLI-backed domains (compose, buildx)" in text
+    assert "CLI-backed domains (marked above)" in text
     assert "scout" not in text
+
+
+def test_every_tool_named_in_the_router_is_registered():
+    """A backticked tool name in the always-resident router resolves to a tool that exists.
+
+    The router is the only description of this server a lazy-loading client sees by default, so a
+    name that went stale there sends every such client after something uncallable - and unlike a
+    docstring, nothing else in the surface repeats the claim where a reader might notice the
+    mismatch. A rename is the way this breaks: the tool moves, the router does not.
+
+    Parameter names are backticked here too and are not tools, so they are named explicitly rather
+    than pattern-matched away. The second assertion keeps that list honest: if one of them ever
+    becomes a real tool name, the exemption stops being silent.
+    """
+    not_tools = {"dest_path", "extra_kwargs"}  # parameters the router names, not tools
+    named = {
+        token
+        for token in re.findall(r"`([a-z][a-z0-9_]*)`", build_instructions())
+        if "_" in token and token not in not_tools
+    }
+
+    assert named, "no tool names found in the router - the extraction pattern has probably rotted"
+    # The router writes one shorthand that is not a tool: `list_*(managed_only=True)`. It is excluded
+    # because the pattern requires a closing backtick straight after the identifier, which a wildcard
+    # does not give it - implicit enough to be worth pinning, so loosening the pattern fails here
+    # rather than turning the shorthand into a phantom tool name.
+    assert "list_" not in named and "list" not in named
+    missing = sorted(name for name in named if name not in TOOL_CATEGORIES)
+    assert not missing, f"the router names tools that are not registered: {missing}"
+    overlap = sorted(name for name in not_tools if name in TOOL_CATEGORIES)
+    assert not overlap, f"these are exempted as parameters but are now registered tools: {overlap}"
+
+
+def test_the_router_names_the_two_domainless_entry_points():
+    """`tool_list` and `docs_lookup` are reachable from the router, by the occasion that needs them.
+
+    Both exist for clients that cannot read resources, and both belong to no domain, so nothing in
+    the domain list points at them. If the router omits them a lazy client never learns they exist -
+    which is what happened to `docs_lookup`, present but framed as a fallback "if your client can't
+    read resources", telling a client that could read them to skip it.
+    """
+    text = build_instructions()
+    for tool in ("tool_list", "docs_lookup"):
+        assert f"`{tool}`" in text, f"{tool} is unreachable from the router"
+    # Named by the occasion that should trigger them, not by the reason they were added.
+    assert "if your client can't read resources" not in text
+    assert "To survey an unfamiliar domain" in text
+    assert "Before guessing a docker-py keyword" in text
 
 
 def test_instructions_mention_the_remote_exec_fallback_only_for_domains_that_have_it():
@@ -754,7 +813,8 @@ def test_instructions_mention_the_remote_exec_fallback_only_for_domains_that_hav
     assert "Applies to context" not in text  # named only where the fallback exists
 
     context_only = build_instructions(registered_domains={"context", "containers"})
-    assert "CLI-backed domains (context)" in context_only
+    assert "CLI-backed domains (marked above)" in context_only
+    assert "- context - docker CLI contexts; CLI-backed" in context_only, "the blurb carries the marking"
     assert "ssh://" not in context_only
 
 
@@ -875,7 +935,7 @@ def test_live_instructions_exclude_a_disabled_domain_end_to_end():
     text = _live_instructions(["DOCKER_MCP_SERVER_DISABLE=swarm,services,nodes,secrets,configs"])
     assert "- swarm -" not in text
     assert "- services -" not in text
-    assert "Swarm-family tools require" not in text
+    assert "manager node only" not in text  # the fact rides on the domain blurbs, which are gone too
     assert "- containers -" in text  # untouched domains survive
 
 

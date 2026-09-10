@@ -597,7 +597,6 @@ _CLI_DOMAINS = ("compose", "stack", "buildx", "scout", "context")
 # installed. `context` is absent deliberately and permanently: its tools manage *this* host's CLI
 # context registry, which a remote host knows nothing about.
 _REMOTE_EXEC_DOMAINS = ("compose", "stack", "buildx", "scout")
-_SWARM_DOMAINS = ("swarm", "services", "nodes", "secrets", "configs")
 
 
 def build_instructions(registered_domains: set[str] | None = None) -> str:
@@ -643,8 +642,8 @@ def build_instructions(registered_domains: set[str] | None = None) -> str:
         fallback_present = [d for d in _REMOTE_EXEC_DOMAINS if d in present]
         if not fallback_present:
             caveats.append(
-                f"CLI-backed domains ({', '.join(cli_present)}) shell out to the docker CLI/plugins; those "
-                "calls raise if the CLI or a required plugin isn't installed."
+                "CLI-backed domains (marked above) shell out to the docker CLI/plugins; those calls "
+                "raise if the CLI or a required plugin isn't installed."
             )
         else:
             # One statement of what happens when the local CLI can't serve a call, rather than a blanket
@@ -653,16 +652,17 @@ def build_instructions(registered_domains: set[str] | None = None) -> str:
             # to agree with a length that varies.
             no_fallback = [d for d in cli_present if d not in fallback_present]
             caveat = (
-                f"CLI-backed domains ({', '.join(cli_present)}) shell out to the docker CLI/plugins. With "
-                "the CLI or a required plugin missing locally, the call runs on the target host instead "
-                "when that host is reached over `ssh://` - its CLI, its registry credentials, and local "
-                "files (a compose project dir, a build context) copied over, so keep them small; a usable "
-                f"local CLI always wins. Applies to {', '.join(fallback_present)}"
+                "CLI-backed domains (marked above) shell out to the docker CLI/plugins. With the CLI or "
+                "a required plugin missing locally, the call runs on the target host instead when that "
+                "host is reached over `ssh://` - its CLI, its registry credentials, and local files (a "
+                "compose project dir, a build context) copied over, so keep them small; a usable local "
+                f"CLI always wins. Applies to {', '.join(fallback_present)}"
             )
             caveat += f"; no fallback for {', '.join(no_fallback)}, which raises instead." if no_fallback else "."
             caveats.append(caveat)
-    if present & set(_SWARM_DOMAINS):
-        caveats.append("Swarm-family tools require a swarm manager node.")
+    # No swarm caveat: every domain in that family carries "manager node only" in its own blurb
+    # above, so a group-level restatement is a sixth copy of a fact already on five lines. If the
+    # requirement ever stops being per-domain, change the blurbs rather than adding a caveat back.
     if _hosts.is_multi():
         caveats.append(
             f"Multiple hosts are configured ({_hosts.labels()}): read-only tools take `host=<label>` "
@@ -676,11 +676,18 @@ def build_instructions(registered_domains: set[str] | None = None) -> str:
 
     lines += [
         "",
-        "The registered surface changes with env switches; read the `docker-mcp://tool-catalog` resource for "
-        "the live tool/domain/category list and which switches are active. Docs are under "
-        "`docker-docs://contents`, or call `docs_lookup` if your client can't read resources. For "
-        "multi-step jobs (deploy, troubleshoot, prune, audit, migrate, "
-        "multi-arch build, volume backup/restore) prefer the matching MCP prompt.",
+        # Each entry leads with the occasion that should trigger the tool, not with why the tool was
+        # added. A lazy-loading client never sees a tool's own description unless it already went
+        # looking, so this text is the only thing that can prompt the search - and `docs_lookup` spent
+        # its life here described as a fallback "if your client can't read resources", which told a
+        # client that *could* read them to skip it.
+        "To survey an unfamiliar domain, check which tools are destructive, or confirm that nothing "
+        "matches, call `tool_list`; the registered surface changes with env switches. Before guessing "
+        "a docker-py keyword for an `extra_kwargs` passthrough, or writing Compose/Dockerfile/buildx "
+        "bake syntax, call `docs_lookup`. Each has a resource equivalent "
+        "(`docker-mcp://tool-catalog`, `docker-docs://contents`). For multi-step jobs (deploy, "
+        "troubleshoot, prune, audit, migrate, multi-arch build, volume backup/restore) prefer the "
+        "matching MCP prompt.",
     ]
     return "\n".join(lines)
 
