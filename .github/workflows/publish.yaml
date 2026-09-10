@@ -616,6 +616,7 @@ jobs:
           # Without it a 429 or a 5xx is indistinguishable from an absent tag, and the gate blames
           # the release for a throttle - which invites a re-run, and a re-run repoints the tags.
           err="$(mktemp)"
+          trap 'rm -f "$err"' EXIT
 
           # Reads the manifest-list digest a tag resolves to, retrying to absorb registry lag and
           # transient refusals alike. Empty output means it never resolved; the caller decides if
