@@ -6,7 +6,13 @@ from typing import Literal
 
 from docker_mcp.exceptions import CapabilityError, RemoteFailureError
 from docker_mcp.server import tool
-from docker_mcp.tools._utils import MAX_PAYLOAD_BYTES, as_byte_chunks, drop_none, join_bounded
+from docker_mcp.tools._utils import (
+    MAX_PAYLOAD_BYTES,
+    as_byte_chunks,
+    close_stream_quietly,
+    drop_none,
+    join_bounded,
+)
 from docker_mcp.tools.system import _get_client
 
 
@@ -433,5 +439,13 @@ def swarm_task_logs(  # noqa: DOC101,DOC103,DOC501,DOC503
     # `_get_result_tty` raises for status itself on the multiplexed path but not on the TTY one,
     # where it would otherwise stream an error body back as though it were log output.
     raise_for_status(response)
-    raw = join_bounded(as_byte_chunks(result_tty(True, response, is_tty)), max_bytes, f"logs of task {id_or_name}")
+    try:
+        raw = join_bounded(as_byte_chunks(result_tty(True, response, is_tty)), max_bytes, f"logs of task {id_or_name}")
+    finally:
+        # A fully consumed stream releases its pooled connection by itself, but `join_bounded` raises
+        # on the max_bytes abort with the body part-read, which would strand that connection for
+        # every oversized task. No `CancellableStream` here, unlike `plugin_push`: there is no
+        # watchdog to interrupt a blocked read from, because `follow` is never sent and the daemon
+        # closes the stream itself once the tail is written.
+        close_stream_quietly(response)
     return raw.decode("utf-8", errors="replace")

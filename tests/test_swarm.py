@@ -273,6 +273,24 @@ def test_swarm_task_logs_reports_a_missing_docker_py_internal_by_name():
             swarm_task_logs("task1")
 
 
+def test_swarm_task_logs_releases_the_connection_on_both_paths():
+    # A stream read to the end frees its own pooled connection, so the happy path would pass without
+    # an explicit close and hide the real case: the max_bytes abort leaves the body part-read, which
+    # strands a connection for every oversized task until the pool is exhausted.
+    api = _task_api()
+    with _patch() as mock_client:
+        mock_client.return_value.api = api
+        swarm_task_logs("task1")
+    assert api._get.return_value.close.called, "connection not released after a normal read"
+
+    api = _task_api(chunks=(b"x" * 6, b"y" * 6))
+    with _patch() as mock_client:
+        mock_client.return_value.api = api
+        with pytest.raises(ToolInputError):
+            swarm_task_logs("task1", max_bytes=10)
+    assert api._get.return_value.close.called, "connection not released after the max_bytes abort"
+
+
 def test_swarm_task_logs_aborts_when_exceeding_max_bytes():
     api = _task_api(chunks=(b"x" * 6, b"y" * 6))
     with _patch() as mock_client:
