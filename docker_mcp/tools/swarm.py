@@ -421,9 +421,26 @@ def swarm_task_logs(  # noqa: DOC101,DOC103,DOC501,DOC503
     # Without a TTY the Engine multiplexes stdout and stderr into framed chunks, so the 8-byte frame
     # headers have to be stripped or they land in the returned text. `_get_result_tty` does that, but
     # only if told which mode applies, and the task's own spec is the only place that records it.
-    is_tty = api.inspect_task(id_or_name).get("Spec", {}).get("ContainerSpec", {}).get("TTY", False)
+    task = api.inspect_task(id_or_name)
+    is_tty = task.get("Spec", {}).get("ContainerSpec", {}).get("TTY", False)
+    # The URL gets the resolved id, not what the caller passed. `inspect_task` accepts an id prefix
+    # or the full `<service>.<slot>.<taskid>` name and this tool advertises both, but whether the
+    # logs route resolves them too is undocumented - and there is no need to find out when the
+    # canonical id is already in hand. It also removes the chance of inspecting one task and
+    # reading another's output if the two endpoints ever disagreed about an ambiguous prefix.
+    #
+    # Not falling back to `id_or_name` when the id is absent: that is the unresolved reference this
+    # exists to avoid, so the fallback would quietly reinstate the defect on the one path where the
+    # daemon has already behaved unexpectedly. A bare KeyError would be no better - it is not in
+    # `_LIBRARY_FAILURES`, so it reaches the client as "Error executing tool" with the text withheld.
+    task_id = task.get("ID")
+    if not task_id:
+        raise RemoteFailureError(
+            f"the daemon returned a task document for {id_or_name!r} with no 'ID' field, so its "
+            "logs endpoint cannot be addressed; `swarm_task_inspect` shows what came back"
+        )
     response = get(
-        build_url("/tasks/{0}/logs", id_or_name),
+        build_url("/tasks/{0}/logs", task_id),
         params={
             "details": details,
             "follow": False,

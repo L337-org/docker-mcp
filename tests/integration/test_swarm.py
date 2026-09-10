@@ -2,7 +2,8 @@
 # run with: uv run pytest -m integration (requires `docker swarm init` first)
 #
 # The swarm lifecycle tools (init/join/leave/unlock) have no integration coverage on purpose -- they
-# reconfigure the daemon the whole suite runs against. These only read, so they are testable.
+# reconfigure the daemon the whole suite runs against. `swarm_task_list`, `swarm_task_inspect` and
+# `swarm_task_logs` only read, so they are testable against the daemon the suite already uses.
 
 import uuid
 

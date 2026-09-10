@@ -25,7 +25,7 @@ def _task_api(*, tty: bool = False, chunks=(b"line1\n", b"line2\n")):
         MagicMock: the api object, with `_get_result_tty` yielding `chunks`
     """
     api = MagicMock()
-    api.inspect_task.return_value = {"Spec": {"ContainerSpec": {"TTY": tty}}}
+    api.inspect_task.return_value = {"ID": "fulltaskid", "Spec": {"ContainerSpec": {"TTY": tty}}}
     api._get_result_tty.return_value = iter(chunks)
     return api
 
@@ -236,7 +236,11 @@ def test_swarm_task_logs_reaches_the_published_task_route():
     with _patch() as mock_client:
         mock_client.return_value.api = api
         assert swarm_task_logs("task1") == "line1\nline2\n"
-    assert api._url.call_args.args == ("/tasks/{0}/logs", "task1")
+    # The resolved id, not the caller's reference: this tool advertises id prefixes and full task
+    # names, and whether the logs route resolves those is undocumented, so the id from
+    # `inspect_task` is what gets used.
+    assert api._url.call_args.args == ("/tasks/{0}/logs", "fulltaskid")
+    assert api.inspect_task.call_args.args == ("task1",)
     params = api._get.call_args.kwargs["params"]
     assert params["follow"] is False, "this tool always takes a bounded snapshot"
     assert params["tail"] == 200
@@ -289,6 +293,19 @@ def test_swarm_task_logs_releases_the_connection_on_both_paths():
         with pytest.raises(ToolInputError):
             swarm_task_logs("task1", max_bytes=10)
     assert api._get.return_value.close.called, "connection not released after the max_bytes abort"
+
+
+def test_swarm_task_logs_refuses_a_task_document_with_no_id():
+    # Falling back to the caller's reference here would reinstate the unresolved-identifier bug on
+    # the one path where the daemon has already misbehaved, and a bare KeyError is not in
+    # `_LIBRARY_FAILURES`, so it would reach the client as "Error executing tool" with no detail.
+    api = _task_api()
+    api.inspect_task.return_value = {"Spec": {"ContainerSpec": {"TTY": False}}}
+    with _patch() as mock_client:
+        mock_client.return_value.api = api
+        with pytest.raises(RemoteFailureError, match="no 'ID' field"):
+            swarm_task_logs("task1")
+    assert not api._get.called, "must not fall back to the unresolved reference"
 
 
 def test_swarm_task_logs_aborts_when_exceeding_max_bytes():
