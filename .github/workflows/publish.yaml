@@ -591,6 +591,17 @@ jobs:
         run: |
           set -euo pipefail
 
+          # `imagetools inspect` reads the registry directly and needs no builder, so this job
+          # deliberately sets none up - but it does need the runner's buildx to carry `--format`.
+          # Without this probe an unsupported flag prints to stderr and returns nothing, which
+          # reads downstream as "every tag is missing" and would blame the release for a tooling
+          # change. Named version in the log so the next person can see what resolved the digests.
+          docker buildx version
+          docker buildx imagetools inspect --help 2>&1 | grep -q -- '--format' || {
+            echo "::error::this runner's buildx has no --format on imagetools inspect, so digests cannot be read"
+            exit 1
+          }
+
           # The same registry list the `images` job builds, gated on the same secret presence, so
           # the Hub mirror is verified whenever it was published and skipped loudly when it was not.
           registries="ghcr.io/l337-org/docker-mcp-server"
