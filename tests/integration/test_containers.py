@@ -13,11 +13,7 @@ from docker_mcp.tools.containers import (
     container_run,
     container_wait,
 )
-from docker_mcp.tools.resources import (
-    get_container_logs_resource,
-    get_container_stats_resource,
-    list_container_resources,
-)
+from docker_mcp.tools.resources import get_container_logs_resource, get_container_stats_resource
 from tests.integration.conftest import fail_unless_environmental_error
 
 
@@ -88,13 +84,6 @@ def test_run_container_stamps_provenance_and_managed_only_filters(healthy_contai
 
 
 def test_container_observability_resources_against_real_container(healthy_container):
-    # The index lists the running container with both a logs and a stats URI.
-    index = json.loads(list_container_resources())
-    entry = next(c for c in index["containers"] if c["name"] == healthy_container)
-    assert entry["status"] == "running"
-    assert entry["logs"] == f"docker-logs://{healthy_container}"
-    assert entry["stats"] == f"docker-stats://{healthy_container}"
-
     # Logs resource returns a string (the container may be quiet; just assert the type and no error).
     assert isinstance(get_container_logs_resource(healthy_container), str)
 

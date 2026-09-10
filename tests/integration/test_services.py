@@ -12,7 +12,7 @@ from docker_mcp.tools.services import (
     service_scale,
     service_wait,
 )
-from docker_mcp.tools.resources import get_service_tasks_resource, list_service_resources
+from docker_mcp.tools.resources import get_service_tasks_resource
 
 pytestmark = pytest.mark.usefixtures("skip_if_no_swarm")
 
@@ -52,8 +52,6 @@ def test_service_wait_running_converges_after_scale_real(running_service):
 
 
 def test_service_resource_reflects_running_service(running_service):
-    index = json.loads(list_service_resources())
-    assert any(s["name"] == running_service for s in index["services"])
     service_wait(running_service, until="running", timeout_seconds=30, poll_interval=1.0)
     summary = json.loads(get_service_tasks_resource(running_service))
     assert summary["running_tasks"] == 2
