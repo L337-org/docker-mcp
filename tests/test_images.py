@@ -315,7 +315,7 @@ def test_image_tag():
 
 
 def test_image_tag_does_not_forward_the_dead_force_parameter():
-    # The Engine dropped `force` from the tag endpoint well before API v1.40, this server's minimum,
+    # The Engine dropped `force` from the tag endpoint at API v1.22, below docker-py's floor of v1.24,
     # and overwrites an existing tag regardless: verified against Engine 29.7.2 (API 1.55), where
     # re-pointing a tag at a different image with force=False succeeded. docker-py still sends
     # `force=1|0` as a query parameter, so forwarding it advertised a guard no daemon applies - an

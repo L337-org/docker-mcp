@@ -309,14 +309,13 @@ def swarm_task_list(filters: dict | None = None, host: str | None = None) -> lis
 
     The cluster-wide view of what is actually scheduled. `service_ps` covers one service and
     `stack_ps` one stack, so answering "what is failing anywhere" or "what is running on this node"
-    through those means looping over every service; this is one call. `swarm_task_logs` reads what
-    a task printed. Filter by `node` for a node's
-    workload (the CLI's `docker node ps`), `desired-state` to separate what should be running from
-    what is shutting down, or `service` for a single service -- for which `service_ps` is the
-    simpler call. Each task carries its full `Spec`, including the `ContainerSpec` (image, command,
-    env), so this returns much more per task than the `service-tasks://{id_or_name}` resource's
-    computed rollout summary. Read-only. Requires a swarm manager: on any other node the daemon
-    refuses, and its refusal is what comes back.
+    through those means looping over every service; this is one call, and `swarm_task_logs` reads
+    what a failing one printed. Filter by `node` for a node's workload (the CLI's `docker node ps`),
+    `desired-state` to separate what should be running from what is shutting down, or `service` for
+    a single service -- for which `service_ps` is the simpler call. Each task carries its full
+    `Spec`, including the `ContainerSpec` (image, command, env), so this returns much more per task
+    than the `service-tasks://{id_or_name}` resource's computed rollout summary. Read-only. Requires
+    a swarm manager: on any other node the daemon refuses, and its refusal is what comes back.
 
     Args:
         filters: Filter dict; keys: id, name, service, node, label, desired-state (running|shutdown|accepted); omit for
@@ -336,11 +335,11 @@ def swarm_task_inspect(id_or_name: str, host: str | None = None) -> dict:  # noq
 
     For when you already hold a task reference -- from a `swarm_task_list` or `service_ps` row, a
     service event, or an error message -- and want just that task. `swarm_task_list` returns the
-    same document for every task, so prefer it when scanning; this is the single-object fetch, and
-    `swarm_task_logs` reads that task's output.
+    same document for every task, so prefer it when scanning; this is the single-object fetch.
     To reach the container behind a running task, read `Status.ContainerStatus.ContainerID` and pass
     it to `container_inspect` / `container_logs` -- but note the container may be on another node,
-    where those tools cannot see it, and `service_logs` aggregates across tasks instead. Read-only.
+    where those tools cannot see it, and `service_logs` aggregates across tasks instead;
+    `swarm_task_logs` reads that one task's output wherever it landed. Read-only.
     Requires a swarm manager; reports the daemon's own error if the task does not exist, if a
     prefix matches more than one task, or if this node is not a manager.
 

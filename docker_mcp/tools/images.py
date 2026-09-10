@@ -548,9 +548,9 @@ def image_tag(  # noqa: DOC101,DOC103
     Returns:
         bool: True if the image was tagged
     """
-    # No `force`: the Engine dropped it from the tag endpoint long before API v1.40, this server's
-    # minimum, and overwrites an existing tag either way - verified against Engine 29.7.2 (API 1.55),
-    # where re-pointing a tag at a different image with force=False succeeded. docker-py still sends
+    # No `force`: the Engine dropped it from the tag endpoint at API v1.22, below docker-py's own
+    # floor of v1.24, and overwrites an existing tag either way - verified against Engine 29.7.2
+    # (API 1.55), where re-pointing a tag at a different image with force=False succeeded. It sends
     # `force=1|0` as a query parameter, so passing it through advertised a guard no daemon applies:
     # an agent setting force=False to avoid clobbering a tag clobbered it anyway. Do not re-add it.
     image = _get_client(host).images.get(id_or_name)

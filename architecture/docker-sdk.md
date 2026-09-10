@@ -81,38 +81,28 @@ say why. **Anything deliberately not wrapped, or wrapped in an unobvious way, be
   Two audit runs reached opposite conclusions on this in the same week; the above is what the 7.2.0
   source actually does.
 - **`swarm_task_logs`'s hand-built `GET /tasks/{id}/logs`** - stays low-level permanently, for the
-  same reason as `swarm_task_list` above: docker-py has no task collection and no
-  `APIClient.task_logs`, so there is no public path to migrate to. This one goes further than those
-  two, because there is no documented `APIClient` method either, so it drives `_url`/`_get`/
-  `_raise_for_status`/`_get_result_tty` behind `getattr` guards. The endpoint itself is published in
-  the Engine spec, which is the acceptable shape of that bet; only the client plumbing is
-  unofficial - and `docker service logs` takes `SERVICE|TASK`, so this is the same route the CLI
-  itself calls for a task reference, which is about as good as a stability argument gets. Replace
-  with the public method if docker-py ever grows one.
-- **`POST /configs/{id}/update` and `POST /secrets/{id}/update`** - real Engine routes with no
-  docker-py surface at any level, and deliberately not wrapped. Declined on surface cost, not on
-  merit: labels are the only mutable field, and it needs *two* tools rather than one, because a
-  single tool taking a resource kind would stay registered under
-  `DOCKER_MCP_SERVER_DISABLE=configs` and have to refuse at call time, which SU.8.1 forbids. That is
-  roughly 1,600 bytes advertised to every session for something needed rarely. Re-propose only with
-  evidence that the need is real, not because the routes are uncovered - that much is known.
+  same reason as `swarm_task_list`, and one rung further down: no documented `APIClient` method
+  either, so it drives the private helpers. The endpoint is in the Engine spec and is what `docker
+  service logs` calls for a `SERVICE|TASK` reference, so only the plumbing is unofficial. Replace
+  if docker-py grows a public method.
+- **`POST /configs/{id}/update`, `POST /secrets/{id}/update`** - no docker-py surface, deliberately
+  not wrapped. Declined on cost, not merit: it needs *two* tools, since one taking a resource kind
+  would stay registered under a partial `DOCKER_MCP_SERVER_DISABLE` and refuse at call time, which
+  SU.8.1 forbids. Roughly 1,600 bytes for a rare need. Re-propose only with evidence of demand, not
+  because the routes are uncovered - that much is known.
 - **`GET /images/{name}/attestations`** - no docker-py surface, deliberately not wrapped. Declined
-  as substantially covered: `buildx_imagetools_inspect` exists precisely because `docker manifest`
-  lacks attestation support, and `scout_sbom` and `registry_manifest` cover neighbouring ground. The
-  residue is attestations on an image held only locally, since `buildx imagetools inspect` resolves
-  against a registry and fails on a local-only reference with `pull access denied`. Real but narrow,
-  and unasked for.
+  as covered: `buildx_imagetools_inspect` handles attestations, with `scout_sbom` and
+  `registry_manifest` nearby. The residue is a local-only image, since imagetools resolves against a
+  registry. Narrow, and unasked for.
 
 The audit must also **check the latest published docker-py, not the pinned one**: `uv.lock` is
 routinely behind what `pyproject.toml`'s floor lets a fresh `uvx`/`pip install` resolve, so auditing
 the installed tree alone misses whatever published users are already running. And it should flag
-**deprecated** surface we still depend on, not only missing coverage, so a migration happens on our
-schedule rather than when removal breaks us. `image_prune_builds`'s `keep_storage` is the worked
-example: the Engine renamed it `reserved-space` at API v1.48, moby still honours the old spelling as
-a deprecated fallback, and the parameter was removed before that fallback went - because docker-py
-sends only the old name, so the day it stops being honoured the value is *ignored* rather than
-rejected, and a call meaning "keep 5GB" prunes the lot. A deprecation whose failure mode is silent
-is worth acting on early; one that will fail loudly can wait.
+**deprecated** surface we still depend on, not only missing coverage. Sort those by failure mode:
+one that will fail loudly can wait, one that will fail *silently* is worth acting on early.
+`image_prune_builds`'s `keep_storage` went before moby dropped its deprecated fallback, because
+docker-py sends only the old name - so an ignored value would prune the whole cache while the caller
+believed a floor was set.
 
 Docker SDK docs: https://docker-py.readthedocs.io/en/stable/index.html  
 Docker SDK low-level API: https://docker-py.readthedocs.io/en/stable/api.html  
