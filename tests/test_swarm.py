@@ -2,7 +2,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from docker_mcp.exceptions import RemoteFailureError
+from docker_mcp.exceptions import CapabilityError, RemoteFailureError, ToolInputError
 from docker_mcp.tools.swarm import (
     swarm_join_tokens,
     swarm_unlock_key,
@@ -12,9 +12,22 @@ from docker_mcp.tools.swarm import (
     swarm_inspect,
     swarm_task_inspect,
     swarm_task_list,
+    swarm_task_logs,
     swarm_unlock,
     swarm_update,
 )
+
+
+def _task_api(*, tty: bool = False, chunks=(b"line1\n", b"line2\n")):
+    """An APIClient mock wired for the private helpers `swarm_task_logs` reaches through.
+
+    Returns:
+        MagicMock: the api object, with `_get_result_tty` yielding `chunks`
+    """
+    api = MagicMock()
+    api.inspect_task.return_value = {"Spec": {"ContainerSpec": {"TTY": tty}}}
+    api._get_result_tty.return_value = iter(chunks)
+    return api
 
 
 def _patch():
@@ -214,3 +227,55 @@ def test_swarm_task_inspect_forwards_the_reference_unmodified():
         mock_client.return_value.api.inspect_task.return_value = {"ID": "t1"}
         assert swarm_task_inspect("web.1.abc123") == {"ID": "t1"}
     mock_client.return_value.api.inspect_task.assert_called_once_with("web.1.abc123")
+
+
+def test_swarm_task_logs_reaches_the_published_task_route():
+    # docker-py has no task_logs at any level, so the tool drives `_url`/`_get` itself. Pin the
+    # route and the parameters: a typo here is invisible until a real daemon 404s.
+    api = _task_api()
+    with _patch() as mock_client:
+        mock_client.return_value.api = api
+        assert swarm_task_logs("task1") == "line1\nline2\n"
+    assert api._url.call_args.args == ("/tasks/{0}/logs", "task1")
+    params = api._get.call_args.kwargs["params"]
+    assert params["follow"] is False, "this tool always takes a bounded snapshot"
+    assert params["tail"] == 200
+    assert api._get.call_args.kwargs["stream"] is True
+
+
+def test_swarm_task_logs_reads_the_tty_flag_from_the_task_spec():
+    # Without a TTY the Engine frames stdout and stderr with 8-byte headers, so passing the wrong
+    # mode to `_get_result_tty` returns those headers as though they were log text.
+    for tty in (True, False):
+        api = _task_api(tty=tty)
+        with _patch() as mock_client:
+            mock_client.return_value.api = api
+            swarm_task_logs("task1")
+        assert api._get_result_tty.call_args.args[2] is tty
+
+
+def test_swarm_task_logs_raises_for_status_before_decoding():
+    # `_get_result_tty` checks the status itself on the multiplexed path but not the TTY one, where
+    # an error body would otherwise be returned as log output.
+    api = _task_api(tty=True)
+    with _patch() as mock_client:
+        mock_client.return_value.api = api
+        swarm_task_logs("task1")
+    assert api._raise_for_status.called
+
+
+def test_swarm_task_logs_reports_a_missing_docker_py_internal_by_name():
+    api = _task_api()
+    api._get_result_tty = None
+    with _patch() as mock_client:
+        mock_client.return_value.api = api
+        with pytest.raises(CapabilityError, match=r"_get_result_tty"):
+            swarm_task_logs("task1")
+
+
+def test_swarm_task_logs_aborts_when_exceeding_max_bytes():
+    api = _task_api(chunks=(b"x" * 6, b"y" * 6))
+    with _patch() as mock_client:
+        mock_client.return_value.api = api
+        with pytest.raises(ToolInputError, match="exceeded max_bytes"):
+            swarm_task_logs("task1", max_bytes=10)

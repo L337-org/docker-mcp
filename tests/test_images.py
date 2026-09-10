@@ -137,11 +137,23 @@ def test_image_prune_builds_passes_no_args_by_default():
 def test_image_prune_builds_forwards_supplied_args():
     with _patch() as mock_client:
         mock_client.return_value.images.prune_builds.return_value = {"CachesDeleted": ["c1"], "SpaceReclaimed": 400}
-        result = image_prune_builds(filters={"until": "24h"}, keep_storage=1024, all=True)
+        result = image_prune_builds(filters={"until": "24h"}, all=True)
     assert result == {"CachesDeleted": ["c1"], "SpaceReclaimed": 400}
-    mock_client.return_value.images.prune_builds.assert_called_once_with(
-        filters={"until": "24h"}, keep_storage=1024, all=True
-    )
+    mock_client.return_value.images.prune_builds.assert_called_once_with(filters={"until": "24h"}, all=True)
+
+
+def test_image_prune_builds_does_not_forward_the_deprecated_keep_storage():
+    # The Engine renamed `keep-storage` to `reserved-space` at API v1.48 and v1.56 no longer
+    # documents the old name; moby honours it as a deprecated fallback for now. docker-py 7.2.0
+    # still sends only `keep-storage`, so the day that fallback goes the value is *ignored* rather
+    # than rejected - and a call meaning "prune but keep 5GB" prunes the lot, from a tool classified
+    # destructive. `buildx_prune` carries `reserved_space` and the newer ceilings instead. Guard both
+    # directions, because the parameter is still in the docker-py signature to be copied back.
+    with _patch() as mock_client:
+        mock_client.return_value.images.prune_builds.return_value = {"SpaceReclaimed": 0}
+        image_prune_builds(all=True)
+    assert "keep_storage" not in mock_client.return_value.images.prune_builds.call_args.kwargs
+    assert "keep_storage" not in inspect.signature(image_prune_builds).parameters
 
 
 def test_image_load():

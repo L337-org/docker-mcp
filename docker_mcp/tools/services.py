@@ -261,7 +261,8 @@ def service_logs(  # noqa: DOC101,DOC103
     if exceeded) so a noisy service can't OOM the server. The default is a bounded `tail=200`;
     `tail="all"` returns the whole buffer, which can be huge on long-running services and exceed
     the agent's context - prefer an integer, or `since`, to constrain output. Logs aggregate
-    across all the service's tasks - `container_logs` reads a single container, and the
+    across all the service's tasks - `swarm_task_logs` reads one task's, `container_logs` a
+    single container, and the
     `service-logs://{id_or_name}` resource is the resource-flavored equivalent of this tool.
 
     Args:

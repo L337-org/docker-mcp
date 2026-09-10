@@ -327,7 +327,6 @@ def image_prune(filters: dict | None = None, host: str | None = None) -> dict:  
 @tool()
 def image_prune_builds(  # noqa: DOC101,DOC103
     filters: dict | None = None,
-    keep_storage: int | None = None,
     all: bool | None = None,
     host: str | None = None,
 ) -> dict:
@@ -337,26 +336,30 @@ def image_prune_builds(  # noqa: DOC101,DOC103
     Prunes the *build cache* - a separate Engine resource from the images `image_prune` removes,
     so run both to reclaim everything a build leaves behind. Prefer `buildx_prune` when the build
     ran on a non-default buildx builder (that builder keeps its own cache, invisible here) or when
-    you need buildx's disk-ceiling flags; this tool needs no CLI plugin and works over any
+    you need any disk ceiling at all - `reserved_space`, `max_used_space` or `min_free_space`, none of
+    which the docker-py path can send; this tool needs no CLI plugin and works over any
     transport, including a daemon with no local `docker` binary. Inventory first with `system_df`
     (its `BuildCache` entry) or `buildx_du`. Destructive and immediate: later builds must re-run
-    the steps whose cache was removed. Needs Docker API v1.31+; passing any of `filters`,
-    `keep_storage`, or `all` needs v1.39+ and raises `InvalidVersion` on an older daemon - omit all
-    three to prune with the daemon's own defaults.
+    the steps whose cache was removed. Needs Docker API v1.31+; passing either `filters` or `all`
+    needs v1.39+ and raises `InvalidVersion` on an older daemon - omit both to prune with the
+    daemon's own defaults.
 
     Args:
         filters: Narrow which cache records to remove, e.g. {"until": "24h"} (a duration or timestamp relative to the
             daemon's clock); also accepts `id`, `parent`, `type`, `description`, `inuse`, `shared`, `private`; omit to
             let the daemon prune unused cache
-        keep_storage: Bytes of cache to keep, e.g. 5368709120 for 5 GiB; omit for no floor. The Engine renamed this
-            `reserved-space` at API v1.48 and still honors the old name; the newer `max-used-space`/`min-free-space`
-            ceilings are reachable only via `buildx_prune`
         all: Remove all types of build cache, not just the unused records
 
     Returns:
         dict: {"CachesDeleted": [...], "SpaceReclaimed": <bytes>}
     """
-    return _get_client(host).images.prune_builds(**drop_none(filters=filters, keep_storage=keep_storage, all=all))
+    # No `keep_storage`: the Engine renamed it `reserved-space` at API v1.48 and v1.56 no longer
+    # documents the old name. moby still honours the old spelling as a deprecated fallback, so this
+    # is not a bug fix - it removes a parameter whose failure mode when that fallback goes is silent.
+    # docker-py sends only `keep-storage`, so an ignored value would prune the entire cache while the
+    # caller believed a floor was in effect, from a tool classified destructive. `buildx_prune`
+    # carries `reserved_space` and the newer ceilings. Do not re-add it from the docker-py signature.
+    return _get_client(host).images.prune_builds(**drop_none(filters=filters, all=all))
 
 
 @tool()
