@@ -94,8 +94,8 @@ roughly level, with the server ahead on unusual or easily-confused operations an
 the common ones.
 
 **Getting the arguments right is where the server is properly ahead**, and this is the substantial
-half. Across 606 parameters, every one carries a declared type, 79% carry an explicit default and
-125 are marked required. That schema is enforced by the client before the call reaches the server,
+half. Across 613 parameters, every one carries a declared type, 79% carry an explicit default and
+126 are marked required. That schema is enforced by the client before the call reaches the server,
 so a wrong argument name or type is rejected as a validation error with nothing executed. The skill
 composes a shell string, and a wrong flag is caught by Docker itself at execution, which may be
 after a side effect has already happened.
@@ -107,7 +107,7 @@ macOS, `status` fatal as a variable name in zsh, `jq -s` applied to something th
 array. A JSON Schema makes that entire class of mistake unrepresentable. Nothing in the skill can,
 because the CLI has no machine-readable description of its own flags.
 
-One honest qualification: only 13 of those 606 parameters carry an `enum`. The other 98% have their
+One honest qualification: only 13 of those 613 parameters carry an `enum`. The other 98% have their
 legal values documented in prose on both sides, so the server's advantage is mostly over argument
 names, types and requiredness rather than over the set of legal values.
 
@@ -220,7 +220,7 @@ kept:
 DOCKER_MCP_SERVER_DISABLE=compose,stack,swarm,services,nodes,secrets,configs,buildx,scout,registry,plugins,context
 ```
 
-That is a **2.6x** cut, with the router falling from 647 tokens to 315 as it stops advertising
+That is a **2.6x** cut, with the router falling from 658 tokens to 343 as it stops advertising
 absent domains, and the prompts from 30 to 16. The trade is real, though: a disabled tool is not
 merely hidden, it is *gone*. If the triage turns out to need `compose_logs`, you have to change the
 config and restart, whereas the skill always has every recipe available at no idle cost.
