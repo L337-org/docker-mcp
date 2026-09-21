@@ -50,7 +50,7 @@ MAX_PROMPT_WIRE_BYTES = 7_900  # 7,646
 # rather than left as headroom, so re-adding an index has to argue for itself the same way.
 MAX_RESOURCE_WIRE_BYTES = 4_700  # 4,614, resources and templates together
 MAX_INSTRUCTIONS_BYTES = 2_900  # 2,808
-MAX_TOTAL_WIRE_BYTES = 248_000  # 245,851
+MAX_TOTAL_WIRE_BYTES = 248_000  # 247,266
 
 # Registration is gated at import time, so a switch in effect when `docker_mcp.server` was
 # imported shrinks the surface, and every budget below would pass while measuring something

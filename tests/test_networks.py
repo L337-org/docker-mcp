@@ -54,9 +54,11 @@ def test_network_inspect():
 
 
 def test_network_inspect_omits_verbose_and_scope_unless_asked():
-    # docker-py version-checks each of these on `is not None` (verbose needs API v1.28, scope
-    # v1.31), so forwarding a literal False/None would start raising InvalidVersion against an
-    # older daemon on the plain inspect that has always worked there.
+    # docker-py checks each of these on `is not None` (verbose was introduced at API v1.28, scope
+    # at v1.31), so a non-None value is what raises InvalidVersion. Dropping the None defaults keeps
+    # the plain inspect clear of both guards, and pins that `verbose` never regresses to a plain
+    # `bool = False` default - that False would trip the v1.28 guard on a daemon this call has
+    # always worked on.
     network = MagicMock()
     network.attrs = {"Id": "net1"}
     with _patch() as mock_client:

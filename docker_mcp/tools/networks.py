@@ -95,9 +95,13 @@ def network_inspect(  # noqa: DOC101,DOC103
         dict: Full network inspect attrs (equivalent to `docker network inspect`); with `verbose` also a `Services` map
             of service name to its tasks and peers on this network
     """
-    # Both are passed only when set: docker-py version-checks each on `is not None`, so a literal
-    # verbose=False or scope=None reaching the call would newly raise InvalidVersion against an
-    # older daemon that the default call has always worked on.
+    # Both default to None and are dropped rather than forwarded, so neither version guard is
+    # tripped by a caller who did not ask for one. docker-py checks each on `is not None` (verbose
+    # was introduced at API v1.28, scope at v1.31), so it is a *non-None* value that raises
+    # InvalidVersion: were `verbose` a plain `bool = False`, that False would trip the v1.28 guard
+    # and break the plain inspect on an older daemon it has always worked on, which is why the
+    # annotation is `bool | None`. A caller who does pass `scope` to a pre-v1.31 daemon gets the
+    # error, and should - they asked for it.
     return _get_client(host).networks.get(id_or_name, **drop_none(verbose=verbose, scope=scope)).attrs
 
 
