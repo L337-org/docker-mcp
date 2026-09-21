@@ -53,6 +53,32 @@ def test_network_inspect():
         assert network_inspect("mynet") == {"Id": "net1"}
 
 
+def test_network_inspect_omits_verbose_and_scope_unless_asked():
+    # docker-py version-checks each of these on `is not None` (verbose needs API v1.28, scope
+    # v1.31), so forwarding a literal False/None would start raising InvalidVersion against an
+    # older daemon on the plain inspect that has always worked there.
+    network = MagicMock()
+    network.attrs = {"Id": "net1"}
+    with _patch() as mock_client:
+        mock_client.return_value.networks.get.return_value = network
+        network_inspect("mynet")
+    kwargs = mock_client.return_value.networks.get.call_args.kwargs
+    assert "verbose" not in kwargs
+    assert "scope" not in kwargs
+
+
+def test_network_inspect_forwards_verbose_and_scope():
+    network = MagicMock()
+    network.attrs = {"Id": "net1", "Services": {"web": {"Tasks": []}}}
+    with _patch() as mock_client:
+        mock_client.return_value.networks.get.return_value = network
+        result = network_inspect("mynet", verbose=True, scope="swarm")
+    kwargs = mock_client.return_value.networks.get.call_args.kwargs
+    assert kwargs["verbose"] is True
+    assert kwargs["scope"] == "swarm"
+    assert "Services" in result
+
+
 def test_network_list():
     network = MagicMock()
     network.attrs = {"Id": "net1"}
