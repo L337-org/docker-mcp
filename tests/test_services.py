@@ -68,6 +68,25 @@ def test_service_list():
         assert service_list() == [{"ID": "svc1"}]
 
 
+def test_service_list_omits_status_unless_asked():
+    # docker-py version-checks `status` on `is not None`, so forwarding a literal False would start
+    # raising InvalidVersion against a pre-v1.41 daemon on the call that has always worked there.
+    with _patch() as mock_client:
+        mock_client.return_value.services.list.return_value = []
+        service_list()
+    assert "status" not in mock_client.return_value.services.list.call_args.kwargs
+
+
+def test_service_list_forwards_status_and_returns_the_task_counts():
+    service = MagicMock()
+    service.attrs = {"ID": "svc1", "ServiceStatus": {"RunningTasks": 2, "DesiredTasks": 3, "CompletedTasks": 0}}
+    with _patch() as mock_client:
+        mock_client.return_value.services.list.return_value = [service]
+        result = service_list(status=True)
+    assert mock_client.return_value.services.list.call_args.kwargs["status"] is True
+    assert result[0]["ServiceStatus"]["DesiredTasks"] == 3
+
+
 def test_list_services_managed_only_injects_label_filter():
     with _patch() as mock_client:
         mock_client.return_value.services.list.return_value = []

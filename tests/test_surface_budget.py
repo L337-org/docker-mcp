@@ -44,13 +44,13 @@ from docker_mcp.server import DISABLED_DOMAINS, NO_DESTRUCTIVE, READONLY, mcp
 MAX_SINGLE_TOOL_WIRE_BYTES = 5_300  # buildx_build, 5,108
 # Raised from 231,000 deliberately, for `swarm_task_logs`: a capability with no other route through
 # this server, priced at ~2,300 bytes and paid for once here rather than trimmed to fit.
-MAX_TOOL_WIRE_BYTES = 236_000  # 230,783
+MAX_TOOL_WIRE_BYTES = 236_000  # 232,198
 MAX_PROMPT_WIRE_BYTES = 7_900  # 7,646
 # Lowered from 6,400 with the three `docker://` listing indexes: the saving is ratcheted in here
 # rather than left as headroom, so re-adding an index has to argue for itself the same way.
 MAX_RESOURCE_WIRE_BYTES = 4_700  # 4,614, resources and templates together
 MAX_INSTRUCTIONS_BYTES = 2_900  # 2,808
-MAX_TOTAL_WIRE_BYTES = 248_000  # 245,851
+MAX_TOTAL_WIRE_BYTES = 248_000  # 247,266
 
 # Registration is gated at import time, so a switch in effect when `docker_mcp.server` was
 # imported shrinks the surface, and every budget below would pass while measuring something

@@ -151,6 +151,7 @@ def service_inspect(  # noqa: DOC101,DOC103
 @tool()
 def service_list(  # noqa: DOC101,DOC103
     filters: dict | None = None,
+    status: bool | None = None,
     managed_only: bool = False,
     host: str | None = None,
 ) -> list:
@@ -158,19 +159,29 @@ def service_list(  # noqa: DOC101,DOC103
     List swarm services.
 
     Must run against a swarm manager. One entry per service (the desired state); `service_ps`
-    lists a service's tasks, and `stack_services` groups services by stack.
+    lists a service's tasks, and `stack_services` groups services by stack. Pass `status=True`
+    for a whole-swarm health sweep: it adds each service's running-versus-desired task counts in
+    the one call, where the alternative is a `service_ps` per service. It is a count, not a
+    diagnosis - when a service comes back short, `service_ps` on that one name is what names the
+    failing task and its error.
 
     Args:
         filters: Filter by attributes (id, name, label, mode)
+        status: Add a `ServiceStatus` entry with the running, desired and completed task counts (needs daemon API
+            v1.41+); omit when only the specs are wanted
         managed_only: Only return services created by this MCP server (filters on the docker-mcp-server.managed label);
             combines with any `filters` given
 
     Returns:
-        list: One full service document ({"ID", "Spec", ...}) per service
+        list: One full service document ({"ID", "Spec", ...}) per service; with `status` each also carries
+            "ServiceStatus" ({"RunningTasks", "DesiredTasks", "CompletedTasks"})
     """
     if managed_only:
         filters = managed_filter(filters)
-    return [s.attrs for s in _get_client(host).services.list(**drop_none(filters=filters))]
+    # `status` is passed only when set: docker-py version-checks it on `is not None`, so a literal
+    # status=False would newly raise InvalidVersion against a pre-v1.41 daemon that the default
+    # call has always worked on.
+    return [s.attrs for s in _get_client(host).services.list(**drop_none(filters=filters, status=status))]
 
 
 @tool()

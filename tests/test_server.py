@@ -995,6 +995,7 @@ _EXPECTED_ENUMS = {
     "compose_config": {"format": ["yaml", "json"]},
     "compose_up": {"pull": ["always", "missing", "never"]},
     "network_create": {"scope": ["local", "global", "swarm"]},
+    "network_inspect": {"scope": ["local", "global", "swarm"]},
     "stack_deploy": {"resolve_image": ["always", "changed", "never"]},
     "scout_cves": {
         "format": ["packages", "sarif", "spdx", "gitlab", "markdown", "sbom"],
