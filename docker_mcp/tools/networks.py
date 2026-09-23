@@ -69,19 +69,40 @@ def network_create(  # noqa: DOC101,DOC103
 
 
 @tool()
-def network_inspect(id_or_name: str, host: str | None = None) -> dict:  # noqa: DOC101,DOC103
+def network_inspect(  # noqa: DOC101,DOC103
+    id_or_name: str,
+    verbose: bool | None = None,
+    scope: Literal["local", "global", "swarm"] | None = None,
+    host: str | None = None,
+) -> dict:
     """
     Return the full inspect detail for a single network.
 
     Includes the connected containers (`Containers`, keyed by container id, with each
     entry's assigned IP), IPAM config, and driver options. For a quick overview of many
     networks use `network_list` instead - its default (non-`greedy`) response omits the
-    per-network `Containers` detail for speed.
+    per-network `Containers` detail for speed. `verbose` is the swarm-overlay troubleshooting
+    switch: it adds the cluster-wide `Services` breakdown that a plain inspect never carries,
+    which is what shows whether the tasks on other nodes have actually joined the network.
+
+    Args:
+        verbose: Add the cluster-wide service/peer detail for an overlay network (needs daemon API v1.28+); omit on a
+            single-host network, where it adds nothing
+        scope: Disambiguate when the same name exists at more than one scope; omit to let the daemon choose (needs
+            daemon API v1.31+)
 
     Returns:
-        dict: Full network inspect attrs (equivalent to `docker network inspect`)
+        dict: Full network inspect attrs (equivalent to `docker network inspect`); with `verbose` also a `Services` map
+            of service name to its tasks and peers on this network
     """
-    return _get_client(host).networks.get(id_or_name).attrs
+    # Both default to None and are dropped rather than forwarded, so neither version guard is
+    # tripped by a caller who did not ask for one. docker-py checks each on `is not None` (verbose
+    # was introduced at API v1.28, scope at v1.31), so it is a *non-None* value that raises
+    # InvalidVersion: were `verbose` a plain `bool = False`, that False would trip the v1.28 guard
+    # and break the plain inspect on an older daemon it has always worked on, which is why the
+    # annotation is `bool | None`. A caller who does pass `scope` to a pre-v1.31 daemon gets the
+    # error, and should - they asked for it.
+    return _get_client(host).networks.get(id_or_name, **drop_none(verbose=verbose, scope=scope)).attrs
 
 
 @tool()
