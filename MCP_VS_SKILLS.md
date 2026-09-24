@@ -36,7 +36,7 @@ We have no commercial interest in either. Both are MIT-licensed and free.
 | **Works with** | Any MCP client: Claude Code, Claude Desktop, Cursor, Zed, Continue, ... | Claude Code, claude.ai and GitHub Copilot; **no other MCP client loads them** |
 | **Ships executable code** | Yes - a Python package you run | **No** - markdown only |
 | **Choosing the right operation** | 165 names anchored to the CLI's own structure, and 99% of descriptions name a sibling to prefer or avoid | A router table points at one domain file, which carries prose discriminators and worked examples |
-| **Getting the arguments right** | Every argument typed, 79% with an explicit default, **validated before the call runs** | The model composes a shell string; wrong flags surface only when Docker rejects them, at execution |
+| **Getting the arguments right** | Every argument typed, 80% with an explicit default, **validated before the call runs** | The model composes a shell string; wrong flags surface only when Docker rejects them, at execution |
 | **Searching the documentation** | Names are a complete always-in-context index, and `tool_list` answers structured queries (by domain, category or parameter) with a definitive negative; full descriptions are still fetched one at a time, through whatever search the client implements | The whole corpus is files on disk: greppable with standard tools, and readable end to end |
 | **Output** | Structured JSON, typed, **capped** with a `truncated` flag | Raw text/NDJSON the model must parse; bounding is a written rule |
 | **Read-only / no-destructive mode** | **Enforced** - tools are never registered | A written rule |
@@ -94,7 +94,7 @@ roughly level, with the server ahead on unusual or easily-confused operations an
 the common ones.
 
 **Getting the arguments right is where the server is properly ahead**, and this is the substantial
-half. Across 616 parameters, every one carries a declared type, 79% carry an explicit default and
+half. Across 616 parameters, every one carries a declared type, 80% carry an explicit default and
 126 are marked required. That schema is enforced by the client before the call reaches the server,
 so a wrong argument name or type is rejected as a validation error with nothing executed. The skill
 composes a shell string, and a wrong flag is caught by Docker itself at execution, which may be
