@@ -12,8 +12,7 @@ name: Weekly canary
 #      macos-latest (arm64), macos-15-intel (x86_64), and windows-latest.
 #
 # On failure the notify job files (or comments on) a deduplicated issue labeled
-# ci-failure + wf:canary — one open issue per stream, so four red Mondays make one thread, which
-# the scheduled Claude responder routine (and the humans it defers to) works from.
+# ci-failure + wf:canary — one open issue per stream, so four red Mondays make one thread.
 #
 # PRs into main also run the repo-pyproject resolution leg — the only part that exercises the
 # PR's own changes — so a dependency edit that breaks a platform is caught before merge, not the

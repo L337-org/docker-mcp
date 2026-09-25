@@ -3,9 +3,8 @@ description: >
   Opens — or comments on — a deduplicated GitHub issue describing a failed automation run.
   Dedupe key: an open issue carrying BOTH the shared `ci-failure` label and this workflow's
   stream label (e.g. `wf:release`), so repeated failures of the same pipeline collect in one
-  thread instead of spawning duplicates. The issue body is written to be actionable by the
-  scheduled Claude responder routine that polls `ci-failure` issues (as well as by a human):
-  it names the failed jobs, links the run, and states how to re-run. The calling job needs
+  thread instead of spawning duplicates. The issue body is written to be actionable: it names
+  the failed jobs, links the run, and states how to re-run. The calling job needs
   `issues: write` permission and must pass `github.token`.
 
 inputs:
