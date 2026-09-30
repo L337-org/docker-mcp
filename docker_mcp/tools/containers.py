@@ -218,8 +218,8 @@ def container_list(  # noqa: DOC101,DOC103,DOC501,DOC503
 
     Args:
         all: Show all containers, including stopped ones (default False: running only)
-        since: Only show containers created after this id or name; applied as the `since` filter
-        before: Only show containers created before this id or name; applied as the `before` filter
+        since: Only show containers created after this id or name
+        before: Only show containers created before this id or name
         limit: Maximum number of results
         filters: Filter by attributes (e.g. status, label)
         sparse: Skip inspect calls and return less detail
