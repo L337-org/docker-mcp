@@ -15,22 +15,23 @@ check could only see that a file was touched, never that the right rule reached 
 green ticks it could not justify. A rule belongs in `AGENTS.md`, or in the `architecture/` note
 that owns the detail, and which of those it is remains a judgement made at review.
 
-An `Action pins are immutable` job fails the build when any `uses:` reference in
-`.github/workflows` or `.github/actions` names a tag or branch rather than a full 40-hex commit SHA.
-A tag can be repointed by its owner at any time, so `@v7` runs whatever they last pushed to it - and
-`publish.yaml` mints an OIDC token for PyPI Trusted Publishing (`id-token: write`), pushes to GHCR
-(`packages: write`) and uploads release assets (`contents: write`), so a repointed tag would execute
-inside the jobs holding this project's strongest credentials. Trusted Publishing has no stored token
-for an attacker to steal; executing in that job is the whole attack. First-party `actions/*` get no
-exemption, and the pin costs nothing to hold because Dependabot bumps the SHA and rewrites the
-trailing `# vX.Y.Z` comment. Local `./` actions are exempt (this repo's own code at its own commit),
-and bare, quoted and uppercase SHAs are all accepted - hex is case-insensitive and GitHub resolves an
-uppercase ref, so rejecting one would fail a legitimately pinned action. The trailing version comment
-is convention, not enforced. The job is a port of the identically-named one in
-[L337-org/apt](https://github.com/L337-org/apt), which is the reference implementation;
-`send-to-influx` carries the third copy. **Keep the three in step** - the logic is deliberately
-identical, and the uppercase-SHA fix had to be chased across all three because it was written once
-and copied twice.
+The `Repository hygiene` and `Action pins are immutable` jobs (`premerge.yaml`) each run a shared
+action from [L337-org/github-workflows](https://github.com/L337-org/github-workflows), pinned by
+commit SHA, rather than a copy kept in this repository.  What each check covers, and how to run the
+hygiene check locally at the pinned commit, is in that repository's README; it is not restated here
+because it would drift.  A change to either check lands there and reaches this repository when the
+pin is bumped.
+
+The pin check matters most here because `publish.yaml` mints an OIDC token for PyPI Trusted
+Publishing (`id-token: write`), pushes to GHCR (`packages: write`) and uploads release assets
+(`contents: write`), so a repointed tag would execute inside the jobs holding this project's
+strongest credentials.  Trusted Publishing has no stored token for an attacker to steal; executing
+in that job is the whole attack.  The shared action's default directories, `.github/workflows` and
+`.github/actions`, are this repository's, so the local `file-failure-issue` action is checked too.
+
+A `Code review` workflow (`code-review.yaml`) calls the shared Claude review workflow at the same
+pinned commit.  The header of that file says when this repository asks for a review; the shared
+README describes how the review itself runs.
 
 An `mcp<2` cap existed briefly: mcp 2.0.0 removed `mcp.server.fastmcp`, which `server.py` imported
 `FastMCP` from, and an uncapped 2.2.0 shipped dead on arrival at import while every CI job stayed
