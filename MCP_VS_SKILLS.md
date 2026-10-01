@@ -296,7 +296,7 @@ So the honest summary is:
 
 - **Eager-loading client** -> the skill is dramatically cheaper: ~6-9x on a real task at full
   surface, ~2.5-3.6x even against a trimmed server, and ~140-370x at idle.
-- **Lazy-loading client** -> the server is cheaper in use, by ~2.4-3.5x at full surface and ~3.7-6.2x
+- **Lazy-loading client** -> the server is cheaper in use, by ~2.4-3.5x at full surface and ~3.6-6.0x
   when trimmed, and both are cheap at idle.
 - **Docker rarely comes up in your work** -> the skill, decisively; it costs ~140 tokens to have
   installed and you may never pay more.
