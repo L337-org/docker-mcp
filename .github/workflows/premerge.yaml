@@ -189,8 +189,8 @@ jobs:
       - name: Run pydoclint
         # `docker_mcp` explicitly, not `.`: tests/ is exempt for the same reason ruff exempts it
         # from D, and scripts/ is outside the run too. Passing a path rather than an --exclude
-        # regex is deliberate - an unanchored `build` in such a regex silently matched tools/buildx.py, so a whole module
-        # went unchecked while the run reported clean.
+        # regex is deliberate - an unanchored `build` in such a regex silently matched
+        # tools/buildx.py, so a whole module went unchecked while the run reported clean.
         run: uv run pydoclint docker_mcp
 
   pyright-run:
