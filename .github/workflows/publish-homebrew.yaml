@@ -36,8 +36,9 @@ permissions:
   contents: read
 
 # DISABLED by decision: the other channels cover distribution. The dylib linkage failure that
-# first disabled it no longer applies to current pydantic_core wheels; see architecture/distribution.md
-# ("Homebrew tap") for the evidence and the re-enable steps. Re-enable by adding:
+# first disabled it still applies to the pydantic_core version uv.lock pins; see
+# architecture/distribution.md ("Homebrew tap") for when it lifts and the re-enable steps.
+# Re-enable by adding:
 #   release:
 #     types: [published]
 on:
