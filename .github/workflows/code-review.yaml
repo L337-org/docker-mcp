@@ -1,0 +1,57 @@
+name: 'Code review'
+permissions:
+  contents: read
+
+# What this caller decides.  The shared workflow decides everything else about the review, and
+# its README describes it at the commit pinned below.
+#
+# - Opening a pull request, and every push to one, asks for a review at the depth the shared
+#   workflow picks.  A push is reviewed deliberately: the loop that invites, a reviewing agent and
+#   a coding agent trading rounds nobody chose, is accepted because a declined finding is not
+#   raised again and the shared workflow pauses automatic rounds after a bound.
+# - Reopening a pull request or marking it ready forces a full review, because either usually
+#   follows a change of approach that a delta of the newest commits would not see.
+# - A top-level comment starting `/claude-review` asks for a review at the picked depth, and
+#   `/claude-review full` forces a full one.  The command must be followed by a space, a line
+#   break or nothing, so that `/claude-reviewer` or `/claude-review fullness` do not count; a
+#   space is appended before matching to cover the last case.  GitHub runs comment-triggered
+#   workflows from the default branch, so the commands only work from `main`.
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review, synchronize]
+  issue_comment:
+    types: [created]
+
+# No concurrency group here: one at workflow level is joined by every comment on the pull
+# request, before the job's `if:` runs, and an unrelated comment would replace a queued review
+# request.  The shared workflow queues reviews on its own job instead.
+
+jobs:
+  review:
+    # Draft pull requests wait until they are ready.  A comment request is honoured on a
+    # draft, because asking is the signal.  Only people the repository trusts can ask: the
+    # review spends the allowance of whoever owns the token.
+    if: >-
+      (github.event_name == 'pull_request' && !github.event.pull_request.draft) ||
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request &&
+       (startsWith(format('{0} ', github.event.comment.body), '/claude-review ') ||
+        startsWith(github.event.comment.body, fromJSON('"/claude-review\n"')) ||
+        startsWith(github.event.comment.body, fromJSON('"/claude-review\r\n"'))) &&
+       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))
+    permissions:
+      contents: read
+      pull-requests: write
+    uses: L337-org/github-workflows/.github/workflows/claude-review.yaml@8cb828dee3175ad39277184557e9041195f3cfe2 # v1.1.1
+    with:
+      pr-number: ${{ github.event.pull_request.number || github.event.issue.number }}
+      depth: >-
+        ${{ ((github.event_name == 'pull_request' &&
+              contains(fromJSON('["reopened","ready_for_review"]'), github.event.action)) ||
+             (github.event_name == 'issue_comment' &&
+              (startsWith(format('{0} ', github.event.comment.body), '/claude-review full ') ||
+               startsWith(github.event.comment.body, fromJSON('"/claude-review full\n"')) ||
+               startsWith(github.event.comment.body, fromJSON('"/claude-review full\r\n"')))))
+            && 'full' || 'auto' }}
+      push-triggered: ${{ github.event_name == 'pull_request' && github.event.action == 'synchronize' }}
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}

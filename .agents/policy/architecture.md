@@ -3,7 +3,6 @@
 _when changing module structure, public surface, docstrings, generated files, deprecation, or log levels_
 
 - **DK.12.1** You MUST NOT treat the size limit as a risk of losing an instruction; the advisory threshold drives a notice only, and the file is still loaded in full with nothing truncated.
-- **DK.12.2** The real danger is that a large file makes its instructions less likely to be followed, because the load-bearing rules end up buried among rationale and detail irrelevant to the task in hand.
 - **DK.12.3** You MUST decide what stays per sentence, by asking whether it is an instruction or an explanation; instructions stay whatever the file then measures, and explanation moves.
 - **DK.12.4** You MUST treat our 40,000-character target as a review trigger rather than a cap, and MUST NOT remove a rule in order to reach a number.
 - **DK.12.5** Every edit to one of these files MUST be an editing pass on the section it touches rather than an append, cutting reasoning that has become obvious, an alternative nobody will re-propose, or a war story whose lesson a test now enforces.
@@ -15,7 +14,6 @@ _when changing module structure, public surface, docstrings, generated files, de
 - **DK.13.2** You MUST extract verbatim by line range with a script rather than retyping or paraphrasing, re-derive the ranges from version control, and assert equality before cutting anything.
 - **DK.13.3** You MUST demote headings by one level while tracking fenced-code state, or a shell comment inside a code block gets mangled.
 - **DK.13.4** You MUST use three separate commits in order - the faithful move, the restyle, then the cut and the new pointers - because mixing the move with the cut makes the move unreviewable.
-- **DK.13.5** You MUST check for duplication before relocating, and merge into an existing document rather than creating a third home.
 - **DK.13.6** You MUST restyle text that crosses from an exempt file into a shipping one, in its own commit.
 - **DK.13.7** You MUST sweep the whole repository for stale pointers afterwards, including maintainer scripts, unit-file comments, test docstrings and the security, contributing and readme files, then confirm every relative link resolves.
 - **DK.13.8** You MUST verify no rule was lost semantically rather than by line diff, comparing the emphasised rule leads with whitespace and dashes normalised, and reading the reported misses rather than trusting the count.
@@ -32,13 +30,11 @@ _when changing module structure, public surface, docstrings, generated files, de
 - **DK.14.2** First, the trigger MUST be recognisable before the rule is needed, because an on-demand file is read only when something in context says to read it.
 - **DK.14.3** Anything governing how every turn is conducted MUST stay resident whatever it costs, as MUST a fallback whose trigger is the absence of an applicable rule.
 - **DK.14.4** Second, it MUST actually save something: for a section of size S with a description of size D and an invocation rate P, lazy loading only pays when P is below one minus D over S.
-- **DK.14.5** A section needed on most sessions is more expensive lazily loaded than resident, and the smaller the section the worse the arithmetic.
 - **DK.14.6** You MUST bias the threshold towards keeping things resident, because an unnecessarily resident section costs a fixed predictable number of characters while a rule that should have loaded and did not costs a wrong action, which is unbounded.
 - **CS.2.1** New functionality MUST go in the existing module that owns that area rather than in a new file; a new file is for a genuinely new area.
 - **CS.2.2** Private helpers MUST be marked as such by the language's convention and MUST stay out of the public surface.
 - **CS.2.3** The public surface MUST be declared explicitly - an export list, an index module, a visibility keyword - rather than implied by naming, because documentation generators, linters and import checks all need the declaration.
 - **CS.2.4** Adding a module MUST follow a documented checklist enumerating everything updated in the same change: registration, any central map, the export list, tests, user documentation, architecture notes and the assistant-instruction file.
-- **CS.2.5** Writing that checklist MUST be part of adding the first such module, because this-area-is-fragile-be-careful is not a process.
 - **CS.6.1** Every public module, class and function MUST carry a docstring, and a private helper MUST carry one where the reason for its existence is not obvious from the code.
 - **CS.6.2** Docstrings MUST be written so that adopting a generator later is a change to the generator's configuration and nothing else.
 - **CS.6.3** A project MUST use one docstring format, chosen once and enforced by the linter, because a generator parses the format and a codebase using three produces broken output whichever is configured.
@@ -78,7 +74,6 @@ _when changing module structure, public surface, docstrings, generated files, de
 - **LS.12.1** Every diagnostic MUST go to standard error and standard output MUST carry only the program's own data, because a caller piping the output expects data and a diagnostic mixed into it corrupts whatever parses it.
 - **LS.12.2** You MUST NOT treat a success or progress message as data; anything a machine is meant to read goes to standard output, and everything a human is meant to read about how the run went goes to standard error.
 - **SK.3.1** Where the platform provides a credential store or helper, you MUST use it rather than reading, caching or re-deriving credentials yourself.
-- **SK.3.2** A subprocess environment allow-list MUST include the keys the platform's own credential helpers need, because omitting them fails as what looks like a permissions bug.
 - **SK.8.1** A permission check SHOULD consider whether a real secret is actually present, so that freshly-installed placeholder defaults do not trip an alarm users then learn to ignore.
 - **DV.3.1** You MUST treat names in emitted data - metric names and field keys, table columns, file formats, event names - as an interface, even though nothing type-checks them and nothing fails when they change.
 - **DV.3.2** A rename in emitted data MUST either write the new name alongside the old for a transition period, or be a major version; additions are safe.
@@ -105,7 +100,6 @@ _when changing module structure, public surface, docstrings, generated files, de
 - **AC.5.2** Untouched legacy items SHOULD be cleaned opportunistically rather than churned.
 - **AC.6.1** Every factual claim in a description MUST be verified against the primary source - the actual library or API documentation, or the installed artefact - because the consumer relies on it without being able to check it, so an unverified claim ships into something with no way to notice.
 - **AC.7.1** Where the product can be reduced, the reduction MUST remove capabilities from the advertised surface entirely, MUST apply consistently across every kind of exposed object, and MUST be inspectable at runtime.
-- **AC.7.2** A capability MUST NOT be registered and then refuse when called, because that leaks its own existence and invites a bypass.
 - **AC.8.1** A model-facing parameter MUST NOT be given a deprecation window or a transitional alias, because the consumer fetches the schema at the start of every session and holds no stored copy, so the alias costs context on every session to cover a window shorter than one conversation.
 - **AC.8.2** Before adding an alias anywhere you MUST ask whether the caller persists; where it does, the ordinary deprecation rules apply unchanged, because this is an exception for one kind of consumer rather than a relaxation of them.
 - **AC.9.1** A parameter typed as a sequence MUST have its type checked at the boundary, because a string satisfies that type and iterates per character, so a single value arrives as a list of letters and fails somewhere unrelated.

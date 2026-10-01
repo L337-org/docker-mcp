@@ -459,9 +459,7 @@ one to clear a code, and read the raise site first rather than trusting the name
 there. Error behaviour a caller can act on goes in the usage paragraph instead, in terms of what
 happens rather than which class was constructed.
 
-**`scripts/check-repo-hygiene.py` is vendored byte-identically across repositories** and
-self-verifies against a shared digest, so a change to it must land in every one of them with each
-digest regenerated. Tests are exempt: a test's name is its documentation.
+Tests are exempt: a test's name is its documentation.
 
 ## The advertised surface has a budget
 
