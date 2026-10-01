@@ -102,6 +102,54 @@ def test_list_containers_with_filters():
     assert kwargs["filters"] == {"status": "running"}
 
 
+def test_list_containers_sends_since_and_before_as_filters():
+    """
+    The anchors must ride `filters`, never the same-named top-level kwargs.
+
+    docker-py forwards `since=`/`before=` to `GET /containers/json` as query params, but moby's
+    `getContainersJSON` reads only `all`, `size`, `limit` and `filters` - so the top-level spelling
+    is dropped on the floor and the caller silently gets an unfiltered list.
+    """
+    with _patch() as mock_client:
+        mock_client.return_value.containers.list.return_value = []
+        container_list(since="abc", before="def", filters={"status": "running"})
+    kwargs = mock_client.return_value.containers.list.call_args.kwargs
+    assert kwargs["filters"] == {"status": "running", "since": "abc", "before": "def"}
+    assert "since" not in kwargs
+    assert "before" not in kwargs
+
+
+def test_list_containers_leaves_filters_alone_without_anchors():
+    with _patch() as mock_client:
+        mock_client.return_value.containers.list.return_value = []
+        container_list(filters={"status": "running"})
+    kwargs = mock_client.return_value.containers.list.call_args.kwargs
+    assert kwargs["filters"] == {"status": "running"}
+
+
+def test_list_containers_does_not_mutate_the_callers_filters():
+    caller_filters = {"status": "running"}
+    with _patch() as mock_client:
+        mock_client.return_value.containers.list.return_value = []
+        container_list(since="abc", filters=caller_filters)
+    assert caller_filters == {"status": "running"}
+
+
+def test_list_containers_refuses_an_anchor_that_contradicts_filters():
+    with _patch() as mock_client:
+        mock_client.return_value.containers.list.return_value = []
+        with pytest.raises(ToolInputError, match="given twice"):
+            container_list(since="abc", filters={"since": "def"})
+    mock_client.return_value.containers.list.assert_not_called()
+
+
+def test_list_containers_accepts_an_anchor_that_agrees_with_filters():
+    with _patch() as mock_client:
+        mock_client.return_value.containers.list.return_value = []
+        container_list(before="abc", filters={"before": "abc"})
+    assert mock_client.return_value.containers.list.call_args.kwargs["filters"] == {"before": "abc"}
+
+
 def test_list_containers_managed_only_injects_label_filter():
     with _patch() as mock_client:
         mock_client.return_value.containers.list.return_value = []
