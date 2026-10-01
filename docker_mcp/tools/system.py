@@ -476,7 +476,6 @@ def host_list() -> list[dict]:
 def system_login(  # noqa: DOC101,DOC103
     username: str,
     password: str,
-    email: str | None = None,
     registry: str | None = None,
     reauth: bool = False,
     dockercfg_path: str | None = None,
@@ -493,7 +492,6 @@ def system_login(  # noqa: DOC101,DOC103
     Args:
         username: Registry username
         password: Registry password or token
-        email: Registry account email
         registry: URL to the registry (defaults to Docker Hub)
         reauth: Force re-authentication even if valid credentials exist
         dockercfg_path: Path to a custom dockercfg file
@@ -501,10 +499,15 @@ def system_login(  # noqa: DOC101,DOC103
     Returns:
         dict: The login response: {"Status"} always; "IdentityToken" only when the registry issues one
     """
+    # No `email`: the Engine dropped it from `AuthConfig` at API v1.56 (moby's
+    # `registry.AuthConfig` no longer declares the field), and nothing had read it since
+    # `docker login --email` was removed in 17.06 - `/auth` decodes the body without
+    # DisallowUnknownFields, so the value is discarded rather than rejected. docker-py still puts
+    # `email` in the request body and in its credential cache, so exposing it advertised a
+    # parameter no daemon acts on. Do not re-add it.
     return _get_client(host).login(
         username=username,
         password=password,
-        email=email,
         registry=registry,
         reauth=reauth,
         dockercfg_path=dockercfg_path,

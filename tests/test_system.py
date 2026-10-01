@@ -86,10 +86,11 @@ def test_login():
     with patch("docker_mcp.tools.system._get_client", return_value=mock_client):
         result = system_login("user", "pass", registry="https://example.com")
     assert result == {"Status": "Login Succeeded"}
+    # No `email`: the Engine removed it from AuthConfig at API v1.56 and had ignored it long
+    # before that, so the parameter is gone from the tool and must not reappear in the call.
     mock_client.login.assert_called_once_with(
         username="user",
         password="pass",
-        email=None,
         registry="https://example.com",
         reauth=False,
         dockercfg_path=None,

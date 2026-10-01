@@ -199,7 +199,7 @@ def container_inspect(id_or_name: str, host: str | None = None) -> dict:  # noqa
 
 
 @tool()
-def container_list(  # noqa: DOC101,DOC103
+def container_list(  # noqa: DOC101,DOC103,DOC501,DOC503
     all: bool = False,
     since: str | None = None,
     before: str | None = None,
@@ -235,11 +235,30 @@ def container_list(  # noqa: DOC101,DOC103
     """
     if managed_only:
         filters = managed_filter(filters)
+    # `since`/`before` go in `filters`, not in the top-level kwargs docker-py still forwards to
+    # `GET /containers/json` as query params of the same name. moby dropped those query params from
+    # that handler: `getContainersJSON` now builds its ContainerListOptions from `all`, `size`,
+    # `limit` and `filters` only, with no version gate, and the Engine API spec has documented
+    # exactly those four since v1.51. So the top-level spelling is on its way to being silently
+    # ignored - the caller asks for a window and gets the whole list back, with no error to notice.
+    # The filter spelling is the documented one and has been in moby's `acceptedPsFilterTags` since
+    # 1.13 (API v1.25), below anything this server can reach, so it is safe on every daemon. Do not
+    # pass them as top-level kwargs again.
+    for key, value in (("since", since), ("before", before)):
+        if value is None:
+            continue
+        clash = (filters or {}).get(key)
+        if clash is not None and clash != value:
+            raise ToolInputError(
+                f"`{key}` was given twice and the two disagree: {value!r} as an argument, "
+                f"{clash!r} in `filters`. Pass one or the other."
+            )
+        filters = {**(filters or {}), key: value}
     kwargs: dict = {
         "all": all,
         "sparse": sparse,
         "ignore_removed": ignore_removed,
-        **drop_none(since=since, before=before, limit=limit, filters=filters),
+        **drop_none(limit=limit, filters=filters),
     }
     return [c.attrs for c in _get_client(host).containers.list(**kwargs)]
 
