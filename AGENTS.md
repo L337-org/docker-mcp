@@ -55,7 +55,7 @@ Five channels ship from this repo, all detailed in
   (`gavinlucas/docker-mcp-server`) when the opt-in `DOCKERHUB_*` release secrets are configured.
 - **A Claude Desktop Extension (`.mcpb`)** attached to each GitHub Release.
 - **A Homebrew tap** in `L337-org/homebrew-tap`, currently **paused** — do not re-enable it without
-  reading the four-step re-enable procedure in the architecture note.
+  reading the five-step re-enable procedure in the architecture note.
 - **A Claude Code agent skill** in `skills/l337-docker/`, attached to each Release as a `.tar.gz`.
   Deliberately **not** a channel for the server: it is a CLI-only *alternative* to it. Its guards are
   conventions a model can skip, not refusals at a call boundary — never describe it as equivalent.

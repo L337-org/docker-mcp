@@ -35,8 +35,10 @@ name: 'Publish Homebrew formula'
 permissions:
   contents: read
 
-# DISABLED: automatic release trigger removed pending resolution of the Homebrew dylib linkage
-# issue (pydantic_core wheels lack -headerpad_max_install_names). Re-enable by adding:
+# DISABLED by decision: the other channels cover distribution. The dylib linkage failure that
+# first disabled it still applies to the pydantic_core version uv.lock pins; see
+# architecture/distribution.md ("Homebrew tap") for when it lifts and the re-enable steps.
+# Re-enable by adding:
 #   release:
 #     types: [published]
 on:
