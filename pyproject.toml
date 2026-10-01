@@ -116,7 +116,7 @@ ignore-decorators = [
 
 # pydoclint checks the docstring against the signature; ruff's D417 only checks a section that
 # already exists, so a function documenting no parameters passes it. Run over `docker_mcp` only:
-# `tests/` is exempt as it is from D.
+# `tests/` is exempt as it is from D, and `scripts/` is outside the run too.
 #
 # Two exemptions are per function, both asserted by tests/test_docstrings.py - a tool's docstring
 # is its advertised description with the types already in `inputSchema` (CS.6.14), and

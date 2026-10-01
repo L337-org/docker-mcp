@@ -12,8 +12,9 @@ permissions:
 # - Reopening a pull request or marking it ready forces a full review, because either usually
 #   follows a change of approach that a delta of the newest commits would not see.
 # - A top-level comment starting `/claude-review` asks for a review at the picked depth, and
-#   `/claude-review full` forces a full one.  A space is appended before matching so that
-#   `/claude-reviewer` or `/claude-review fullness` do not count.  GitHub runs comment-triggered
+#   `/claude-review full` forces a full one.  The command must be followed by a space, a line
+#   break or nothing, so that `/claude-reviewer` or `/claude-review fullness` do not count; a
+#   space is appended before matching to cover the last case.  GitHub runs comment-triggered
 #   workflows from the default branch, so the commands only work from `main`.
 on:
   pull_request:
@@ -33,19 +34,23 @@ jobs:
     if: >-
       (github.event_name == 'pull_request' && !github.event.pull_request.draft) ||
       (github.event_name == 'issue_comment' && github.event.issue.pull_request &&
-       startsWith(format('{0} ', github.event.comment.body), '/claude-review ') &&
+       (startsWith(format('{0} ', github.event.comment.body), '/claude-review ') ||
+        startsWith(github.event.comment.body, fromJSON('"/claude-review\n"')) ||
+        startsWith(github.event.comment.body, fromJSON('"/claude-review\r\n"'))) &&
        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))
     permissions:
       contents: read
       pull-requests: write
-    uses: L337-org/github-workflows/.github/workflows/claude-review.yaml@eacd1a299ea09599157cb40a8909aed47c050b3a # v1.1.0
+    uses: L337-org/github-workflows/.github/workflows/claude-review.yaml@8cb828dee3175ad39277184557e9041195f3cfe2 # v1.1.1
     with:
       pr-number: ${{ github.event.pull_request.number || github.event.issue.number }}
       depth: >-
         ${{ ((github.event_name == 'pull_request' &&
               contains(fromJSON('["reopened","ready_for_review"]'), github.event.action)) ||
              (github.event_name == 'issue_comment' &&
-              startsWith(format('{0} ', github.event.comment.body), '/claude-review full ')))
+              (startsWith(format('{0} ', github.event.comment.body), '/claude-review full ') ||
+               startsWith(github.event.comment.body, fromJSON('"/claude-review full\n"')) ||
+               startsWith(github.event.comment.body, fromJSON('"/claude-review full\r\n"')))))
             && 'full' || 'auto' }}
       push-triggered: ${{ github.event_name == 'pull_request' && github.event.action == 'synchronize' }}
     secrets:
