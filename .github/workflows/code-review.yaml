@@ -41,7 +41,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
-    uses: L337-org/github-workflows/.github/workflows/claude-review.yaml@8cb828dee3175ad39277184557e9041195f3cfe2 # v1.1.1
+    uses: L337-org/github-workflows/.github/workflows/claude-review.yaml@6136c02585a1a6f27eac1e733b45134d287f1616 # v1.1.2
     with:
       pr-number: ${{ github.event.pull_request.number || github.event.issue.number }}
       depth: >-
