@@ -32,7 +32,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Repository conventions hold
-        uses: L337-org/github-workflows/actions/repo-hygiene@6136c02585a1a6f27eac1e733b45134d287f1616 # v1.1.2
+        uses: L337-org/github-workflows/actions/repo-hygiene@17b9df0328001e9f15abbac77118a31124993b15 # v1.1.3
 
   action-pins:
     # Every `uses:` in .github/workflows and .github/actions names a full commit SHA, checked by
@@ -50,7 +50,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Every `uses:` must name a 40-hex commit SHA
-        uses: L337-org/github-workflows/actions/action-pins@6136c02585a1a6f27eac1e733b45134d287f1616 # v1.1.2
+        uses: L337-org/github-workflows/actions/action-pins@17b9df0328001e9f15abbac77118a31124993b15 # v1.1.3
 
   fresh-resolve-import:
     # Answers a question `uv sync --locked` (used by every other job here) cannot: would a
