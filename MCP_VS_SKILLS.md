@@ -392,7 +392,8 @@ Read it to answer "is X covered?" or "how would the skill do X?". It is not need
 between the two, which is what everything above is for.
 
 Legend: **✓** direct CLI equivalent; **≈** covered by a documented recipe (loop, `curl`, template);
-**-** no equivalent, see [Structural gaps](#structural-gaps).
+**-** no equivalent, with the reason in the row; the differences in kind are under
+[Structural gaps](#structural-gaps).
 
 ## Tools
 
