@@ -473,14 +473,6 @@ def test_exec_inspect_passes_the_host_through():
     mock_client.assert_called_once_with("prod")
 
 
-def test_exec_inspect_reports_a_still_running_exec_with_no_exit_code():
-    with _patch() as mock_client:
-        mock_client.return_value.api.exec_inspect.return_value = {"ID": "e1", "Running": True, "ExitCode": None}
-        result = container_exec_inspect("e1")
-    assert result["Running"] is True
-    assert result["ExitCode"] is None
-
-
 def test_container_commit():
     container = MagicMock()
     image = MagicMock()

@@ -755,8 +755,8 @@ def container_exec(  # noqa: DOC101,DOC103
         tty: Allocate a pseudo-TTY
         privileged: Run with extended privileges
         user: User to run the command as
-        detach: Start the command and return at once, with no output and a null `exit_code`; read the outcome
-            with `container_exec_inspect`
+        detach: Start the command and return at once: no output, and a null `exit_code` unless it finished
+            instantly; read the real outcome with `container_exec_inspect`
         environment: Environment variables, as `{"KEY": "value"}` or a list of "KEY=value" strings
         workdir: Working directory inside the container
         demux: Return stdout and stderr separately
@@ -791,12 +791,13 @@ def container_exec_inspect(exec_id: str, host: str | None = None) -> dict:  # no
     """
     Report whether one detached exec is still running, and its exit code once it is not.
 
-    The only route to the outcome of a `container_exec(detach=True)` call, which returns as the
-    command starts and so has no exit code to give. Ids come from `container_inspect`'s `ExecIDs`,
-    which lists only the execs *still running*, so read it before the command finishes - afterwards
-    the id still inspects here, it is just no longer discoverable. Poll until `Running` is false;
-    `ProcessConfig` tells concurrent execs apart. An attached `container_exec` already returns its
-    own exit code.
+    The reliable route to the outcome of a `container_exec(detach=True)` call, which reads the exit
+    code the instant the command starts and so reports null for anything still running. Ids come
+    from `container_inspect`'s `ExecIDs`, which lists only the execs *still running*, so read it
+    before the command finishes - the id keeps working here for a few minutes afterwards, until the
+    daemon's five-minute reaper drops the record, and stops at once if the container is removed.
+    Poll until `Running` is false; `ProcessConfig` tells concurrent execs apart. An attached
+    `container_exec` already returns its own exit code.
 
     Args:
         exec_id: Exec instance id, as `container_inspect` lists under `ExecIDs`
