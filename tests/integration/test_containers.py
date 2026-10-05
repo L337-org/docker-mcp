@@ -2,10 +2,12 @@
 # run with: uv run pytest -m integration
 
 import json
+import re
 import time
 import uuid
 
 import pytest
+from docker.errors import NotFound
 
 from docker_mcp.tools.containers import (
     container_stats,
@@ -136,3 +138,29 @@ def test_container_exec_inspect_round_trips_a_detached_exec(log_emitting_contain
     # Inspectable by id after it has finished, even though it has left the container's `ExecIDs`.
     assert finished["ExitCode"] == 7
     assert exec_id not in (container_inspect(log_emitting_container).get("ExecIDs") or [])
+
+
+def test_container_exec_inspect_stops_answering_once_the_container_is_removed():
+    # The docstring promises the id stops working at once when the container goes, not after the
+    # daemon's periodic clean-up. Its own container rather than a fixture, because removing it is
+    # the step under test and a fixture's teardown would then fail on a container already gone.
+    name = f"dmcp-it-{uuid.uuid4().hex[:8]}"
+    try:
+        container_run("alpine:3", command=["sleep", "120"], name=name)
+    except Exception as exc:  # noqa: BLE001 - narrowed below: only a named environmental cause skips
+        fail_unless_environmental_error(exc, what="starting the exec-inspect removal container")
+    removed = False
+    try:
+        container_exec(name, ["sleep", "60"], detach=True)
+        exec_ids = container_inspect(name).get("ExecIDs") or []
+        assert len(exec_ids) == 1, f"expected exactly one running exec, got {exec_ids}"
+        exec_id = exec_ids[0]
+        assert container_exec_inspect(exec_id)["Running"] is True
+
+        container_remove(name, force=True)
+        removed = True
+        with pytest.raises(NotFound, match=re.escape(f"No such exec instance: {exec_id}")):
+            container_exec_inspect(exec_id)
+    finally:
+        if not removed:
+            container_remove(name, force=True)

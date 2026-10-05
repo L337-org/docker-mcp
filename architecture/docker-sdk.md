@@ -59,6 +59,10 @@ say why. **Anything deliberately not wrapped, or wrapped in an unobvious way, be
   `self._result`.)
 - **`plugin_privileges`'s `api.plugin_privileges`** - stays low-level permanently. `PluginCollection`
   exposes no privileges call; docker-py's own `install` calls this same low-level method internally.
+- **`container_exec_inspect`'s `api.exec_inspect`** - stays low-level permanently. docker-py's only
+  high-level exec surface is `Container.exec_run`, which creates, starts and inspects an exec in one
+  call and then discards the exec id; neither `Container` nor `ContainerCollection` exposes an
+  exec-inspect. `APIClient.exec_inspect` is the only public path. Nothing to migrate to.
 - **`swarm_update`'s `api.update_swarm`** - stays low-level permanently. The high-level
   `Swarm.update()` builds its request body from docker-py kwargs via `create_swarm_spec`, so it
   cannot resubmit the daemon's own spec document; against a replace-semantics endpoint that silently
