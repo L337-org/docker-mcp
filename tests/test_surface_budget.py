@@ -44,13 +44,18 @@ from docker_mcp.server import DISABLED_DOMAINS, NO_DESTRUCTIVE, READONLY, mcp
 MAX_SINGLE_TOOL_WIRE_BYTES = 5_300  # buildx_build, 5,108
 # Raised from 231,000 deliberately, for `swarm_task_logs`: a capability with no other route through
 # this server, priced at ~2,300 bytes and paid for once here rather than trimmed to fit.
-MAX_TOOL_WIRE_BYTES = 236_000  # 232,198
+MAX_TOOL_WIRE_BYTES = 236_000  # 233,441
 MAX_PROMPT_WIRE_BYTES = 7_900  # 7,646
 # Lowered from 6,400 with the three `docker://` listing indexes: the saving is ratcheted in here
 # rather than left as headroom, so re-adding an index has to argue for itself the same way.
 MAX_RESOURCE_WIRE_BYTES = 4_700  # 4,614, resources and templates together
 MAX_INSTRUCTIONS_BYTES = 2_900  # 2,808
-MAX_TOTAL_WIRE_BYTES = 248_000  # 247,266
+# Raised from 248,000 deliberately, for `container_exec_inspect`: the only route to the outcome of a
+# detached exec, since docker-py's `Container.exec_run` discards the exec id it created. ~1,200 bytes
+# for a tool that makes an existing one (`container_exec(detach=True)`) answerable at all. Note the
+# tool ceiling above did not move: this is the total catching up with an anchor that was 734 bytes
+# from the cap, not new room for the next addition to spend.
+MAX_TOTAL_WIRE_BYTES = 250_000  # 248,509
 
 # Registration is gated at import time, so a switch in effect when `docker_mcp.server` was
 # imported shrinks the surface, and every budget below would pass while measuring something

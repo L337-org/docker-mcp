@@ -19,6 +19,7 @@ from docker_mcp.tools.containers import (
     container_top,
     container_create,
     container_exec,
+    container_exec_inspect,
     container_export,
     container_inspect,
     container_archive_get,
@@ -453,6 +454,31 @@ def test_exec_in_container_decodes_output():
         mock_client.return_value.containers.get.return_value = container
         result = container_exec("web", ["sh", "-c", "echo ok"])
     assert result == {"exit_code": 0, "output": "ok\n"}
+
+
+def test_exec_inspect_returns_the_engine_payload():
+    payload = {"ID": "e1", "Running": False, "ExitCode": 2, "ProcessConfig": {"entrypoint": "sh"}}
+    with _patch() as mock_client:
+        mock_client.return_value.api.exec_inspect.return_value = payload
+        assert container_exec_inspect("e1") == payload
+    mock_client.return_value.api.exec_inspect.assert_called_once_with("e1")
+
+
+def test_exec_inspect_passes_the_host_through():
+    # The one failure the multi-host design exists to prevent: a low-level call site that resolves
+    # the client without the caller's host silently answers from the default daemon.
+    with _patch() as mock_client:
+        mock_client.return_value.api.exec_inspect.return_value = {"ID": "e1", "Running": True, "ExitCode": None}
+        container_exec_inspect("e1", host="prod")
+    mock_client.assert_called_once_with("prod")
+
+
+def test_exec_inspect_reports_a_still_running_exec_with_no_exit_code():
+    with _patch() as mock_client:
+        mock_client.return_value.api.exec_inspect.return_value = {"ID": "e1", "Running": True, "ExitCode": None}
+        result = container_exec_inspect("e1")
+    assert result["Running"] is True
+    assert result["ExitCode"] is None
 
 
 def test_container_commit():

@@ -755,7 +755,8 @@ def container_exec(  # noqa: DOC101,DOC103
         tty: Allocate a pseudo-TTY
         privileged: Run with extended privileges
         user: User to run the command as
-        detach: Detach from the exec
+        detach: Start the command and return at once, with no output and a null `exit_code`; read the outcome
+            with `container_exec_inspect`
         environment: Environment variables, as `{"KEY": "value"}` or a list of "KEY=value" strings
         workdir: Working directory inside the container
         demux: Return stdout and stderr separately
@@ -783,6 +784,33 @@ def container_exec(  # noqa: DOC101,DOC103
     if isinstance(output, bytes):
         output = output.decode("utf-8", errors="replace")
     return {"exit_code": result.exit_code, "output": output}
+
+
+@tool()
+def container_exec_inspect(exec_id: str, host: str | None = None) -> dict:  # noqa: DOC101,DOC103
+    """
+    Report whether one detached exec is still running, and its exit code once it is not.
+
+    The only route to the outcome of a `container_exec(detach=True)` call, which returns as the
+    command starts and so has no exit code to give. Ids come from `container_inspect`'s `ExecIDs`,
+    which lists only the execs *still running*, so read it before the command finishes - afterwards
+    the id still inspects here, it is just no longer discoverable. Poll until `Running` is false;
+    `ProcessConfig` tells concurrent execs apart. An attached `container_exec` already returns its
+    own exit code.
+
+    Args:
+        exec_id: Exec instance id, as `container_inspect` lists under `ExecIDs`
+
+    Returns:
+        dict: {"ID", "ContainerID", "Running", "ExitCode", "Pid", "ProcessConfig", ...}; `ExitCode` is null for
+            as long as `Running` is true
+    """
+    # Stays on the low-level `client.api`, and deliberately: docker-py's whole high-level exec surface
+    # is `Container.exec_run`, which creates, starts and inspects an exec in one call and then throws
+    # the exec id away, so it can neither hand back a handle nor address an instance that already
+    # exists. `APIClient.exec_inspect` is the documented low-level call for GET /exec/{id}/json and the
+    # only route to a detached exec's result. There is nothing high-level to migrate this onto.
+    return cast(dict, _get_client(host).api.exec_inspect(exec_id))
 
 
 @tool()

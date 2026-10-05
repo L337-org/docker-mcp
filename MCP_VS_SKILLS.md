@@ -396,7 +396,7 @@ Legend: **✓** direct CLI equivalent; **≈** covered by a documented recipe (l
 
 ## Tools
 
-### containers (25) - `reference/containers.md`
+### containers (26) - `reference/containers.md`
 
 | Tool | CLI |
 |---|---|
@@ -414,6 +414,7 @@ Legend: **✓** direct CLI equivalent; **≈** covered by a documented recipe (l
 | container_top ✓ | `docker top` |
 | container_diff ✓ | `docker diff` |
 | container_exec ✓ | `docker exec` |
+| container_exec_inspect **-** | **no CLI equivalent** - the CLI cannot address an exec instance after `docker exec -d` |
 | container_commit ✓ | `docker commit` |
 | container_export ✓ | `docker export -o` |
 | container_update ✓ | `docker update` |

@@ -2,12 +2,16 @@
 # run with: uv run pytest -m integration
 
 import json
+import time
 import uuid
 
 import pytest
 
 from docker_mcp.tools.containers import (
     container_stats,
+    container_exec,
+    container_exec_inspect,
+    container_inspect,
     container_list,
     container_remove,
     container_run,
@@ -103,3 +107,32 @@ def test_container_stats_tool_against_real_container(healthy_container):
     # The raw snapshot carries the cgroup sections the summary is derived from.
     assert "memory_stats" in snapshot
     assert "cpu_stats" in snapshot
+
+
+def test_container_exec_inspect_round_trips_a_detached_exec(log_emitting_container):
+    # The whole point of the tool: a detached exec returns no exit code, so this is the only route
+    # to its outcome. Start one that outlives the assertions, find it by id, then read it to the end.
+    started = container_exec(log_emitting_container, ["sh", "-c", "sleep 3; exit 7"], detach=True)
+    assert started["exit_code"] is None
+
+    exec_ids = container_inspect(log_emitting_container).get("ExecIDs") or []
+    assert len(exec_ids) == 1, f"expected exactly one running exec, got {exec_ids}"
+    exec_id = exec_ids[0]
+
+    running = container_exec_inspect(exec_id)
+    assert running["ID"] == exec_id
+    assert running["Running"] is True
+    assert running["ExitCode"] is None
+
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        finished = container_exec_inspect(exec_id)
+        if not finished["Running"]:
+            break
+        time.sleep(0.5)
+    else:
+        pytest.fail(f"exec {exec_id} was still running after 30s")
+
+    # Inspectable by id after it has finished, even though it has left the container's `ExecIDs`.
+    assert finished["ExitCode"] == 7
+    assert exec_id not in (container_inspect(log_emitting_container).get("ExecIDs") or [])

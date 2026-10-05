@@ -80,6 +80,7 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "container_stats": ToolCategory.READ_ONLY,
     "container_top": ToolCategory.READ_ONLY,
     "container_exec": ToolCategory.MUTATING,
+    "container_exec_inspect": ToolCategory.READ_ONLY,
     "container_commit": ToolCategory.MUTATING,
     "container_diff": ToolCategory.READ_ONLY,
     "container_rename": ToolCategory.MUTATING,
