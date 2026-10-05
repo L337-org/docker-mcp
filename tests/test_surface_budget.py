@@ -44,18 +44,21 @@ from docker_mcp.server import DISABLED_DOMAINS, NO_DESTRUCTIVE, READONLY, mcp
 MAX_SINGLE_TOOL_WIRE_BYTES = 5_300  # buildx_build, 5,108
 # Raised from 231,000 deliberately, for `swarm_task_logs`: a capability with no other route through
 # this server, priced at ~2,300 bytes and paid for once here rather than trimmed to fit.
-MAX_TOOL_WIRE_BYTES = 236_000  # 233,597
+MAX_TOOL_WIRE_BYTES = 236_000  # 233,579
 MAX_PROMPT_WIRE_BYTES = 7_900  # 7,646
 # Lowered from 6,400 with the three `docker://` listing indexes: the saving is ratcheted in here
 # rather than left as headroom, so re-adding an index has to argue for itself the same way.
 MAX_RESOURCE_WIRE_BYTES = 4_700  # 4,614, resources and templates together
 MAX_INSTRUCTIONS_BYTES = 2_900  # 2,808
-# Raised from 248,000 deliberately, for `container_exec_inspect`: the only reliable route to the outcome of a
-# detached exec, since docker-py's `Container.exec_run` discards the exec id it created. ~1,330 bytes
-# for a tool that makes an existing one (`container_exec(detach=True)`) answerable at all. Note the
-# tool ceiling above did not move: this is the total catching up with an anchor that was 734 bytes
-# from the cap, not new room for the next addition to spend.
-MAX_TOTAL_WIRE_BYTES = 250_000  # 248,665
+# Raised from 248,000 deliberately, for `container_exec_inspect`: the only reliable route to the
+# outcome of a detached exec, since docker-py's `Container.exec_run` discards the exec id it
+# created. Measured, not estimated: the tool is 1,315 wire bytes and the `container_exec` docstring
+# edit that goes with it is 142, so the total moved 1,457 (247,190 to 248,647). Only 810 bytes were
+# free, so the raise is what buys an existing tool (`container_exec(detach=True)`) an answer at all;
+# the tool ceiling above did not need to move. NOTE the two anchors this replaced read 232,198 and
+# 247,266 and were simply wrong - main measures 232,122 and 247,190, 76 bytes lower - so re-measure
+# rather than subtracting from whatever the comment last claimed.
+MAX_TOTAL_WIRE_BYTES = 250_000  # 248,647
 
 # Registration is gated at import time, so a switch in effect when `docker_mcp.server` was
 # imported shrinks the surface, and every budget below would pass while measuring something

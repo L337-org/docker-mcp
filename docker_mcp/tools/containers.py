@@ -795,7 +795,7 @@ def container_exec_inspect(exec_id: str, host: str | None = None) -> dict:  # no
     code the instant the command starts and so reports null for anything still running. Ids come
     from `container_inspect`'s `ExecIDs`, which lists only the execs *still running*, so read it
     before the command finishes - the id keeps working here for a few minutes afterwards, until the
-    daemon's five-minute reaper drops the record, and stops at once if the container is removed.
+    daemon discards the record, and stops at once if the container is removed.
     Poll until `Running` is false; `ProcessConfig` tells concurrent execs apart. An attached
     `container_exec` already returns its own exit code.
 
