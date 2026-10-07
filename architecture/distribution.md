@@ -30,7 +30,7 @@ A plugin for Claude Code and Cowork, listed in Anthropic's plugin directory: a s
 
 **Why `uvx` and a lock.** The directory does not accept an MCP server shipped as an `.mcpb`, and its locked launch supports exactly `uvx <package>==<version>` with a `uv.lock` beside the manifest, which is the precondition for the Verified badge ([pre-submission checklist](https://claude.com/docs/plugins/pre-submission-checklist)). `claude-plugin/pyproject.toml` is the launch project the lock is generated from: it pins the release, mirrors the root's `constraint-dependencies`, and is never installed (`package = false`).
 
-**How it publishes.** After `verify`, the plugin jobs in `publish.yaml` run `scripts/claude_plugin_release.py` from the workflow's own commit, taking only the plugin's content from the release tag; a tag without a plugin skips them. Every check lives in that script except the version pins, which `preflight` checks against the tag; before the branch moves all of these must hold:
+**How it publishes.** After `verify`, the plugin jobs in `publish.yaml` run `scripts/claude_plugin_release.py` from the workflow's own commit, taking only the plugin's content from the release tag; a tag without a plugin skips them. Every check lives in that script; `preflight` also checks the version pins against the tag, so a mismatch fails before anything publishes. Before the branch moves all of these must hold:
 - PyPI serves the release, and the generated lock pins it and every dependency from pypi.org by hash;
 - the plugin installs and starts on each OS in the matrix, and its settings take effect;
 - the new commit is signed by GitHub, its parent is the branch head that was read, and its tree is exactly the folder that was tested.
