@@ -780,7 +780,7 @@ jobs:
     # holds every check, so the pre-merge rehearsal (premerge.yaml) runs the same code.
     #
     # The script runs from the workflow's own commit, not the release tag's checkout, so a manual
-    # re-run of an older tag uses today's guards (including the refusal to move the branch
+    # re-run of an older tag uses the workflow's guards (including the refusal to move the branch
     # backwards); only the plugin's content is taken from the tag.  A tag from before the plugin
     # existed has none, and the plugin jobs are skipped with a notice.
     name: Build Claude plugin
