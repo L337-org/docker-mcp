@@ -1,0 +1,16 @@
+# The Claude plugin's launch project.  It is never installed itself: it exists so the release can
+# lock the server and every one of its dependencies into a uv.lock beside the manifest, which is
+# what Claude Code's locked launch installs.  There is no uv.lock here on main - it can only be
+# generated once the release is on PyPI, so scripts/claude_plugin_release.py generates it after
+# publishing and commits it to the claude-plugin-release branch (see architecture/distribution.md).
+[project]
+name = "docker-mcp-server-claude-plugin"
+version = "2.2.7"
+requires-python = ">=3.14"
+dependencies = ["docker-mcp-server==2.2.7"]
+
+[tool.uv]
+package = false
+# Mirrors the root pyproject.toml's [tool.uv] constraint-dependencies (checked by the release
+# script and tests/test_claude_plugin.py), so the plugin's lock honours the same security floors.
+constraint-dependencies = ["urllib3>=2.7.0"]
