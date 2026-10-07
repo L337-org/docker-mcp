@@ -262,3 +262,13 @@ def test_an_env_reference_to_an_undeclared_option_is_refused(tmp_path):
     (plugin / ".claude-plugin" / "plugin.json").write_text(json.dumps(manifest))
     with pytest.raises(release.ReleaseError, match="undeclared option 'nope'"):
         release.plugin_env(plugin, {})
+
+
+def test_a_pypi_build_refuses_to_run_without_a_token(tmp_path, monkeypatch, capsys):
+    """Whether to reuse an existing plugin tag depends on reading it reliably, which an anonymous
+    request did not do during a GitHub incident; so the PyPI build will not run anonymously."""
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+    status = release.main(["build", "--version", _VERSION, "--source", "pypi", "--out", str(tmp_path / "out")])
+    assert status == 1
+    assert "needs GH_TOKEN" in capsys.readouterr().err
+    assert not (tmp_path / "out").exists()

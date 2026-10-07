@@ -444,6 +444,11 @@ def build(args: argparse.Namespace) -> None:
     version, out = args.version, Path(args.out).resolve()
     if out.exists():
         raise ReleaseError(f"{out} already exists; build into a fresh directory")
+    if args.source == "pypi" and not os.environ.get("GH_TOKEN"):
+        # Whether this release's plugin commit already exists decides whether to rebuild, so the
+        # answer must be current: during a GitHub incident an anonymous read reported an existing
+        # tag as absent while an authenticated read moments later saw it.
+        raise ReleaseError("a PyPI build needs GH_TOKEN to check for an existing plugin tag; set it to any read token")
     plugin = out / PLUGIN_DIRNAME
     shutil.copytree(REPO_ROOT / PLUGIN_DIRNAME, plugin, ignore=shutil.ignore_patterns("uv.lock", ".DS_Store"))
     check_plugin_folder(plugin, version)
@@ -1072,7 +1077,15 @@ def publish(args: argparse.Namespace) -> None:
     if not info["verified"] or info["parents"]:
         raise ReleaseError(f"commit {target} is not a verified parentless commit: {info}")
     if info["tree"] != local_tree:
-        raise ReleaseError(f"commit {target} has tree {info['tree']}, not the tested folder's {local_tree}")
+        raise ReleaseError(
+            f"commit {target} has tree {info['tree']}, not the tested folder's {local_tree}. "
+            + (
+                f"{tag} already exists, so the build should have fetched that commit rather than building a new "
+                "one; re-run the whole plugin job chain so build, smoke and publish all use the tagged commit."
+                if decision.action == "move-to-tag" and not args.rollback
+                else "Nothing was moved."
+            )
+        )
     log(f"commit {target}: verified ({info['reason']}), parentless, tree {info['tree']}")
 
     if decision.action != "tag-head":
