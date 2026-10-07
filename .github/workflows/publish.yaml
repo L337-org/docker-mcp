@@ -191,7 +191,7 @@ jobs:
         run: uv build
 
       - name: Keep the built files
-        # Saved separately (RP.3.2) so a manual rescue is possible, and so the Claude plugin job
+        # Saved separately so a manual rescue is possible, and so the Claude plugin job
         # can check that what PyPI serves is byte-identical to what this job built and uploaded.
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -778,6 +778,11 @@ jobs:
     # exists (a re-run), that commit is fetched and re-tested instead of being rebuilt.  On a
     # rollback, the named release's plugin commit is fetched.  scripts/claude_plugin_release.py
     # holds every check, so the pre-merge rehearsal (premerge.yaml) runs the same code.
+    #
+    # The script runs from the workflow's own commit, not the release tag's checkout, so a manual
+    # re-run of an older tag uses today's guards (including the refusal to move the branch
+    # backwards); only the plugin's content is taken from the tag.  A tag from before the plugin
+    # existed has none, and the plugin jobs are skipped with a notice.
     name: Build Claude plugin
     runs-on: ubuntu-latest
     # A lock and a validate; downloads from PyPI.
@@ -788,21 +793,39 @@ jobs:
       && (inputs.claude_plugin_rollback || needs.verify.result == 'success')
     permissions:
       contents: read
+    outputs:
+      has_plugin: ${{ steps.plugin.outputs.has_plugin }}
     env:
       VERSION: ${{ needs.preflight.outputs.version }}
       GH_TOKEN: ${{ github.token }}
     steps:
-      - name: Check out the release tag
+      - name: Check out the workflow's own commit, for the release script
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Check out the release tag, for the plugin's content
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.preflight.outputs.tag }}
+          path: release-src
+
+      - name: Does this release have a Claude plugin?
+        id: plugin
+        run: |
+          if [ "${{ inputs.claude_plugin_rollback }}" = true ] || [ -f release-src/claude-plugin/pyproject.toml ]; then
+            echo "has_plugin=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::${{ needs.preflight.outputs.tag }} has no claude-plugin/pyproject.toml; the Claude plugin jobs are skipped."
+            echo "has_plugin=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Set up Python environment
+        if: steps.plugin.outputs.has_plugin == 'true'
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.14"
 
       - name: Set up uv
+        if: steps.plugin.outputs.has_plugin == 'true'
         uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           # The version the Dockerfile and canary pin, so the lock is written by a known uv.
@@ -810,26 +833,29 @@ jobs:
           enable-cache: false
 
       - name: Install the Claude Code CLI for `claude plugin validate`
-        if: ${{ !inputs.claude_plugin_rollback }}
+        if: steps.plugin.outputs.has_plugin == 'true' && !inputs.claude_plugin_rollback
         # Pinned: the validator's rules change between releases.  It needs no login.
         run: npm install --global @anthropic-ai/claude-code@2.1.292
 
       - name: Fetch the files the pypi job built
-        if: ${{ !inputs.claude_plugin_rollback }}
+        if: steps.plugin.outputs.has_plugin == 'true' && !inputs.claude_plugin_rollback
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: python-dist
           path: release-dist
 
       - name: Build and check the plugin
-        if: ${{ !inputs.claude_plugin_rollback }}
-        run: python scripts/claude_plugin_release.py build --version "$VERSION" --source pypi --expect-dist release-dist --out plugin-build
+        if: steps.plugin.outputs.has_plugin == 'true' && !inputs.claude_plugin_rollback
+        run: |
+          python scripts/claude_plugin_release.py build --version "$VERSION" --source pypi \
+            --source-root release-src --expect-dist release-dist --out plugin-build
 
       - name: Fetch the plugin commit to roll back to
         if: ${{ inputs.claude_plugin_rollback }}
         run: python scripts/claude_plugin_release.py fetch --version "$VERSION" --out plugin-build
 
       - name: Keep the build for the smoke and publish jobs
+        if: steps.plugin.outputs.has_plugin == 'true'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: claude-plugin-build
@@ -846,10 +872,10 @@ jobs:
     # claim to.  On Linux it also calls a real tool against the runner's Docker daemon.
     name: Smoke-test Claude plugin (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    # Two installs from PyPI plus four server sessions; Intel-free runners, so wheels only.
+    # Two installs from PyPI and a server session for each settings case; no Intel runner, so wheels only.
     timeout-minutes: 30
     needs: [preflight, claude-plugin-build]
-    if: always() && needs.claude-plugin-build.result == 'success'
+    if: always() && needs.claude-plugin-build.result == 'success' && needs.claude-plugin-build.outputs.has_plugin == 'true'
     permissions:
       contents: read
     strategy:
@@ -860,10 +886,8 @@ jobs:
       run:
         shell: bash
     steps:
-      - name: Check out the release tag
+      - name: Check out the workflow's own commit, for the release script
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ needs.preflight.outputs.tag }}
 
       - name: Set up Python environment
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -899,7 +923,7 @@ jobs:
     # A handful of API calls.
     timeout-minutes: 10
     needs: [preflight, claude-plugin-build, claude-plugin-smoke]
-    if: always() && needs.claude-plugin-smoke.result == 'success'
+    if: always() && needs.claude-plugin-smoke.result == 'success' && needs.claude-plugin-build.outputs.has_plugin == 'true'
     permissions:
       contents: read
     # Two releases moving the branch at once could interleave its read-back; one at a time.
@@ -917,11 +941,9 @@ jobs:
           echo "::warning::PLUGIN_RELEASE_CLIENT_ID or PLUGIN_RELEASE_APP_PRIVATE_KEY is not set: the Claude plugin for $VERSION was built and tested but NOT published."
           echo "Claude plugin: **skipped** (App credentials unset)" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Check out the release tag
+      - name: Check out the workflow's own commit, for the release script
         if: env.APP_CLIENT_ID != '' && env.APP_KEY_SET == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ needs.preflight.outputs.tag }}
 
       - name: Set up Python environment
         if: env.APP_CLIENT_ID != '' && env.APP_KEY_SET == 'true'
@@ -949,9 +971,11 @@ jobs:
         if: env.APP_CLIENT_ID != '' && env.APP_KEY_SET == 'true'
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
+          TAG: ${{ needs.preflight.outputs.tag }}
           ROLLBACK: ${{ inputs.claude_plugin_rollback && 'true' || 'false' }}
         run: |
-          args=(publish --version "$VERSION" --build plugin-build --release-commit "$(git rev-parse HEAD)")
+          release_commit="$(gh api "repos/$GITHUB_REPOSITORY/commits/$TAG" -q .sha)"
+          args=(publish --version "$VERSION" --build plugin-build --release-commit "$release_commit")
           if [ "$ROLLBACK" = true ]; then args+=(--rollback); fi
           python scripts/claude_plugin_release.py "${args[@]}"
 

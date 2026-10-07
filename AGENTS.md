@@ -56,7 +56,7 @@ These channels ship from this repo, all detailed in
 - **A Claude Desktop Extension (`.mcpb`)** attached to each GitHub Release.
 - **A Claude plugin** in `claude-plugin/`, for Anthropic's plugin directory. It launches the PyPI
   release with a pinned `uvx` and mirrors the `.mcpb`'s settings. After `verify`, the release
-  pipeline locks it against PyPI, tests it on three OSes and publishes it, through a GitHub App, as
+  pipeline locks it against PyPI, tests it on each OS in the release matrix and publishes it, through a GitHub App, as
   a plugin-only commit on the `claude-plugin-release` branch the directory follows; every pull
   request rehearses that with the same script. Never grant the App the Workflows permission.
 - **A Homebrew tap** in `L337-org/homebrew-tap`, currently **paused** — do not re-enable it without

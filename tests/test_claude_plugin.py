@@ -57,7 +57,7 @@ def test_plugin_launch_project_pins_the_same_release_and_constraints():
     """The lock is generated from claude-plugin/pyproject.toml, so it must pin what plugin.json runs.
 
     Its constraint-dependencies mirror the root's, so the plugin's lock honours the same security
-    floors (`urllib3>=2.7.0` today) that the project's own lock does.
+    floors that the project's own lock does.
     """
     version = _pyproject_version()
     plugin_project = tomllib.loads((_PLUGIN_DIR / "pyproject.toml").read_text(encoding="utf-8"))

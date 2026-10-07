@@ -161,7 +161,7 @@ jobs:
     # the version, the same tools registered, and the plugin's settings take effect.
     runs-on: ${{ matrix.os }}
     name: Claude plugin rehearsal (smoke, ${{ matrix.os }})
-    # Two installs plus four server sessions.
+    # Two installs and a server session for each settings case.
     timeout-minutes: 30
     needs: [claude-plugin-rehearsal-build]
     permissions:

@@ -58,7 +58,8 @@ DEFAULT_REPO = "L337-org/docker-mcp"
 MAX_FILE_BYTES = 256 * 1024
 MAX_FILES = 512
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"}
-# Caps on what this script reads from the network or a child process (SU.4.1).
+# Caps on what this script reads from the network or a child process, so nothing external can make
+# it buffer without bound.
 MAX_DOWNLOAD_BYTES = 64 * 1024 * 1024
 MAX_MCP_LINE_BYTES = 16 * 1024 * 1024
 HTTP_TIMEOUT = 60
@@ -446,14 +447,15 @@ def build(args: argparse.Namespace) -> None:
         raise ReleaseError(f"{out} already exists; build into a fresh directory")
     if args.source == "pypi" and not os.environ.get("GH_TOKEN"):
         # Whether this release's plugin commit already exists decides whether to rebuild, so the
-        # answer must be current: during a GitHub incident an anonymous read reported an existing
-        # tag as absent while an authenticated read moments later saw it.
+        # check is made authenticated; a stale "absent" is still caught later, by publish refusing
+        # a tagged commit whose tree differs from the one tested.
         raise ReleaseError("a PyPI build needs GH_TOKEN to check for an existing plugin tag; set it to any read token")
     plugin = out / PLUGIN_DIRNAME
-    shutil.copytree(REPO_ROOT / PLUGIN_DIRNAME, plugin, ignore=shutil.ignore_patterns("uv.lock", ".DS_Store"))
+    source_root = Path(args.source_root).resolve()
+    shutil.copytree(source_root / PLUGIN_DIRNAME, plugin, ignore=shutil.ignore_patterns("uv.lock", ".DS_Store"))
     check_plugin_folder(plugin, version)
 
-    root = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    root = tomllib.loads((source_root / "pyproject.toml").read_text(encoding="utf-8"))
     plugin_pyproject = tomllib.loads((plugin / "pyproject.toml").read_text(encoding="utf-8"))
     root_constraints = root.get("tool", {}).get("uv", {}).get("constraint-dependencies", [])
     if plugin_pyproject.get("tool", {}).get("uv", {}).get("constraint-dependencies", []) != root_constraints:
@@ -1045,7 +1047,15 @@ def publish(args: argparse.Namespace) -> None:
         raise ReleaseError(f"the build's files hash to {local_tree}, not the {record['tree']} that was tested")
 
     state = gh.state(branch, tag)
-    decision = decide(version, local_tree, state, rollback=args.rollback)
+    try:
+        decision = decide(version, local_tree, state, rollback=args.rollback)
+    except ReleaseError as exc:
+        if not args.dry_run:
+            raise
+        # A rehearsal of a pull request that predates a newer release would be refused, rightly for
+        # a real publish; for a rehearsal it is information, not a failure.
+        log(f"dry run: publishing {version} now would be refused: {exc}")
+        return
     log(f"branch {branch}: {state.head or 'absent'} ({state.head_version or '-'}); tag {tag}: {state.tag or 'absent'}")
     log(f"decision: {decision.action} - {decision.reason}")
     if args.dry_run or decision.action == "noop":
@@ -1089,10 +1099,10 @@ def publish(args: argparse.Namespace) -> None:
         )
     log(f"commit {target}: verified ({info['reason']}), parentless, tree {info['tree']}")
 
-    # Writes, not reads, are the source of truth here.  During a GitHub incident a read reported an
-    # existing tag as absent, so the tag is created before the branch moves: creating a ref fails if
-    # it already exists, which stops a run that misread the state before anything visible changes.
-    # Each write's own response says where the ref now points, so no separate read-back is trusted.
+    # Writes, not reads, are the source of truth here, because a read of a recently created ref can
+    # be stale.  The tag is created before the branch moves: creating a ref fails if it already
+    # exists, which stops a run that misread the state before anything visible changes.  Each write's
+    # own response says where the ref now points, so no separate read-back is trusted.
     if state.tag is None:
         try:
             _, created_tag = gh.call("POST", "git/refs", {"ref": f"refs/tags/{tag}", "sha": target})
@@ -1146,6 +1156,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--dist", help="local wheels (required with --source local)")
     p.add_argument("--expect-dist", help="the files the release job built, to compare with PyPI's")
     p.add_argument("--tag-prefix", default=DEFAULT_TAG_PREFIX)
+    p.add_argument(
+        "--source-root",
+        default=str(REPO_ROOT),
+        help="the checkout whose claude-plugin/ and pyproject.toml to build (default: this script's own)",
+    )
     p.set_defaults(func=build)
 
     p = sub.add_parser("smoke", help="install the built plugin and check the server")

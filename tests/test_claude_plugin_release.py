@@ -265,10 +265,104 @@ def test_an_env_reference_to_an_undeclared_option_is_refused(tmp_path):
 
 
 def test_a_pypi_build_refuses_to_run_without_a_token(tmp_path, monkeypatch, capsys):
-    """Whether to reuse an existing plugin tag depends on reading it reliably, which an anonymous
-    request did not do during a GitHub incident; so the PyPI build will not run anonymously."""
+    """Whether to reuse an existing plugin tag depends on reading it reliably, so the PyPI build
+    checks authenticated and will not run anonymously."""
     monkeypatch.delenv("GH_TOKEN", raising=False)
     status = release.main(["build", "--version", _VERSION, "--source", "pypi", "--out", str(tmp_path / "out")])
     assert status == 1
     assert "needs GH_TOKEN" in capsys.readouterr().err
     assert not (tmp_path / "out").exists()
+
+
+# --------------------------------------------------------------------------------------------
+# publish(): the order of writes, and what happens when one of them goes wrong
+# --------------------------------------------------------------------------------------------
+
+
+class _FakeGitHub:
+    """Stands in for the GitHub class: serves a fixed state and records every write in order.
+
+    Shaped on the class's own methods (state, commit, call, ref) and on the REST responses the
+    script reads - a ref's ``object.sha`` and a created object's ``sha`` - per the Git refs and Git
+    database API reference; nothing here is a GitHub behaviour the tests assert on.
+    """
+
+    def __init__(self, state, tree, *, fail_tag=False, move_lands_on=None):
+        self._state, self._tree = state, tree
+        self._fail_tag, self._move_lands_on = fail_tag, move_lands_on
+        self.writes: list[tuple[str, str]] = []
+
+    def state(self, branch, tag):
+        return self._state
+
+    def commit(self, sha):
+        return {"tree": self._tree, "parents": [], "verified": True, "reason": "valid"}
+
+    def ref(self, ref):
+        raise AssertionError("publish must confirm refs from write responses, not reads")
+
+    def call(self, method, path, body=None):
+        body = body or {}
+        self.writes.append((method, path))
+        if path in ("git/blobs", "git/trees", "git/commits"):
+            return 201, {"sha": "new-commit" if path == "git/commits" else "x"}
+        if path == "git/refs" and body["ref"].startswith("refs/tags/"):
+            if self._fail_tag:
+                raise release.ReleaseError("POST git/refs failed with HTTP 422: Reference already exists")
+            return 201, {"object": {"sha": body["sha"]}}
+        # A branch move: report where it landed.  Moving back to the previous head always lands.
+        moving_back = body["sha"] == self._state.head
+        return 200, {"object": {"sha": body["sha"] if moving_back else (self._move_lands_on or body["sha"])}}
+
+
+def _built(tmp_path) -> tuple[Path, str]:
+    build_dir = tmp_path / "build"
+    shutil.copytree(_ROOT / "claude-plugin", build_dir / "claude-plugin")
+    tree = release.git_tree_sha(release.read_folder(build_dir / "claude-plugin"))
+    release.write_build_record(build_dir, _VERSION, "pypi", tree)
+    return build_dir, tree
+
+
+def _publish(monkeypatch, fake, build_dir, *extra):
+    monkeypatch.setattr(release, "GitHub", lambda repo, token: fake)
+    return release.main(["publish", "--version", _VERSION, "--build", str(build_dir), *extra])
+
+
+def test_publish_tags_before_it_moves_the_branch(tmp_path, monkeypatch):
+    build_dir, tree = _built(tmp_path)
+    fake = _FakeGitHub(release.BranchState("old", "0.0.1", "t0", None), tree)
+    assert _publish(monkeypatch, fake, build_dir) == 0
+    ref_writes = [w for w in fake.writes if w[1].startswith("git/refs")]
+    assert ref_writes == [("POST", "git/refs"), ("PATCH", f"git/refs/heads/{release.DEFAULT_BRANCH}")]
+
+
+def test_nothing_moves_when_the_tag_cannot_be_created(tmp_path, monkeypatch, capsys):
+    build_dir, tree = _built(tmp_path)
+    fake = _FakeGitHub(release.BranchState("old", "0.0.1", "t0", None), tree, fail_tag=True)
+    assert _publish(monkeypatch, fake, build_dir) == 1
+    assert not [w for w in fake.writes if "heads/" in w[1]]
+    assert "the branch was not moved" in capsys.readouterr().err
+
+
+def test_a_move_that_lands_elsewhere_is_put_back(tmp_path, monkeypatch, capsys):
+    build_dir, tree = _built(tmp_path)
+    fake = _FakeGitHub(release.BranchState("old", "0.0.1", "t0", None), tree, move_lands_on="somewhere-else")
+    assert _publish(monkeypatch, fake, build_dir) == 1
+    heads = [w for w in fake.writes if "heads/" in w[1]]
+    assert len(heads) == 2, "expected the move and then the move back"
+    assert "moved it back to old" in capsys.readouterr().err
+
+
+def test_a_run_that_only_needs_its_tag_leaves_the_branch_alone(tmp_path, monkeypatch):
+    build_dir, tree = _built(tmp_path)
+    fake = _FakeGitHub(release.BranchState("head", _VERSION, tree, None), tree)
+    assert _publish(monkeypatch, fake, build_dir) == 0
+    assert fake.writes == [("POST", "git/refs")]
+
+
+def test_a_dry_run_reports_a_refusal_without_failing_or_writing(tmp_path, monkeypatch, capsys):
+    build_dir, tree = _built(tmp_path)
+    fake = _FakeGitHub(release.BranchState("newer", "99.0.0", "t9", "tagged"), tree)
+    assert _publish(monkeypatch, fake, build_dir, "--dry-run") == 0
+    assert fake.writes == []
+    assert "would be refused" in capsys.readouterr().out
