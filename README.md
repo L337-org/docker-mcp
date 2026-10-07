@@ -474,3 +474,7 @@ the operations you request. The full statement is in [PRIVACY.md](https://github
 ## Contributing
 
 Contributions are welcome. The project values a tight mapping between the Docker SDK's public surface and the MCP tools we expose. See [CONTRIBUTING.md](https://github.com/L337-org/docker-mcp/blob/main/CONTRIBUTING.md) for the project layout, tool conventions, the checklist for adding a new tool module, and local development setup.
+
+## Trademarks
+
+docker-mcp-server is an independent open-source project.  It is not affiliated with, endorsed by or sponsored by Docker, Inc.  Docker is a trademark or registered trademark of Docker, Inc.

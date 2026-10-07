@@ -161,3 +161,14 @@ def test_documentation_hosts_in_the_disclosures_match_the_server():
     expected = {urlparse(url).hostname for url in [DOCKER_DOCS_BASE_URL, *EXTERNAL_SECTIONS.values()]}
     for doc in (_PLUGIN_DIR / "README.md", _ROOT / "PRIVACY.md"):
         assert _documentation_hosts_named_in(doc) == expected, f"{doc.name} documentation hosts have drifted"
+
+
+def test_every_readme_states_the_project_is_not_affiliated_with_docker():
+    """The plugin's name contains a brand, so each listing's description says whose project it is.
+
+    The plugin README is what directory reviewers read; README.md and DOCKERHUB.md are the PyPI,
+    GitHub and Docker Hub descriptions.
+    """
+    for doc in (_PLUGIN_DIR / "README.md", _ROOT / "README.md", _ROOT / "DOCKERHUB.md"):
+        text = " ".join(doc.read_text(encoding="utf-8").split())
+        assert "not affiliated with, endorsed by or sponsored by Docker, Inc." in text, doc.name

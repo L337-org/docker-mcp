@@ -41,3 +41,7 @@ Set these under `/plugin` > **Installed** > **Configure**.  All are optional.
 
 Full documentation, including remote daemons and the security model, is in the
 [project README](https://github.com/L337-org/docker-mcp#readme).  Licensed MIT.
+
+## Trademarks
+
+docker-mcp-server is an independent open-source project.  It is not affiliated with, endorsed by or sponsored by Docker, Inc.  Docker is a trademark or registered trademark of Docker, Inc.
