@@ -22,6 +22,7 @@ wheels
 .agents
 tests
 skills
+claude-plugin
 .DS_Store
 *~
 *.bak

@@ -1,0 +1,130 @@
+"""The Claude plugin in `claude-plugin/` must stay a faithful second front-end to the `.mcpb`.
+
+Nothing generates `plugin.json` from `manifest.json`, and nothing restamps it at release: Anthropic's
+directory reads it as committed at the commit `latest-release` moves to. So every fact the two share
+is asserted here rather than left to a bump checklist.
+"""
+
+import json
+import os
+import re
+import tomllib
+from pathlib import Path
+
+_ROOT = Path(__file__).resolve().parent.parent
+_PLUGIN_DIR = _ROOT / "claude-plugin"
+_PLUGIN_JSON = _PLUGIN_DIR / ".claude-plugin" / "plugin.json"
+_MANIFEST = _ROOT / "manifest.json"
+_SERVER = "docker-mcp-server"
+
+
+def _plugin() -> dict:
+    return json.loads(_PLUGIN_JSON.read_text(encoding="utf-8"))
+
+
+def _manifest() -> dict:
+    return json.loads(_MANIFEST.read_text(encoding="utf-8"))
+
+
+def _pyproject_version() -> str:
+    return tomllib.loads((_ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
+
+
+def test_plugin_version_and_uvx_pin_match_pyproject():
+    """The plugin's version and the release its `uvx` launch pins both move with pyproject.toml.
+
+    A stale pin is the failure that matters: the directory would keep serving the previous server
+    under a new plugin version.  `preflight` checks the same pair against the release tag.
+    """
+    version = _pyproject_version()
+    plugin = _plugin()
+    assert plugin["version"] == version, (
+        f"claude-plugin plugin.json version {plugin['version']!r} != pyproject.toml {version!r} - bump them together"
+    )
+    server = plugin["mcpServers"][_SERVER]
+    assert server["command"] == "uvx"
+    assert server["args"] == [f"{_SERVER}=={version}"], (
+        f"plugin uvx args {server['args']!r} must pin exactly {_SERVER}=={version}: the directory blocks an "
+        "unpinned launcher, and a stale pin ships the previous release"
+    )
+
+
+def test_plugin_settings_mirror_the_mcpb_install_dialog():
+    """Same options, in the same order, with the same labels, help text, types and defaults.
+
+    A string option with no default in the `.mcpb` gets an explicit `""` in the plugin: without a
+    default, the plugin's `${user_config.KEY}` reference has no value to substitute, whereas `""` is
+    read by the server as unset, which is what the `.mcpb` gives for a blank field.
+    """
+    manifest = _manifest()["user_config"]
+    plugin = _plugin()["userConfig"]
+    assert list(plugin) == list(manifest)
+    for key, option in manifest.items():
+        expected = {
+            "type": option["type"],
+            "title": option["title"],
+            "description": option["description"],
+            "default": option.get("default", ""),
+        }
+        assert plugin[key] == expected, f"plugin userConfig {key!r} has drifted from manifest.json"
+
+
+def test_plugin_passes_settings_to_the_server_as_the_mcpb_does():
+    """The env mapping is the contract with the server; both front-ends must use the same one."""
+    manifest_env = _manifest()["server"]["mcp_config"]["env"]
+    assert _plugin()["mcpServers"][_SERVER]["env"] == manifest_env
+    # Every option is wired through and nothing references an option that does not exist, which
+    # `claude plugin validate` reports as an error but nothing here would otherwise notice.
+    referenced = {m for v in manifest_env.values() for m in re.findall(r"\$\{user_config\.(\w+)\}", v)}
+    assert referenced == set(_plugin()["userConfig"])
+
+
+def test_plugin_listing_metadata_matches_the_bundle():
+    """The two listings describe the same server, so the shared identity fields must agree."""
+    manifest = _manifest()
+    plugin = _plugin()
+    assert plugin["name"] == manifest["name"] == _SERVER
+    assert plugin["displayName"] == manifest["display_name"]
+    assert plugin["description"] == manifest["description"]
+    assert plugin["author"] == manifest["author"]
+    assert plugin["license"] == manifest["license"]
+    assert plugin["homepage"] == manifest["homepage"]
+    assert plugin["repository"] == manifest["repository"]["url"]
+    assert plugin["keywords"] == manifest["keywords"]
+    assert plugin["documentationUrl"] == manifest["documentation"]
+    assert plugin["supportUrl"] == manifest["support"]
+    assert plugin["privacyPolicyUrl"] == manifest["privacy_policies"][0]
+
+
+def test_plugin_icon_is_a_real_copy_of_the_project_icon():
+    """The directory blocks a symlink it loads, so the icon is a copy - and must stay identical."""
+    assert _plugin()["icon"] == "./icon.png"
+    icon = _PLUGIN_DIR / "icon.png"
+    assert not icon.is_symlink()
+    assert icon.read_bytes() == (_ROOT / "assets" / "icon.png").read_bytes(), (
+        "claude-plugin/icon.png differs from assets/icon.png - copy it again"
+    )
+
+
+def test_plugin_folder_holds_nothing_the_directory_rejects():
+    """Symlinks anywhere in the plugin folder block submission; a root CLAUDE.md is never loaded."""
+    for dirpath, dirnames, filenames in os.walk(_PLUGIN_DIR):
+        for name in dirnames + filenames:
+            assert not (Path(dirpath) / name).is_symlink(), f"symlink in plugin folder: {Path(dirpath) / name}"
+    assert not (_PLUGIN_DIR / "CLAUDE.md").exists()
+
+
+def test_plugin_readme_meets_the_directory_minimum_and_names_no_image():
+    """The directory requires 40 words outside code blocks.  It also holds a version for review when
+    a document names a bundled image or font, which is what flagged the whole repository the first
+    time it was validated."""
+    text = (_PLUGIN_DIR / "README.md").read_text(encoding="utf-8")
+    prose = re.sub(r"```.*?```", "", text, flags=re.DOTALL)
+    assert len(prose.split()) >= 40
+    assert "icon.png" not in text
+
+
+def test_plugin_is_excluded_from_the_other_channels_artifacts():
+    """Both ignore files are denylists, so a new top-level directory ships by default."""
+    assert "claude-plugin/" in (_ROOT / ".mcpbignore").read_text(encoding="utf-8").splitlines()
+    assert "claude-plugin" in (_ROOT / ".dockerignore").read_text(encoding="utf-8").splitlines()

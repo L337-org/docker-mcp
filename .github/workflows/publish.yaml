@@ -4,7 +4,7 @@ name: Release
 # workflow_dispatch with the tag) it runs:
 #
 #   preflight ─→ pypi ──────────────┐
-#             ├→ images ─→ hub-desc ├─→ registry ─→ verify
+#             ├→ images ─→ hub-desc ├─→ registry ─→ verify ─→ latest-release
 #             └→ mcpb ──────────────┘        (notify files an issue if anything failed)
 #
 # This replaces the four independent publish-*.yaml workflows that all fanned out on the release
@@ -114,6 +114,15 @@ jobs:
           if manifest != version:
               errors.append(f"manifest.json version {manifest!r} != release version {version!r}")
 
+          # Unlike manifest.json, nothing restamps the plugin: the directory reads it as committed
+          # at the commit latest-release moves to, so a stale pin would ship the previous server.
+          plugin = json.load(open("claude-plugin/.claude-plugin/plugin.json"))
+          if plugin["version"] != version:
+              errors.append(f"claude-plugin plugin.json version {plugin['version']!r} != release version {version!r}")
+          args = plugin["mcpServers"]["docker-mcp-server"]["args"]
+          if args != [f"docker-mcp-server=={version}"]:
+              errors.append(f"claude-plugin uvx args {args!r} do not pin docker-mcp-server=={version}")
+
           lock = tomllib.load(open("uv.lock", "rb"))
           entries = [p for p in lock["package"]
                      if p["name"] == "docker-mcp-server" and p.get("source", {}).get("editable") == "."]
@@ -127,7 +136,8 @@ jobs:
               for e in errors:
                   print(f"::error::{e}")
               print("::error::Nothing has been published. To fix: bump the versions "
-                    "(pyproject.toml + manifest.json, then `uv lock`), merge, delete this release "
+                    "(pyproject.toml + manifest.json + claude-plugin/.claude-plugin/plugin.json, "
+                    "then `uv lock`), merge, delete this release "
                     "AND its tag, and publish a new release from the fixed commit.")
               sys.exit(1)
           print(f"Version consistency OK: {version}")
@@ -727,6 +737,75 @@ jobs:
           echo "::error::MCP Registry never listed version ${VERSION}"
           exit 1
 
+  latest-release:
+    # Fast-forwards the `latest-release` branch to the release tag's commit. Anthropic's plugin
+    # directory follows that branch, so the Claude plugin (claude-plugin/) can only ever point at a
+    # release that has published and passed `verify`: the plugin's `uvx docker-mcp-server==X.Y.Z`
+    # pin would name a version PyPI does not have yet if the directory followed main.
+    #
+    # The push uses the LATEST_RELEASE_DEPLOY_KEY deploy key, the only bypass actor on the ruleset
+    # that restricts creating and updating the branch. A second ruleset with no bypass actors still
+    # applies to it, blocking deletion, force-pushes and unsigned commits - so this job can only
+    # fast-forward to an already-signed commit. Both rulesets are described in
+    # architecture/distribution.md.
+    #
+    # Re-running the current release is a no-op ("Everything up-to-date"). Re-running a SUPERSEDED
+    # tag fails here, because moving the branch backwards is not a fast-forward; that is the
+    # intended outcome, unlike the image `:latest` tags, which a superseded re-run does repoint.
+    # With the secret unset the job reports the skip and succeeds (an opt-in channel, like the
+    # Docker Hub mirror).
+    name: Advance latest-release branch
+    runs-on: ubuntu-latest
+    # One checkout, one push, one API read.
+    timeout-minutes: 10
+    needs: [preflight, verify]
+    permissions:
+      contents: read
+    # Hoisted to job-level env so step `if:`s can test it; see the images job.
+    env:
+      DEPLOY_KEY: ${{ secrets.LATEST_RELEASE_DEPLOY_KEY }}
+      TAG: ${{ needs.preflight.outputs.tag }}
+    steps:
+      - name: Report a skipped channel
+        if: env.DEPLOY_KEY == ''
+        run: |
+          echo "::warning::LATEST_RELEASE_DEPLOY_KEY is not set: latest-release was NOT advanced to $TAG, so the Claude plugin directory listing stays on the previous release."
+          echo "latest-release: **skipped** (LATEST_RELEASE_DEPLOY_KEY unset)" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Check out the release tag with the deploy key
+        if: env.DEPLOY_KEY != ''
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.preflight.outputs.tag }}
+          ssh-key: ${{ secrets.LATEST_RELEASE_DEPLOY_KEY }}
+
+      - name: Fast-forward latest-release to the tag
+        if: env.DEPLOY_KEY != ''
+        run: |
+          set -euo pipefail
+          sha="$(git rev-parse "HEAD^{commit}")"
+          # No --force: a non-fast-forward must fail, and the ruleset would refuse it anyway.
+          if ! out="$(git push origin "$sha:refs/heads/latest-release" 2>&1)"; then
+            echo "$out"
+            echo "::error::Could not move latest-release to $TAG ($sha). If $TAG is older than the commit latest-release already points at, this is a superseded re-run and the refusal is correct; otherwise see the git output above."
+            exit 1
+          fi
+          echo "$out"
+
+      - name: Verify latest-release points at the tag
+        if: env.DEPLOY_KEY != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          want="$(git rev-parse "HEAD^{commit}")"
+          got="$(gh api "repos/$GITHUB_REPOSITORY/branches/latest-release" -q .commit.sha)"
+          if [ "$got" != "$want" ]; then
+            echo "::error::latest-release is at $got, expected $TAG ($want)"
+            exit 1
+          fi
+          echo "latest-release OK: $TAG ($want)" | tee -a "$GITHUB_STEP_SUMMARY"
+
   notify:
     # Files (or comments on) a `ci-failure` issue when any job above failed, so a partial release
     # is loud. Skipped jobs downstream of a failure don't mask it: `if: failure()` is true when
@@ -735,7 +814,7 @@ jobs:
     runs-on: ubuntu-latest
     # Files or updates a single issue.
     timeout-minutes: 10
-    needs: [preflight, pypi, images, dockerhub-description, mcpb, skill, registry, verify]
+    needs: [preflight, pypi, images, dockerhub-description, mcpb, skill, registry, verify, latest-release]
     if: failure()
     permissions:
       contents: read   # checkout, to use the local composite action

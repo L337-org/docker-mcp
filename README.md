@@ -20,7 +20,7 @@ Documentation is built for the agent, not just the person configuring it: an MCP
 
 docker-mcp-server is optimized to work efficiently with the new generation of MCP clients that support lazy tool loading. For clients that still eagerly load all tools, the server can optionally be configured to exclude tools from a subset of domains (e.g. exclude 'swarm' and 'scout' tools) to reduce the tool list size. It's also possible to put the MCP server into 'read-only' or 'no-destructive' modes that prevent any tools with write or destructive capabilities from being registered, which again reduces the footprint.
 
-The server runs entirely on your machine, either [natively](#using-the-server), as an [mcpb bundle](#install-as-a-desktop-extension-mcpb), or [containerized](#run-as-a-container), and sends no telemetry. You are entirely in control - see the [Privacy Policy](#privacy-policy).
+The server runs entirely on your machine, either [natively](#using-the-server), as an [mcpb bundle](#install-as-a-desktop-extension-mcpb), as a [Claude plugin](#install-as-a-claude-plugin), or [containerized](#run-as-a-container), and sends no telemetry. You are entirely in control - see the [Privacy Policy](#privacy-policy).
 
 ## Requirements
 
@@ -29,8 +29,8 @@ Note: If you're using the containerized MCP server or MCPB bundle, the Python an
 - A running Docker daemon reachable from the host that runs the server (the standard `DOCKER_HOST` / unix socket conventions apply)
 - [Python ≥ 3.14](https://www.python.org/downloads/)
 - [uv](https://docs.astral.sh/uv/) for dependency management
-- **Intel (x86_64) macOS only:** installing natively (via `uvx`/`pip`, or the `.mcpb` bundle, both of
-  which resolve dependencies locally) requires [Rust](https://rustup.rs/) and OpenSSL 3.x, because
+- **Intel (x86_64) macOS only:** installing natively (via `uvx`/`pip`, the Claude plugin, or the
+  `.mcpb` bundle, all of which resolve dependencies locally) requires [Rust](https://rustup.rs/) and OpenSSL 3.x, because
   `cryptography` - a transitive dependency, via `mcp` -> `pyjwt[crypto]` - has shipped no x86_64
   macOS wheel since version 49.0.0 and must be built from source there. If you'd rather not install
   a build toolchain, use the [container image](#run-as-a-container) instead - it runs the same
@@ -89,6 +89,16 @@ It's a [`uv`-type bundle](https://github.com/modelcontextprotocol/mcpb): Claude 
 no separate Python, `uv`, or `git`. Leave the **Docker host(s)** field blank to use your default
 Docker context; set one endpoint (`ssh://user@host`) for a remote daemon, or list several (see
 [Managing several daemons](#managing-several-daemons)).
+
+### Install as a Claude plugin
+
+The [`claude-plugin/`](claude-plugin/) folder packages the server as a plugin for Claude Code and
+Cowork, submitted to Anthropic's plugin directory (the listing is pending review).  It runs
+`uvx docker-mcp-server==<version>`, pinned to the release the plugin was built from, so it needs
+[uv](https://docs.astral.sh/uv/) on the host.  It offers the same four settings as the `.mcpb`
+install dialog (**Docker host(s)**, read-only, no-destructive and disabled domains), set under
+`/plugin` > **Installed** > **Configure**.  The directory follows the `latest-release` branch, which only moves
+when a release has published and verified, so the plugin never runs an unreleased version.
 
 ### Run as a container
 

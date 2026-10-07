@@ -1,0 +1,67 @@
+{
+  "name": "docker-mcp-server",
+  "displayName": "Docker MCP Server",
+  "version": "2.2.7",
+  "description": "Manage Docker through the Docker SDK for Python and the docker CLI: containers, images, networks, volumes, Compose, Swarm, Buildx, Scout, and OCI registries, exposed as MCP tools.",
+  "author": {
+    "name": "Gavin Lucas",
+    "url": "https://github.com/GavinLucas"
+  },
+  "homepage": "https://github.com/L337-org/docker-mcp",
+  "repository": "https://github.com/L337-org/docker-mcp",
+  "license": "MIT",
+  "keywords": [
+    "docker",
+    "containers",
+    "compose",
+    "swarm",
+    "buildx",
+    "scout",
+    "devops",
+    "mcp"
+  ],
+  "icon": "./icon.png",
+  "documentationUrl": "https://github.com/L337-org/docker-mcp#readme",
+  "supportUrl": "https://github.com/L337-org/docker-mcp/issues",
+  "privacyPolicyUrl": "https://github.com/L337-org/docker-mcp/blob/main/PRIVACY.md",
+  "userConfig": {
+    "docker_hosts": {
+      "type": "string",
+      "title": "Docker host(s)",
+      "description": "Docker daemon(s) to manage. Blank = your default Docker context / socket. One remote: ssh://user@host (recommended; auth via your SSH keys), tcp://host:2375 for a plaintext TCP daemon, or tcp://host:2376(tls=/path/to/certs) for a TLS daemon (the directory needs ca.pem, which verifies the daemon - a self-signed daemon works - plus cert.pem/key.pem only if it requires a client cert). Several: comma-separated name=endpoint pairs, e.g. local=auto, prod=ssh://ops@prod.example.com(ro) - append (ro) to make a host read-only, or (nd) to block only destructive calls (kills/removals/prunes) on it. When set, this replaces DOCKER_HOST.",
+      "default": ""
+    },
+    "read_only": {
+      "type": "boolean",
+      "title": "Read-only mode",
+      "description": "Register only read-only tools - no create, modify, or delete.",
+      "default": false
+    },
+    "no_destructive": {
+      "type": "boolean",
+      "title": "Disable destructive tools",
+      "description": "Register everything except destructive tools (remove / prune / kill).",
+      "default": false
+    },
+    "disable_domains": {
+      "type": "string",
+      "title": "Disabled domains",
+      "description": "Comma-separated tool domains to drop, e.g. swarm,plugins,scout.",
+      "default": ""
+    }
+  },
+  "mcpServers": {
+    "docker-mcp-server": {
+      "command": "uvx",
+      "args": [
+        "docker-mcp-server==2.2.7"
+      ],
+      "env": {
+        "DOCKER_MCP_SERVER_HOSTS": "${user_config.docker_hosts}",
+        "DOCKER_MCP_SERVER_READONLY": "${user_config.read_only}",
+        "DOCKER_MCP_SERVER_NO_DESTRUCTIVE": "${user_config.no_destructive}",
+        "DOCKER_MCP_SERVER_DISABLE": "${user_config.disable_domains}"
+      }
+    }
+  }
+}
