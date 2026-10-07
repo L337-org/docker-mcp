@@ -626,6 +626,36 @@ jobs:
           echo "::error::PyPI never served docker-mcp-server ${VERSION}"
           exit 1
 
+      - name: Verify no newer version is on PyPI
+        # The images job moves :latest to this release, so a re-run of a superseded release points
+        # it at an older build, and nothing else here notices: the version and moving tags are
+        # pushed together, so they agree.  PyPI is the record of which release is newest; there is
+        # one release line, so this release must be the newest one there.  Fully yanked versions
+        # do not count.
+        run: |
+          set -euo pipefail
+          curl -fsS --max-time 30 --retry 3 "https://pypi.org/pypi/docker-mcp-server/json" > "$RUNNER_TEMP/pypi.json"
+          python3 - "$RUNNER_TEMP/pypi.json" <<'PY'
+          import json, os, re, sys
+
+          version = os.environ["VERSION"]
+          releases = json.load(open(sys.argv[1]))["releases"]
+          # all() is true for an empty list, so a version with no files is dropped with the yanked ones.
+          live = [v for v, files in releases.items() if not all(f.get("yanked") for f in files)]
+          odd = [v for v in live + [version] if not re.fullmatch(r"\d+(\.\d+)*", v)]
+          if odd:
+              print(f"::error::cannot order versions that are not plain dotted numbers: {odd}")
+              sys.exit(1)
+          key = lambda v: tuple(int(p) for p in v.split("."))
+          newer = sorted((v for v in live if key(v) > key(version)), key=key)
+          if newer:
+              print(f"::error::docker-mcp-server {version} is not the newest release on PyPI ({newer[-1]} is), "
+                    f"so :latest and :no-scout now point at an older build. Re-run the release for v{newer[-1]} "
+                    "to move them back.")
+              sys.exit(1)
+          print(f"PyPI OK: no release newer than {version}")
+          PY
+
       # Anonymous manifest reads from Docker Hub are rate-limited per source IP, and hosted runners
       # share those. Four extra reads is nothing on its own, but the budget may already be spent by
       # someone else, and a release gate that fails on a neighbour's traffic is worse than no gate.
@@ -689,8 +719,8 @@ jobs:
           # from the same call. Anchoring on the GHCR pinned tag rather than comparing pairwise
           # catches three faults with one assertion: a missing tag, a moving tag the push did not
           # update, and a mirror that somehow carries a different build. (A re-run of an older
-          # release repoints both tags together and passes here; see "superseded" in
-          # architecture/distribution.md for what does and does not catch it.)
+          # release repoints both tags together and passes here; "Verify no newer version is on
+          # PyPI" catches that.)
           rc=0
           for variant in "full:latest:" "no-scout:no-scout:-no-scout"; do
             IFS=: read -r name moving suffix <<< "$variant"

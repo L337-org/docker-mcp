@@ -1,5 +1,8 @@
 import json
+import os
 import re
+import subprocess
+import sys
 import tomllib
 from pathlib import Path
 
@@ -266,3 +269,45 @@ def test_image_label_ownership_marker_matches_server_json():
         f"publish.yaml image label {label!r} != server.json name {expected!r} - "
         f"the MCP Registry listing for the OCI image will stop verifying"
     )
+
+
+def _newest_release_check() -> str:
+    """The Python the verify job runs to refuse a release that is not the newest on PyPI."""
+    text = PUBLISH_WORKFLOW.read_text()
+    step = text[text.index("- name: Verify no newer version is on PyPI") :]
+    body = step[step.index("<<'PY'\n") + len("<<'PY'\n") : step.index("\n          PY\n")]
+    return "\n".join(line.removeprefix("          ") for line in body.splitlines())
+
+
+@pytest.mark.parametrize(
+    ("version", "ok", "message"),
+    [
+        ("2.2.6", True, "no release newer than 2.2.6"),
+        ("2.2.7", True, "no release newer than 2.2.7"),
+        ("2.10.0", True, "no release newer than 2.10.0"),
+        ("2.2.5", False, "2.2.5 is not the newest release on PyPI (2.2.6 is)"),
+        ("2.2.6rc1", False, "not plain dotted numbers"),
+    ],
+)
+def test_verify_refuses_a_release_that_is_not_the_newest_on_pypi(tmp_path, version, ok, message):
+    """A re-run of a superseded release moves :latest backwards and every other verify check still
+    passes, so this one must fail it.  The JSON is shaped on PyPI's project API (`releases`, each a
+    list of files with `yanked`); 2.3.0 is fully yanked and 2.2.9 has no files, so neither counts."""
+
+    def files(yanked):
+        return [{"yanked": yanked}]
+
+    releases = {"2.2.4": files(False), "2.2.5": files(False), "2.2.6": files(False), "2.3.0": files(True), "2.2.9": []}
+    data = tmp_path / "pypi.json"
+    data.write_text(json.dumps({"releases": releases}))
+    script = tmp_path / "check.py"
+    script.write_text(_newest_release_check())
+    result = subprocess.run(  # noqa: S603  (this interpreter, a script written here)
+        [sys.executable, str(script), str(data)],
+        env={**os.environ, "VERSION": version},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert (result.returncode == 0) is ok, result.stdout + result.stderr
+    assert message in result.stdout
