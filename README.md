@@ -93,12 +93,13 @@ Docker context; set one endpoint (`ssh://user@host`) for a remote daemon, or lis
 ### Install as a Claude plugin
 
 The [`claude-plugin/`](claude-plugin/) folder packages the server as a plugin for Claude Code and
-Cowork, for Anthropic's plugin directory.  It runs
-`uvx docker-mcp-server==<version>`, pinned to the release the plugin was built from, so it needs
-[uv](https://docs.astral.sh/uv/) on the host.  It offers the same settings as the `.mcpb`
+Cowork, for Anthropic's plugin directory.  It runs `uvx docker-mcp-server==<version>`, pinned to
+the release the plugin was built from, with a lockfile that pins every dependency by hash, so it
+needs [uv](https://docs.astral.sh/uv/) on the host.  It offers the same settings as the `.mcpb`
 install dialog (**Docker host(s)**, read-only, no-destructive and disabled domains), set under
-`/plugin` > **Installed** > **Configure**.  The directory follows the `latest-release` branch, which only moves
-when a release has published and verified, so the plugin never runs an unreleased version.
+`/plugin` > **Installed** > **Configure**.  The plugin the directory serves is only ever updated
+after a release has been published to PyPI and the plugin has been installed and tested from it,
+so it never runs an unreleased version.
 
 ### Run as a container
 

@@ -1,8 +1,9 @@
 """The Claude plugin in `claude-plugin/` must stay a faithful second front-end to the `.mcpb`.
 
-Nothing generates `plugin.json` from `manifest.json`, and nothing restamps it at release: Anthropic's
-directory reads it as committed at the commit `latest-release` moves to. So every fact the two share
-is asserted here rather than left to a bump checklist.
+Nothing generates `plugin.json` from `manifest.json`, and nothing restamps it at release: the release
+script copies this folder as committed and adds only `uv.lock`.  So every fact the two share is
+asserted here rather than left to a bump checklist.  The release script's own checks are tested in
+test_claude_plugin_release.py.
 """
 
 import json
@@ -50,6 +51,28 @@ def test_plugin_version_and_uvx_pin_match_pyproject():
         f"plugin uvx args {server['args']!r} must pin exactly {_SERVER}=={version}: the directory blocks an "
         "unpinned launcher, and a stale pin ships the previous release"
     )
+
+
+def test_plugin_launch_project_pins_the_same_release_and_constraints():
+    """The lock is generated from claude-plugin/pyproject.toml, so it must pin what plugin.json runs.
+
+    Its constraint-dependencies mirror the root's, so the plugin's lock honours the same security
+    floors (`urllib3>=2.7.0` today) that the project's own lock does.
+    """
+    version = _pyproject_version()
+    plugin_project = tomllib.loads((_PLUGIN_DIR / "pyproject.toml").read_text(encoding="utf-8"))
+    root = tomllib.loads((_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    assert plugin_project["project"]["version"] == version
+    assert plugin_project["project"]["dependencies"] == [f"{_SERVER}=={version}"]
+    assert plugin_project["project"]["requires-python"] == root["project"]["requires-python"]
+    assert plugin_project["tool"]["uv"]["package"] is False
+    assert plugin_project["tool"]["uv"]["constraint-dependencies"] == root["tool"]["uv"]["constraint-dependencies"]
+
+
+def test_no_plugin_lockfile_is_committed_on_main():
+    """The lock can only be generated once the release is on PyPI, so it lives only on the release
+    branch; one committed here would be stale by the next release and would not be what ships."""
+    assert not (_PLUGIN_DIR / "uv.lock").exists()
 
 
 # The `user_config` option keys this test knows how to carry into `userConfig`.  Every one has the

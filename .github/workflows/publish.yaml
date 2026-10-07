@@ -4,8 +4,12 @@ name: Release
 # workflow_dispatch with the tag) it runs:
 #
 #   preflight ─→ pypi ──────────────┐
-#             ├→ images ─→ hub-desc ├─→ registry ─→ verify ─→ latest-release
-#             └→ mcpb ──────────────┘        (notify files an issue if anything failed)
+#             ├→ images ─→ hub-desc ├─→ registry ─→ verify ─→ claude-plugin-build ─→ claude-plugin-smoke
+#             └→ mcpb ──────────────┘                         (x3 OS) ─→ claude-plugin-publish
+#                                            (notify files an issue if anything failed)
+#
+# A dispatch with `claude_plugin_rollback` set runs only preflight and the three claude-plugin jobs,
+# moving the plugin release branch back to the named release's plugin commit after re-testing it.
 #
 # This replaces the four independent publish-*.yaml workflows that all fanned out on the release
 # event. Ordering `registry` after the three artifact publishers removes the race it previously
@@ -39,6 +43,10 @@ on:
       tag:
         description: 'Release tag to (re-)publish (e.g. v1.9.3)'
         required: true
+      claude_plugin_rollback:
+        description: 'Only move the Claude plugin release branch back to this (earlier) release; publish nothing else'
+        type: boolean
+        default: false
 
 concurrency:
   group: release-${{ github.event.release.tag_name || inputs.tag }}
@@ -114,10 +122,11 @@ jobs:
           if manifest != version:
               errors.append(f"manifest.json version {manifest!r} != release version {version!r}")
 
-          # Unlike manifest.json, nothing restamps the plugin: the directory reads it as committed
-          # at the commit latest-release moves to, so a stale pin would ship the previous server.
-          # A dispatch re-run of a tag from before the plugin existed has no file to check.
+          # Unlike manifest.json, nothing restamps the plugin: the release script copies it as
+          # committed and only adds the lock, so a stale pin would ship the previous server.  A
+          # dispatch re-run of a tag from before the plugin existed has no files to check.
           plugin_path = "claude-plugin/.claude-plugin/plugin.json"
+          project_path = "claude-plugin/pyproject.toml"
           if os.path.exists(plugin_path):
               plugin = json.load(open(plugin_path))
               if plugin["version"] != version:
@@ -125,6 +134,10 @@ jobs:
               args = plugin["mcpServers"]["docker-mcp-server"]["args"]
               if args != [f"docker-mcp-server=={version}"]:
                   errors.append(f"{plugin_path} uvx args {args!r} do not pin docker-mcp-server=={version}")
+              if os.path.exists(project_path):
+                  deps = tomllib.load(open(project_path, "rb"))["project"]["dependencies"]
+                  if deps != [f"docker-mcp-server=={version}"]:
+                      errors.append(f"{project_path} dependencies {deps!r} do not pin docker-mcp-server=={version}")
           else:
               print(f"::notice::{plugin_path} does not exist at this tag; Claude plugin version checks skipped")
 
@@ -141,8 +154,8 @@ jobs:
               for e in errors:
                   print(f"::error::{e}")
               print("::error::Nothing has been published. To fix: bump the versions "
-                    "(pyproject.toml + manifest.json + claude-plugin/.claude-plugin/plugin.json, "
-                    "then `uv lock`), merge, delete this release "
+                    "(pyproject.toml + manifest.json + claude-plugin/.claude-plugin/plugin.json + "
+                    "claude-plugin/pyproject.toml, then `uv lock`), merge, delete this release "
                     "AND its tag, and publish a new release from the fixed commit.")
               sys.exit(1)
           print(f"Version consistency OK: {version}")
@@ -156,6 +169,7 @@ jobs:
     # An sdist and wheel build, then one upload.
     timeout-minutes: 15
     needs: [preflight]
+    if: ${{ !inputs.claude_plugin_rollback }}
     permissions:
       contents: read
       id-token: write  # required for Trusted Publishing (OIDC)
@@ -175,6 +189,16 @@ jobs:
 
       - name: Build sdist and wheel
         run: uv build
+
+      - name: Keep the built files
+        # Saved separately (RP.3.2) so a manual rescue is possible, and so the Claude plugin job
+        # can check that what PyPI serves is byte-identical to what this job built and uploaded.
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: python-dist
+          path: dist/
+          if-no-files-found: error
+          retention-days: 90
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
@@ -200,6 +224,7 @@ jobs:
     # The longest job here: both variants for linux/amd64 and linux/arm64 under QEMU.
     timeout-minutes: 45
     needs: [preflight]
+    if: ${{ !inputs.claude_plugin_rollback }}
     permissions:
       contents: read
       packages: write
@@ -334,6 +359,7 @@ jobs:
     # Pack the bundle and attach it to the release.
     timeout-minutes: 15
     needs: [preflight]
+    if: ${{ !inputs.claude_plugin_rollback }}
     permissions:
       contents: write  # upload the .mcpb as a release asset
     steps:
@@ -397,6 +423,7 @@ jobs:
     # Pack the skill archive and attach it to the release.
     timeout-minutes: 15
     needs: [preflight]
+    if: ${{ !inputs.claude_plugin_rollback }}
     permissions:
       contents: write  # upload the archives as release assets
     steps:
@@ -655,7 +682,7 @@ jobs:
           # from the same call. Anchoring on the GHCR pinned tag rather than comparing pairwise
           # catches three faults with one assertion: a missing tag, a moving tag the push did not
           # update, and a mirror that somehow carries a different build. (A re-run of an older
-          # release repoints both tags together and passes here; latest-release stops that run.)
+          # release repoints both tags together and passes here; claude-plugin-publish stops that run.)
           rc=0
           for variant in "full:latest:" "no-scout:no-scout:-no-scout"; do
             IFS=: read -r name moving suffix <<< "$variant"
@@ -743,73 +770,189 @@ jobs:
           echo "::error::MCP Registry never listed version ${VERSION}"
           exit 1
 
-  latest-release:
-    # Fast-forwards the `latest-release` branch to the release tag's commit. Anthropic's plugin
-    # directory follows that branch, so the Claude plugin (claude-plugin/) can only ever point at a
-    # release that has published and passed `verify`: the plugin's `uvx docker-mcp-server==X.Y.Z`
-    # pin would name a version PyPI does not have yet if the directory followed main.
-    #
-    # The push uses the LATEST_RELEASE_DEPLOY_KEY deploy key. The branch's protection must let only
-    # that key create or update it while still refusing deletion, force-pushes and unsigned commits
-    # to it, so this job can only fast-forward to an already-signed commit; architecture/
-    # distribution.md says how that is configured and how to check it.
-    #
-    # Re-running the current release is a no-op ("Everything up-to-date"). Re-running a SUPERSEDED
-    # tag fails here, because moving the branch backwards is not a fast-forward; that is the
-    # intended outcome, unlike the image `:latest` tags, which a superseded re-run does repoint.
-    # With the secret unset the job reports the skip and succeeds (an opt-in channel, like the
-    # Docker Hub mirror).
-    name: Advance latest-release branch
+  claude-plugin-build:
+    # Builds the Claude plugin for this release and checks it before anything is published:
+    # PyPI must serve this release's wheel and sdist, byte-identical to what the pypi job built;
+    # the generated uv.lock must pin the release and every dependency from pypi.org with hashes;
+    # and `claude plugin validate --strict` must pass.  If this release's plugin commit already
+    # exists (a re-run), that commit is fetched and re-tested instead of being rebuilt.  On a
+    # rollback, the named release's plugin commit is fetched.  scripts/claude_plugin_release.py
+    # holds every check, so the pre-merge rehearsal (premerge.yaml) runs the same code.
+    name: Build Claude plugin
     runs-on: ubuntu-latest
-    # One checkout, one push, one API read.
-    timeout-minutes: 10
-    needs: [preflight, verify]
+    # A lock and a validate; downloads from PyPI.
+    timeout-minutes: 20
+    needs: [preflight, pypi, verify]
+    if: >-
+      always() && needs.preflight.result == 'success'
+      && (inputs.claude_plugin_rollback || needs.verify.result == 'success')
     permissions:
       contents: read
-    # Hoisted to job-level env so step `if:`s can test it; see the images job.
     env:
-      DEPLOY_KEY: ${{ secrets.LATEST_RELEASE_DEPLOY_KEY }}
-      TAG: ${{ needs.preflight.outputs.tag }}
+      VERSION: ${{ needs.preflight.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
     steps:
-      - name: Report a skipped channel
-        if: env.DEPLOY_KEY == ''
-        run: |
-          echo "::warning::LATEST_RELEASE_DEPLOY_KEY is not set: latest-release was NOT advanced to $TAG, so the Claude plugin directory listing stays on the previous release."
-          echo "latest-release: **skipped** (LATEST_RELEASE_DEPLOY_KEY unset)" >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Check out the release tag with the deploy key
-        if: env.DEPLOY_KEY != ''
+      - name: Check out the release tag
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.preflight.outputs.tag }}
-          ssh-key: ${{ secrets.LATEST_RELEASE_DEPLOY_KEY }}
 
-      - name: Fast-forward latest-release to the tag
-        if: env.DEPLOY_KEY != ''
+      - name: Set up Python environment
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          # The version the Dockerfile and canary pin, so the lock is written by a known uv.
+          version: "0.11.21"
+          enable-cache: false
+
+      - name: Install the Claude Code CLI for `claude plugin validate`
+        if: ${{ !inputs.claude_plugin_rollback }}
+        # Pinned: the validator's rules change between releases.  It needs no login.
+        run: npm install --global @anthropic-ai/claude-code@2.1.292
+
+      - name: Fetch the files the pypi job built
+        if: ${{ !inputs.claude_plugin_rollback }}
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: python-dist
+          path: release-dist
+
+      - name: Build and check the plugin
+        if: ${{ !inputs.claude_plugin_rollback }}
+        run: python scripts/claude_plugin_release.py build --version "$VERSION" --source pypi --expect-dist release-dist --out plugin-build
+
+      - name: Fetch the plugin commit to roll back to
+        if: ${{ inputs.claude_plugin_rollback }}
+        run: python scripts/claude_plugin_release.py fetch --version "$VERSION" --out plugin-build
+
+      - name: Keep the build for the smoke and publish jobs
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: claude-plugin-build
+          path: plugin-build/
+          if-no-files-found: error
+          # The manifest is in .claude-plugin/, which upload-artifact skips by default.
+          include-hidden-files: true
+          retention-days: 90
+
+  claude-plugin-smoke:
+    # Installs the built plugin on each OS both ways it can be installed (from the lock with every
+    # hash enforced, and by the manifest's own uvx command), checks both report this release and
+    # register the same tools, and that the plugin's settings change what is registered as they
+    # claim to.  On Linux it also calls a real tool against the runner's Docker daemon.
+    name: Smoke-test Claude plugin (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    # Two installs from PyPI plus four server sessions; Intel-free runners, so wheels only.
+    timeout-minutes: 30
+    needs: [preflight, claude-plugin-build]
+    if: always() && needs.claude-plugin-build.result == 'success'
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out the release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.preflight.outputs.tag }}
+
+      - name: Set up Python environment
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.11.21"
+          enable-cache: false
+
+      - name: Fetch the plugin build
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: claude-plugin-build
+          path: plugin-build
+
+      - name: Install and exercise the plugin
+        run: python scripts/claude_plugin_release.py smoke --build plugin-build ${{ matrix.os == 'ubuntu-latest' && '--docker' || '' }}
+
+  claude-plugin-publish:
+    # Publishes the tested build: creates the parentless plugin-only commit through the GitHub App,
+    # proves it verified and byte-identical to what was smoke-tested, force-moves the
+    # claude-plugin-release branch to it (which is what Anthropic's directory follows), reads it
+    # back - moving it straight back if it is wrong - and only then tags it claude-plugin-vX.Y.Z.
+    # The script refuses to move the branch to an older release unless this is a rollback.  The
+    # App's rights on the branch and tags come from repository rulesets; see
+    # architecture/distribution.md.  With the App's credentials unset the job reports the skip.
+    name: Publish Claude plugin
+    runs-on: ubuntu-latest
+    # A handful of API calls.
+    timeout-minutes: 10
+    needs: [preflight, claude-plugin-build, claude-plugin-smoke]
+    if: always() && needs.claude-plugin-smoke.result == 'success'
+    permissions:
+      contents: read
+    # Two releases moving the branch at once could interleave its read-back; one at a time.
+    concurrency:
+      group: claude-plugin-release
+      cancel-in-progress: false
+    env:
+      VERSION: ${{ needs.preflight.outputs.version }}
+      APP_CLIENT_ID: ${{ vars.PLUGIN_RELEASE_CLIENT_ID }}
+      APP_KEY_SET: ${{ secrets.PLUGIN_RELEASE_APP_PRIVATE_KEY != '' }}
+    steps:
+      - name: Report a skipped channel
+        if: env.APP_CLIENT_ID == '' || env.APP_KEY_SET != 'true'
         run: |
-          set -euo pipefail
-          sha="$(git rev-parse "HEAD^{commit}")"
-          # No --force: a non-fast-forward must fail, and the ruleset would refuse it anyway.
-          if ! out="$(git push origin "$sha:refs/heads/latest-release" 2>&1)"; then
-            echo "$out"
-            echo "::error::Could not move latest-release to $TAG ($sha). If $TAG is older than the commit latest-release already points at, this is a superseded re-run and the refusal is correct; otherwise see the git output above."
-            exit 1
-          fi
-          echo "$out"
+          echo "::warning::PLUGIN_RELEASE_CLIENT_ID or PLUGIN_RELEASE_APP_PRIVATE_KEY is not set: the Claude plugin for $VERSION was built and tested but NOT published."
+          echo "Claude plugin: **skipped** (App credentials unset)" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Verify latest-release points at the tag
-        if: env.DEPLOY_KEY != ''
+      - name: Check out the release tag
+        if: env.APP_CLIENT_ID != '' && env.APP_KEY_SET == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.preflight.outputs.tag }}
+
+      - name: Set up Python environment
+        if: env.APP_CLIENT_ID != '' && env.APP_KEY_SET == 'true'
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+
+      - name: Fetch the tested build
+        if: env.APP_CLIENT_ID != '' && env.APP_KEY_SET == 'true'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: claude-plugin-build
+          path: plugin-build
+
+      - name: Get a GitHub App token for this repository
+        if: env.APP_CLIENT_ID != '' && env.APP_KEY_SET == 'true'
+        id: app
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.PLUGIN_RELEASE_CLIENT_ID }}
+          private-key: ${{ secrets.PLUGIN_RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+
+      - name: Publish
+        if: env.APP_CLIENT_ID != '' && env.APP_KEY_SET == 'true'
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          ROLLBACK: ${{ inputs.claude_plugin_rollback && 'true' || 'false' }}
         run: |
-          set -euo pipefail
-          want="$(git rev-parse "HEAD^{commit}")"
-          got="$(gh api "repos/$GITHUB_REPOSITORY/branches/latest-release" -q .commit.sha)"
-          if [ "$got" != "$want" ]; then
-            echo "::error::latest-release is at $got, expected $TAG ($want)"
-            exit 1
-          fi
-          echo "latest-release OK: $TAG ($want)" | tee -a "$GITHUB_STEP_SUMMARY"
+          args=(publish --version "$VERSION" --build plugin-build --release-commit "$(git rev-parse HEAD)")
+          if [ "$ROLLBACK" = true ]; then args+=(--rollback); fi
+          python scripts/claude_plugin_release.py "${args[@]}"
 
   notify:
     # Files (or comments on) a `ci-failure` issue when any job above failed, so a partial release
@@ -819,7 +962,8 @@ jobs:
     runs-on: ubuntu-latest
     # Files or updates a single issue.
     timeout-minutes: 10
-    needs: [preflight, pypi, images, dockerhub-description, mcpb, skill, registry, verify, latest-release]
+    needs: [preflight, pypi, images, dockerhub-description, mcpb, skill, registry, verify,
+            claude-plugin-build, claude-plugin-smoke, claude-plugin-publish]
     if: failure()
     permissions:
       contents: read   # checkout, to use the local composite action

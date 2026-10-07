@@ -55,8 +55,10 @@ These channels ship from this repo, all detailed in
   (`gavinlucas/docker-mcp-server`) when the opt-in `DOCKERHUB_*` release secrets are configured.
 - **A Claude Desktop Extension (`.mcpb`)** attached to each GitHub Release.
 - **A Claude plugin** in `claude-plugin/`, for Anthropic's plugin directory. It launches the PyPI
-  release with a pinned `uvx`, mirrors the `.mcpb`'s settings, and the directory follows the
-  `latest-release` branch, which the release pipeline fast-forwards after `verify`.
+  release with a pinned `uvx` and mirrors the `.mcpb`'s settings. After `verify`, the release
+  pipeline locks it against PyPI, tests it on three OSes and publishes it, through a GitHub App, as
+  a plugin-only commit on the `claude-plugin-release` branch the directory follows; every pull
+  request rehearses that with the same script. Never grant the App the Workflows permission.
 - **A Homebrew tap** in `L337-org/homebrew-tap`, currently **paused** — do not re-enable it without
   reading the five-step re-enable procedure in the architecture note.
 - **A Claude Code agent skill** in `skills/l337-docker/`, attached to each Release as a `.tar.gz`.
