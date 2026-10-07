@@ -8,6 +8,7 @@ whether a publish may go ahead, and the checks whose failure must stop it.
 import base64
 import importlib.util
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -447,3 +448,126 @@ def test_a_local_build_is_never_published(tmp_path, monkeypatch, capsys):
     assert _publish(monkeypatch, fake, build_dir) == 1
     assert fake.writes == []
     assert "local wheel" in capsys.readouterr().err
+
+
+def test_a_published_commit_with_another_tree_is_never_published(tmp_path, monkeypatch, capsys):
+    build_dir, tree = _built(tmp_path)
+    fake = _FakeGitHub(_state("old", "0.0.1", "t0"), "some-other-tree")
+    assert _publish(monkeypatch, fake, build_dir) == 1
+    assert not _ref_writes(fake)
+    assert "nothing was moved" in capsys.readouterr().err
+
+
+def test_a_published_commit_with_other_parents_is_never_published(tmp_path, monkeypatch, capsys):
+    build_dir, tree = _built(tmp_path)
+    fake = _FakeGitHub(_state("old", "0.0.1", "t0"), tree)
+    fake.commit = lambda sha: {"tree": tree, "parents": ["elsewhere"], "verified": True, "reason": "valid"}
+    assert _publish(monkeypatch, fake, build_dir) == 1
+    assert not _ref_writes(fake)
+    assert "parents ['elsewhere']" in capsys.readouterr().err
+
+
+# --------------------------------------------------------------------------------------------
+# pypi_release_files(): PyPI must serve exactly what was uploaded
+# --------------------------------------------------------------------------------------------
+
+
+def _fake_pypi(monkeypatch, files: dict[str, bytes], digests: dict[str, str] | None = None):
+    """Serve a release's JSON and its files, shaped on PyPI's JSON API (`urls[].filename`,
+    `packagetype`, `digests.sha256`, `url`); digests default to the files' real ones."""
+    import hashlib
+
+    urls = [
+        {
+            "filename": name,
+            "packagetype": "sdist" if name.endswith(".tar.gz") else "bdist_wheel",
+            "digests": {"sha256": (digests or {}).get(name, hashlib.sha256(data).hexdigest())},
+            "url": f"https://files.invalid/{name}",
+        }
+        for name, data in files.items()
+    ]
+
+    def http(method, url, *, token=None, body=None, raw=False):
+        if url.startswith("https://pypi.org/pypi/"):
+            return 200, {"urls": urls}
+        return 200, files[url.rsplit("/", 1)[1]]
+
+    monkeypatch.setattr(release, "http", http)
+
+
+_FILES = {"pkg-1.0-py3-none-any.whl": b"wheel", "pkg-1.0.tar.gz": b"sdist"}
+
+
+def test_pypi_files_matching_this_runs_build_pass(tmp_path, monkeypatch):
+    _fake_pypi(monkeypatch, _FILES)
+    built = tmp_path / "built"
+    built.mkdir()
+    for name, data in _FILES.items():
+        (built / name).write_bytes(data)
+    (tmp_path / "dl").mkdir()
+    assert len(release.pypi_release_files("1.0", tmp_path / "dl", built)) == 2
+
+
+def test_a_pypi_file_differing_from_this_runs_build_is_refused(tmp_path, monkeypatch):
+    _fake_pypi(monkeypatch, _FILES)
+    built = tmp_path / "built"
+    built.mkdir()
+    (built / "pkg-1.0-py3-none-any.whl").write_bytes(b"another wheel")
+    (built / "pkg-1.0.tar.gz").write_bytes(b"sdist")
+    (tmp_path / "dl").mkdir()
+    with pytest.raises(release.ReleaseError, match="differs from the file this run's pypi job built"):
+        release.pypi_release_files("1.0", tmp_path / "dl", built)
+
+
+def test_a_pypi_file_this_run_did_not_build_is_refused(tmp_path, monkeypatch):
+    _fake_pypi(monkeypatch, _FILES)
+    built = tmp_path / "built"
+    built.mkdir()
+    (built / "pkg-1.0-py3-none-any.whl").write_bytes(b"wheel")
+    (tmp_path / "dl").mkdir()
+    with pytest.raises(release.ReleaseError, match="which the release job did not build"):
+        release.pypi_release_files("1.0", tmp_path / "dl", built)
+
+
+def test_a_download_not_matching_pypis_own_digest_is_refused(tmp_path, monkeypatch):
+    _fake_pypi(monkeypatch, _FILES, digests={"pkg-1.0.tar.gz": "0" * 64})
+    (tmp_path / "dl").mkdir()
+    with pytest.raises(release.ReleaseError, match="does not match PyPI's own sha256"):
+        release.pypi_release_files("1.0", tmp_path / "dl", None)
+
+
+def test_a_rerun_checks_pypis_digests_without_a_build_to_compare(tmp_path, monkeypatch):
+    _fake_pypi(monkeypatch, _FILES)
+    (tmp_path / "dl").mkdir()
+    assert len(release.pypi_release_files("1.0", tmp_path / "dl", None)) == 2
+
+
+# --------------------------------------------------------------------------------------------
+# The rehearsal must run with the release jobs' tools
+# --------------------------------------------------------------------------------------------
+
+
+def _job(workflow: str, job: str) -> str:
+    text = (_ROOT / ".github" / "workflows" / workflow).read_text()
+    start = text.index(f"\n  {job}:\n")
+    following = re.search(r"\n  [a-z][a-z0-9-]*:\n", text[start + 1 :])
+    return text[start : start + 1 + following.start()] if following else text[start:]
+
+
+def _pins(block: str) -> set[tuple[str, str]]:
+    # In these jobs only setup-uv takes a bare `version:` (setup-python's is `python-version:`).
+    uv = {("uv", v) for v in re.findall(r'^\s+version: "([^"]+)"', block, flags=re.MULTILINE)}
+    claude = {("claude-code", v) for v in re.findall(r"@anthropic-ai/claude-code@(\S+)", block)}
+    return uv | claude
+
+
+def test_the_rehearsal_pins_the_release_jobs_uv_and_claude_code():
+    """The rehearsal exists to fail where the release would; a lock or a validate run by another
+    uv or Claude Code version would not show that."""
+    release_pins = _pins(_job("publish.yaml", "claude-plugin-build") + _job("publish.yaml", "claude-plugin-smoke"))
+    rehearsal_pins = _pins(
+        _job("premerge.yaml", "claude-plugin-rehearsal-build") + _job("premerge.yaml", "claude-plugin-rehearsal-smoke")
+    )
+    assert {kind for kind, _ in release_pins} == {"uv", "claude-code"}, release_pins
+    assert len({v for kind, v in release_pins if kind == "uv"}) == 1, f"the release jobs pin uv twice: {release_pins}"
+    assert rehearsal_pins == release_pins

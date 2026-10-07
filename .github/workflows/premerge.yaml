@@ -129,12 +129,14 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
-          # The release jobs' uv, so the rehearsal locks with the same version.
+          # The release jobs' uv, so the rehearsal locks with the same version; a test in
+          # tests/test_claude_plugin_release.py keeps them equal.
           version: "0.11.21"
           enable-cache: false
 
       - name: Install the Claude Code CLI for `claude plugin validate`
-        # The same pin as publish.yaml's claude-plugin-build job.
+        # The same pin as publish.yaml's claude-plugin-build job; a test in
+        # tests/test_claude_plugin_release.py keeps them equal.
         run: npm install --global @anthropic-ai/claude-code@2.1.292
 
       - name: Build the server wheel from this checkout

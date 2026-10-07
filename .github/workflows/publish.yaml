@@ -165,6 +165,8 @@ jobs:
     permissions:
       contents: read
       id-token: write  # required for Trusted Publishing (OIDC)
+    outputs:
+      uploaded: ${{ steps.existing.outputs.uploaded }}
     steps:
       - name: Check out the release tag
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -191,6 +193,22 @@ jobs:
           path: dist/
           if-no-files-found: error
           retention-days: 90
+
+      - name: Is this version already on PyPI?
+        # A dispatch re-run rebuilds, and the build backend is not pinned, so its files can differ
+        # from the ones a first run uploaded.  The Claude plugin job compares PyPI's files with
+        # this job's only when this run is the one that uploads them.
+        id: existing
+        env:
+          VERSION: ${{ needs.preflight.outputs.version }}
+        run: |
+          code="$(curl -sS --max-time 30 -o /dev/null -w '%{http_code}' "https://pypi.org/pypi/docker-mcp-server/$VERSION/json")"
+          case "$code" in
+            200) echo "uploaded=false" >> "$GITHUB_OUTPUT"
+                 echo "::notice::docker-mcp-server $VERSION is already on PyPI; this run uploads nothing (skip-existing)." ;;
+            404) echo "uploaded=true" >> "$GITHUB_OUTPUT" ;;
+            *)   echo "::error::PyPI returned HTTP $code for docker-mcp-server $VERSION; cannot tell whether it is published"; exit 1 ;;
+          esac
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
@@ -671,7 +689,8 @@ jobs:
           # from the same call. Anchoring on the GHCR pinned tag rather than comparing pairwise
           # catches three faults with one assertion: a missing tag, a moving tag the push did not
           # update, and a mirror that somehow carries a different build. (A re-run of an older
-          # release repoints both tags together and passes here; claude-plugin-publish stops that run.)
+          # release repoints both tags together and passes here; see "superseded" in
+          # architecture/distribution.md for what does and does not catch it.)
           rc=0
           for variant in "full:latest:" "no-scout:no-scout:-no-scout"; do
             IFS=: read -r name moving suffix <<< "$variant"
@@ -761,15 +780,17 @@ jobs:
 
   claude-plugin-build:
     # Builds the Claude plugin for this release and checks it before anything is published:
-    # PyPI must serve this release's wheel and sdist, byte-identical to what the pypi job built;
-    # the generated uv.lock must pin the release and every dependency from pypi.org with hashes;
-    # and `claude plugin validate --strict` must pass.  scripts/claude_plugin_release.py holds every
-    # check, so the pre-merge rehearsal (premerge.yaml) runs the same code.
+    # PyPI must serve this release's wheel and sdist, matching PyPI's own digests and, when this
+    # run uploaded them, byte-identical to what the pypi job built; the generated uv.lock must pin
+    # the release and every dependency from pypi.org with hashes; and `claude plugin validate
+    # --strict` must pass.  scripts/claude_plugin_release.py holds every check, so the pre-merge
+    # rehearsal (premerge.yaml) runs the same code.
     #
     # The script runs from the workflow's own commit, not the release tag's checkout, so a manual
-    # re-run of an older tag uses the workflow's guards (including the refusal to publish a version
-    # twice or move the branch backwards); only the plugin's content is taken from the tag.  A tag from before the plugin
-    # existed has none, and the plugin jobs are skipped with a notice.
+    # re-run of an older tag uses the workflow's guards (including the refusal to publish a
+    # version twice or move the branch backwards); only the plugin's content is taken from the
+    # tag.  A tag from before the plugin existed has none, and the plugin jobs are skipped with a
+    # notice.
     name: Build Claude plugin
     runs-on: ubuntu-latest
     # A lock and a validate; downloads from PyPI.
@@ -811,7 +832,8 @@ jobs:
         if: steps.plugin.outputs.has_plugin == 'true'
         uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
-          # The version the Dockerfile and canary pin, so the lock is written by a known uv.
+          # Pinned, so the lock is written by a known uv; a test in
+          # tests/test_claude_plugin_release.py keeps the rehearsal's pins equal to these.
           version: "0.11.21"
           enable-cache: false
 
@@ -821,7 +843,7 @@ jobs:
         run: npm install --global @anthropic-ai/claude-code@2.1.292
 
       - name: Fetch the files the pypi job built
-        if: steps.plugin.outputs.has_plugin == 'true'
+        if: steps.plugin.outputs.has_plugin == 'true' && needs.pypi.outputs.uploaded == 'true'
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: python-dist
@@ -829,9 +851,17 @@ jobs:
 
       - name: Build and check the plugin
         if: steps.plugin.outputs.has_plugin == 'true'
+        env:
+          UPLOADED: ${{ needs.pypi.outputs.uploaded }}
         run: |
-          python scripts/claude_plugin_release.py build --version "$VERSION" --source pypi \
-            --source-root release-src --expect-dist release-dist --out plugin-build
+          args=(build --version "$VERSION" --source pypi --source-root release-src --out plugin-build)
+          if [ "$UPLOADED" = true ]; then
+            args+=(--expect-dist release-dist)
+          else
+            # A re-run: this run's build was not uploaded, so only PyPI's own digests are checked.
+            echo "::notice::the pypi job uploaded nothing in this run; PyPI's files are checked against PyPI's digests only"
+          fi
+          python scripts/claude_plugin_release.py "${args[@]}"
 
       - name: Keep the build for the smoke and publish jobs
         if: steps.plugin.outputs.has_plugin == 'true'
@@ -893,9 +923,8 @@ jobs:
     # branch - the branch Anthropic's directory follows - proves it signed by GitHub, parented on
     # the head that was read and byte-identical to what was smoke-tested, then fast-forwards the
     # branch to it.  The script refuses a version the branch has held before, so a re-run of a
-    # superseded or reverted release changes nothing.  It uses the workflow's own token: the
-    # branch's ruleset forbids force pushes and deletion for everyone, so no actor needs a bypass;
-    # see architecture/distribution.md.
+    # superseded or reverted release changes nothing.  It uses the workflow's own token; the
+    # repository rules the branch needs are in architecture/distribution.md.
     name: Publish Claude plugin
     runs-on: ubuntu-latest
     # A handful of API calls, plus one read per distinct release in the branch's history.

@@ -396,7 +396,8 @@ def pypi_release_files(version: str, workdir: Path, expect_dist: Path | None) ->
     Args:
         version: the release
         workdir: where to put the downloads
-        expect_dist: the files the release job built and uploaded, if available
+        expect_dist: the files this run's pypi job built and uploaded, or None when it uploaded
+            nothing (a re-run), since a rebuild with a newer build backend can differ
 
     Returns:
         set: the sha256 digests PyPI serves for the release
@@ -427,7 +428,10 @@ def pypi_release_files(version: str, workdir: Path, expect_dist: Path | None) ->
             if not built.is_file():
                 raise ReleaseError(f"PyPI serves {name}, which the release job did not build (looked in {expect_dist})")
             if sha256_file(built) != expected:
-                raise ReleaseError(f"PyPI's {name} differs from the file the release job built and uploaded")
+                raise ReleaseError(
+                    f"PyPI's {name} differs from the file this run's pypi job built and uploaded ({built}); "
+                    "PyPI is not serving what was uploaded, so investigate before re-running"
+                )
         digests.add(expected)
         log(f"  {name}: sha256 {expected} matches PyPI" + (" and the release build" if expect_dist else ""))
     return digests
@@ -1080,7 +1084,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--source", choices=["pypi", "local"], required=True)
     p.add_argument("--out", required=True, help="a directory that does not exist yet")
     p.add_argument("--dist", help="local wheels (required with --source local)")
-    p.add_argument("--expect-dist", help="the files the release job built, to compare with PyPI's")
+    p.add_argument("--expect-dist", help="the files this run's pypi job built and uploaded, to compare with PyPI's")
     p.add_argument(
         "--source-root",
         default=str(REPO_ROOT),
