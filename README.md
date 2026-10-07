@@ -93,9 +93,9 @@ Docker context; set one endpoint (`ssh://user@host`) for a remote daemon, or lis
 ### Install as a Claude plugin
 
 The [`claude-plugin/`](claude-plugin/) folder packages the server as a plugin for Claude Code and
-Cowork, submitted to Anthropic's plugin directory (the listing is pending review).  It runs
+Cowork, for Anthropic's plugin directory.  It runs
 `uvx docker-mcp-server==<version>`, pinned to the release the plugin was built from, so it needs
-[uv](https://docs.astral.sh/uv/) on the host.  It offers the same four settings as the `.mcpb`
+[uv](https://docs.astral.sh/uv/) on the host.  It offers the same settings as the `.mcpb`
 install dialog (**Docker host(s)**, read-only, no-destructive and disabled domains), set under
 `/plugin` > **Installed** > **Configure**.  The directory follows the `latest-release` branch, which only moves
 when a release has published and verified, so the plugin never runs an unreleased version.

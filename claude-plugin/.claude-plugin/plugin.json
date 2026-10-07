@@ -29,6 +29,7 @@
       "type": "string",
       "title": "Docker host(s)",
       "description": "Docker daemon(s) to manage. Blank = your default Docker context / socket. One remote: ssh://user@host (recommended; auth via your SSH keys), tcp://host:2375 for a plaintext TCP daemon, or tcp://host:2376(tls=/path/to/certs) for a TLS daemon (the directory needs ca.pem, which verifies the daemon - a self-signed daemon works - plus cert.pem/key.pem only if it requires a client cert). Several: comma-separated name=endpoint pairs, e.g. local=auto, prod=ssh://ops@prod.example.com(ro) - append (ro) to make a host read-only, or (nd) to block only destructive calls (kills/removals/prunes) on it. When set, this replaces DOCKER_HOST.",
+      "required": false,
       "default": ""
     },
     "read_only": {
@@ -47,6 +48,7 @@
       "type": "string",
       "title": "Disabled domains",
       "description": "Comma-separated tool domains to drop, e.g. swarm,plugins,scout.",
+      "required": false,
       "default": ""
     }
   },

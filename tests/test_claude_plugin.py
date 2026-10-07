@@ -10,6 +10,9 @@ import os
 import re
 import tomllib
 from pathlib import Path
+from urllib.parse import urlparse
+
+from docker_mcp.tools.resources import DOCKER_DOCS_BASE_URL, EXTERNAL_SECTIONS
 
 _ROOT = Path(__file__).resolve().parent.parent
 _PLUGIN_DIR = _ROOT / "claude-plugin"
@@ -49,8 +52,14 @@ def test_plugin_version_and_uvx_pin_match_pyproject():
     )
 
 
+# The `user_config` option keys this test knows how to carry into `userConfig`.  Every one has the
+# same name and meaning in both schemas.  A key outside this set (`sensitive`, `min`/`max`,
+# `multiple`) fails the test below until someone decides how it maps, rather than being dropped.
+_MIRRORED_OPTION_KEYS = {"type", "title", "description", "required", "default"}
+
+
 def test_plugin_settings_mirror_the_mcpb_install_dialog():
-    """Same options, in the same order, with the same labels, help text, types and defaults.
+    """Same options, in the same order, with every option key carried over.
 
     A string option with no default in the `.mcpb` gets an explicit `""` in the plugin: without a
     default, the plugin's `${user_config.KEY}` reference has no value to substitute, whereas `""` is
@@ -60,12 +69,12 @@ def test_plugin_settings_mirror_the_mcpb_install_dialog():
     plugin = _plugin()["userConfig"]
     assert list(plugin) == list(manifest)
     for key, option in manifest.items():
-        expected = {
-            "type": option["type"],
-            "title": option["title"],
-            "description": option["description"],
-            "default": option.get("default", ""),
-        }
+        unmapped = set(option) - _MIRRORED_OPTION_KEYS
+        assert not unmapped, (
+            f"manifest.json option {key!r} has {sorted(unmapped)}, which this test does not know how to "
+            "mirror into plugin.json's userConfig - decide the mapping and extend _MIRRORED_OPTION_KEYS"
+        )
+        expected = {**option, "default": option.get("default", "")}
         assert plugin[key] == expected, f"plugin userConfig {key!r} has drifted from manifest.json"
 
 
@@ -115,9 +124,8 @@ def test_plugin_folder_holds_nothing_the_directory_rejects():
 
 
 def test_plugin_readme_meets_the_directory_minimum_and_names_no_image():
-    """The directory requires 40 words outside code blocks.  It also holds a version for review when
-    a document names a bundled image or font, which is what flagged the whole repository the first
-    time it was validated."""
+    """The directory requires 40 words outside code blocks, and holds a version for review when a
+    document names a bundled image or font."""
     text = (_PLUGIN_DIR / "README.md").read_text(encoding="utf-8")
     prose = re.sub(r"```.*?```", "", text, flags=re.DOTALL)
     assert len(prose.split()) >= 40
@@ -128,3 +136,28 @@ def test_plugin_is_excluded_from_the_other_channels_artifacts():
     """Both ignore files are denylists, so a new top-level directory ships by default."""
     assert "claude-plugin/" in (_ROOT / ".mcpbignore").read_text(encoding="utf-8").splitlines()
     assert "claude-plugin" in (_ROOT / ".dockerignore").read_text(encoding="utf-8").splitlines()
+
+
+def test_plugin_readme_lists_every_setting():
+    """Directory reviewers and users read only the plugin folder, so its README names each setting."""
+    text = (_PLUGIN_DIR / "README.md").read_text(encoding="utf-8")
+    for key, option in _plugin()["userConfig"].items():
+        assert f"**{option['title']}**" in text, f"claude-plugin/README.md does not describe setting {key!r}"
+
+
+def _documentation_hosts_named_in(path: Path) -> set[str]:
+    text = path.read_text(encoding="utf-8")
+    match = re.search(r"documentation hosts \(([^)]*)\)", text)
+    assert match, f"{path.name} has no 'documentation hosts (...)' list"
+    return {h.strip() for h in re.split(r",|\band\b", " ".join(match.group(1).split())) if h.strip()}
+
+
+def test_documentation_hosts_in_the_disclosures_match_the_server():
+    """The plugin README and the privacy policy both list the hosts `docs_lookup` fetches from.
+
+    The security scan reads the plugin README as the disclosure of what the plugin contacts, so a
+    host added to the server's documentation sources must be named there and in the policy.
+    """
+    expected = {urlparse(url).hostname for url in [DOCKER_DOCS_BASE_URL, *EXTERNAL_SECTIONS.values()]}
+    for doc in (_PLUGIN_DIR / "README.md", _ROOT / "PRIVACY.md"):
+        assert _documentation_hosts_named_in(doc) == expected, f"{doc.name} documentation hosts have drifted"

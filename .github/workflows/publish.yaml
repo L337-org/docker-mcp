@@ -116,12 +116,17 @@ jobs:
 
           # Unlike manifest.json, nothing restamps the plugin: the directory reads it as committed
           # at the commit latest-release moves to, so a stale pin would ship the previous server.
-          plugin = json.load(open("claude-plugin/.claude-plugin/plugin.json"))
-          if plugin["version"] != version:
-              errors.append(f"claude-plugin plugin.json version {plugin['version']!r} != release version {version!r}")
-          args = plugin["mcpServers"]["docker-mcp-server"]["args"]
-          if args != [f"docker-mcp-server=={version}"]:
-              errors.append(f"claude-plugin uvx args {args!r} do not pin docker-mcp-server=={version}")
+          # A dispatch re-run of a tag from before the plugin existed has no file to check.
+          plugin_path = "claude-plugin/.claude-plugin/plugin.json"
+          if os.path.exists(plugin_path):
+              plugin = json.load(open(plugin_path))
+              if plugin["version"] != version:
+                  errors.append(f"{plugin_path} version {plugin['version']!r} != release version {version!r}")
+              args = plugin["mcpServers"]["docker-mcp-server"]["args"]
+              if args != [f"docker-mcp-server=={version}"]:
+                  errors.append(f"{plugin_path} uvx args {args!r} do not pin docker-mcp-server=={version}")
+          else:
+              print(f"::notice::{plugin_path} does not exist at this tag; Claude plugin version checks skipped")
 
           lock = tomllib.load(open("uv.lock", "rb"))
           entries = [p for p in lock["package"]
@@ -648,8 +653,9 @@ jobs:
           # Both variants publish a pinned tag and a moving one in a single push, so every tag of a
           # variant must resolve to one digest - across registries too, since the mirror is pushed
           # from the same call. Anchoring on the GHCR pinned tag rather than comparing pairwise
-          # catches three faults with one assertion: a missing tag, a moving tag left behind by a
-          # re-run of an older release, and a mirror that somehow carries a different build.
+          # catches three faults with one assertion: a missing tag, a moving tag the push did not
+          # update, and a mirror that somehow carries a different build. (A re-run of an older
+          # release repoints both tags together and passes here; latest-release stops that run.)
           rc=0
           for variant in "full:latest:" "no-scout:no-scout:-no-scout"; do
             IFS=: read -r name moving suffix <<< "$variant"
@@ -667,7 +673,7 @@ jobs:
                   echo "::error::could not read ${reg}:${tag}: $(tail -n 1 "$err")"
                   rc=1
                 elif [ "$actual" != "$expected" ]; then
-                  # The re-run case: :latest still points at whatever shipped last.
+                  # e.g. a moving tag left on an earlier build by a partial push.
                   echo "::error::${reg}:${tag} resolves to ${actual}, not this release's ${expected}"
                   rc=1
                 else
@@ -743,11 +749,10 @@ jobs:
     # release that has published and passed `verify`: the plugin's `uvx docker-mcp-server==X.Y.Z`
     # pin would name a version PyPI does not have yet if the directory followed main.
     #
-    # The push uses the LATEST_RELEASE_DEPLOY_KEY deploy key, the only bypass actor on the ruleset
-    # that restricts creating and updating the branch. A second ruleset with no bypass actors still
-    # applies to it, blocking deletion, force-pushes and unsigned commits - so this job can only
-    # fast-forward to an already-signed commit. Both rulesets are described in
-    # architecture/distribution.md.
+    # The push uses the LATEST_RELEASE_DEPLOY_KEY deploy key. The branch's protection must let only
+    # that key create or update it while still refusing deletion, force-pushes and unsigned commits
+    # to it, so this job can only fast-forward to an already-signed commit; architecture/
+    # distribution.md says how that is configured and how to check it.
     #
     # Re-running the current release is a no-op ("Everything up-to-date"). Re-running a SUPERSEDED
     # tag fails here, because moving the branch backwards is not a fast-forward; that is the

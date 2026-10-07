@@ -11,9 +11,8 @@ The plugin starts one local MCP server with `uvx docker-mcp-server==<version>`, 
 release this plugin version was built from.  On first use `uv` downloads that release and its
 dependencies from [PyPI](https://pypi.org/project/docker-mcp-server/) and caches them; after that
 it runs from the cache.  You need [uv](https://docs.astral.sh/uv/) installed, and `uv` fetches a
-suitable Python (3.14 or later) itself if you do not have one.  On Intel (x86_64) macOS one
-transitive dependency has to be built from source, which needs Rust and OpenSSL 3.x - see the
-[project requirements](https://github.com/L337-org/docker-mcp#requirements).
+suitable Python (3.14 or later) itself if you do not have one.  On Intel (x86_64) macOS, check the
+[project requirements](https://github.com/L337-org/docker-mcp#requirements) first.
 
 Once running, the server's network activity is limited to:
 
