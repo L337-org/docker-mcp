@@ -37,10 +37,11 @@ A plugin for Claude Code and Cowork, listed in Anthropic's plugin directory: a s
 
 The commit holds only `claude-plugin/` and goes on top of **`claude-plugin-release`**, which the directory follows (submission plugin path `claude-plugin`). The branch only fast-forwards, so its history is the record of what was published. The script refuses a version the branch has held before, so a re-run cannot undo a rollback, and one older than the branch holds; a re-run of the current release is a no-op. Publishing a GitHub Release is the only human step. **Required:** **Publish new versions automatically** is on for the directory submission (its settings in the portal), so a version goes live once it clears the directory's own review, with no manual publish; turning it off would add a second human step to every release and rollback. Every pull request rehearses the release with the same script; see [ci.md](ci.md).
 
-**Repository settings required.**
+**Settings required** (in the repository and the directory portal).
 - One ruleset on `claude-plugin-release` with no bypass actors: no deletion, no force pushes, signed commits only. Check with `gh api repos/L337-org/docker-mcp/rulesets`.
-- A webhook sending push events to the URL the directory portal gives, with its secret, so the directory hears when the branch moves. Check under Settings > Webhooks (admin only): the last delivery should be successful. Without it the directory finds a new version only on its own schedule.
-- Re-check both after anything that can drop them, such as a repository transfer.
+- A webhook sending push events to the URL the directory portal gives, with its secret, so the directory hears when the branch moves. Check with `gh api repos/L337-org/docker-mcp/hooks` and `gh api repos/L337-org/docker-mcp/hooks/<id>/deliveries` (admin only): the last delivery should be successful. Without it the directory finds a new version only on its own schedule.
+- **Publish new versions automatically** on for the directory submission (its settings in the portal). If it is off, the release still finishes green but the version never goes live.
+- Re-check all three whenever the ruleset, the repository's webhooks or the directory submission are changed, and when the portal issues a new webhook URL or secret.
 
 The publish job needs only the workflow token's `contents: write`.
 
@@ -54,9 +55,10 @@ A revert restores the earlier release's files exactly, lock included, and that b
 **Accepted limitations**
 - Every version waits for an Anthropic reviewer: a pinned `uvx` launch is held for review, lock or not.
 - The lock is honoured only by the directory's locked launch; loaded any other way, `uvx` resolves the dependencies at install time.
-- Anyone with write access can fast-forward the branch with a signed commit, which the directory would scan as a new version. Ordinary work shares no history with the branch, so an accidental push is refused; a deliberate one is visible in the history and undone by a revert.
+- Anyone with write access can fast-forward the branch with a signed commit, which the directory publishes once it clears the directory's review, with no maintainer step. Ordinary work shares no history with the branch, so an accidental push is refused; a deliberate one is visible in the history and undone by a revert.
 
 **Rejected**
+- Keeping auto-publish off as a maintainer gate: it adds a second human step to every release and rollback, and write access is already trusted with `main`.
 - Force-moving the branch between parentless commits kept by per-release tags, published by a GitHub App as the only bypass actor. Force moves were needed only while the branch was a snapshot of `main`, and the App's key, a repository secret that any branch's workflow could read, restricted publishing no further than write access while adding a key to rotate.
 - A deploy key: it can only push, so its commits are unsigned and the signed-commit rule refuses them.
 - Generated commits stacked on `main` history: moving such a ref changes workflow files, which the workflow token cannot do.
