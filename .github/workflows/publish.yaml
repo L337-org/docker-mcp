@@ -887,9 +887,10 @@ jobs:
 
   claude-plugin-publish:
     # Publishes the tested build: creates the parentless plugin-only commit through the GitHub App,
-    # proves it verified and byte-identical to what was smoke-tested, force-moves the
-    # claude-plugin-release branch to it (which is what Anthropic's directory follows), reads it
-    # back - moving it straight back if it is wrong - and only then tags it claude-plugin-vX.Y.Z.
+    # proves it verified and byte-identical to what was smoke-tested, tags it claude-plugin-vX.Y.Z
+    # (which fails if the tag exists, stopping a run that misread the state), then force-moves the
+    # claude-plugin-release branch to it - the branch Anthropic's directory follows - moving it
+    # straight back if the move reports anything else.
     # The script refuses to move the branch to an older release unless this is a rollback.  The
     # App's rights on the branch and tags come from repository rulesets; see
     # architecture/distribution.md.  With the App's credentials unset the job reports the skip.

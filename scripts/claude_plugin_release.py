@@ -1013,12 +1013,13 @@ def fetch_tagged(gh: GitHub, tag: str, version: str, out: Path) -> str:
 
 
 def publish(args: argparse.Namespace) -> None:
-    """Create the release's plugin commit, move the branch to it, and tag it.
+    """Create the release's plugin commit, tag it, and move the branch to it.
 
-    Order matters: the branch moves only after the commit is verified and its tree proven
-    byte-identical to the folder the smoke jobs tested, and the tag is created only after the branch
-    is confirmed in place - so a failed run leaves no tag to block a re-run.  If the branch reads back
-    wrong after the move, it is moved straight back to where it was.
+    Order matters: nothing is written until the commit is verified and its tree proven
+    byte-identical to the folder the smoke jobs tested; the tag is created before the branch moves,
+    because creating it fails if it already exists and so catches a run that misread the state; and
+    if the branch move reports anything but the new commit, the branch is moved straight back.  A run
+    that tagged but did not move the branch is finished by a re-run, which moves it to the tag.
 
     Args:
         args: parsed command line
@@ -1088,24 +1089,35 @@ def publish(args: argparse.Namespace) -> None:
         )
     log(f"commit {target}: verified ({info['reason']}), parentless, tree {info['tree']}")
 
+    # Writes, not reads, are the source of truth here.  During a GitHub incident a read reported an
+    # existing tag as absent, so the tag is created before the branch moves: creating a ref fails if
+    # it already exists, which stops a run that misread the state before anything visible changes.
+    # Each write's own response says where the ref now points, so no separate read-back is trusted.
+    if state.tag is None:
+        try:
+            _, created_tag = gh.call("POST", "git/refs", {"ref": f"refs/tags/{tag}", "sha": target})
+        except ReleaseError as exc:
+            raise ReleaseError(
+                f"could not create {tag} at {target}, so the branch was not moved. If it already exists, an "
+                f"earlier run published this release and GitHub reported the tag as absent; re-run. ({exc})"
+            ) from exc
+        tagged = expect_dict(created_tag, f"the created tag {tag}")["object"]["sha"]
+        if tagged != target:
+            raise ReleaseError(f"creating {tag} returned {tagged}, not {target}; the branch was not moved")
+        log(f"tagged {target} as {tag}")
+
     if decision.action != "tag-head":
         previous = state.head
         if previous is None:
-            gh.call("POST", "git/refs", {"ref": f"refs/heads/{branch}", "sha": target})
+            _, moved = gh.call("POST", "git/refs", {"ref": f"refs/heads/{branch}", "sha": target})
         else:
-            gh.call("PATCH", f"git/refs/heads/{branch}", {"sha": target, "force": True})
-        now = gh.ref(f"heads/{branch}")
+            _, moved = gh.call("PATCH", f"git/refs/heads/{branch}", {"sha": target, "force": True})
+        now = expect_dict(moved, f"the updated {branch}")["object"]["sha"]
         if now != target:
             if previous is not None:
                 gh.call("PATCH", f"git/refs/heads/{branch}", {"sha": previous, "force": True})
-            raise ReleaseError(f"{branch} read back as {now} after moving it to {target}; moved it back to {previous}")
+            raise ReleaseError(f"moving {branch} to {target} left it at {now}; moved it back to {previous}")
         log(f"{branch} moved {previous or '(new)'} -> {target}")
-
-    if state.tag is None:
-        gh.call("POST", "git/refs", {"ref": f"refs/tags/{tag}", "sha": target})
-        if gh.ref(f"tags/{tag}") != target:
-            raise ReleaseError(f"tag {tag} did not read back as {target}")
-        log(f"tagged {target} as {tag}")
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary:
         with open(summary, "a", encoding="utf-8") as fh:
