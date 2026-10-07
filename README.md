@@ -98,7 +98,7 @@ the release the plugin was built from, so it needs [uv](https://docs.astral.sh/u
 It ships a lockfile pinning every dependency by hash, which the directory describes its locked
 launch as installing exactly; loaded any other way, `uvx` resolves the dependencies at install time.
 It offers the same settings as the `.mcpb` install dialog (**Docker host(s)**, read-only,
-no-destructive and disabled domains), set under `/plugin` > **Installed** > **Configure**.  The
+no-destructive and disabled domains), set in the plugin's settings in Claude Code (`/plugin`).  The
 release pipeline updates the plugin the directory serves only after a release has been published
 to PyPI and the plugin has been installed and tested from it.
 

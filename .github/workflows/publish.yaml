@@ -5,7 +5,7 @@ name: Release
 #
 #   preflight ─→ pypi ──────────────┐
 #             ├→ images ─→ hub-desc ├─→ registry ─→ verify ─→ claude-plugin-build ─→ claude-plugin-smoke
-#             └→ mcpb ──────────────┘                         (x3 OS) ─→ claude-plugin-publish
+#             └→ mcpb ──────────────┘                         (each OS) ─→ claude-plugin-publish
 #                                            (notify files an issue if anything failed)
 #
 # This replaces the four independent publish-*.yaml workflows that all fanned out on the release

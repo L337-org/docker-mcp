@@ -54,12 +54,9 @@ These channels ship from this repo, all detailed in
 - **GHCR** (`ghcr.io/l337-org/docker-mcp-server`), mirrored to Docker Hub
   (`gavinlucas/docker-mcp-server`) when the opt-in `DOCKERHUB_*` release secrets are configured.
 - **A Claude Desktop Extension (`.mcpb`)** attached to each GitHub Release.
-- **A Claude plugin** in `claude-plugin/`, for Anthropic's plugin directory. It launches the PyPI
-  release with a pinned `uvx` and mirrors the `.mcpb`'s settings. After `verify`, the release
-  pipeline locks it against PyPI, tests it on each OS in the release matrix and publishes it as
-  a plugin-only commit on the `claude-plugin-release` branch the directory follows; every pull
-  request rehearses that with the same script. That branch only fast-forwards; roll back with a
-  signed `git revert` on it, never a force push.
+- **A Claude plugin** in `claude-plugin/`, for Anthropic's plugin directory, published by the
+  release pipeline to the `claude-plugin-release` branch. Never force-push that branch; roll back
+  with a signed `git revert`, as the architecture note describes.
 - **A Homebrew tap** in `L337-org/homebrew-tap`, currently **paused** — do not re-enable it without
   reading the five-step re-enable procedure in the architecture note.
 - **A Claude Code agent skill** in `skills/l337-docker/`, attached to each Release as a `.tar.gz`.

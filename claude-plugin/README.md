@@ -32,7 +32,7 @@ It sends no telemetry and has no backend - see the
 
 ## Settings
 
-Set these under `/plugin` > **Installed** > **Configure**.  All are optional.
+Set these in the plugin's settings in Claude Code (`/plugin`).  All are optional.
 
 - **Docker host(s)**: blank uses your default Docker context or socket.  One endpoint
   (`ssh://user@host`, `tcp://host:2376(tls=/path/to/certs)`) manages a remote daemon; a
