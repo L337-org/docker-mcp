@@ -20,7 +20,7 @@ Documentation is built for the agent, not just the person configuring it: an MCP
 
 docker-mcp-server is optimized to work efficiently with the new generation of MCP clients that support lazy tool loading. For clients that still eagerly load all tools, the server can optionally be configured to exclude tools from a subset of domains (e.g. exclude 'swarm' and 'scout' tools) to reduce the tool list size. It's also possible to put the MCP server into 'read-only' or 'no-destructive' modes that prevent any tools with write or destructive capabilities from being registered, which again reduces the footprint.
 
-The server runs entirely on your machine, either [natively](#using-the-server), as an [mcpb bundle](#install-as-a-desktop-extension-mcpb), or [containerized](#run-as-a-container), and sends no telemetry. You are entirely in control - see the [Privacy Policy](#privacy-policy).
+The server runs entirely on your machine, either [natively](#using-the-server), as an [mcpb bundle](#install-as-a-desktop-extension-mcpb), as a [Claude plugin](#install-as-a-claude-plugin), or [containerized](#run-as-a-container), and sends no telemetry. You are entirely in control - see the [Privacy Policy](#privacy-policy).
 
 ## Requirements
 
@@ -29,8 +29,8 @@ Note: If you're using the containerized MCP server or MCPB bundle, the Python an
 - A running Docker daemon reachable from the host that runs the server (the standard `DOCKER_HOST` / unix socket conventions apply)
 - [Python ≥ 3.14](https://www.python.org/downloads/)
 - [uv](https://docs.astral.sh/uv/) for dependency management
-- **Intel (x86_64) macOS only:** installing natively (via `uvx`/`pip`, or the `.mcpb` bundle, both of
-  which resolve dependencies locally) requires [Rust](https://rustup.rs/) and OpenSSL 3.x, because
+- **Intel (x86_64) macOS only:** installing natively (via `uvx`/`pip`, the Claude plugin, or the
+  `.mcpb` bundle, all of which resolve dependencies locally) requires [Rust](https://rustup.rs/) and OpenSSL 3.x, because
   `cryptography` - a transitive dependency, via `mcp` -> `pyjwt[crypto]` - has shipped no x86_64
   macOS wheel since version 49.0.0 and must be built from source there. If you'd rather not install
   a build toolchain, use the [container image](#run-as-a-container) instead - it runs the same
@@ -89,6 +89,18 @@ It's a [`uv`-type bundle](https://github.com/modelcontextprotocol/mcpb): Claude 
 no separate Python, `uv`, or `git`. Leave the **Docker host(s)** field blank to use your default
 Docker context; set one endpoint (`ssh://user@host`) for a remote daemon, or list several (see
 [Managing several daemons](#managing-several-daemons)).
+
+### Install as a Claude plugin
+
+The [`claude-plugin/`](claude-plugin/) folder packages the server as a plugin for Claude Code and
+Cowork, for Anthropic's plugin directory.  It runs `uvx docker-mcp-server==<version>`, pinned to
+the release the plugin was built from, so it needs [uv](https://docs.astral.sh/uv/) on the host.
+It ships a lockfile pinning every dependency by hash, which the directory describes its locked
+launch as installing exactly; loaded any other way, `uvx` resolves the dependencies at install time.
+It offers the same settings as the `.mcpb` install dialog (**Docker host(s)**, read-only,
+no-destructive and disabled domains), set in the plugin's settings in Claude Code (`/plugin`).  The
+release pipeline updates the plugin the directory serves only after a release has been published
+to PyPI and the plugin has been installed and tested from it.
 
 ### Run as a container
 
@@ -464,3 +476,7 @@ the operations you request. The full statement is in [PRIVACY.md](https://github
 ## Contributing
 
 Contributions are welcome. The project values a tight mapping between the Docker SDK's public surface and the MCP tools we expose. See [CONTRIBUTING.md](https://github.com/L337-org/docker-mcp/blob/main/CONTRIBUTING.md) for the project layout, tool conventions, the checklist for adding a new tool module, and local development setup.
+
+## Trademarks
+
+docker-mcp-server is an independent open-source project.  It is not affiliated with, endorsed by or sponsored by Docker, Inc.  Docker is a trademark or registered trademark of Docker, Inc.

@@ -35,7 +35,7 @@ Read the linked file before judging a substantive change to that area.
 | `_cli.py`, `_ssh_proxy.py`, CLI-backed tools | [architecture/cli-shell-out.md](architecture/cli-shell-out.md) | `subprocess.run` called directly; `shell=True`; a missing `timeout=`; the remote-exec fallback preferred over a usable local CLI; staging consequences absent from the docstring |
 | any `@tool()` docstring | [architecture/tool-descriptions.md](architecture/tool-descriptions.md) | the checklist below |
 | code calling `docker` | [architecture/docker-sdk.md](architecture/docker-sdk.md) | an unverified method; a hand-built route that is not in the Engine API spec; a reach-in past the public SDK introduced without recorded sign-off |
-| `Dockerfile`, `manifest.json`, `server.json`, release workflows | [architecture/distribution.md](architecture/distribution.md) | version drift across the four files; a registry ownership marker no longer matching `server.json`'s `name` |
+| `Dockerfile`, `manifest.json`, `server.json`, `claude-plugin/`, release workflows | [architecture/distribution.md](architecture/distribution.md) | a version-declaring file missing from the bump checklist there, `preflight`, or the version tests; a registry ownership marker no longer matching `server.json`'s `name` |
 | `skills/l337-docker/` | [architecture/agent-skill.md](architecture/agent-skill.md) | the skill described as equivalent to the server; tool-permission frontmatter added; a hand-edited figure in `MCP_VS_SKILLS.md` |
 | `.github/workflows/` | [architecture/ci.md](architecture/ci.md) | a `uses:` naming a tag or branch; a new job without `timeout-minutes` where the workflow requires one |
 
@@ -45,7 +45,7 @@ Read the linked file before judging a substantive change to that area.
 SDK for Python as MCP tools. The entry point is the `docker_mcp` package, run with `python -m
 docker_mcp` or via the installed console script.
 
-Five channels ship from this repo, all detailed in
+These channels ship from this repo, all detailed in
 [architecture/distribution.md](architecture/distribution.md):
 
 - **PyPI** as `docker-mcp-server` (the `docker-mcp` name was taken). The import package stays
@@ -54,6 +54,9 @@ Five channels ship from this repo, all detailed in
 - **GHCR** (`ghcr.io/l337-org/docker-mcp-server`), mirrored to Docker Hub
   (`gavinlucas/docker-mcp-server`) when the opt-in `DOCKERHUB_*` release secrets are configured.
 - **A Claude Desktop Extension (`.mcpb`)** attached to each GitHub Release.
+- **A Claude plugin** in `claude-plugin/`, for Anthropic's plugin directory, published by the
+  release pipeline to the `claude-plugin-release` branch. Never force-push that branch; roll back
+  with a signed `git revert`, as the architecture note describes.
 - **A Homebrew tap** in `L337-org/homebrew-tap`, currently **paused** — do not re-enable it without
   reading the five-step re-enable procedure in the architecture note.
 - **A Claude Code agent skill** in `skills/l337-docker/`, attached to each Release as a `.tar.gz`.

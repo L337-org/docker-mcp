@@ -102,6 +102,103 @@ jobs:
         # so this needs no Docker and catches a failure in main() itself, not just the import.
         run: .venv-fresh/bin/docker-mcp-server --version
 
+  claude-plugin-rehearsal-build:
+    # Rehearses the release's Claude plugin jobs (publish.yaml) with the same script, so a change
+    # that would break them fails here rather than after a release has gone to PyPI.  The one
+    # difference is the source: this version is not on PyPI yet, so the plugin is locked against a
+    # wheel built from this checkout.  Everything else - the folder and lock checks, `claude plugin
+    # validate --strict`, and the publish decision (dry run, against the live branch) - is the
+    # release's own code path.
+    runs-on: [ubuntu-latest]
+    name: Claude plugin rehearsal (build)
+    # A wheel build, a lock and a validate.
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Check out source repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python environment
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          # The release jobs' uv, so the rehearsal locks with the same version; a test in
+          # tests/test_claude_plugin_release.py keeps them equal.
+          version: "0.11.21"
+          enable-cache: false
+
+      - name: Install the Claude Code CLI for `claude plugin validate`
+        # The same pin as publish.yaml's claude-plugin-build job; a test in
+        # tests/test_claude_plugin_release.py keeps them equal.
+        run: npm install --global @anthropic-ai/claude-code@2.1.292
+
+      - name: Build the server wheel from this checkout
+        run: uv build --out-dir local-dist
+
+      - name: Build and check the plugin against it
+        run: |
+          version="$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+          python scripts/claude_plugin_release.py build --version "$version" --source local --dist local-dist --out plugin-build
+          # What publishing this version after release would do to the live branch, changing nothing.
+          python scripts/claude_plugin_release.py publish --version "$version" --build plugin-build --dry-run
+
+      - name: Keep the build for the smoke jobs
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: claude-plugin-rehearsal-build
+          path: plugin-build/
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 7
+
+  claude-plugin-rehearsal-smoke:
+    # The release's smoke test on each OS, against the rehearsal build: both installs, both report
+    # the version, the same tools registered, and the plugin's settings take effect.
+    runs-on: ${{ matrix.os }}
+    name: Claude plugin rehearsal (smoke, ${{ matrix.os }})
+    # Two installs and a server session for each settings case.
+    timeout-minutes: 30
+    needs: [claude-plugin-rehearsal-build]
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out source repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python environment
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.11.21"
+          enable-cache: false
+
+      - name: Fetch the rehearsal build
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: claude-plugin-rehearsal-build
+          path: plugin-build
+
+      - name: Install and exercise the plugin
+        run: python scripts/claude_plugin_release.py smoke --build plugin-build ${{ matrix.os == 'ubuntu-latest' && '--docker' || '' }}
+
   pytest-run:
     runs-on: [ubuntu-latest]
     name: Run pytest

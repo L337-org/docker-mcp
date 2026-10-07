@@ -55,6 +55,14 @@ not a schedule - it complements rather than replaces the weekly canary's publish
 smoke below, which exercises the actual shipped artefact rather than a hypothetical resolve of the
 current tree.
 
+**The `Claude plugin rehearsal` jobs** (`premerge.yaml`) run `scripts/claude_plugin_release.py`, the
+script the release's Claude plugin jobs run, against a wheel built from the checkout, so a change
+that would break the post-release plugin publish fails on the pull request. They cover everything
+except the PyPI half (that PyPI serves the release), which the release checks; the publish step is a
+dry run against the live branch. Each must be a required check in the `main` ruleset (check with
+`gh api repos/L337-org/docker-mcp/rulesets`), so renaming one means updating the ruleset in the
+same change. [distribution.md](distribution.md) has the release side.
+
 A **weekly canary** (`.github/workflows/canary.yaml`, Mondays + dispatch) hunts platform/ecosystem
 drift premerge CI can't see: wheels-only (`--only-binary :all:`) dependency resolution for Intel
 macOS / ARM macOS / Windows against both the repo `pyproject.toml` and the latest published PyPI

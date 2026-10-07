@@ -87,3 +87,7 @@ Connecting this server to an AI agent grants it the same access as a local Docke
 - **Source, full docs & issues:** <https://github.com/L337-org/docker-mcp>
 - **Also on PyPI** (run without a container): `uvx docker-mcp-server` - see the [README](https://github.com/L337-org/docker-mcp#using-the-server).
 - **License & contributing:** see the GitHub repository.
+
+## Trademarks
+
+docker-mcp-server is an independent open-source project.  It is not affiliated with, endorsed by or sponsored by Docker, Inc.  Docker is a trademark or registered trademark of Docker, Inc.
