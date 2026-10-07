@@ -35,15 +35,19 @@ A plugin for Claude Code and Cowork, listed in Anthropic's plugin directory: a s
 - the plugin installs and starts on each OS in the matrix, and its settings take effect;
 - the new commit is signed by GitHub, its parent is the branch head that was read, and its tree is exactly the folder that was tested.
 
-The commit holds only `claude-plugin/` and goes on top of **`claude-plugin-release`**, which the directory follows (submission plugin path `claude-plugin`). The branch only fast-forwards, so its history is the record of what was published. The script refuses a version the branch has held before, so a re-run cannot undo a rollback, and one older than the branch holds; a re-run of the current release is a no-op. Publishing a GitHub Release is the only human step. **Required:** **Publish new versions automatically** is off on the directory submission (its settings in the portal), so a scanned version goes live only when published there. Every pull request rehearses the release with the same script; see [ci.md](ci.md).
+The commit holds only `claude-plugin/` and goes on top of **`claude-plugin-release`**, which the directory follows (submission plugin path `claude-plugin`). The branch only fast-forwards, so its history is the record of what was published. The script refuses a version the branch has held before, so a re-run cannot undo a rollback, and one older than the branch holds; a re-run of the current release is a no-op. Publishing a GitHub Release is the only human step. **Required:** **Publish new versions automatically** is on for the directory submission (its settings in the portal), so a version goes live once it clears the directory's own review, with no manual publish; turning it off would add a second human step to every release and rollback. Every pull request rehearses the release with the same script; see [ci.md](ci.md).
 
-**Repository rules required.** One ruleset on `claude-plugin-release` with no bypass actors: no deletion, no force pushes, signed commits only. Check with `gh api repos/L337-org/docker-mcp/rulesets`. The publish job needs only the workflow token's `contents: write`.
+**Repository settings required.**
+- One ruleset on `claude-plugin-release` with no bypass actors: no deletion, no force pushes, signed commits only. Check with `gh api repos/L337-org/docker-mcp/rulesets`.
+- A webhook sending push events to the URL the directory portal gives, with its secret, so the directory hears when the branch moves. Check under Settings > Webhooks (admin only): the last delivery should be successful. Without it the directory finds a new version only on its own schedule.
+- Re-check both after anything that can drop them, such as a repository transfer.
+
+The publish job needs only the workflow token's `contents: write`.
 
 **To roll back** to the previous release:
 1. Check out `claude-plugin-release`.
 2. Run `git revert -S --no-edit HEAD`, or `git revert -S --no-edit HEAD~2..HEAD` to go back two (the newest N commits, reverted newest first). `-S` is required: the branch accepts signed commits only.
-3. Push.
-4. Publish the new version in the directory portal.
+3. Push. The directory scans it as a new version and publishes it once it clears review.
 
 A revert restores the earlier release's files exactly, lock included, and that build was tested when it was first published. The reverted version is never published again; the next new release replaces the revert. Fixing forward with a new release remains the normal correction.
 
