@@ -592,7 +592,7 @@ jobs:
     # silently. Each check retries briefly (5 x 15s) to absorb CDN/index lag.
     name: Verify release convergence
     runs-on: ubuntu-latest
-    # Five external checks, each retrying up to five times.
+    # Short external checks, each retrying a few times.
     timeout-minutes: 20
     # `skill` is listed explicitly: it hangs off `preflight` alone and is not in `registry`'s
     # needs (the registry entry does not reference the skill archives), so without it here verify
@@ -642,12 +642,16 @@ jobs:
           releases = json.load(open(sys.argv[1]))["releases"]
           # all() is true for an empty list, so a version with no files is dropped with the yanked ones.
           live = [v for v, files in releases.items() if not all(f.get("yanked") for f in files)]
-          odd = [v for v in live + [version] if not re.fullmatch(r"\d+(\.\d+)*", v)]
-          if odd:
-              print(f"::error::cannot order versions that are not plain dotted numbers: {odd}")
+          plain = re.compile(r"\d+(\.\d+)*")
+          if not plain.fullmatch(version):
+              print(f"::error::cannot order {version!r}: it is not a plain dotted version")
               sys.exit(1)
+          # One stray pre-release on PyPI must not fail every later release; it is skipped, and said so.
+          odd = [v for v in live if not plain.fullmatch(v)]
+          if odd:
+              print(f"::warning::not compared, as they are not plain dotted versions: {odd}")
           key = lambda v: tuple(int(p) for p in v.split("."))
-          newer = sorted((v for v in live if key(v) > key(version)), key=key)
+          newer = sorted((v for v in live if v not in odd and key(v) > key(version)), key=key)
           if newer:
               print(f"::error::docker-mcp-server {version} is not the newest release on PyPI ({newer[-1]} is), "
                     f"so :latest and :no-scout now point at an older build. Re-run the release for v{newer[-1]} "

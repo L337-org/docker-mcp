@@ -9,10 +9,9 @@ always confirming anything destructive.
 
 The plugin starts one local MCP server with `uvx docker-mcp-server==<version>`, pinned to the
 release this plugin version was built from.  The `pyproject.toml` and `uv.lock` in this folder lock
-that release and every one of its dependencies, with hashes; the plugin directory's locked launch
-installs exactly that set.  Loaded any other way, `uvx` resolves the dependencies when it installs
-them.  On first use `uv` downloads the
-packages from [PyPI](https://pypi.org/project/docker-mcp-server/) and caches them; after that it
+that release and every one of its dependencies, with hashes, and the plugin directory describes its
+locked launch as installing exactly that set.  Loaded any other way, `uvx` resolves the
+dependencies when it installs them.  On first use `uv` downloads the packages from [PyPI](https://pypi.org/project/docker-mcp-server/) and caches them; after that it
 runs from the cache.  You need [uv](https://docs.astral.sh/uv/) installed, and `uv` fetches a
 suitable Python (3.14 or later) itself if you do not have one.  On Intel (x86_64) macOS, check the
 [project requirements](https://github.com/L337-org/docker-mcp#requirements) first.

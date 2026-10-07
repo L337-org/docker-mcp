@@ -62,10 +62,10 @@ release. They exist so a change that would break the post-release plugin publish
 request instead: the folder and lock checks, `claude plugin validate --strict` (with the Claude Code
 CLI pinned to the release jobs' version), both installs, the settings checks, a real `system_ping`
 on Linux, and a dry-run of the publish decision against the live branch. What they cannot cover is
-the PyPI half - that the release is served and byte-identical to what was built - which the release
-job checks before publishing. Each must be a required check in the `main` ruleset (check with
-`gh api repos/L337-org/docker-mcp/rulesets`), so renaming one means updating the ruleset in the
-same change. [distribution.md](distribution.md) has the release side.
+the PyPI half - that the release is served and, on a run that uploaded it, byte-identical to what
+was built - which the release job checks before publishing. Each must be a required check in the
+`main` ruleset (check with `gh api repos/L337-org/docker-mcp/rulesets`), so renaming one means
+updating the ruleset in the same change. [distribution.md](distribution.md) has the release side.
 
 A **weekly canary** (`.github/workflows/canary.yaml`, Mondays + dispatch) hunts platform/ecosystem
 drift premerge CI can't see: wheels-only (`--only-binary :all:`) dependency resolution for Intel

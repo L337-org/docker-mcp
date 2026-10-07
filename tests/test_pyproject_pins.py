@@ -286,7 +286,7 @@ def _newest_release_check() -> str:
         ("2.2.7", True, "no release newer than 2.2.7"),
         ("2.10.0", True, "no release newer than 2.10.0"),
         ("2.2.5", False, "2.2.5 is not the newest release on PyPI (2.2.6 is)"),
-        ("2.2.6rc1", False, "not plain dotted numbers"),
+        ("2.2.6rc1", False, "it is not a plain dotted version"),
     ],
 )
 def test_verify_refuses_a_release_that_is_not_the_newest_on_pypi(tmp_path, version, ok, message):
@@ -311,3 +311,41 @@ def test_verify_refuses_a_release_that_is_not_the_newest_on_pypi(tmp_path, versi
     )
     assert (result.returncode == 0) is ok, result.stdout + result.stderr
     assert message in result.stdout
+
+
+def test_a_stray_pre_release_on_pypi_does_not_block_later_releases(tmp_path):
+    releases = {"2.2.6": [{"yanked": False}], "2.3.0rc1": [{"yanked": False}]}
+    data = tmp_path / "pypi.json"
+    data.write_text(json.dumps({"releases": releases}))
+    script = tmp_path / "check.py"
+    script.write_text(_newest_release_check())
+    result = subprocess.run(  # noqa: S603  (this interpreter, a script written here)
+        [sys.executable, str(script), str(data)],
+        env={**os.environ, "VERSION": "2.2.7"},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "::warning::not compared" in result.stdout
+    assert "2.3.0rc1" in result.stdout
+
+
+def test_the_plugin_build_compares_with_the_pypi_jobs_files_only_when_that_run_uploaded():
+    """Three pieces must agree: the pypi job's `uploaded` output, the build job's download of its
+    files, and the build step passing --expect-dist.  A re-run uploads nothing, and comparing PyPI
+    with its rebuild would fail whenever the build backend has changed since."""
+    text = PUBLISH_WORKFLOW.read_text()
+    pypi = text[text.index("\n  pypi:\n") : text.index("\n  images:\n")]
+    assert "uploaded: ${{ steps.existing.outputs.uploaded }}" in pypi
+    existing = pypi[pypi.index("id: existing") : pypi.index("- name: Publish to PyPI")]
+    assert '200) echo "uploaded=false"' in existing
+    assert '404) echo "uploaded=true"' in existing
+    assert "exit 1" in existing.split("*)", 1)[1], "an unexpected PyPI status must fail, not guess"
+    build = text[text.index("\n  claude-plugin-build:\n") : text.index("\n  claude-plugin-smoke:\n")]
+    download = build[build.index("- name: Fetch the files the pypi job built") :]
+    assert "needs.pypi.outputs.uploaded == 'true'" in download.split("- name:", 2)[1]
+    step = build[build.index("- name: Build and check the plugin") :]
+    assert "UPLOADED: ${{ needs.pypi.outputs.uploaded }}" in step
+    assert re.search(r'if \[ "\$UPLOADED" = true \]; then\s+args\+=\(--expect-dist release-dist\)', step)
+    assert "--expect-dist" not in step.split("args=(", 1)[1].split(")", 1)[0], "never unconditionally"
