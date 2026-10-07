@@ -5,6 +5,7 @@ job instead (premerge.yaml), against the real services; what is here is the logi
 whether a publish may go ahead, and the checks whose failure must stop it.
 """
 
+import base64
 import importlib.util
 import json
 import shutil
@@ -24,8 +25,10 @@ _spec.loader.exec_module(release)
 _VERSION = json.loads((_ROOT / "claude-plugin" / ".claude-plugin" / "plugin.json").read_text())["version"]
 
 
-def _state(head=None, head_version=None, head_tree=None, tag=None):
-    return release.BranchState(head=head, head_version=head_version, head_tree=head_tree, tag=tag)
+def _state(head=None, head_version=None, head_tree=None, published=None):
+    if published is None:
+        published = [head_version] if head_version else []
+    return release.BranchState(head=head, head_version=head_version, head_tree=head_tree, published=published)
 
 
 # --------------------------------------------------------------------------------------------
@@ -34,65 +37,59 @@ def _state(head=None, head_version=None, head_tree=None, tag=None):
 
 
 def test_first_release_creates_the_branch():
-    decision = release.decide("2.2.7", "t1", _state(), rollback=False)
+    decision = release.decide("2.2.7", "t1", _state())
     assert decision.action == "create"
-    assert "first release" in decision.reason
+    assert "first commit" in decision.reason
 
 
 def test_a_newer_release_creates_a_new_commit():
-    decision = release.decide("2.3.0", "t2", _state("c1", "2.2.7", "t1"), rollback=False)
+    decision = release.decide("2.3.0", "t2", _state("c1", "2.2.7", "t1"))
     assert decision.action == "create"
 
 
 def test_versions_compare_numerically_not_as_strings():
-    assert release.decide("2.10.0", "t", _state("c", "2.9.0", "x"), rollback=False).action == "create"
-    with pytest.raises(release.ReleaseError, match="not older"):
-        release.decide("2.9.0", "t", _state("c", "2.10.0", "x"), rollback=False)
+    assert release.decide("2.10.0", "t", _state("c", "2.9.0", "x")).action == "create"
+    with pytest.raises(release.ReleaseError, match="which is newer"):
+        release.decide("2.9.0", "t", _state("c", "2.10.0", "x"))
 
 
-def test_an_older_release_without_a_tag_is_refused():
-    with pytest.raises(release.ReleaseError, match="already holds 2.3.0, which is not older"):
-        release.decide("2.2.7", "t", _state("c", "2.3.0", "x"), rollback=False)
-
-
-def test_the_same_version_with_a_different_build_is_refused():
-    with pytest.raises(release.ReleaseError, match="already holds 2.2.7"):
-        release.decide("2.2.7", "new-tree", _state("c", "2.2.7", "old-tree"), rollback=False)
-
-
-def test_a_run_that_moved_the_branch_but_failed_to_tag_resumes_by_tagging():
-    decision = release.decide("2.2.7", "same", _state("c", "2.2.7", "same"), rollback=False)
-    assert decision.action == "tag-head"
+def test_an_older_release_never_published_is_refused():
+    with pytest.raises(release.ReleaseError, match="already holds 2.3.0, which is newer"):
+        release.decide("2.2.7", "t", _state("c", "2.3.0", "x"))
 
 
 def test_rerunning_the_current_release_does_nothing():
-    decision = release.decide("2.2.7", "t", _state("c", "2.2.7", "t", tag="c"), rollback=False)
+    decision = release.decide("2.2.7", "t", _state("c", "2.2.7", "t"))
     assert decision.action == "noop"
 
 
-def test_a_tagged_but_unpublished_newer_release_moves_the_branch_to_the_tag():
-    decision = release.decide("2.3.0", "t", _state("c", "2.2.7", "x", tag="c2"), rollback=False)
-    assert decision.action == "move-to-tag"
+def test_rerunning_the_current_release_with_a_different_lock_does_nothing_and_says_so():
+    decision = release.decide("2.2.7", "new-tree", _state("c", "2.2.7", "old-tree"))
+    assert decision.action == "noop"
+    assert "differs from the published one" in decision.reason
 
 
-def test_rerunning_a_superseded_release_is_refused_and_points_at_rollback():
-    with pytest.raises(release.ReleaseError, match="superseded release.*claude_plugin_rollback"):
-        release.decide("2.2.6", "t", _state("c", "2.2.7", "x", tag="old"), rollback=False)
+def test_rerunning_a_superseded_release_is_refused():
+    with pytest.raises(release.ReleaseError, match="published before.*moved to 2.2.7"):
+        release.decide("2.2.6", "t", _state("c", "2.2.7", "x", published=["2.2.7", "2.2.6"]))
 
 
-def test_a_rollback_moves_to_the_earlier_tag():
-    decision = release.decide("2.2.6", "t", _state("c", "2.2.7", "x", tag="old"), rollback=True)
-    assert decision.action == "move-to-tag"
-    assert "from 2.2.7 to 2.2.6" in decision.reason
+def test_a_reverted_release_is_not_published_again():
+    """After a revert takes the branch from 2.2.7 back to 2.2.6, a re-run of 2.2.7 is newer than the
+    head but must still be refused, or it would undo the rollback."""
+    with pytest.raises(release.ReleaseError, match="by a newer release or a revert"):
+        release.decide("2.2.7", "t", _state("r", "2.2.6", "x", published=["2.2.6", "2.2.7"]))
 
 
-def test_a_rollback_to_a_release_with_no_plugin_commit_is_refused():
-    with pytest.raises(release.ReleaseError, match="no published plugin commit is tagged"):
-        release.decide("2.2.5", "t", _state("c", "2.2.7", "x"), rollback=True)
+def test_a_new_release_after_a_revert_is_published():
+    decision = release.decide("2.2.8", "t", _state("r", "2.2.6", "x", published=["2.2.6", "2.2.7"]))
+    assert decision.action == "create"
 
 
-def test_a_rollback_to_the_release_already_held_does_nothing():
-    assert release.decide("2.2.6", "t", _state("c", "2.2.6", "x", tag="c"), rollback=True).action == "noop"
+def test_a_head_without_a_plugin_version_is_replaced_and_named():
+    decision = release.decide("2.2.7", "t", _state("c", None, "x", published=[]))
+    assert decision.action == "create"
+    assert "no readable plugin.json" in decision.reason
 
 
 def test_a_version_that_is_not_a_plain_release_is_refused():
@@ -264,55 +261,107 @@ def test_an_env_reference_to_an_undeclared_option_is_refused(tmp_path):
         release.plugin_env(plugin, {})
 
 
-def test_a_pypi_build_refuses_to_run_without_a_token(tmp_path, monkeypatch, capsys):
-    """Whether to reuse an existing plugin tag depends on reading it reliably, so the PyPI build
-    checks authenticated and will not run anonymously."""
-    monkeypatch.delenv("GH_TOKEN", raising=False)
-    status = release.main(["build", "--version", _VERSION, "--source", "pypi", "--out", str(tmp_path / "out")])
-    assert status == 1
-    assert "needs GH_TOKEN" in capsys.readouterr().err
-    assert not (tmp_path / "out").exists()
+# --------------------------------------------------------------------------------------------
+# GitHub.state(): what the branch holds, read from its own history
+# --------------------------------------------------------------------------------------------
+
+
+class _HistoryGitHub(release.GitHub):
+    """A GitHub whose API calls are served from a fixed history, shaped on the REST responses the
+    class reads: a ref's ``object.sha``, the commits list's ``sha`` and ``commit.tree.sha``, and a
+    file's base64 ``content``."""
+
+    def __init__(self, history, versions_by_tree):
+        super().__init__("o/r", None)
+        self._history, self._versions = history, versions_by_tree
+        self.reads: list[str] = []
+
+    def call(self, method, path, body=None):
+        self.reads.append(path)
+        if path.startswith("git/ref/"):
+            return (404, None) if not self._history else (200, {"object": {"sha": self._history[0][0]}})
+        if path.startswith("commits?"):
+            page = int(path.rsplit("page=", 1)[1])
+            chunk = self._history[(page - 1) * 100 : page * 100]
+            return 200, [{"sha": c, "commit": {"tree": {"sha": t}}} for c, t in chunk]
+        commit = path.rsplit("ref=", 1)[1]
+        version = self._versions[dict(self._history)[commit]]
+        if version is None:
+            return 404, None
+        content = base64.b64encode(json.dumps({"version": version}).encode()).decode()
+        return 200, {"content": content}
+
+
+def test_state_of_an_absent_branch():
+    assert release.GitHub.state(_HistoryGitHub([], {}), "b") == _state()
+
+
+def test_state_lists_every_version_the_branch_has_held_newest_first():
+    # 2.2.7 published, then reverted: the revert commit restores 2.2.6's tree.
+    history = [("revert", "t6"), ("c7", "t7"), ("c6", "t6"), ("c5", "t5")]
+    gh = _HistoryGitHub(history, {"t5": "2.2.5", "t6": "2.2.6", "t7": "2.2.7"})
+    state = gh.state("b")
+    assert state == release.BranchState("revert", "2.2.6", "t6", ["2.2.6", "2.2.7", "2.2.5"])
+    assert sum(r.startswith("contents/") for r in gh.reads) == 3, "each tree's version is read once"
+
+
+def test_state_reads_every_page_of_history():
+    history = [(f"c{i}", f"t{i}") for i in range(250)]
+    gh = _HistoryGitHub(history, {f"t{i}": f"1.0.{i}" for i in range(250)})
+    assert len(gh.state("b").published) == 250
+
+
+def test_state_refuses_rather_than_reading_part_of_a_long_history(monkeypatch):
+    monkeypatch.setattr(release, "MAX_HISTORY_COMMITS", 150)
+    history = [(f"c{i}", f"t{i}") for i in range(250)]
+    with pytest.raises(release.ReleaseError, match="more than 150 commits"):
+        _HistoryGitHub(history, {f"t{i}": "1.0.0" for i in range(250)}).state("b")
+
+
+def test_state_skips_commits_without_a_plugin_version():
+    gh = _HistoryGitHub([("c2", "t2"), ("c1", "t1")], {"t2": None, "t1": "2.2.6"})
+    assert gh.state("b") == release.BranchState("c2", None, "t2", ["2.2.6"])
 
 
 # --------------------------------------------------------------------------------------------
-# publish(): the order of writes, and what happens when one of them goes wrong
+# publish(): what is written, and what happens when a write goes wrong
 # --------------------------------------------------------------------------------------------
 
 
 class _FakeGitHub:
     """Stands in for the GitHub class: serves a fixed state and records every write in order.
 
-    Shaped on the class's own methods (state, commit, call, ref) and on the REST responses the
-    script reads - a ref's ``object.sha`` and a created object's ``sha`` - per the Git refs and Git
+    Shaped on the class's own methods (state, commit, call) and on the REST responses the script
+    reads - a ref's ``object.sha`` and a created object's ``sha`` - per the Git refs and Git
     database API reference; nothing here is a GitHub behaviour the tests assert on.
     """
 
-    def __init__(self, state, tree, *, fail_tag=False, move_lands_on=None):
-        self._state, self._tree = state, tree
-        self._fail_tag, self._move_lands_on = fail_tag, move_lands_on
-        self.writes: list[tuple[str, str]] = []
+    def __init__(self, state, tree, *, verified=True, refuse_move=False, move_lands_on=None):
+        self._state, self._tree, self._verified = state, tree, verified
+        self._refuse_move, self._move_lands_on = refuse_move, move_lands_on
+        self._parents: list[str] = []
+        self.writes: list[tuple[str, str, dict]] = []
 
-    def state(self, branch, tag):
+    def state(self, branch):
         return self._state
 
     def commit(self, sha):
-        return {"tree": self._tree, "parents": [], "verified": True, "reason": "valid"}
+        return {"tree": self._tree, "parents": self._parents, "verified": self._verified, "reason": "valid"}
 
     def ref(self, ref):
         raise AssertionError("publish must confirm refs from write responses, not reads")
 
     def call(self, method, path, body=None):
         body = body or {}
-        self.writes.append((method, path))
-        if path in ("git/blobs", "git/trees", "git/commits"):
-            return 201, {"sha": "new-commit" if path == "git/commits" else "x"}
-        if path == "git/refs" and body["ref"].startswith("refs/tags/"):
-            if self._fail_tag:
-                raise release.ReleaseError("POST git/refs failed with HTTP 422: Reference already exists")
-            return 201, {"object": {"sha": body["sha"]}}
-        # A branch move: report where it landed.  Moving back to the previous head always lands.
-        moving_back = body["sha"] == self._state.head
-        return 200, {"object": {"sha": body["sha"] if moving_back else (self._move_lands_on or body["sha"])}}
+        self.writes.append((method, path, body))
+        if path in ("git/blobs", "git/trees"):
+            return 201, {"sha": "x"}
+        if path == "git/commits":
+            self._parents = body["parents"]
+            return 201, {"sha": "new-commit"}
+        if self._refuse_move:
+            raise release.ReleaseError("PATCH git/refs failed with HTTP 422: Update is not a fast forward")
+        return 200, {"object": {"sha": self._move_lands_on or body["sha"]}}
 
 
 def _built(tmp_path) -> tuple[Path, str]:
@@ -328,41 +377,73 @@ def _publish(monkeypatch, fake, build_dir, *extra):
     return release.main(["publish", "--version", _VERSION, "--build", str(build_dir), *extra])
 
 
-def test_publish_tags_before_it_moves_the_branch(tmp_path, monkeypatch):
+def _ref_writes(fake):
+    return [(m, p, b) for m, p, b in fake.writes if p.startswith("git/refs")]
+
+
+def test_publish_adds_a_commit_on_the_head_and_fast_forwards(tmp_path, monkeypatch):
     build_dir, tree = _built(tmp_path)
-    fake = _FakeGitHub(release.BranchState("old", "0.0.1", "t0", None), tree)
+    fake = _FakeGitHub(_state("old", "0.0.1", "t0"), tree)
     assert _publish(monkeypatch, fake, build_dir) == 0
-    ref_writes = [w for w in fake.writes if w[1].startswith("git/refs")]
-    assert ref_writes == [("POST", "git/refs"), ("PATCH", f"git/refs/heads/{release.DEFAULT_BRANCH}")]
+    commit = next(b for _, p, b in fake.writes if p == "git/commits")
+    assert commit["parents"] == ["old"]
+    branch = f"git/refs/heads/{release.DEFAULT_BRANCH}"
+    assert _ref_writes(fake) == [("PATCH", branch, {"sha": "new-commit", "force": False})]
 
 
-def test_nothing_moves_when_the_tag_cannot_be_created(tmp_path, monkeypatch, capsys):
+def test_the_first_publish_creates_the_branch_from_a_parentless_commit(tmp_path, monkeypatch):
     build_dir, tree = _built(tmp_path)
-    fake = _FakeGitHub(release.BranchState("old", "0.0.1", "t0", None), tree, fail_tag=True)
-    assert _publish(monkeypatch, fake, build_dir) == 1
-    assert not [w for w in fake.writes if "heads/" in w[1]]
-    assert "the branch was not moved" in capsys.readouterr().err
-
-
-def test_a_move_that_lands_elsewhere_is_put_back(tmp_path, monkeypatch, capsys):
-    build_dir, tree = _built(tmp_path)
-    fake = _FakeGitHub(release.BranchState("old", "0.0.1", "t0", None), tree, move_lands_on="somewhere-else")
-    assert _publish(monkeypatch, fake, build_dir) == 1
-    heads = [w for w in fake.writes if "heads/" in w[1]]
-    assert len(heads) == 2, "expected the move and then the move back"
-    assert "moved it back to old" in capsys.readouterr().err
-
-
-def test_a_run_that_only_needs_its_tag_leaves_the_branch_alone(tmp_path, monkeypatch):
-    build_dir, tree = _built(tmp_path)
-    fake = _FakeGitHub(release.BranchState("head", _VERSION, tree, None), tree)
+    fake = _FakeGitHub(_state(), tree)
     assert _publish(monkeypatch, fake, build_dir) == 0
-    assert fake.writes == [("POST", "git/refs")]
+    assert next(b for _, p, b in fake.writes if p == "git/commits")["parents"] == []
+    ref = f"refs/heads/{release.DEFAULT_BRANCH}"
+    assert _ref_writes(fake) == [("POST", "git/refs", {"ref": ref, "sha": "new-commit"})]
+
+
+def test_an_unsigned_commit_is_never_published(tmp_path, monkeypatch, capsys):
+    build_dir, tree = _built(tmp_path)
+    fake = _FakeGitHub(_state("old", "0.0.1", "t0"), tree, verified=False)
+    assert _publish(monkeypatch, fake, build_dir) == 1
+    assert not _ref_writes(fake)
+    assert "not signed by GitHub" in capsys.readouterr().err
+
+
+def test_a_branch_that_moved_since_it_was_read_is_left_alone(tmp_path, monkeypatch, capsys):
+    build_dir, tree = _built(tmp_path)
+    fake = _FakeGitHub(_state("old", "0.0.1", "t0"), tree, refuse_move=True)
+    assert _publish(monkeypatch, fake, build_dir) == 1
+    assert len(_ref_writes(fake)) == 1, "one fast-forward attempt, never a forced retry"
+    err = capsys.readouterr().err
+    assert "changed after it was read" in err
+    assert "Update is not a fast forward" in err
+
+
+def test_a_move_reported_elsewhere_fails_the_run(tmp_path, monkeypatch, capsys):
+    build_dir, tree = _built(tmp_path)
+    fake = _FakeGitHub(_state("old", "0.0.1", "t0"), tree, move_lands_on="somewhere-else")
+    assert _publish(monkeypatch, fake, build_dir) == 1
+    assert "reported it at somewhere-else" in capsys.readouterr().err
+
+
+def test_rerunning_a_published_release_writes_nothing(tmp_path, monkeypatch):
+    build_dir, tree = _built(tmp_path)
+    fake = _FakeGitHub(_state("head", _VERSION, tree), tree)
+    assert _publish(monkeypatch, fake, build_dir) == 0
+    assert fake.writes == []
 
 
 def test_a_dry_run_reports_a_refusal_without_failing_or_writing(tmp_path, monkeypatch, capsys):
     build_dir, tree = _built(tmp_path)
-    fake = _FakeGitHub(release.BranchState("newer", "99.0.0", "t9", "tagged"), tree)
+    fake = _FakeGitHub(_state("newer", "99.0.0", "t9"), tree)
     assert _publish(monkeypatch, fake, build_dir, "--dry-run") == 0
     assert fake.writes == []
     assert "would be refused" in capsys.readouterr().out
+
+
+def test_a_local_build_is_never_published(tmp_path, monkeypatch, capsys):
+    build_dir, tree = _built(tmp_path)
+    release.write_build_record(build_dir, _VERSION, "local", tree)
+    fake = _FakeGitHub(_state(), tree)
+    assert _publish(monkeypatch, fake, build_dir) == 1
+    assert fake.writes == []
+    assert "local wheel" in capsys.readouterr().err

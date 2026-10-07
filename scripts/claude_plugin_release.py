@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """Build, check and publish the Claude plugin's release branch.
 
-Anthropic's plugin directory follows the `claude-plugin-release` branch.  Each commit on that branch
-is generated here: it has no parent and holds only `claude-plugin/`, with a `uv.lock` that pins the
-released server and every dependency by hash.  The branch is force-moved from one such commit to the
-next, and every commit is kept by an immutable `claude-plugin-v<version>` tag, so a rollback moves
-the branch back to the exact commit that was published before.  `architecture/distribution.md` has
-the reasoning, the repository rules this depends on, and the rollback procedure.
+Anthropic's plugin directory follows the `claude-plugin-release` branch.  Each release adds one
+commit to it, generated here, holding only `claude-plugin/` with a `uv.lock` that pins the released
+server and every dependency by hash.  The branch only ever fast-forwards and its history cannot be
+rewritten, so it is also the record of what was published.  A rollback is a signed `git revert` on
+the branch, made by a person; `architecture/distribution.md` has the reasoning, the repository
+rules this depends on, and the rollback procedure.
 
 The release workflow and the pre-merge workflow both run this script, so what a pull request
 rehearses is the code a release runs:
@@ -16,8 +16,7 @@ rehearses is the code a release runs:
              --source local  wheels built from the checkout (pre-merge; nothing is on PyPI yet)
     smoke    install the built plugin both ways it can be installed, start the server and check
              what it registers, with the plugin's settings applied
-    fetch    write a published plugin commit (by tag) to a folder, for a rollback's smoke test
-    publish  create the commit, move the branch, tag it - or, with --dry-run, only decide
+    publish  add the commit to the branch - or, with --dry-run, only decide
 
 Every check fails the run rather than warning, and `publish` changes nothing until all of them have
 passed in the jobs before it.  Standard library only, so CI runs it with a bare Python.
@@ -48,7 +47,6 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 PLUGIN_DIRNAME = "claude-plugin"
 PACKAGE = "docker-mcp-server"
 DEFAULT_BRANCH = "claude-plugin-release"
-DEFAULT_TAG_PREFIX = "claude-plugin-v"
 PYPI_INDEX = "https://pypi.org/simple"
 API = "https://api.github.com"
 DEFAULT_REPO = "L337-org/docker-mcp"
@@ -63,6 +61,8 @@ IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"}
 MAX_DOWNLOAD_BYTES = 64 * 1024 * 1024
 MAX_MCP_LINE_BYTES = 16 * 1024 * 1024
 HTTP_TIMEOUT = 60
+# How far back publish reads the branch's history, at one release per commit plus any reverts.
+MAX_HISTORY_COMMITS = 1000
 
 
 class ReleaseError(Exception):
@@ -445,11 +445,6 @@ def build(args: argparse.Namespace) -> None:
     version, out = args.version, Path(args.out).resolve()
     if out.exists():
         raise ReleaseError(f"{out} already exists; build into a fresh directory")
-    if args.source == "pypi" and not os.environ.get("GH_TOKEN"):
-        # Whether this release's plugin commit already exists decides whether to rebuild, so the
-        # check is made authenticated; a stale "absent" is still caught later, by publish refusing
-        # a tagged commit whose tree differs from the one tested.
-        raise ReleaseError("a PyPI build needs GH_TOKEN to check for an existing plugin tag; set it to any read token")
     plugin = out / PLUGIN_DIRNAME
     source_root = Path(args.source_root).resolve()
     shutil.copytree(source_root / PLUGIN_DIRNAME, plugin, ignore=shutil.ignore_patterns("uv.lock", ".DS_Store"))
@@ -471,17 +466,6 @@ def build(args: argparse.Namespace) -> None:
         downloads = out / "pypi"
         downloads.mkdir()
         pypi_hashes = pypi_release_files(version, downloads, Path(args.expect_dist) if args.expect_dist else None)
-        gh = GitHub(os.environ.get("GITHUB_REPOSITORY", DEFAULT_REPO), os.environ.get("GH_TOKEN"))
-        tag = args.tag_prefix + version
-        if gh.ref(f"tags/{tag}") is not None:
-            # An earlier run already published this release's plugin commit.  Re-locking now could
-            # pick up newer dependencies, so the commit that was tagged is what gets re-tested and,
-            # if the branch is not on it, published - never a second, different build.
-            shutil.rmtree(plugin)
-            tree = fetch_tagged(gh, tag, version, out)
-            write_build_record(out, version, "tag", tree)
-            log(f"== {tag} already exists: re-testing that commit instead of building a new one")
-            return
     else:
         # The wheels are copied into the build so the lock's local source travels with it to the
         # smoke jobs on other runners, at the same relative path.
@@ -514,17 +498,17 @@ def read_build_record(build_dir: Path) -> dict:
     """Read what a build directory holds.
 
     Args:
-        build_dir: a directory written by build or fetch
+        build_dir: a directory written by build
 
     Returns:
-        dict: version, source (pypi, local or tag) and tree
+        dict: version, source (pypi or local) and tree
 
     Raises:
         ReleaseError: if it has no build record
     """
     path = build_dir / "build.json"
     if not path.is_file():
-        raise ReleaseError(f"{build_dir} has no build.json; run build or fetch into it first")
+        raise ReleaseError(f"{build_dir} has no build.json; run build into it first")
     return json.loads(path.read_text(encoding="utf-8"))
 
 
@@ -534,7 +518,7 @@ def write_build_record(out: Path, version: str, source: str, tree: str) -> None:
     Args:
         out: the build directory
         version: the release
-        source: pypi, local or tag
+        source: pypi or local
         tree: the plugin folder's git tree id
     """
     (out / "build.json").write_text(json.dumps({"version": version, "source": source, "tree": tree}, indent=2))
@@ -793,38 +777,39 @@ def smoke(args: argparse.Namespace) -> None:
 
 
 # --------------------------------------------------------------------------------------------
-# GitHub: decide, fetch, publish
+# GitHub: decide, publish
 # --------------------------------------------------------------------------------------------
 
 
 @dataclass
 class BranchState:
-    """What the release branch and the release's tag currently point at."""
+    """What the release branch holds now, and every version it has ever held."""
 
     head: str | None
     head_version: str | None
     head_tree: str | None
-    tag: str | None
+    published: list[str]
 
 
 @dataclass
 class Decision:
     """What publish will do, and why."""
 
-    action: str  # "create", "move-to-tag", "tag-head", "noop"
+    action: str  # "create" or "noop"
     reason: str
 
 
-def decide(version: str, local_tree: str | None, state: BranchState, *, rollback: bool) -> Decision:
+def decide(version: str, local_tree: str, state: BranchState) -> Decision:
     """Decide what publishing this version should do, refusing anything that would go backwards.
 
-    A pure function of the branch's state so every case is unit tested.
+    A pure function of the branch's state so every case is unit tested.  A version is published at
+    most once: after a revert has taken the branch back to an earlier release, a re-run of the
+    reverted release is refused, so the revert sticks until a newer release replaces it.
 
     Args:
-        version: the release being published (or rolled back to)
-        local_tree: the tree id of the folder built and tested for this release (None in a rollback)
-        state: the branch and tag as they are now
-        rollback: whether this run was asked to move the branch to an earlier release
+        version: the release being published
+        local_tree: the tree id of the folder built and tested for this release
+        state: the branch as it is now
 
     Returns:
         Decision: the action and its reason
@@ -832,30 +817,28 @@ def decide(version: str, local_tree: str | None, state: BranchState, *, rollback
     Raises:
         ReleaseError: when the request is refused
     """
-    if rollback:
-        if state.tag is None:
-            raise ReleaseError(f"cannot roll back to {version}: no published plugin commit is tagged for it")
-        if state.head == state.tag:
-            return Decision("noop", f"the branch already holds {version}")
-        return Decision("move-to-tag", f"rolling back from {state.head_version} to {version}")
-
-    newer = state.head_version is None or version_key(version) > version_key(state.head_version)
-    if state.tag is not None:
-        if state.head == state.tag:
-            return Decision("noop", f"{version} is already published and the branch holds it")
-        if not newer:
-            raise ReleaseError(
-                f"refusing to move the branch from {state.head_version} back to {version}; this looks like a re-run "
-                "of a superseded release. To roll back deliberately, run the workflow with claude_plugin_rollback."
-            )
-        return Decision("move-to-tag", f"{version} was committed and tagged by an earlier run; moving the branch to it")
-    if state.head_version == version and state.head_tree == local_tree:
-        return Decision("tag-head", f"the branch already holds this {version} build; it only needs its tag")
-    if not newer:
-        raise ReleaseError(
-            f"refusing to publish {version}: the branch already holds {state.head_version}, which is not older"
+    if state.head is None:
+        return Decision("create", f"publishing {version} as the branch's first commit")
+    if state.head_version == version:
+        if state.head_tree == local_tree:
+            return Decision("noop", f"{version} is already published and the branch holds this build")
+        return Decision(
+            "noop",
+            f"{version} is already published; this run's build (tree {local_tree}) differs from the published "
+            f"one ({state.head_tree}), most likely a re-lock picking up newer dependencies, and is not published",
         )
-    return Decision("create", f"publishing {version} over {state.head_version or 'nothing (first release)'}")
+    if version in state.published:
+        raise ReleaseError(
+            f"refusing to publish {version}: it was published before and the branch has since moved to "
+            f"{state.head_version}, by a newer release or a revert. A version is published once; see the "
+            "rollback procedure in architecture/distribution.md."
+        )
+    if state.head_version is not None and version_key(version) < version_key(state.head_version):
+        raise ReleaseError(
+            f"refusing to publish {version}: the branch already holds {state.head_version}, which is newer"
+        )
+    over = state.head_version or f"{state.head}, which has no readable plugin.json"
+    return Decision("create", f"publishing {version} over {over}")
 
 
 class GitHub:
@@ -866,7 +849,7 @@ class GitHub:
 
         Args:
             repo: owner/name
-            token: the App installation token (or any token for read-only use)
+            token: a token with contents: write (the workflow's own), or any token for a dry run
         """
         self.repo, self.token = repo, token
 
@@ -919,109 +902,78 @@ class GitHub:
             "reason": verification.get("reason", ""),
         }
 
-    def tree_files(self, tree: str) -> dict[str, bytes]:
-        """Download every file in a tree.
+    def plugin_version(self, commit: str) -> str | None:
+        """The version the plugin declares at a commit.
 
         Args:
-            tree: tree id
+            commit: commit id
 
         Returns:
-            dict: path -> contents
+            str or None: the version, or None if the commit has no plugin.json
+        """
+        status, data = self.call("GET", f"contents/{PLUGIN_DIRNAME}/.claude-plugin/plugin.json?ref={commit}")
+        if status == 404:
+            return None
+        return json.loads(base64.b64decode(expect_dict(data, "plugin.json")["content"]))["version"]
+
+    def history(self, head: str) -> list[tuple[str, str]]:
+        """Every commit reachable from `head`, newest first, with its tree.
+
+        Args:
+            head: the commit to start from
+
+        Returns:
+            list: (commit id, tree id) pairs
 
         Raises:
-            ReleaseError: if the tree listing was truncated or holds anything but regular files
+            ReleaseError: if there are more than MAX_HISTORY_COMMITS, rather than deciding on part of it
         """
-        _, listing = self.call("GET", f"git/trees/{tree}?recursive=1")
-        data = expect_dict(listing, f"tree {tree}")
-        if data.get("truncated"):
-            raise ReleaseError(f"tree {tree} is too large to list in one request")
-        files: dict[str, bytes] = {}
-        for entry in data["tree"]:
-            if entry["type"] == "tree":
-                continue
-            if entry["type"] != "blob" or entry["mode"] != "100644":
-                raise ReleaseError(f"tree {tree} holds {entry['path']} as {entry['type']} {entry['mode']}")
-            _, blob = self.call("GET", f"git/blobs/{entry['sha']}")
-            files[entry["path"]] = base64.b64decode(expect_dict(blob, f"blob {entry['sha']}")["content"])
-        return files
+        commits: list[tuple[str, str]] = []
+        page = 1
+        while True:
+            _, data = self.call("GET", f"commits?sha={head}&per_page=100&page={page}")
+            if not isinstance(data, list):
+                raise ReleaseError(f"listing the history of {head} returned {type(data).__name__}, not a list")
+            commits += [(c["sha"], c["commit"]["tree"]["sha"]) for c in data]
+            if len(commits) > MAX_HISTORY_COMMITS:
+                raise ReleaseError(
+                    f"the release branch has more than {MAX_HISTORY_COMMITS} commits; raise MAX_HISTORY_COMMITS "
+                    "so the check for an already-published version reads all of them"
+                )
+            if len(data) < 100:
+                return commits
+            page += 1
 
-    def state(self, branch: str, tag: str) -> BranchState:
-        """Read the branch head, the version its plugin declares, and the release tag.
+    def state(self, branch: str) -> BranchState:
+        """Read the branch head and the version every commit on it declares.
 
         Args:
             branch: release branch name
-            tag: this release's tag name
 
         Returns:
             BranchState: what is there now
         """
         head = self.ref(f"heads/{branch}")
-        head_version = head_tree = None
-        if head is not None:
-            head_tree = self.commit(head)["tree"]
-            status, data = self.call("GET", f"contents/{PLUGIN_DIRNAME}/.claude-plugin/plugin.json?ref={head}")
-            if status != 404:
-                head_version = json.loads(base64.b64decode(expect_dict(data, "plugin.json")["content"]))["version"]
-        return BranchState(head=head, head_version=head_version, head_tree=head_tree, tag=self.ref(f"tags/{tag}"))
-
-
-def fetch(args: argparse.Namespace) -> None:
-    """Write a published plugin commit, by its release tag, to a folder for a rollback's smoke test.
-
-    Args:
-        args: parsed command line
-
-    Raises:
-        ReleaseError: if the tag is missing or the downloaded files do not hash to the commit's tree
-    """
-    gh = GitHub(os.environ.get("GITHUB_REPOSITORY", DEFAULT_REPO), os.environ.get("GH_TOKEN"))
-    out = Path(args.out).resolve()
-    if out.exists():
-        raise ReleaseError(f"{out} already exists; fetch into a fresh directory")
-    tree = fetch_tagged(gh, args.tag_prefix + args.version, args.version, out)
-    write_build_record(out, args.version, "tag", tree)
-
-
-def fetch_tagged(gh: GitHub, tag: str, version: str, out: Path) -> str:
-    """Download a tagged plugin commit into `out`, proving the files hash to its tree.
-
-    Args:
-        gh: the repository
-        tag: the plugin tag
-        version: the release it must describe
-        out: the build directory to write claude-plugin/ into
-
-    Returns:
-        str: the commit's tree id
-
-    Raises:
-        ReleaseError: if the tag is missing, the files do not hash to the tree, or the folder fails
-            its checks
-    """
-    sha = gh.ref(f"tags/{tag}")
-    if sha is None:
-        raise ReleaseError(f"there is no {tag} tag to fetch")
-    tree = gh.commit(sha)["tree"]
-    files = gh.tree_files(tree)
-    if git_tree_sha(files) != tree:
-        raise ReleaseError(f"files downloaded for {tag} do not hash to its tree {tree}")
-    for rel, data in files.items():
-        target = out / rel
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(data)
-    check_plugin_folder(out / PLUGIN_DIRNAME, version)
-    log(f"fetched {tag} ({sha}, tree {tree}) into {out}")
-    return tree
+        if head is None:
+            return BranchState(head=None, head_version=None, head_tree=None, published=[])
+        history = self.history(head)
+        # A revert restores an earlier tree, so many commits share a few trees; read each tree once.
+        by_tree: dict[str, str | None] = {}
+        for commit, tree in history:
+            if tree not in by_tree:
+                by_tree[tree] = self.plugin_version(commit)
+        head_tree = history[0][1]
+        published = [v for v in dict.fromkeys(by_tree[tree] for _, tree in history) if v is not None]
+        return BranchState(head=head, head_version=by_tree[head_tree], head_tree=head_tree, published=published)
 
 
 def publish(args: argparse.Namespace) -> None:
-    """Create the release's plugin commit, tag it, and move the branch to it.
+    """Add the release's plugin commit to the branch, as a fast-forward.
 
-    Order matters: nothing is written until the commit is verified and its tree proven
-    byte-identical to the folder the smoke jobs tested; the tag is created before the branch moves,
-    because creating it fails if it already exists and so catches a run that misread the state; and
-    if the branch move reports anything but the new commit, the branch is moved straight back.  A run
-    that tagged but did not move the branch is finished by a re-run, which moves it to the tag.
+    Nothing is written until the commit is verified, its parent is the head that was read, and its
+    tree is proven byte-identical to the folder the smoke jobs tested.  The branch then moves by
+    fast-forward only, which GitHub refuses if the branch has moved since it was read, so two runs
+    can never overwrite each other and a stale read of the branch fails rather than publishing.
 
     Args:
         args: parsed command line
@@ -1031,24 +983,23 @@ def publish(args: argparse.Namespace) -> None:
     """
     repo = os.environ.get("GITHUB_REPOSITORY", DEFAULT_REPO)
     gh = GitHub(repo, os.environ.get("GH_TOKEN"))
-    version, branch, tag = args.version, args.branch, args.tag_prefix + args.version
+    version, branch = args.version, args.branch
     build_dir = Path(args.build).resolve()
     record = read_build_record(build_dir)
     if record["version"] != version:
         raise ReleaseError(f"the build is of {record['version']}, not {version}")
     if record["source"] == "local" and not args.dry_run:
-        raise ReleaseError("this build was locked against a local wheel; only a PyPI or tagged build can be published")
-    if args.rollback and record["source"] != "tag":
-        raise ReleaseError("a rollback publishes an existing tagged commit; fetch it rather than building it")
+        raise ReleaseError("this build was locked against a local wheel; only a PyPI build can be published")
     check_plugin_folder(build_dir / PLUGIN_DIRNAME, version)
     local_files = read_folder(build_dir / PLUGIN_DIRNAME)
     local_tree = git_tree_sha(local_files)
     if local_tree != record["tree"]:
         raise ReleaseError(f"the build's files hash to {local_tree}, not the {record['tree']} that was tested")
 
-    state = gh.state(branch, tag)
+    state = gh.state(branch)
+    log(f"branch {branch}: {state.head or 'absent'} ({state.head_version or '-'}); published before: {state.published}")
     try:
-        decision = decide(version, local_tree, state, rollback=args.rollback)
+        decision = decide(version, local_tree, state)
     except ReleaseError as exc:
         if not args.dry_run:
             raise
@@ -1056,82 +1007,57 @@ def publish(args: argparse.Namespace) -> None:
         # a real publish; for a rehearsal it is information, not a failure.
         log(f"dry run: publishing {version} now would be refused: {exc}")
         return
-    log(f"branch {branch}: {state.head or 'absent'} ({state.head_version or '-'}); tag {tag}: {state.tag or 'absent'}")
     log(f"decision: {decision.action} - {decision.reason}")
     if args.dry_run or decision.action == "noop":
         return
 
-    if decision.action == "create":
-        entries = []
-        for rel, data in local_files.items():
-            _, blob = gh.call("POST", "git/blobs", {"content": base64.b64encode(data).decode(), "encoding": "base64"})
-            sha = expect_dict(blob, f"blob for {rel}")["sha"]
-            entries.append({"path": rel, "mode": "100644", "type": "blob", "sha": sha})
-        _, tree = gh.call("POST", "git/trees", {"tree": entries})
-        message = (
-            f"Claude plugin for {PACKAGE} {version}\n\n"
-            f"Generated by the release workflow from {args.release_commit or 'an unrecorded commit'} "
-            f"(release v{version}); holds only {PLUGIN_DIRNAME}/, locked against the release on PyPI.\n"
-        )
-        # No author, committer or signature fields: GitHub then signs the commit as the App.
-        tree_sha = expect_dict(tree, "the created tree")["sha"]
-        _, created = gh.call("POST", "git/commits", {"message": message, "tree": tree_sha, "parents": []})
-        target = expect_dict(created, "the created commit")["sha"]
-    elif decision.action == "tag-head":
-        target = state.head
-    else:
-        target = state.tag
-    if target is None:
-        raise ReleaseError(f"no commit to publish for decision {decision.action}")
+    entries = []
+    for rel, data in local_files.items():
+        _, blob = gh.call("POST", "git/blobs", {"content": base64.b64encode(data).decode(), "encoding": "base64"})
+        sha = expect_dict(blob, f"blob for {rel}")["sha"]
+        entries.append({"path": rel, "mode": "100644", "type": "blob", "sha": sha})
+    _, tree = gh.call("POST", "git/trees", {"tree": entries})
+    message = (
+        f"Claude plugin for {PACKAGE} {version}\n\n"
+        f"Generated by the release workflow from {args.release_commit or 'an unrecorded commit'} "
+        f"(release v{version}); holds only {PLUGIN_DIRNAME}/, locked against the release on PyPI.\n"
+    )
+    parents = [state.head] if state.head else []
+    # No author, committer or signature fields: GitHub then signs the commit itself.
+    body = {"message": message, "tree": expect_dict(tree, "the created tree")["sha"], "parents": parents}
+    _, created = gh.call("POST", "git/commits", body)
+    target = expect_dict(created, "the created commit")["sha"]
 
     info = gh.commit(target)
-    if not info["verified"] or info["parents"]:
-        raise ReleaseError(f"commit {target} is not a verified parentless commit: {info}")
-    if info["tree"] != local_tree:
+    if not info["verified"]:
+        raise ReleaseError(f"commit {target} is not signed by GitHub ({info['reason']!r}); nothing was moved")
+    if info["parents"] != parents or info["tree"] != local_tree:
         raise ReleaseError(
-            f"commit {target} has tree {info['tree']}, not the tested folder's {local_tree}. "
-            + (
-                f"{tag} already exists, so the build should have fetched that commit rather than building a new "
-                "one; re-run the whole plugin job chain so build, smoke and publish all use the tagged commit."
-                if decision.action == "move-to-tag" and not args.rollback
-                else "Nothing was moved."
-            )
+            f"commit {target} has parents {info['parents']} and tree {info['tree']}, not {parents} and the tested "
+            f"folder's {local_tree}; nothing was moved"
         )
-    log(f"commit {target}: verified ({info['reason']}), parentless, tree {info['tree']}")
+    log(f"commit {target}: verified ({info['reason']}), parent {state.head or '(none)'}, tree {info['tree']}")
 
-    # Writes, not reads, are the source of truth here, because a read of a recently created ref can
-    # be stale.  The tag is created before the branch moves: creating a ref fails if it already
-    # exists, which stops a run that misread the state before anything visible changes.  Each write's
-    # own response says where the ref now points, so no separate read-back is trusted.
-    if state.tag is None:
-        try:
-            _, created_tag = gh.call("POST", "git/refs", {"ref": f"refs/tags/{tag}", "sha": target})
-        except ReleaseError as exc:
-            raise ReleaseError(
-                f"could not create {tag} at {target}, so the branch was not moved. If it already exists, an "
-                f"earlier run published this release and GitHub reported the tag as absent; re-run. ({exc})"
-            ) from exc
-        tagged = expect_dict(created_tag, f"the created tag {tag}")["object"]["sha"]
-        if tagged != target:
-            raise ReleaseError(f"creating {tag} returned {tagged}, not {target}; the branch was not moved")
-        log(f"tagged {target} as {tag}")
-
-    if decision.action != "tag-head":
-        previous = state.head
-        if previous is None:
+    try:
+        if state.head is None:
             _, moved = gh.call("POST", "git/refs", {"ref": f"refs/heads/{branch}", "sha": target})
         else:
-            _, moved = gh.call("PATCH", f"git/refs/heads/{branch}", {"sha": target, "force": True})
-        now = expect_dict(moved, f"the updated {branch}")["object"]["sha"]
-        if now != target:
-            if previous is not None:
-                gh.call("PATCH", f"git/refs/heads/{branch}", {"sha": previous, "force": True})
-            raise ReleaseError(f"moving {branch} to {target} left it at {now}; moved it back to {previous}")
-        log(f"{branch} moved {previous or '(new)'} -> {target}")
+            _, moved = gh.call("PATCH", f"git/refs/heads/{branch}", {"sha": target, "force": False})
+    except ReleaseError as exc:
+        raise ReleaseError(
+            f"{branch} was not moved to {target}: it changed after it was read at {state.head or '(absent)'}, by "
+            f"another release or a revert, or the repository's rules refused the update; re-run to decide again. "
+            f"({exc})"
+        ) from exc
+    # The write's own response says where the branch now points; a separate read could be stale.
+    now = expect_dict(moved, f"the updated {branch}")["object"]["sha"]
+    if now != target:
+        raise ReleaseError(f"moving {branch} to {target} reported it at {now}; check the branch")
+    log(f"{branch} moved {state.head or '(new)'} -> {target}")
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary:
         with open(summary, "a", encoding="utf-8") as fh:
-            fh.write(f"Claude plugin: `{branch}` -> `{target}` ({tag}; {decision.reason})\n")
+            fh.write(f"Claude plugin: `{branch}` -> `{target}` ({decision.reason})\n")
 
 
 # --------------------------------------------------------------------------------------------
@@ -1155,7 +1081,6 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--out", required=True, help="a directory that does not exist yet")
     p.add_argument("--dist", help="local wheels (required with --source local)")
     p.add_argument("--expect-dist", help="the files the release job built, to compare with PyPI's")
-    p.add_argument("--tag-prefix", default=DEFAULT_TAG_PREFIX)
     p.add_argument(
         "--source-root",
         default=str(REPO_ROOT),
@@ -1164,23 +1089,17 @@ def main(argv: list[str] | None = None) -> int:
     p.set_defaults(func=build)
 
     p = sub.add_parser("smoke", help="install the built plugin and check the server")
-    p.add_argument("--build", required=True, help="a directory written by build or fetch")
+    p.add_argument("--build", required=True, help="a directory written by build")
     p.add_argument("--docker", action="store_true", help="also call system_ping against the local daemon")
     p.set_defaults(func=smoke)
 
-    for name, func, text in [("fetch", fetch, "download a published plugin commit"), ("publish", publish, "publish")]:
-        p = sub.add_parser(name, help=text)
-        p.add_argument("--version", required=True)
-        p.add_argument("--branch", default=DEFAULT_BRANCH)
-        p.add_argument("--tag-prefix", default=DEFAULT_TAG_PREFIX)
-        if name == "fetch":
-            p.add_argument("--out", required=True)
-        else:
-            p.add_argument("--build", required=True, help="a directory written by build (or fetch, to roll back)")
-            p.add_argument("--rollback", action="store_true", help="move the branch to this earlier release's tag")
-            p.add_argument("--dry-run", action="store_true", help="decide and report, change nothing")
-            p.add_argument("--release-commit", help="the release tag's commit, recorded in the plugin commit")
-        p.set_defaults(func=func)
+    p = sub.add_parser("publish", help="add the tested build to the release branch")
+    p.add_argument("--version", required=True)
+    p.add_argument("--branch", default=DEFAULT_BRANCH)
+    p.add_argument("--build", required=True, help="a directory written by build")
+    p.add_argument("--dry-run", action="store_true", help="decide and report, change nothing")
+    p.add_argument("--release-commit", help="the release tag's commit, recorded in the plugin commit")
+    p.set_defaults(func=publish)
 
     args = parser.parse_args(argv)
     if getattr(args, "source", None) == "local" and not args.dist:
