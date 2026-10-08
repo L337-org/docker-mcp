@@ -674,10 +674,10 @@ _CLI_DOMAINS = ("compose", "stack", "buildx", "scout", "context")
 # context registry, which a remote host knows nothing about.
 _REMOTE_EXEC_DOMAINS = ("compose", "stack", "buildx", "scout")
 
-# Claude Code cuts a server's `instructions` at 2,048 UTF-16 code units without telling the server or the
-# model (reported in its issue tracker; not in its documentation). The router is therefore ordered by what
-# is worst to lose - how to find a tool first, the domain words next, the caveats last - and
-# `tests/test_server.py` holds its longest rendering under this limit.
+# Claude Code cuts a server's `instructions` at 2,048 UTF-16 code units without telling the server or
+# the model (anthropics/claude-code issues #39106 and #81268; not in its documentation). The router is
+# ordered by what is worst to lose - how to find a tool first, the domain words next, the caveats last -
+# and `tests/test_server.py` holds its longest rendering under this limit.
 INSTRUCTIONS_CHAR_LIMIT = 2048
 
 

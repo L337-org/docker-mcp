@@ -1,8 +1,8 @@
 """A budget on the advertised surface, because AC.1.2 makes its size a tracked metric.
 
 Every byte here is paid for by every client on every session, before it has asked for anything.
-This server advertises well over a hundred tools, and at that size the surface is the dominant cost of using it
-at all - which is exactly why it needs a number attached rather than an intention.
+At this server's size the surface is the dominant cost of using it at all - which is exactly why
+it needs a number attached rather than an intention.
 
 WHAT IS MEASURED IS THE WIRE FORM, not the docstring. A tool costs its name, its description and
 its whole input schema, and the schema is a large share of it: `buildx_build` is 5,108 bytes on
