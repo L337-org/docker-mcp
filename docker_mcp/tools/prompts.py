@@ -251,9 +251,10 @@ def clean_environment(scope: str = "stopped") -> str:
         "2. Use `container_prune` to remove stopped containers.\n"
         "3. Use `image_prune` (without `filters={'dangling': False}`) to remove dangling images only.\n"
         "4. Reclaim the build cache - if the `system_df` from step 1 showed a large `BuildCache`, this is "
-        "where most of the space comes back. Prefer `buildx_prune` when the buildx plugin is available "
-        "(it always runs with `--force`, and it also sees a non-default builder's own cache); fall back to "
-        "`image_prune_builds`, which goes through the daemon API and needs no CLI plugin, when it isn't. "
+        "where most of the space comes back: use `buildx_prune`, which also sees a non-default builder's "
+        "own cache, or, where buildx is not registered, `image_prune(build_cache=True)`, which prunes the "
+        "daemon's default build cache. If neither is registered (a read-only or no-destructive mode is "
+        "on), say the build cache cannot be pruned here rather than skipping it silently. "
         "Mention that an immediately-following rebuild will be slower with a cold cache.\n"
     )
     if scope == "all":
@@ -833,8 +834,7 @@ def investigate_disk_usage() -> str:
         "`image_history` to see which layers are heavy (a fat `COPY`, an un-cleaned package cache) and "
         "whether several images share base layers (so the on-disk cost is less than the sum of sizes).\n"
         "3. If Build Cache dominates: call `buildx_du` for the cache breakdown. This is invisible to "
-        "`image_prune` and is reclaimable with `buildx_prune`, or with `image_prune_builds` where the "
-        "buildx plugin isn't installed.\n"
+        "`image_prune` alone and is reclaimable with `buildx_prune`, or `image_prune(build_cache=True)`.\n"
         "4. If Local Volumes dominate: call `volume_list` and cross-reference with `container_list"
         "(all=True)` to spot dangling volumes no container references - but do NOT assume a dangling "
         "volume is junk; it may hold data whose container is gone.\n"

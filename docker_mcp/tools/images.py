@@ -7,7 +7,9 @@ Producing them, moving them between daemon and registry, and inspecting what is 
 
 from typing import cast
 
-from docker_mcp.exceptions import ToolInputError
+from docker.errors import DockerException
+
+from docker_mcp.exceptions import RemoteFailureError, ToolInputError
 from docker_mcp.server import tool
 from docker_mcp.tools._utils import (
     MAX_PAYLOAD_BYTES,
@@ -305,61 +307,46 @@ def image_search(term: str, limit: int | None = None, host: str | None = None) -
 
 
 @tool()
-def image_prune(filters: dict | None = None, host: str | None = None) -> dict:  # noqa: DOC101,DOC103
+def image_prune(  # noqa: DOC101,DOC103,DOC501,DOC503
+    filters: dict | None = None,
+    build_cache: bool = False,
+    host: str | None = None,
+) -> dict:
     """
-    Remove unused local images to reclaim disk space.
+    Remove unused local images to reclaim disk space, and with `build_cache=True` the daemon's build cache too.
 
     Without filters removes only "dangling" images - untagged layers not referenced by any
     tag or container. To remove all images not used by any container (including tagged ones)
     pass `filters={"dangling": False}`. Valid filter keys: `dangling` (bool as string
     "true"/"false"), `until` (RFC3339 timestamp or duration like "24h"), `label`
-    (key or key=value). Use `system_df` first to see how much space is reclaimable.
+    (key or key=value). Use `system_df` first to see how much space is reclaimable. The build cache
+    is a separate resource, often the larger one on a machine that builds images; `build_cache=True`
+    prunes its unused records through the Engine API, with `filters` applying to images only. For a
+    non-default builder's cache, cache filters, or a space floor, use `buildx_prune` instead.
 
     Args:
         filters: Narrow which images to remove; omit to remove dangling images only
+        build_cache: Also prune the daemon's unused build cache
 
     Returns:
-        dict: {"ImagesDeleted": [...], "SpaceReclaimed": <bytes>}
+        dict: {"ImagesDeleted": [...], "SpaceReclaimed": <bytes>}, plus with `build_cache` a "BuildCache" key holding
+            {"CachesDeleted": [...], "SpaceReclaimed": <bytes>}
     """
-    return _get_client(host).images.prune(filters=filters)
-
-
-@tool()
-def image_prune_builds(  # noqa: DOC101,DOC103
-    filters: dict | None = None,
-    all: bool | None = None,
-    host: str | None = None,
-) -> dict:
-    """
-    Delete the daemon's build cache to reclaim disk space.
-
-    Prunes the *build cache* - a separate Engine resource from the images `image_prune` removes,
-    so run both to reclaim everything a build leaves behind. Prefer `buildx_prune` when the build
-    ran on a non-default buildx builder (that builder keeps its own cache, invisible here) or when
-    you need any disk ceiling at all - `reserved_space`, `max_used_space` or `min_free_space`, none of
-    which the docker-py path can send; this tool needs no CLI plugin and works over any
-    transport, including a daemon with no local `docker` binary. Inventory first with `system_df`
-    (its `BuildCache` entry) or `buildx_du`. Destructive and immediate: later builds must re-run
-    the steps whose cache was removed. Needs Docker API v1.31+; passing either `filters` or `all`
-    needs v1.39+ and raises `InvalidVersion` on an older daemon - omit both to prune with the
-    daemon's own defaults.
-
-    Args:
-        filters: Narrow which cache records to remove, e.g. {"until": "24h"} (a duration or timestamp relative to the
-            daemon's clock); also accepts `id`, `parent`, `type`, `description`, `inuse`, `shared`, `private`; omit to
-            let the daemon prune unused cache
-        all: Remove all types of build cache, not just the unused records
-
-    Returns:
-        dict: {"CachesDeleted": [...], "SpaceReclaimed": <bytes>}
-    """
-    # No `keep_storage`: the Engine renamed it `reserved-space` at API v1.48 and v1.56 no longer
-    # documents the old name. moby still honours the old spelling as a deprecated fallback, so this
-    # is not a bug fix - it removes a parameter whose failure mode when that fallback goes is silent.
-    # docker-py sends only `keep-storage`, so an ignored value would prune the entire cache while the
-    # caller believed a floor was in effect, from a tool classified destructive. `buildx_prune`
-    # carries `reserved_space` and the newer ceilings. Do not re-add it from the docker-py signature.
-    return _get_client(host).images.prune_builds(**drop_none(filters=filters, all=all))
+    client = _get_client(host)
+    if not build_cache:
+        return client.images.prune(filters=filters)
+    # The cache first, so that if it fails nothing else has been removed yet. No arguments: every
+    # prune_builds argument is version-gated, image filters mean nothing to the cache, and its
+    # `keep_storage` is the deprecated spelling an Engine may ignore - see buildx_prune for limits.
+    cache = client.api.prune_builds()
+    try:
+        result = client.images.prune(filters=filters)
+    except DockerException as exc:
+        raise RemoteFailureError(
+            f"pruning images failed after the build cache was already pruned "
+            f"({cache.get('SpaceReclaimed', 0)} bytes reclaimed there): {exc}"
+        ) from exc
+    return {**result, "BuildCache": cache}
 
 
 @tool()

@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
-from docker_mcp.exceptions import RemoteFailureError, ToolInputError
+from docker_mcp.exceptions import CapabilityError, RemoteFailureError, ToolInputError
 from docker_mcp.tools._cli import CliResult
 from docker_mcp.tools.buildx import (
     buildx_bake,
@@ -284,6 +284,15 @@ def test_buildx_inspect_with_bootstrap():
 # ---------- buildx_prune ----------
 
 
+@pytest.fixture
+def _buildx_installed():  # pyright: ignore[reportUnusedFunction]
+    # buildx_prune probes for the plugin to choose between the CLI and the Engine API; pin the answer
+    # so these tests do not depend on what the machine running them has installed.
+    with patch("docker_mcp.tools.buildx.has_plugin", return_value=True):
+        yield
+
+
+@pytest.mark.usefixtures("_buildx_installed")
 def test_buildx_prune_always_passes_force():
     with patch("docker_mcp.tools.buildx.run_docker", return_value=_ok()) as run:
         buildx_prune()
@@ -291,6 +300,7 @@ def test_buildx_prune_always_passes_force():
     assert args[:3] == ["buildx", "prune", "--force"]
 
 
+@pytest.mark.usefixtures("_buildx_installed")
 def test_buildx_prune_filter_and_space_flags():
     with patch("docker_mcp.tools.buildx.run_docker", return_value=_ok()) as run:
         buildx_prune(
@@ -306,6 +316,72 @@ def test_buildx_prune_filter_and_space_flags():
     assert args[args.index("--reserved-space") + 1] == "10GB"
     assert args[args.index("--max-used-space") + 1] == "20GB"
     assert args[args.index("--min-free-space") + 1] == "5GB"
+
+
+@contextlib.contextmanager
+def _no_buildx_and_no_ssh():
+    """No buildx plugin here and a host not reached over ssh://: the Engine API path."""
+    with (
+        patch("docker_mcp.tools.buildx.should_remote_exec", return_value=False),
+        patch("docker_mcp.tools.buildx.has_plugin", return_value=False),
+        patch("docker_mcp.tools.buildx._get_client") as client,
+        patch("docker_mcp.tools.buildx.run_docker") as run,
+    ):
+        yield client, run
+
+
+def test_buildx_prune_without_the_plugin_prunes_through_the_engine_api():
+    with _no_buildx_and_no_ssh() as (client, run):
+        client.return_value.api.prune_builds.return_value = {"CachesDeleted": ["c1"], "SpaceReclaimed": 400}
+        result = buildx_prune(all=True, filters={"until": "24h"})
+    assert result == {"CachesDeleted": ["c1"], "SpaceReclaimed": 400}
+    client.return_value.api.prune_builds.assert_called_once_with(filters={"until": "24h"}, all=True)
+    assert not run.called, "nothing is shelled out when the plugin is missing"
+
+
+def test_buildx_prune_through_the_engine_api_sends_no_arguments_by_default():
+    # Every prune_builds argument is version-gated (API v1.39+), so an unqualified prune must send
+    # none of them rather than passing explicit Nones or False to an older daemon.
+    with _no_buildx_and_no_ssh() as (client, _):
+        buildx_prune()
+    client.return_value.api.prune_builds.assert_called_once_with()
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"reserved_space": "10GB"},
+        {"max_used_space": "20GB"},
+        {"min_free_space": "5GB"},
+        {"builder": "other"},
+    ],
+)
+def test_buildx_prune_through_the_engine_api_refuses_what_it_cannot_send(kwargs):
+    # docker-py's prune_builds has no parameter for the space limits, and its `keep_storage` is the
+    # Engine's deprecated spelling of reserved-space, which an Engine dropping the fallback ignores -
+    # so a limit sent that way could prune the whole cache. A named builder keeps a cache the daemon's
+    # endpoint cannot reach. Each is refused, by name, before anything is pruned.
+    with _no_buildx_and_no_ssh() as (client, _):
+        with pytest.raises(CapabilityError, match=next(iter(kwargs))):
+            buildx_prune(**kwargs)
+    assert not client.return_value.api.prune_builds.called
+
+
+def test_buildx_prune_never_sends_the_deprecated_keep_storage():
+    with _no_buildx_and_no_ssh() as (client, _):
+        buildx_prune(all=True)
+    assert "keep_storage" not in client.return_value.api.prune_builds.call_args.kwargs
+
+
+def test_buildx_prune_on_an_ssh_host_without_the_plugin_runs_remotely_not_through_the_engine():
+    with (
+        patch("docker_mcp.tools.buildx.should_remote_exec", return_value=True),
+        patch("docker_mcp.tools.buildx.remote_exec_cli", return_value=_ok()) as remote,
+        patch("docker_mcp.tools.buildx._get_client") as client,
+    ):
+        buildx_prune(reserved_space="10GB")
+    assert remote.call_args.args[1][:3] == ["buildx", "prune", "--force"]
+    assert not client.called
 
 
 # ---------- buildx_create / buildx_use / buildx_remove ----------

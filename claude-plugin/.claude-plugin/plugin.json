@@ -1,7 +1,7 @@
 {
   "name": "docker-mcp-server",
   "displayName": "Docker MCP Server",
-  "version": "2.2.7",
+  "version": "2.2.8",
   "description": "Manage Docker through the Docker SDK for Python and the docker CLI: containers, images, networks, volumes, Compose, Swarm, Buildx, Scout, and OCI registries, exposed as MCP tools.",
   "author": {
     "name": "Gavin Lucas",
@@ -56,7 +56,7 @@
     "docker-mcp-server": {
       "command": "uvx",
       "args": [
-        "docker-mcp-server==2.2.7"
+        "docker-mcp-server==2.2.8"
       ],
       "env": {
         "DOCKER_MCP_SERVER_HOSTS": "${user_config.docker_hosts}",

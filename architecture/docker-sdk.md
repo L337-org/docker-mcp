@@ -17,13 +17,13 @@ When the high-level SDK has no method for an operation (e.g. service rollback, o
 
 **Pass `host` through - always.** `_get_client(host: str | None = None)` makes it optional, so `_get_client()` compiles, reads as idiomatic and silently talks to the default daemon, discarding the caller's host selection. That is the one failure this server's whole multi-host design exists to prevent (see [hosts.md](hosts.md)). Every low-level call site in `docker_mcp/tools/` passes it, and a new one must not be the first that does not. The single deliberate exception is `startup_preflight`, which pings the default host before any caller exists (see [hosts.md](hosts.md)); nothing in a tool body should use the bare form.
 
-**Verify against the source, not just the rendered docs, and treat "the method exists" as separate from "the method works."** The rendered docs show a method's docstring, not the URL it builds, so a method can be documented, importable, and still non-functional. `plugin_push` is the standing example: docker-py's `Plugin.push()` / `APIClient.push_plugin()` both POST to `/plugins/{name}/pull`, a route the Engine does not define (push is `POST /plugins/{name}/push`), so they 404 against every daemon - a copy-paste from the pull method present since 2017 and still in `main`, surviving because upstream has no test covering it. Where a *documented* method is provably broken, the fallback ladder is: (1) another public SDK path, (2) the correct endpoint through docker-py's private request helpers (`_url`/`_post`/`_raise_for_status`/`_stream_helper`), resolved via `getattr` and guarded so a missing helper raises an actionable message rather than an `AttributeError` - the same treatment as `system_logout`'s `api._auth_configs` reach-in and `stage_build_context`'s use of docker-py's `tar`/`exclude_paths`, (3) a CLI shell-out, if the domain is already CLI-backed. Each such reach-in must name the bug and the escape hatch in the tool's docstring, so it can be removed when upstream fixes it.
+**Verify against the source, not just the rendered docs, and treat "the method exists" as separate from "the method works."** The rendered docs show a method's docstring, not the URL it builds, so a method can be documented, importable, and still non-functional. docker-py's `Plugin.push()` is the standing example: `Plugin.push()` / `APIClient.push_plugin()` both POST to `/plugins/{name}/pull`, a route the Engine does not define (push is `POST /plugins/{name}/push`), so they 404 against every daemon. Where a *documented* method is provably broken, the fallback ladder is: (1) another public SDK path, (2) the correct endpoint through docker-py's private request helpers (`_url`/`_post`/`_raise_for_status`/`_stream_helper`), resolved via `getattr` and guarded so a missing helper raises an actionable message rather than an `AttributeError` - the same treatment as `system_logout`'s `api._auth_configs` reach-in and `stage_build_context`'s use of docker-py's `tar`/`exclude_paths`, (3) a CLI shell-out, if the domain is already CLI-backed. Each such reach-in must name the bug and the escape hatch in the tool's docstring, so it can be removed when upstream fixes it.
 
-**Rungs (2) and (3) are not an agent's call to make.** Rung (1) is ordinary work; anything below it leaves the supported surface, so an agent - a routine, or anyone implementing from an audit issue - must **stop, write up what it found and why the public path fails, and escalate for a human decision** rather than implementing it. This is not a formality: it is how `plugin_push` was actually settled. The draft-PR routine hit the broken method, declined to reach past the public SDK, shipped the rest, and *documented the omission*; that write-up is what prompted the investigation that found the real endpoint and the human judgement to take it. A routine that had "helpfully" hand-rolled the call instead would have made a trust decision nobody asked it to make, and one that silently dropped the candidate would have buried it. **Document and escalate is the correct behaviour, not a failure to finish the job** - a parked candidate with a clear rationale is a better outcome than an autonomous workaround. Sign-off is needed once, when the reach-in is introduced: the ones listed here are already blessed, so touching or refactoring them later needs no fresh approval.
+**Rungs (2) and (3) are not an agent's call to make.** Rung (1) is ordinary work; anything below it leaves the supported surface, so an agent - a routine, or anyone implementing from an audit issue - must **stop, write up what it found and why the public path fails, and escalate for a human decision** rather than implementing it. **Document and escalate is the correct behaviour, not a failure to finish the job** - a parked candidate with a clear rationale is a better outcome than an autonomous workaround. Sign-off is needed once, when the reach-in is introduced: the ones listed here are already blessed, so touching or refactoring them later needs no fresh approval.
 
 **Confirm the real route from the Engine API spec (`moby/moby`'s `api/swagger.yaml`) before writing a hand-built path, and note which kind of bet it is** - the two are not equivalent risks:
 
-- **A published endpoint reached through private client plumbing** (what `plugin_push` does): `POST /plugins/{name}/push` is in the Engine API spec and is what `docker plugin push` itself calls, so the *contract* is stable and unlikely to move; only docker-py's `_url`/`_post` internals are unofficial, which is what the `getattr` guard covers. This is the acceptable shape.
+- **A published endpoint reached through private client plumbing** (what `service_logs(task=...)` does): `GET /tasks/{id}/logs` is in the Engine API spec and is what `docker service logs` itself calls for a task, so the *contract* is stable and unlikely to move; only docker-py's `_url`/`_get`/`_raise_for_status`/`_get_result_tty` internals are unofficial, which is what the `getattr` guard covers. This is the acceptable shape.
 - **An endpoint that is not in the spec at all** is a different proposition - no compatibility promise, no deprecation cycle, nothing to pin the behaviour. Do not use one, even guarded, without explicit human sign-off recorded in the PR; never on an agent's own initiative.
 
 ## SDK audit exclusions (deliberate non-candidates)
@@ -34,10 +34,6 @@ merits, and are **not** to be re-proposed - a periodic audit has no memory of la
 this list it re-files the same rejected candidates forever. Removing an entry is a real decision;
 say why. **Anything deliberately not wrapped, or wrapped in an unobvious way, belongs here.**
 
-- **`Plugin.push()` / `APIClient.push_plugin()`** - never migrate `plugin_push` onto these. They are
-  broken upstream (wrong URL, see above); our hand-built endpoint call is the working path, not
-  technical debt to be tidied away. Revisit only if upstream fixes the URL, at which point the
-  reach-in should be replaced by the public method.
 - **`Container.attach` / `attach_socket` / `resize`** - real methods, deliberately unwrapped: they
   open an interactive bidirectional stream/TTY, which does not fit a request/response tool call.
   `container_exec` covers scripted one-shot execution.
@@ -45,10 +41,10 @@ say why. **Anything deliberately not wrapped, or wrapped in an unobvious way, be
   permanently. The high-level `Service`/`ServiceCollection` expose no `rollback`.
 - **`system_logout`'s `api._auth_configs`** - stays low-level permanently. There is no `logout`
   anywhere in the SDK and no server-side session to end, so there is nothing to migrate to.
-- **`swarm_task_list` / `swarm_task_inspect`'s `api.tasks()` / `api.inspect_task()`** - stay
-  low-level permanently. docker-py has no task collection at all (there is no `client.tasks`, and
-  `docker/models/` has no `tasks.py`), so these documented `APIClient` methods are the only public
-  path. Nothing to migrate to; do not propose one.
+- **`service_ps`'s `api.tasks()` with no service** - stays low-level permanently. docker-py has no
+  task collection at all (there is no `client.tasks`, and `docker/models/` has no `tasks.py`), so this
+  documented `APIClient` method is the only public path for every task in the swarm. Nothing to
+  migrate to; do not propose one.
 - **`image_import`'s `api.import_image_from_{file,data,url,image}`** - stay low-level permanently.
   `ImageCollection` has no import method at all, so there is no high-level path to migrate onto.
   Note the call-site comment explaining why the per-source methods are used rather than
@@ -57,8 +53,9 @@ say why. **Anything deliberately not wrapped, or wrapped in an unobvious way, be
   its "unreadable path is retried as a URL" behaviour - that is a documented hazard guarded at our
   call site, not a fix. (`import_image_from_data` is the one exception: it posts directly via
   `self._result`.)
-- **`plugin_privileges`'s `api.plugin_privileges`** - stays low-level permanently. `PluginCollection`
-  exposes no privileges call; docker-py's own `install` calls this same low-level method internally.
+- **The `plugin_install` / `plugin_upgrade` dry run's `api.plugin_privileges`** - stays low-level
+  permanently. `PluginCollection` exposes no privileges call; docker-py's own `install` and `upgrade`
+  call this same low-level method internally and grant what it returns.
 - **`swarm_update`'s `api.update_swarm`** - stays low-level permanently. The high-level
   `Swarm.update()` builds its request body from docker-py kwargs via `create_swarm_spec`, so it
   cannot resubmit the daemon's own spec document; against a replace-semantics endpoint that silently
@@ -80,9 +77,9 @@ say why. **Anything deliberately not wrapped, or wrapped in an unobvious way, be
   `update_service` writes `data['TaskTemplate']['Networks']` on anything from API v1.25 upwards.
   Two audit runs reached opposite conclusions on this in the same week; the above is what the 7.2.0
   source actually does.
-- **`swarm_task_logs`'s hand-built `GET /tasks/{id}/logs`** - stays low-level permanently, for the
-  same reason as `swarm_task_list`, and one rung further down: no documented `APIClient` method
-  either, so it drives the private helpers. The endpoint is in the Engine spec and is what `docker
+- **`service_logs(task=...)`'s hand-built `GET /tasks/{id}/logs`** - stays low-level permanently, for
+  the same reason as `service_ps`'s task list, and one rung further down: no documented `APIClient`
+  method either, so it drives the private helpers. The endpoint is in the Engine spec and is what `docker
   service logs` calls for a `SERVICE|TASK` reference, so only the plumbing is unofficial. Replace
   if docker-py grows a public method.
 - **`POST /configs/{id}/update`, `POST /secrets/{id}/update`** - no docker-py surface, deliberately
@@ -100,8 +97,9 @@ routinely behind what `pyproject.toml`'s floor lets a fresh `uvx`/`pip install` 
 the installed tree alone misses whatever published users are already running. And it should flag
 **deprecated** surface we still depend on, not only missing coverage. Sort those by failure mode:
 one that will fail loudly can wait, one that will fail *silently* is worth acting on early.
-`image_prune_builds`'s `keep_storage` went before moby dropped its deprecated fallback, because
-docker-py sends only the old name - so an ignored value would prune the whole cache while the caller
+`keep_storage` is never sent - not from `image_prune(build_cache=True)`, nor from `buildx_prune`'s
+Engine API fallback, where a space limit asked for is refused. docker-py sends only that deprecated
+name, so once moby drops the fallback an ignored value would prune the whole cache while the caller
 believed a floor was set.
 
 Docker SDK docs: https://docker-py.readthedocs.io/en/stable/index.html  

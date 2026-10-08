@@ -1,8 +1,8 @@
 """A budget on the advertised surface, because AC.1.2 makes its size a tracked metric.
 
 Every byte here is paid for by every client on every session, before it has asked for anything.
-This server advertises 165 tools, and at that size the surface is the dominant cost of using it
-at all - which is exactly why it needs a number attached rather than an intention.
+At this server's size the surface is the dominant cost of using it at all - which is exactly why
+it needs a number attached rather than an intention.
 
 WHAT IS MEASURED IS THE WIRE FORM, not the docstring. A tool costs its name, its description and
 its whole input schema, and the schema is a large share of it: `buildx_build` is 5,108 bytes on
@@ -42,15 +42,15 @@ from docker_mcp.server import DISABLED_DOMAINS, NO_DESTRUCTIVE, READONLY, mcp
 #   print(sum(len(json.dumps(t.model_dump(mode='json'),separators=(',',':')).encode()) \
 #   for t in asyncio.run(mcp.list_tools())))"
 MAX_SINGLE_TOOL_WIRE_BYTES = 5_300  # buildx_build, 5,108
-# Raised from 231,000 deliberately, for `swarm_task_logs`: a capability with no other route through
-# this server, priced at ~2,300 bytes and paid for once here rather than trimmed to fit.
-MAX_TOOL_WIRE_BYTES = 236_000  # 232,198
+MAX_TOOL_WIRE_BYTES = 226_000  # 222,361
 MAX_PROMPT_WIRE_BYTES = 7_900  # 7,646
 # Lowered from 6,400 with the three `docker://` listing indexes: the saving is ratcheted in here
 # rather than left as headroom, so re-adding an index has to argue for itself the same way.
 MAX_RESOURCE_WIRE_BYTES = 4_700  # 4,614, resources and templates together
-MAX_INSTRUCTIONS_BYTES = 2_900  # 2,808
-MAX_TOTAL_WIRE_BYTES = 248_000  # 247,266
+# The default rendering only: the host caveat adds to it, and `tests/test_server.py` checks the longest
+# rendering against `INSTRUCTIONS_CHAR_LIMIT`, so this ceiling only has to stop the default creeping up.
+MAX_INSTRUCTIONS_BYTES = 1_790  # 1,744
+MAX_TOTAL_WIRE_BYTES = 240_500  # 236,365
 
 # Registration is gated at import time, so a switch in effect when `docker_mcp.server` was
 # imported shrinks the surface, and every budget below would pass while measuring something

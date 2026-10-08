@@ -529,6 +529,59 @@ def test_query_catalog_keyword_is_case_insensitive():
     assert query_catalog(keyword="PRUNE")["matched"] == query_catalog(keyword="prune")["matched"] > 0
 
 
+def test_query_catalog_keyword_returns_a_tool_matching_any_of_several_words():
+    # An agent's words for a job rarely all appear in the summary of the tool that does it, so a
+    # multi-word keyword is a list of alternatives, not a phrase: each word alone finds its tools.
+    together = {row["name"] for row in query_catalog(keyword="vulnerabilit rollback")["tools"]}
+    assert {"scout_cves", "service_rollback"} <= together
+    assert together == (
+        {row["name"] for row in query_catalog(keyword="vulnerabilit")["tools"]}
+        | {row["name"] for row in query_catalog(keyword="rollback")["tools"]}
+    )
+
+
+def test_query_catalog_keyword_ranks_tools_matching_more_words_first():
+    result = query_catalog(keyword="logs task")
+    ranks = [
+        sum(word in (row["name"] + " " + row["summary"]).lower() for word in ("log", "task")) for row in result["tools"]
+    ]
+    # `service_logs` matches both words, so it outranks every tool matching only one of them.
+    names = [row["name"] for row in result["tools"]]
+    assert names.index("service_logs") < names.index("container_logs")
+    assert ranks[0] == 2
+
+
+def test_query_catalog_keyword_trims_common_endings():
+    # "failing" finds a summary that only says "fail..."; "tasks" finds one that says "task".
+    assert query_catalog(keyword="tasks")["matched"] == query_catalog(keyword="task")["matched"] > 0
+    # "pruning" is trimmed to "prun", a substring of every match for "prune", so nothing is lost.
+    assert query_catalog(keyword="pruning")["matched"] >= query_catalog(keyword="prune")["matched"] > 0
+    # The example the router and the description give: "failing" also finds "fail" and "failed".
+    assert query_catalog(keyword="failing")["filters"]["keyword_terms"] == ["failing"]
+    assert query_catalog(keyword="failing")["matched"] == query_catalog(keyword="fail")["matched"] > 0
+
+
+def test_query_catalog_keyword_of_only_filler_matches_nothing_rather_than_everything():
+    # A substring match on "a" or "the" hits nearly every tool, which would bury the real result -
+    # and a keyword made of nothing else has said nothing about which tool is wanted.
+    for keyword in ("a", "the", "all of the", "is it in"):
+        result = query_catalog(keyword=keyword)
+        assert result["matched"] == 0, keyword
+        assert result["filters"]["keyword_terms"] == []
+    # Filler alongside a real word is simply dropped.
+    assert query_catalog(keyword="show me the logs")["filters"]["keyword_terms"] == ["show", "logs"]
+
+
+def test_query_catalog_keyword_keeps_two_letter_docker_words():
+    # The CLI's own vocabulary is full of them, so they are search terms, not noise.
+    assert "service_ps" in {row["name"] for row in query_catalog(keyword="ps")["tools"]}
+    assert "compose_up" in {row["name"] for row in query_catalog(keyword="up")["tools"]}
+
+
+def test_query_catalog_without_a_keyword_reports_no_terms():
+    assert query_catalog()["filters"]["keyword_terms"] is None
+
+
 def test_query_catalog_combines_filters():
     result = query_catalog(domain="containers", category="destructive")
     assert result["matched"] > 0
@@ -787,8 +840,63 @@ def test_the_router_names_the_two_domainless_entry_points():
         assert f"`{tool}`" in text, f"{tool} is unreachable from the router"
     # Named by the occasion that should trigger them, not by the reason they were added.
     assert "if your client can't read resources" not in text
-    assert "To survey an unfamiliar domain" in text
-    assert "Before guessing a docker-py keyword" in text
+    assert "if that misses, call `tool_list`" in text
+    assert "`docs_lookup` before guessing" in text
+
+
+def test_instructions_put_finding_a_tool_first_and_the_caveats_last():
+    """Ordered by what is worst to lose, because a client may cut the text short without saying so.
+
+    How to find a tool when the client's search misses is the one thing an agent cannot work out for
+    itself, so it leads; the domain words come next, and the caveats last.
+    """
+    text = build_instructions()
+    finder = text.index("if that misses, call `tool_list`")
+    domains = text.index("Domains (and the words that find them):")
+    caveats = text.index("Picking the right tool:")
+    assert finder < domains < caveats
+
+
+def test_multi_host_caveat_leads_the_caveats_end_to_end():
+    # A call landing on the wrong daemon is the most consequential thing a caveat warns about, so it
+    # comes before the CLI fallback and the payload-size advice.
+    text = _live_instructions(["DOCKER_MCP_SERVER_HOSTS=local=ssh://a, prod=ssh://b(ro)"])
+    assert text.index("Multiple hosts are configured") < text.index("CLI-backed domains (marked above)")
+
+
+def test_instructions_fit_claude_codes_cut_off_at_their_longest_end_to_end():
+    """Every domain, every caveat and three hosts still fit in what Claude Code shows the agent.
+
+    A router that grows past `INSTRUCTIONS_CHAR_LIMIT` loses its tail silently in the client that
+    applies it, so the limit is checked here rather than discovered there. Three hosts with realistic
+    labels and endpoints stand in for "several": the host caveat is the only part whose length the
+    operator controls, and the ordering test above is what limits the damage beyond that.
+    """
+    from docker_mcp.server import INSTRUCTIONS_CHAR_LIMIT
+
+    text = _live_instructions(
+        [
+            "DOCKER_MCP_SERVER_HOSTS=local=unix:///var/run/docker.sock, "
+            "staging=ssh://deploy@staging.example.org(ro), production=ssh://deploy@production.example.org(nd)"
+        ]
+    ).rstrip("\n")
+    assert "Multiple hosts are configured" in text, "the longest rendering must include the host caveat"
+    units = len(text.encode("utf-16-le")) // 2
+    assert units <= INSTRUCTIONS_CHAR_LIMIT, f"instructions are {units} UTF-16 units, over {INSTRUCTIONS_CHAR_LIMIT}"
+
+
+def test_router_names_the_jobs_that_have_no_tool_of_their_own():
+    """A job folded into another tool is findable only if the router says where it went.
+
+    The tool names alone point elsewhere: nothing called `service_ps` suggests every task in the
+    swarm, and nothing called `plugin_install` suggests a privileges preview. A lazy-loading client
+    sees these blurbs before any description, so each job is named under the domain that does it.
+    """
+    lines = {line.split(" - ", 1)[0][2:]: line for line in build_instructions().splitlines() if line.startswith("- ")}
+    assert "every task" in lines["services"] or "all in the swarm" in lines["services"]
+    assert "one task" in lines["services"]
+    assert "privileges" in lines["plugins"]
+    assert "build cache prune" in lines["buildx"]
 
 
 def test_instructions_mention_the_remote_exec_fallback_only_for_domains_that_have_it():

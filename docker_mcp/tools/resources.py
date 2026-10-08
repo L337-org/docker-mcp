@@ -462,30 +462,31 @@ def tool_list(
     keyword: str | None = None,
 ) -> dict:
     """
-    List this server's registered tools as compact rows, filtered by domain, category or keyword.
+    Find this server's tools by a few words, or list them by domain or category, as compact rows.
 
-    A tool-callable mirror of `docker-mcp://tool-catalog` for clients that can't read MCP resources
-    (e.g. Claude Desktop, Cursor), and the only way to ask what no per-tool description search can
-    express: which tools are destructive, which accept a `host`, what this server actually
-    registered. Use it to brief on an unfamiliar area (`domain="buildx"` returns one line per tool
-    rather than ~13 full definitions), to check blast radius (`category="destructive"`), or to
-    establish that nothing matches - `matched: 0` is a definitive negative, which a client's fuzzy
-    search cannot give. Covers this server's own surface; `docs_lookup` covers external Docker
-    reference documentation. Rows are summaries, not definitions - fetch a tool's own definition for
-    its parameters. Read-only, never raises on a query matching nothing, and always registered even
-    when DOCKER_MCP_SERVER_DISABLE drops every domain. A tool dropped by a switch or a disabled
-    domain is absent rather than flagged; `hidden_by_configuration` reports how many each domain
-    hides.
+    The way to find a tool when your client's own search misses: pass the words for the job as
+    `keyword` ("logs one task", "prune build cache") and every tool matching any of them comes back,
+    those matching the most words first. Each word is matched as a substring of tool names, summaries
+    and parameter names, with common endings trimmed ("failing" also finds "fail") and filler words
+    ignored. `matched: 0` is a definite negative, which a client's fuzzy search cannot give. Also
+    answers what no per-tool search can express: `domain="buildx"` briefs on an area in one line per
+    tool, `category="destructive"` shows the blast radius. Covers this server's own surface;
+    `docs_lookup` covers external Docker reference documentation. Rows are summaries, not definitions -
+    load a tool's own definition for its parameters. Read-only, never raises on a query matching
+    nothing, and always registered even when DOCKER_MCP_SERVER_DISABLE drops every domain. A tool
+    dropped by a switch or a disabled domain is absent rather than flagged; `hidden_by_configuration`
+    reports how many each domain hides.
 
     Args:
         domain: Exact domain name (see any result's `domains` key); omit for every domain
         category: Exact category; omit for all three
-        keyword: Case-insensitive substring over tool names, summaries and parameter names
+        keyword: One or more words, case-insensitive; a tool matching any word is returned
 
     Returns:
         dict: {"matched": int, "tools": [{"name", "domain", "category", "summary"}], "domains": {domain: count},
-            "no_domain": int, "hidden_by_configuration": {domain: count}, "switches", "filters"}. Every `domains` key is
-            a value `domain` accepts; `no_domain` counts the domain-less tools, whose rows carry `domain: null` and
-            which no `domain` value selects.
+            "no_domain": int, "hidden_by_configuration": {domain: count}, "switches", "filters"}, with `tools` best
+            match first. Every `domains` key is a value `domain` accepts; `no_domain` counts the domain-less tools,
+            whose rows carry `domain: null` and which no `domain` value selects. `filters.keyword_terms` lists the
+            words actually searched for.
     """
     return query_catalog(domain=domain, category=category, keyword=keyword)

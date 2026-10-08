@@ -2,7 +2,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from docker_mcp.exceptions import ToolInputError
+from docker_mcp.exceptions import CapabilityError, RemoteFailureError, ToolInputError
 from docker_mcp.tools.services import (
     _read_service_log_tail,
     _read_service_task_summary,
@@ -17,6 +17,18 @@ from docker_mcp.tools.services import (
     service_update,
     service_wait,
 )
+
+
+def _task_api(*, tty: bool = False, chunks=(b"line1\n", b"line2\n")):
+    """An APIClient mock wired for the private helpers `service_logs(task=...)` reaches through.
+
+    Returns:
+        MagicMock: the api object, with `_get_result_tty` yielding `chunks`
+    """
+    api = MagicMock()
+    api.inspect_task.return_value = {"ID": "fulltaskid", "Spec": {"ContainerSpec": {"TTY": tty}}}
+    api._get_result_tty.return_value = iter(chunks)
+    return api
 
 
 def _patch():
@@ -444,3 +456,136 @@ def test_service_wait_accepts_zero_replicas():
         result = service_wait("web", replicas=0, timeout_seconds=5)
     assert result["met"] is True
     assert result["desired_tasks"] == 0
+
+
+def test_service_ps_without_a_service_asks_the_daemon_for_every_task():
+    with _patch() as mock_client:
+        mock_client.return_value.api.tasks.return_value = [{"ID": "t1"}, {"ID": "t2"}]
+        assert service_ps() == [{"ID": "t1"}, {"ID": "t2"}]
+    # No service lookup: with no service named, this is the cluster-wide read.
+    mock_client.return_value.services.get.assert_not_called()
+    mock_client.return_value.api.tasks.assert_called_once_with(filters=None)
+
+
+def test_service_ps_without_a_service_forwards_filters():
+    with _patch() as mock_client:
+        mock_client.return_value.api.tasks.return_value = []
+        assert service_ps(filters={"node": "node1", "desired-state": "running"}) == []
+    mock_client.return_value.api.tasks.assert_called_once_with(filters={"node": "node1", "desired-state": "running"})
+
+
+def test_service_ps_finds_one_task_by_forwarding_the_filter_unmodified():
+    # One task is found through the list's `id`/`name` filters, which the daemon matches by prefix
+    # itself (moby's newListTasksFilters maps them to IDPrefixes/NamePrefixes), so the reference must
+    # reach it as given rather than being parsed or expanded here.
+    with _patch() as mock_client:
+        mock_client.return_value.api.tasks.return_value = [{"ID": "t1"}]
+        assert service_ps(filters={"name": "web.1.abc123"}) == [{"ID": "t1"}]
+    mock_client.return_value.api.tasks.assert_called_once_with(filters={"name": "web.1.abc123"})
+
+
+def test_service_logs_for_a_task_reaches_the_published_task_route():
+    # docker-py has no task_logs at any level, so the task path drives `_url`/`_get` itself. Pin the
+    # route and the parameters: a typo here is invisible until a real daemon 404s.
+    api = _task_api()
+    with _patch() as mock_client:
+        mock_client.return_value.api = api
+        assert service_logs(task="task1") == "line1\nline2\n"
+    # The resolved id, not the caller's reference: `task` advertises id prefixes and full task
+    # names, and whether the logs route resolves those is undocumented, so the id from
+    # `inspect_task` is what gets used.
+    assert api._url.call_args.args == ("/tasks/{0}/logs", "fulltaskid")
+    assert api.inspect_task.call_args.args == ("task1",)
+    params = api._get.call_args.kwargs["params"]
+    assert params["follow"] is False, "service_logs always takes a bounded snapshot"
+    assert params["tail"] == 200
+    assert api._get.call_args.kwargs["stream"] is True
+
+
+def test_service_logs_for_a_task_reads_the_tty_flag_from_the_task_spec():
+    # Without a TTY the Engine frames stdout and stderr with 8-byte headers, so passing the wrong
+    # mode to `_get_result_tty` returns those headers as though they were log text.
+    for tty in (True, False):
+        api = _task_api(tty=tty)
+        with _patch() as mock_client:
+            mock_client.return_value.api = api
+            service_logs(task="task1")
+        assert api._get_result_tty.call_args.args[2] is tty
+
+
+def test_service_logs_for_a_task_raises_for_status_before_decoding():
+    # `_get_result_tty` checks the status itself on the multiplexed path but not the TTY one, where
+    # an error body would otherwise be returned as log output.
+    api = _task_api(tty=True)
+    with _patch() as mock_client:
+        mock_client.return_value.api = api
+        service_logs(task="task1")
+    assert api._raise_for_status.called
+
+
+def test_service_logs_for_a_task_reports_a_missing_docker_py_internal_by_name():
+    api = _task_api()
+    api._get_result_tty = None
+    with _patch() as mock_client:
+        mock_client.return_value.api = api
+        with pytest.raises(CapabilityError, match=r"_get_result_tty"):
+            service_logs(task="task1")
+
+
+def test_service_logs_for_a_task_releases_the_connection_on_both_paths():
+    # A stream read to the end frees its own pooled connection, so the happy path would pass without
+    # an explicit close and hide the real case: the max_bytes abort leaves the body part-read, which
+    # strands a connection for every oversized task until the pool is exhausted.
+    api = _task_api()
+    with _patch() as mock_client:
+        mock_client.return_value.api = api
+        service_logs(task="task1")
+    assert api._get.return_value.close.called, "connection not released after a normal read"
+
+    api = _task_api(chunks=(b"x" * 6, b"y" * 6))
+    with _patch() as mock_client:
+        mock_client.return_value.api = api
+        with pytest.raises(ToolInputError):
+            service_logs(task="task1", max_bytes=10)
+    assert api._get.return_value.close.called, "connection not released after the max_bytes abort"
+
+
+def test_service_logs_for_a_task_refuses_a_task_document_with_no_id():
+    # Falling back to the caller's reference here would reinstate the unresolved-identifier bug on
+    # the one path where the daemon has already misbehaved, and a bare KeyError is not in
+    # `_LIBRARY_FAILURES`, so it would reach the client as "Error executing tool" with no detail.
+    api = _task_api()
+    api.inspect_task.return_value = {"Spec": {"ContainerSpec": {"TTY": False}}}
+    with _patch() as mock_client:
+        mock_client.return_value.api = api
+        with pytest.raises(RemoteFailureError, match="no 'ID' field"):
+            service_logs(task="task1")
+    assert not api._get.called, "must not fall back to the unresolved reference"
+
+
+def test_service_logs_for_a_task_aborts_when_exceeding_max_bytes():
+    api = _task_api(chunks=(b"x" * 6, b"y" * 6))
+    with _patch() as mock_client:
+        mock_client.return_value.api = api
+        with pytest.raises(ToolInputError, match="exceeded max_bytes"):
+            service_logs(task="task1", max_bytes=10)
+
+
+@pytest.mark.parametrize("kwargs", [{}, {"id_or_name": "svc1", "task": "task1"}])
+def test_service_logs_needs_exactly_one_of_a_service_or_a_task(kwargs):
+    # Neither would read nothing, and both is ambiguous about which stream `tail` and `max_bytes`
+    # bound - so the caller is told, and nothing is read.
+    with _patch() as mock_client:
+        with pytest.raises(ToolInputError, match="exactly one of `id_or_name`"):
+            service_logs(**kwargs)
+    assert not mock_client.called
+
+
+def test_service_logs_for_a_service_does_not_reach_the_task_route():
+    service = MagicMock()
+    service.logs.return_value = iter([b"line\n"])
+    with _patch() as mock_client:
+        mock_client.return_value.services.get.return_value = service
+        assert service_logs("svc1") == "line\n"
+    assert not mock_client.return_value.api._get.called
+    assert service.logs.call_args.kwargs["follow"] is False
