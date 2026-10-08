@@ -1,54 +1,9 @@
-"""Tools for Engine plugins: installing them, and controlling whether they are enabled."""
+"""Tools for Engine plugins: installing and upgrading them, and controlling whether they are enabled."""
 
 # library of mcp tools relating to plugin management
 
-import threading
-
-from docker import auth
-from docker.types.daemon import CancellableStream
-
-from docker_mcp.exceptions import CapabilityError
 from docker_mcp.server import tool
-from docker_mcp.tools._utils import close_stream_quietly, host_read_path
 from docker_mcp.tools.system import _get_client
-
-# Cap on progress records collected from a push stream, so a chatty registry can't grow the reply
-# without bound. Reported back as "truncated" rather than silently dropped.
-_MAX_PUSH_PROGRESS = 200
-
-
-@tool()
-def plugin_create(  # noqa: DOC101,DOC103
-    name: str,
-    plugin_data_dir: str,
-    gzip: bool = False,
-    host: str | None = None,
-) -> dict:
-    """
-    Build a plugin from a local plugin data directory and install it under `name`.
-
-    The counterpart to `plugin_install`, which pulls an already-published plugin from a registry:
-    use this only for a plugin rootfs you built yourself, and `plugin_install` for anything on a
-    registry. `plugin_data_dir` is read on the machine running this server (not on the daemon
-    host), must already contain a `config.json` manifest and a `rootfs` directory, and is tarred
-    client-side and posted to the daemon - in a container it must be a bind mount or the path
-    resolves to nothing. The new plugin is created **disabled**: call `plugin_configure` for any
-    settings it declares, then `plugin_enable` to activate it. Raises if the directory is missing
-    or lacks `config.json`/`rootfs`, or if `name` is already installed (remove it first with
-    `plugin_remove`). Unlike the other create tools, this stamps no provenance labels - the Engine
-    API's plugin-create call accepts none.
-
-    Args:
-        name: Local name for the plugin, `author/name:tag`; the `:latest` tag is optional and is the default if omitted
-        plugin_data_dir: Path on this server's filesystem to the plugin data directory (containing `config.json` and
-            `rootfs`)
-        gzip: Compress the uploaded directory with gzip
-
-    Returns:
-        dict: The created plugin's full document ({"Id", "Name", "Enabled", "Settings", "Config"})
-    """
-    path = host_read_path(plugin_data_dir)
-    return _get_client(host).plugins.create(name, str(path), gzip=gzip).attrs
 
 
 @tool()
@@ -70,152 +25,41 @@ def plugin_inspect(name: str, host: str | None = None) -> dict:  # noqa: DOC101,
 
 
 @tool()
-def plugin_install(remote: str, local_name: str | None = None, host: str | None = None) -> dict:  # noqa: DOC101,DOC103
-    """
-    Install a plugin from Docker Hub.
-
-    `remote` is a Docker Hub reference in `author/name:tag` form, e.g.
-    `vieux/sshfs:latest`. The daemon handles permission grants non-interactively - call
-    `plugin_privileges` first to see what host access the plugin is asking for.
-    After installation use `plugin_inspect` to confirm the plugin's enabled state, then call
-    `plugin_enable` to activate it if needed, and optionally `plugin_configure` first if
-    it requires settings. Use `plugin_list` to list all plugins, or `plugin_remove` to
-    uninstall.
-
-    Args:
-        remote: Docker Hub plugin reference, e.g. "vieux/sshfs:latest"
-        local_name: Alias to refer to the plugin locally; defaults to remote
-
-    Returns:
-        dict: The installed plugin's full document ({"Id", "Name", "Enabled", "Settings", "Config"})
-    """
-    return _get_client(host).plugins.install(remote, local_name=local_name).attrs
-
-
-@tool()
-def plugin_privileges(remote: str, host: str | None = None) -> list:  # noqa: DOC101,DOC103
-    """
-    Ask the registry which host privileges a not-yet-installed plugin demands.
-
-    The review step before `plugin_install`, which grants these privileges non-interactively (the
-    daemon never prompts) - so this is the only chance to see what a plugin wants before it has it.
-    Worth checking for anything not already trusted: plugins routinely request host mounts, devices,
-    and elevated capabilities, and a granted privilege is host-level access, not container-scoped.
-    Reads the *remote* plugin from its registry and installs nothing; for the privileges of a plugin
-    already installed, read `Config` from `plugin_inspect` instead. Credentials come from
-    `system_login`, or from `~/.docker/config.json` if the host ran `docker login`. Raises if the
-    reference cannot be resolved in the registry.
-
-    Args:
-        remote: Registry plugin reference, `author/name:tag`; the `:latest` tag is optional and is the default if
-            omitted
-
-    Returns:
-        list: One dict per requested privilege ({"Name", "Description", "Value"}), e.g. Name "mount" with Value
-            ["/data"], or "capabilities" with Value ["CAP_SYS_ADMIN"]; empty if the plugin requests none
-    """
-    # The high-level PluginCollection exposes no privileges call; this is the documented low-level one.
-    return _get_client(host).api.plugin_privileges(remote)
-
-
-@tool()
-def plugin_push(  # noqa: DOC101,DOC103,DOC501,DOC503
-    name: str, timeout_seconds: float = 300.0, host: str | None = None
+def plugin_install(  # noqa: DOC101,DOC103
+    remote: str,
+    local_name: str | None = None,
+    dry_run: bool = False,
+    host: str | None = None,
 ) -> dict:
     """
-    Push an installed plugin to its registry.
+    Install a plugin from a registry, or with `dry_run=True` only show the host privileges it would get.
 
-    The write-side counterpart to `plugin_install` (which pulls) and the publish step after
-    `plugin_create` builds a plugin locally: `name` must already be the registry-qualified name the
-    plugin is installed under, since - unlike `image_push` - there is no plugin equivalent of
-    `image_tag` to rename it first, so create it under the target name. The plugin does not need to
-    be enabled. Credentials come from `system_login`, or from `~/.docker/config.json` if the host
-    ran `docker login`. Does NOT raise when the registry rejects the push: an authentication or
-    quota failure arrives as a final progress record and is surfaced as the `error` key, so check
-    that key rather than assuming success. Raises `CapabilityError` if the installed docker-py is too
-    old to expose the internals below, and reports the daemon's own error if the plugin isn't installed.
-
-    Bypasses docker-py's `Plugin.push()`/`APIClient.push_plugin()`, which cannot work: both POST to
-    `/plugins/{name}/pull`, a route the Engine does not define (push is `/plugins/{name}/push`), so
-    they 404 against any daemon. Bug present since the method was written in 2017 and still in
-    docker-py `main`; it survives because upstream has no test covering it. This calls the correct
-    endpoint through docker-py's private request helpers, in the manner of `system_logout`'s
-    `api._auth_configs` reach-in, and fails loudly if those internals change shape.
-
-    Caveat for `ssh://` daemons: docker-py can't cancel an SSH stream, so the `timeout_seconds`
-    watchdog can't interrupt a push that stalls with the connection still open - the same limitation
-    `container_logs` carries in follow mode. The call still returns normally once the registry
-    answers or the stream ends.
+    The daemon grants every privilege a plugin requests without prompting, so for anything not
+    already trusted call this with `dry_run=True` first: plugins routinely ask for host mounts,
+    devices and elevated capabilities, and a granted privilege is host-level access, not
+    container-scoped. A dry run reads the plugin from its registry and installs nothing; for a plugin
+    already installed, read `Config` from `plugin_inspect` instead. Credentials come from
+    `system_login`, or from `~/.docker/config.json` if the host ran `docker login`. After installing,
+    `plugin_inspect` shows whether it is enabled; `plugin_configure` any settings it declares, then
+    `plugin_enable` it. `plugin_list` lists every plugin and `plugin_remove` uninstalls.
 
     Args:
-        name: Installed plugin name to push, `[registry/]author/name:tag`; `:latest` if the tag is omitted. A bare
-            `author/name` pushes to Docker Hub
-        timeout_seconds: Max wall-clock seconds to wait on the push stream before returning what was collected (default
-            300); raise it for a large plugin over a slow link
+        remote: Registry plugin reference, `author/name:tag`, e.g. "vieux/sshfs:latest"; the `:latest` tag is optional
+            and is the default if omitted
+        local_name: Alias to refer to the plugin locally; defaults to remote
+        dry_run: Return the privileges the plugin requests and install nothing
 
     Returns:
-        dict: {"name", "progress": [<decoded status dicts>], "truncated": bool, "error": str or None} - `error` is
-            non-None only when the registry reported a failure
+        dict: The installed plugin's full document ({"Id", "Name", "Enabled", "Settings", "Config"}); with `dry_run`,
+            {"remote", "privileges"} where `privileges` holds one {"Name", "Description", "Value"} per requested
+            privilege, e.g. Name "mount" with Value ["/data"], and is empty if the plugin requests none
     """
-    api = _get_client(host).api
-    # docker-py exposes no working public path here (see docstring), so we drive its private request
-    # helpers directly. Resolved via getattr - like system_logout's _auth_configs reach-in - so the
-    # absence of any of them surfaces as the explicit message below rather than an AttributeError from
-    # inside the call (and so a type checker isn't asked to vouch for a private attribute).
-    build_url = getattr(api, "_url", None)
-    post = getattr(api, "_post", None)
-    raise_for_status = getattr(api, "_raise_for_status", None)
-    stream_helper = getattr(api, "_stream_helper", None)
-    if build_url is None or post is None or raise_for_status is None or stream_helper is None:
-        missing = sorted(
-            attr
-            for attr, fn in (
-                ("_url", build_url),
-                ("_post", post),
-                ("_raise_for_status", raise_for_status),
-                ("_stream_helper", stream_helper),
-            )
-            if fn is None
-        )
-        raise CapabilityError(
-            f"the installed docker-py no longer exposes {', '.join(missing)} on APIClient, which "
-            "plugin_push needs to reach POST /plugins/{name}/push; push the plugin with "
-            "`docker plugin push` until this tool is updated"
-        )
-    registry, _ = auth.resolve_repository_name(name)
-    header = auth.get_config_header(api, registry)
-    headers = {"X-Registry-Auth": header} if header else {}
-    # stream=True is required: _stream_helper reads the chunked body incrementally. (push_plugin omits
-    # it - a second latent bug there, harmless only because the wrong URL never returns a stream.)
-    response = post(build_url("/plugins/{0}/push", name), headers=headers, stream=True)
-    raise_for_status(response)
-    progress: list = []
-    truncated = False
-    # Wrapped in CancellableStream (public, and what docker-py hands back from its own streaming
-    # calls) because closing the *response* does not bound anything: Response.close() sets
-    # http.client's `fp` to None without interrupting a read already blocked on the socket, so the
-    # call still hangs until the registry answers and then dies in `_close_conn` with an
-    # AttributeError on that None - losing the collected records. CancellableStream.close() shuts
-    # the socket down, which does unblock the read, and turns the resulting ProtocolError/OSError
-    # into StopIteration so the loop ends and the partial progress below is returned as documented.
-    # This is also how container_logs/system_events get their bound - docker-py wraps those for us.
-    stream = CancellableStream(stream_helper(response, decode=True), response)
-    timer = threading.Timer(timeout_seconds, lambda: close_stream_quietly(stream))
-    timer.start()
-    try:
-        for record in stream:
-            progress.append(record)
-            if len(progress) >= _MAX_PUSH_PROGRESS:
-                truncated = True
-                break
-    finally:
-        timer.cancel()
-        # Both: the stream to tear the socket down on the truncation break, the response to release
-        # the pooled connection. Either may already be shut; close_stream_quietly swallows that.
-        close_stream_quietly(stream)
-        close_stream_quietly(response)
-    error = next((r.get("error") for r in reversed(progress) if isinstance(r, dict) and r.get("error")), None)
-    return {"name": name, "progress": progress, "truncated": truncated, "error": error}
+    client = _get_client(host)
+    if dry_run:
+        # The high-level PluginCollection exposes no privileges call; this is the documented low-level
+        # one, and the same call `PluginCollection.install` makes before granting the result.
+        return {"remote": remote, "privileges": client.api.plugin_privileges(remote)}
+    return client.plugins.install(remote, local_name=local_name).attrs
 
 
 @tool()
@@ -318,24 +162,38 @@ def plugin_remove(name: str, force: bool = False, host: str | None = None) -> bo
 
 
 @tool()
-def plugin_upgrade(name: str, remote: str | None = None, host: str | None = None) -> bool:  # noqa: DOC101,DOC103
+def plugin_upgrade(  # noqa: DOC101,DOC103
+    name: str,
+    remote: str | None = None,
+    dry_run: bool = False,
+    host: str | None = None,
+) -> bool | dict:
     """
-    Upgrade an installed plugin to a newer version.
+    Upgrade an installed plugin to a newer version, or with `dry_run=True` only show the privileges it would get.
 
-    The plugin must be disabled first - call `plugin_disable` before this, then
-    `plugin_enable` afterwards to bring it back up. `remote` lets you upgrade to a
-    different reference (e.g. a newer tag) than the plugin's current name; omit it to
-    re-pull the same reference. Existing settings and volumes created by the plugin
-    persist across the upgrade.
+    The daemon grants whatever privileges the new version requests without prompting, exactly as
+    `plugin_install` does, so a dry run first shows them and changes nothing. The plugin must be
+    disabled first - call `plugin_disable` before this, then `plugin_enable` afterwards to bring it
+    back up. `remote` lets you upgrade to a different reference (e.g. a newer tag) than the plugin's
+    current name; omit it to re-pull the same reference. Existing settings and volumes created by the
+    plugin persist across the upgrade.
 
     Args:
         name: The plugin name to upgrade
         remote: Reference to upgrade to, e.g. "vieux/sshfs:next" (default: same as name)
+        dry_run: Return the privileges the upgrade would grant and change nothing
 
     Returns:
-        bool: True after the upgrade completes
+        bool | dict: True after the upgrade completes; with `dry_run`, {"remote", "privileges"} where `privileges`
+            holds one {"Name", "Description", "Value"} per requested privilege
     """
-    plugin = _get_client(host).plugins.get(name)
+    client = _get_client(host)
+    plugin = client.plugins.get(name)
+    if dry_run:
+        # `Plugin.upgrade` defaults the reference to the plugin's own name and grants exactly what
+        # `plugin_privileges` returns for it, so the preview asks about that same reference.
+        target = remote if remote is not None else plugin.name
+        return {"remote": target, "privileges": client.api.plugin_privileges(target)}
     if remote is None:
         plugin.upgrade()
     else:

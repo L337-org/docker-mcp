@@ -5,10 +5,16 @@
 import time
 from typing import Literal, cast
 
-from docker_mcp.exceptions import ToolInputError
+from docker_mcp.exceptions import CapabilityError, RemoteFailureError, ToolInputError
 from docker_mcp.server import tool
 from docker_mcp.tools._labels import managed_filter, with_provenance
-from docker_mcp.tools._utils import MAX_PAYLOAD_BYTES, as_byte_chunks, drop_none, join_bounded
+from docker_mcp.tools._utils import (
+    MAX_PAYLOAD_BYTES,
+    as_byte_chunks,
+    close_stream_quietly,
+    drop_none,
+    join_bounded,
+)
 from docker_mcp.tools.system import _get_client
 
 
@@ -232,29 +238,44 @@ def service_remove(id_or_name: str, host: str | None = None) -> bool:  # noqa: D
 
 
 @tool()
-def service_ps(id_or_name: str, filters: dict | None = None, host: str | None = None) -> list:  # noqa: DOC101,DOC103
+def service_ps(  # noqa: DOC101,DOC103
+    id_or_name: str | None = None,
+    filters: dict | None = None,
+    host: str | None = None,
+) -> list:
     """
-    List a swarm service's tasks (per-replica scheduling units), like `docker service ps`.
+    List swarm tasks: one service's, or with no service every task in the swarm, like `docker service ps`.
 
-    Shows where replicas run and why they fail: each task carries `Status`
-    (State/Message/ContainerStatus), `DesiredState`, `NodeID`, and `Slot`. Prefer this over
-    `container_list` for services (tasks may run on other nodes), `stack_ps` for a whole stack,
-    and the `service-tasks://{id_or_name}` resource for a computed rollout summary. Requires a
-    swarm manager.
+    Omit `id_or_name` for the cluster-wide view - what is failing anywhere, or with the `node` filter
+    one node's workload (the CLI's `docker node ps`) - in one call rather than one per service;
+    `stack_ps` covers one stack. Find a single task with the `id` filter (full id or prefix) or
+    `name` (the full `<service>.<slot>.<taskid>`, or `<service>.<slot>` for every task that slot has
+    run). Both match by prefix, so an ambiguous prefix returns several tasks rather than an error, and
+    `web.1` also matches `web.10`. Only container tasks come back unless `runtime` is filtered (e.g.
+    `attachment`). Each task carries `Status` (State/Message/ContainerStatus), `DesiredState`,
+    `NodeID`, `Slot` and its full `Spec`; `service_logs(task=...)` reads what one printed. Prefer this
+    over `container_list` for services, whose tasks may run on other nodes. Read-only. Requires a swarm
+    manager: on any other node the daemon refuses, and its refusal is what comes back.
 
     Args:
-        filters: Filter dict; keys: id, name, node, label, desired-state (running|shutdown|accepted)
+        id_or_name: The service whose tasks to list; omit for every task in the swarm
+        filters: Filter dict; keys: id, name, service, node, label, desired-state (running|shutdown|accepted), runtime
 
     Returns:
-        list: Task dicts (ID, Slot, NodeID, Status, DesiredState, Spec)
+        list: One full task document per task (ID, ServiceID, NodeID, Slot, Spec, Status, DesiredState)
     """
-    service = _get_client(host).services.get(id_or_name)
-    return service.tasks(filters=filters)
+    client = _get_client(host)
+    if id_or_name is None:
+        # docker-py has no task collection (no `client.tasks`), so the swarm-wide list is the
+        # documented low-level call; `Service.tasks` below is the same call with a service filter.
+        return client.api.tasks(filters=filters)
+    return client.services.get(id_or_name).tasks(filters=filters)
 
 
 @tool()
-def service_logs(  # noqa: DOC101,DOC103
-    id_or_name: str,
+def service_logs(  # noqa: DOC101,DOC103,DOC501,DOC503
+    id_or_name: str | None = None,
+    task: str | None = None,
     details: bool = False,
     stdout: bool = True,
     stderr: bool = True,
@@ -265,18 +286,21 @@ def service_logs(  # noqa: DOC101,DOC103
     host: str | None = None,
 ) -> str:
     """
-    Get a bounded snapshot of a swarm service's logs (never follows).
+    Get a bounded snapshot of a swarm service's logs, or of one of its tasks (never follows).
 
-    `follow` is intentionally not exposed: the stream is joined into one string before returning, so
-    following would block forever and grow unbounded. Collection is capped at `max_bytes` (ToolInputError
-    if exceeded) so a noisy service can't OOM the server. The default is a bounded `tail=200`;
-    `tail="all"` returns the whole buffer, which can be huge on long-running services and exceed
-    the agent's context - prefer an integer, or `since`, to constrain output. Logs aggregate across
-    all the service's tasks: use `swarm_task_logs` for one task, `container_logs` for one container,
-    and the `service-logs://{id_or_name}` resource for the resource-flavored equivalent of this
-    tool.
+    Pass `id_or_name` for every task of a service interleaved, or `task` for one replica - the one
+    that actually failed, found with `service_ps` - just as `docker service logs` takes either.
+    `container_logs` is no substitute on a multi-node swarm: a task's container lives on whichever
+    node the scheduler chose, and this server talks to one daemon. `follow` is not exposed (the
+    stream is joined into one string, so following would never finish). `tail` and `max_bytes` apply
+    to what was asked for, so a quiet replica is not crowded out by noisy ones; `tail="all"` can
+    exceed the agent's context, so prefer an integer or `since`. docker-py has no public call for a
+    task's logs, so that path uses its private request helpers and raises if those internals move.
 
     Args:
+        id_or_name: The service whose logs to read; give this or `task`, not both
+        task: One task's id, an unambiguous id prefix, or its full `<service>.<slot>.<taskid>` name; give this or
+            `id_or_name`, not both
         details: Show extra details
         since: Show logs since this Unix timestamp
         tail: Number of lines from the end, or the literal "all" for everything
@@ -285,18 +309,108 @@ def service_logs(  # noqa: DOC101,DOC103
     Returns:
         str: Decoded log output
     """
+    if (id_or_name is None) == (task is None):
+        raise ToolInputError(
+            "service_logs reads either a whole service or one task: pass exactly one of `id_or_name` "
+            f"(got {id_or_name!r}) or `task` (got {task!r})"
+        )
+    params = {
+        "details": details,
+        "stdout": stdout,
+        "stderr": stderr,
+        "since": since,
+        "timestamps": timestamps,
+        "tail": tail,
+    }
+    if task is not None:
+        return _read_task_logs(task, params, max_bytes, host)
     service = _get_client(host).services.get(id_or_name)
-    output = service.logs(
-        details=details,
-        follow=False,
-        stdout=stdout,
-        stderr=stderr,
-        since=since,
-        timestamps=timestamps,
-        tail=tail,
-    )
-
+    output = service.logs(follow=False, **params)
     raw = join_bounded(as_byte_chunks(output), max_bytes, f"logs of service {id_or_name}")
+    return raw.decode("utf-8", errors="replace")
+
+
+def _read_task_logs(task: str, params: dict, max_bytes: int, host: str | None) -> str:
+    """Read one swarm task's logs through `GET /tasks/{id}/logs`, bounded and non-following.
+
+    docker-py has no task collection and no `APIClient.task_logs`, so this drives its private
+    request helpers against the published Engine route. Drop the reach-in if docker-py grows a public
+    method.
+
+    Args:
+        task: the task's id, an unambiguous id prefix, or its full name
+        params: the log query options, without `follow`
+        max_bytes: abort with ToolInputError if the buffered logs exceed this many bytes
+        host: the host label to target, or None for the default
+
+    Returns:
+        str: the decoded log output
+
+    Raises:
+        CapabilityError: the installed docker-py no longer has the private helpers this needs
+        RemoteFailureError: the daemon returned a task document with no ID to address
+    """
+    api = _get_client(host).api
+    # Resolved via getattr so a docker-py that has moved these internals gives the actionable
+    # message below rather than an AttributeError from inside the call.
+    build_url = getattr(api, "_url", None)
+    get = getattr(api, "_get", None)
+    raise_for_status = getattr(api, "_raise_for_status", None)
+    result_tty = getattr(api, "_get_result_tty", None)
+    if build_url is None or get is None or raise_for_status is None or result_tty is None:
+        missing = sorted(
+            attr
+            for attr, fn in (
+                ("_url", build_url),
+                ("_get", get),
+                ("_raise_for_status", raise_for_status),
+                ("_get_result_tty", result_tty),
+            )
+            if fn is None
+        )
+        raise CapabilityError(
+            f"the installed docker-py no longer exposes {', '.join(missing)} on APIClient, which "
+            "service_logs(task=...) needs to reach GET /tasks/{id}/logs; read the whole service's "
+            "logs with service_logs(id_or_name=...), or run `docker service logs` on a manager"
+        )
+    # Without a TTY the Engine multiplexes stdout and stderr into framed chunks, so the 8-byte frame
+    # headers have to be stripped or they land in the returned text. `_get_result_tty` does that, but
+    # only if told which mode applies, and the task's own spec is the only place that records it.
+    document = api.inspect_task(task)
+    is_tty = document.get("Spec", {}).get("ContainerSpec", {}).get("TTY", False)
+    # The URL gets the resolved id, not what the caller passed. `inspect_task` accepts an id prefix
+    # or the full `<service>.<slot>.<taskid>` name and `task` advertises both, but whether the
+    # logs route resolves them too is undocumented - and there is no need to find out when the
+    # canonical id is already in hand. It also removes the chance of inspecting one task and
+    # reading another's output if the two endpoints ever disagreed about an ambiguous prefix.
+    #
+    # Not falling back to `task` when the id is absent: that is the unresolved reference this
+    # exists to avoid, so the fallback would quietly reinstate the defect on the one path where the
+    # daemon has already behaved unexpectedly. A bare KeyError would be no better - it is not in
+    # `_LIBRARY_FAILURES`, so it reaches the client as "Error executing tool" with the text withheld.
+    task_id = document.get("ID")
+    if not task_id:
+        raise RemoteFailureError(
+            f"the daemon returned a task document for {task!r} with no 'ID' field, so its "
+            'logs endpoint cannot be addressed; `service_ps(filters={"id": ...})` shows what came back'
+        )
+    response = get(
+        build_url("/tasks/{0}/logs", task_id),
+        params={**params, "follow": False},
+        stream=True,
+    )
+    # `_get_result_tty` raises for status itself on the multiplexed path but not on the TTY one,
+    # where it would otherwise stream an error body back as though it were log output.
+    raise_for_status(response)
+    try:
+        raw = join_bounded(as_byte_chunks(result_tty(True, response, is_tty)), max_bytes, f"logs of task {task}")
+    finally:
+        # A fully consumed stream releases its pooled connection by itself, but `join_bounded` raises
+        # on the max_bytes abort with the body part-read, which would strand that connection for
+        # every oversized task. No `CancellableStream` here: there is no watchdog to interrupt a
+        # blocked read from, because `follow` is never sent and the daemon closes the stream itself
+        # once the tail is written.
+        close_stream_quietly(response)
     return raw.decode("utf-8", errors="replace")
 
 

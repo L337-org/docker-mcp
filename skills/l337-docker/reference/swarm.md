@@ -98,8 +98,8 @@ docker inspect --type task <task-id>        # one task, full document
 
 `docker service ps` prints `NAME` as `<service>.<slot>`, but `docker inspect --type task` will not
 resolve that form - pass the task `ID` from the same row instead. (The MCP server exposes the
-cluster-wide read directly as `swarm_task_list`, with `node`, `service` and `desired-state`
-filters.)
+cluster-wide read directly as `service_ps` with no service, with `node`, `service` and
+`desired-state` filters.)
 
 ### Creating and updating
 

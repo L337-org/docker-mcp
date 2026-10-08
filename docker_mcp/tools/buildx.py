@@ -20,11 +20,12 @@ instances and their history.
 
 from pathlib import Path
 
-from docker_mcp.exceptions import ToolInputError
+from docker_mcp.exceptions import CapabilityError, ToolInputError
 from docker_mcp.server import tool
 from docker_mcp.tools._cli import (
     CliResult,
     filter_args,
+    has_plugin,
     parse_json_or_ndjson,
     parse_ndjson,
     RemoteStagingSession,
@@ -38,6 +39,8 @@ from docker_mcp.tools._cli import (
     safe_positional,
     should_remote_exec,
 )
+from docker_mcp.tools._utils import drop_none
+from docker_mcp.tools.system import _get_client
 
 # Per-operation timeout ceilings (seconds). Builds and pulls against slow registries or
 # large contexts routinely run for many minutes, so they get longer ceilings than queries.
@@ -862,7 +865,7 @@ def buildx_du(builder: str | None = None, host: str | None = None) -> list:  # n
 
 
 @tool()
-def buildx_prune(  # noqa: DOC101,DOC103
+def buildx_prune(  # noqa: DOC101,DOC103,DOC501,DOC503
     all: bool = False,
     filters: dict | None = None,
     reserved_space: str | None = None,
@@ -873,12 +876,16 @@ def buildx_prune(  # noqa: DOC101,DOC103
     host: str | None = None,
 ) -> dict:
     """
-    Remove BuildKit cache entries.
+    Remove BuildKit build cache entries to reclaim disk space.
 
-    Destructive: this tool always passes `--force` because no interactive prompt is
-    available under MCP. Pair with `buildx_du` first to inventory what would be removed.
-    Does not raise on a non-zero CLI exit (a missing buildx plugin or a timeout still raises) - inspect
-    `returncode`/`stderr` in the result.
+    Destructive and immediate: later builds re-run the steps whose cache was removed. Always passes
+    `--force`, since no interactive prompt is available under MCP. Inventory first with `buildx_du`
+    or `system_df` (its `BuildCache` entry); build cache is separate from the images `image_prune`
+    removes, so run both to reclaim everything a build leaves behind. With no buildx plugin here and
+    a host not reached over ssh://, this prunes the daemon's default build cache through the Engine
+    API instead: `builder` and the three space limits cannot be sent that way, so passing any of them
+    there raises rather than pruning without the limit. Does not raise on a non-zero CLI exit (a
+    timeout still raises) - inspect `returncode`/`stderr` in the result.
 
     Args:
         all: Include internal/frontend images
@@ -890,8 +897,13 @@ def buildx_prune(  # noqa: DOC101,DOC103
         timeout_seconds: Subprocess timeout (default 600s)
 
     Returns:
-        dict: {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
+        dict: {"returncode": int, "stdout": str, "stderr": str, "truncated": bool} through the CLI; through the Engine
+            API, {"CachesDeleted": [...], "SpaceReclaimed": <bytes>}
     """
+    if not should_remote_exec(host, plugin="buildx") and not has_plugin("buildx"):
+        return _prune_build_cache_through_engine(
+            all, filters, reserved_space, max_used_space, min_free_space, builder, host
+        )
     args: list[str] = ["prune", "--force"]
     if all:
         args.append("--all")
@@ -905,6 +917,57 @@ def buildx_prune(  # noqa: DOC101,DOC103
     if builder is not None:
         args.extend(["--builder", builder])
     return _run_buildx(args, timeout=timeout_seconds, host=host).to_dict()
+
+
+def _prune_build_cache_through_engine(
+    all: bool,
+    filters: dict | None,
+    reserved_space: str | None,
+    max_used_space: str | None,
+    min_free_space: str | None,
+    builder: str | None,
+    host: str | None,
+) -> dict:
+    """Prune the daemon's build cache through docker-py, for a host with no buildx plugin to run.
+
+    Args:
+        all: remove all types of build cache, not only unused records
+        filters: which cache records to remove
+        reserved_space: must be None; refused otherwise
+        max_used_space: must be None; refused otherwise
+        min_free_space: must be None; refused otherwise
+        builder: must be None; refused otherwise
+        host: the host label to target, or None for the default
+
+    Returns:
+        dict: the Engine's prune result, {"CachesDeleted": [...], "SpaceReclaimed": <bytes>}
+
+    Raises:
+        CapabilityError: a builder or space limit was asked for, which this path cannot send
+    """
+    # docker-py 7.2.0's `prune_builds` takes only filters, `keep_storage` and `all`. The space limits
+    # have no parameter there, and `keep_storage` is the Engine's deprecated spelling of
+    # `reserved-space`, which an Engine that drops the fallback will ignore - so a limit sent through
+    # it could prune the whole cache while the caller believed a floor was set. Refuse instead.
+    # A non-default builder keeps its own cache, which the daemon's prune endpoint cannot reach.
+    unsendable = [
+        name
+        for name, value in (
+            ("reserved_space", reserved_space),
+            ("max_used_space", max_used_space),
+            ("min_free_space", min_free_space),
+            ("builder", builder),
+        )
+        if value is not None
+    ]
+    if unsendable:
+        raise CapabilityError(
+            f"buildx_prune was asked for {', '.join(unsendable)}, which only the buildx CLI plugin can send, "
+            "and it is not installed here; nothing was pruned. Install the docker-buildx plugin, point this "
+            "host at an ssh:// endpoint that has it via DOCKER_MCP_SERVER_HOSTS, or call again without those "
+            "arguments to prune the daemon's default build cache through the Engine API"
+        )
+    return _get_client(host).api.prune_builds(**drop_none(filters=filters, all=True if all else None))
 
 
 @tool()

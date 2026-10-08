@@ -1,17 +1,18 @@
-# integration tests for the cluster-wide swarm task tools, which need a real daemon in swarm mode.
+# integration tests for reading swarm tasks - every task in the swarm, one task found by filter, and
+# one task's logs - which need a real daemon in swarm mode. These jobs are done by `service_ps` and
+# `service_logs`, but are kept here, apart from the per-service tests in test_services.py, because what
+# they pin is the daemon's own task resolution.
 # run with: uv run pytest -m integration (requires `docker swarm init` first)
 #
 # The swarm lifecycle tools (init/join/leave/unlock) have no integration coverage on purpose -- they
-# reconfigure the daemon the whole suite runs against. `swarm_task_list`, `swarm_task_inspect` and
-# `swarm_task_logs` only read, so they are testable against the daemon the suite already uses.
+# reconfigure the daemon the whole suite runs against. The task reads only read, so they are testable
+# against the daemon the suite already uses.
 
 import uuid
 
 import pytest
-from docker.errors import NotFound
 
-from docker_mcp.tools.services import service_create, service_ps, service_remove, service_wait
-from docker_mcp.tools.swarm import swarm_task_inspect, swarm_task_list, swarm_task_logs
+from docker_mcp.tools.services import service_create, service_logs, service_ps, service_remove, service_wait
 
 pytestmark = pytest.mark.usefixtures("skip_if_no_swarm")
 
@@ -39,54 +40,55 @@ def running_service():
             pass
 
 
-def test_swarm_task_list_sees_the_service_and_agrees_with_service_ps(running_service):
+def test_service_ps_without_a_service_sees_every_task_and_agrees_with_the_per_service_view(running_service):
     service_wait(running_service, until="running", timeout_seconds=30, poll_interval=1.0)
     per_service = service_ps(running_service)
     assert per_service
 
     # The cluster-wide read is a superset of the per-service one, and the `service` filter narrows
-    # it back down to exactly what `service_ps` returns -- the equivalence the docstring promises
-    # when it tells callers to prefer `service_ps` for a single service.
-    cluster_wide = swarm_task_list()
+    # it back down to exactly what naming the service returns.
+    cluster_wide = service_ps()
     assert {t["ID"] for t in per_service} <= {t["ID"] for t in cluster_wide}
-    filtered = swarm_task_list(filters={"service": running_service})
+    filtered = service_ps(filters={"service": running_service})
     assert {t["ID"] for t in filtered} == {t["ID"] for t in per_service}
 
 
-def test_swarm_task_inspect_resolves_id_prefix_and_full_name_but_not_the_ps_name(running_service):
+def test_service_ps_finds_one_task_by_id_prefix_full_name_and_slot_name(running_service):
+    """The list filters do the single-task lookup the removed `swarm_task_inspect` did.
+
+    moby maps the `id` and `name` filters to prefix matches against the task's full name, which is
+    what `service_ps`'s description now promises - including that `<service>.<slot>`, which inspect
+    could not resolve, finds that slot's tasks. If the daemon changes any of this, the description
+    is wrong and this fails rather than it quietly becoming so.
+    """
     service_wait(running_service, until="running", timeout_seconds=30, poll_interval=1.0)
     task = service_ps(running_service)[0]
 
-    assert swarm_task_inspect(task["ID"])["ID"] == task["ID"]
-    assert swarm_task_inspect(task["ID"][:8])["ID"] == task["ID"]
+    assert [t["ID"] for t in service_ps(filters={"id": task["ID"]})] == [task["ID"]]
+    assert task["ID"] in {t["ID"] for t in service_ps(filters={"id": task["ID"][:8]})}
 
-    # A task's resolvable name is the container-name form, not the `<service>.<slot>` that
-    # `docker service ps` prints. Both halves are asserted because the docstring warns about the
-    # difference: if the daemon ever starts resolving the short form, this fails and the docstring
-    # gets updated rather than quietly becoming wrong.
     full_name = f"{running_service}.{task['Slot']}.{task['ID']}"
-    assert swarm_task_inspect(full_name)["ID"] == task["ID"]
-    with pytest.raises(NotFound):
-        swarm_task_inspect(f"{running_service}.{task['Slot']}")
+    assert [t["ID"] for t in service_ps(filters={"name": full_name})] == [task["ID"]]
+    assert task["ID"] in {t["ID"] for t in service_ps(filters={"name": f"{running_service}.{task['Slot']}"})}
 
 
-def test_swarm_task_logs_reads_a_real_task_through_the_hand_built_route(running_service):
+def test_service_logs_reads_a_real_task_through_the_hand_built_route(running_service):
     """The route and the frame handling only prove out against a real daemon.
 
-    `swarm_task_logs` builds `/tasks/{id}/logs` itself, because docker-py exposes no task-logs
+    `service_logs(task=...)` builds `/tasks/{id}/logs` itself, because docker-py exposes no task-logs
     method to get it wrong on our behalf: a mistyped path or the wrong TTY mode is invisible to the
     unit tests, which mock the very helpers that would reject it.
 
     Single-node only, and deliberately so: this suite runs against one daemon. That does not weaken
-    the check, because the tool asks the manager and the manager fetches from whichever node holds
+    the check, because the call asks the manager and the manager fetches from whichever node holds
     the task, so the code path is identical - what a multi-node cluster would add is coverage of the
     Engine's own forwarding, not of anything here.
     """
     service_wait(running_service, until="running", timeout_seconds=120)
-    tasks = swarm_task_list(filters={"service": running_service})
+    tasks = service_ps(running_service)
     assert tasks, "expected the service to have produced a task"
 
-    logs = swarm_task_logs(tasks[0]["ID"], tail=10)
+    logs = service_logs(task=tasks[0]["ID"], tail=10)
 
     assert isinstance(logs, str)
     # `sleep 120` prints nothing, so an empty string is the correct result. What matters is that the

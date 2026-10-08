@@ -99,7 +99,6 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "image_remove": ToolCategory.DESTRUCTIVE,
     "image_search": ToolCategory.READ_ONLY,
     "image_prune": ToolCategory.DESTRUCTIVE,
-    "image_prune_builds": ToolCategory.DESTRUCTIVE,
     "image_load": ToolCategory.MUTATING,
     "image_import": ToolCategory.MUTATING,
     "image_save": ToolCategory.MUTATING,  # can write a file on the server host (dest_path)
@@ -155,15 +154,9 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "swarm_unlock": ToolCategory.MUTATING,
     "swarm_unlock_key": ToolCategory.READ_ONLY,
     "swarm_join_tokens": ToolCategory.READ_ONLY,
-    "swarm_task_list": ToolCategory.READ_ONLY,
-    "swarm_task_inspect": ToolCategory.READ_ONLY,
-    "swarm_task_logs": ToolCategory.READ_ONLY,
     # plugins
-    "plugin_create": ToolCategory.MUTATING,
     "plugin_inspect": ToolCategory.READ_ONLY,
     "plugin_install": ToolCategory.MUTATING,
-    "plugin_privileges": ToolCategory.READ_ONLY,
-    "plugin_push": ToolCategory.MUTATING,
     "plugin_list": ToolCategory.READ_ONLY,
     "plugin_configure": ToolCategory.MUTATING,
     "plugin_disable": ToolCategory.MUTATING,
@@ -239,9 +232,7 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
 
 # Destructive tools whose effect is idempotent - re-running has no additional effect (the targets
 # are already gone). Surfaced via ToolAnnotations.idempotent_hint so clients can treat retries as safe.
-_IDEMPOTENT_TOOLS = frozenset(
-    {"container_prune", "image_prune", "image_prune_builds", "network_prune", "volume_prune", "buildx_prune"}
-)
+_IDEMPOTENT_TOOLS = frozenset({"container_prune", "image_prune", "network_prune", "volume_prune", "buildx_prune"})
 
 # The optional per-call parameter that selects which configured host a daemon-targeting tool acts on.
 _HOST_PARAM = "host"
@@ -437,6 +428,73 @@ def _summary_for(func: Callable[..., Any]) -> str:
     return ""
 
 
+# Words a plain-language query carries that say nothing about which tool is wanted. Matching is by
+# substring, so left in they would hit almost every tool ("the" is inside "other") and bury the real
+# matches. Deliberately short: a Docker verb that happens to be common English ("list", "show",
+# "run") is a real search term and must stay out of this set. Single characters are dropped
+# separately. Two-letter words are listed one by one rather than dropped by length, because the
+# docker CLI's own vocabulary is full of them (`ps`, `cp`, `df`, `rm`, `up`).
+_KEYWORD_FILLER = frozenset(
+    "about all and any are can does each every for from have how into its not off one that the their "
+    "them then this what when which who why will with you your "
+    "an as at be by do if in is it me my of on or so to we".split()
+)
+# Endings trimmed so a word finds its other forms: "failing" also tries "fail", "tasks" tries "task".
+# Crude on purpose - the search errs towards returning too much rather than missing the tool.
+_KEYWORD_SUFFIXES = ("ing", "ed", "es", "s")
+
+
+def _keyword_terms(keyword: str) -> list[tuple[str, ...]]:
+    """Split a `tool_list` keyword into search terms, each with the forms it may match as.
+
+    Args:
+        keyword: the caller's keyword, one word or several separated by whitespace
+
+    Returns:
+        list[tuple[str, ...]]: one tuple per distinct usable word, holding the word and its trimmed form; empty when
+            every word was filler or a single character
+    """
+    terms: list[tuple[str, ...]] = []
+    seen: set[str] = set()
+    for word in keyword.lower().split():
+        if len(word) < 2 or word in _KEYWORD_FILLER or word in seen:
+            continue
+        seen.add(word)
+        forms = [word]
+        for suffix in _KEYWORD_SUFFIXES:
+            stem = word.removesuffix(suffix)
+            if stem != word and len(stem) >= 3:
+                forms.append(stem)
+                break
+        terms.append(tuple(forms))
+    return terms
+
+
+def _keyword_rank(record: ToolRecord, terms: list[tuple[str, ...]]) -> tuple[int, int, int] | None:
+    """How well one tool matches the search terms, or None if it matches none of them.
+
+    Args:
+        record: the tool's registry record
+        terms: the output of `_keyword_terms`
+
+    Returns:
+        tuple[int, int, int] | None: (terms matched anywhere, terms matched in the name, terms matched in the summary),
+            larger is better; None when no term matches the name, summary or a parameter name
+    """
+    name = record.name.lower()
+    summary = record.summary.lower()
+    params = [param.lower() for param in record.params]
+    anywhere = in_name = in_summary = 0
+    for forms in terms:
+        name_hit = any(form in name for form in forms)
+        summary_hit = any(form in summary for form in forms)
+        if name_hit or summary_hit or any(form in param for form in forms for param in params):
+            anywhere += 1
+            in_name += name_hit
+            in_summary += summary_hit
+    return (anywhere, in_name, in_summary) if anywhere else None
+
+
 def query_catalog(
     domain: str | None = None,
     category: str | None = None,
@@ -453,15 +511,20 @@ def query_catalog(
     Args:
         domain: Exact domain name to restrict to, or None for every domain
         category: Exact category value ("read_only"/"mutating"/"destructive"), or None for all
-        keyword: Case-insensitive substring matched against name, summary and parameter names
+        keyword: One or more case-insensitive words, each matched as a substring of the name, summary and parameter
+            names; a tool matching any word is returned, tools matching more words first
 
     Returns:
         dict: {"matched", "tools", "domains", "no_domain", "hidden_by_configuration", "switches", "filters"}. `domains`
             and `hidden_by_configuration` are keyed by real domain names only; `no_domain` counts the always-registered
-            domain-less tools, whose rows carry `domain: None` and which no `domain=` value selects.
+            domain-less tools, whose rows carry `domain: None` and which no `domain=` value selects. `filters` echoes
+            the arguments, plus `keyword_terms`: the words the keyword was actually searched for.
     """
-    wanted = keyword.lower() if keyword else None
-    rows = []
+    # Any word may match, ranked by how many do: an agent's words for a job rarely all appear in the
+    # summary of the tool that does it, so requiring every word would miss more than it filters out.
+    # A keyword made only of filler searches for nothing and matches nothing, rather than everything.
+    terms = _keyword_terms(keyword) if keyword else None
+    ranked: list[tuple[tuple[int, int, int], dict[str, Any]]] = []
     for record in sorted(_tool_registry.values(), key=lambda r: (r.domain or "", r.name)):
         if not record.registered:
             continue
@@ -469,20 +532,26 @@ def query_catalog(
             continue
         if category is not None and record.category.value != category:
             continue
-        if wanted is not None and not (
-            wanted in record.name.lower()
-            or wanted in record.summary.lower()
-            or any(wanted in param.lower() for param in record.params)
-        ):
-            continue
-        rows.append(
-            {
-                "name": record.name,
-                "domain": record.domain,
-                "category": record.category.value,
-                "summary": record.summary,
-            }
+        rank = (0, 0, 0)
+        if terms is not None:
+            found = _keyword_rank(record, terms)
+            if found is None:
+                continue
+            rank = found
+        ranked.append(
+            (
+                rank,
+                {
+                    "name": record.name,
+                    "domain": record.domain,
+                    "category": record.category.value,
+                    "summary": record.summary,
+                },
+            )
         )
+    # A stable sort on the rank alone keeps the domain-then-name order within each rank.
+    ranked.sort(key=lambda item: item[0], reverse=True)
+    rows = [row for _, row in ranked]
     # Both maps are keyed by real domain names only, so every key is a value `domain=` accepts.
     # The `_NO_DOMAIN_TOOLS` are counted separately rather than under an empty-string key: "" is not
     # a domain, `domain=""` would match nothing (their rows carry `domain: None`), and offering it as
@@ -514,7 +583,12 @@ def query_catalog(
             "DOCKER_MCP_SERVER_NO_DESTRUCTIVE": NO_DESTRUCTIVE,
             "DOCKER_MCP_SERVER_DISABLE": sorted(DISABLED_DOMAINS),
         },
-        "filters": {"domain": domain, "category": category, "keyword": keyword},
+        "filters": {
+            "domain": domain,
+            "category": category,
+            "keyword": keyword,
+            "keyword_terms": [forms[0] for forms in terms] if terms is not None else None,
+        },
     }
 
 
@@ -568,28 +642,29 @@ def tool_catalog() -> dict[str, Any]:
 # *before* any per-tool schema - is built from these. For a lazy-loading client (e.g. Claude Code) that
 # fetches tool schemas on demand, `instructions` is the main surface we control that's always in context,
 # so it acts as a router: it maps user vocabulary onto the domain keyword a tool search will hit. It does
-# not enumerate tools (that's the live `docker-mcp://tool-catalog` resource) - it's a map, not a manual.
+# not enumerate tools - it's a map, not a manual. A job that has no tool of its own name (every task in the
+# swarm, one task's logs, a plugin's privileges) is named here under the domain of the tool that does it,
+# because the tool names alone would send a searching agent elsewhere.
 # A domain's line is emitted only when that domain has a *registered* tool, so DOCKER_MCP_SERVER_DISABLE
 # and the read-only switches never leave the router advertising a domain the client can't actually call.
 _DOMAIN_BLURBS: dict[str, str] = {
-    "containers": "run/create/start/stop/restart/kill/remove, logs, stats, top, exec, diff, commit, archive/cp, "
-    "wait, rename",
-    "images": "pull/push/build/tag/remove/save/load/history, search, prune (dangling images, build cache)",
-    "networks": "create/connect/disconnect/inspect/remove",
-    "volumes": "create/list/inspect/remove",
-    "compose": "Docker Compose v2 (up/down/ps/logs/build/run/exec/...); CLI-backed",
-    "stack": "Compose-on-Swarm (deploy/ls/ps/rm/services); CLI-backed",
-    "swarm": "swarm init/join/leave/unlock, join-tokens, cluster-wide task list/inspect/logs; manager node only",
-    "services": "Swarm services (create/scale/update/rollback/logs/tasks); manager node only",
-    "nodes": "Swarm nodes (list/inspect/update/remove); manager node only",
+    "containers": "run, logs, stats, exec, cp, commit",
+    "images": "pull/push/build/tag/save/load/import, prune",
+    "networks": "connect/disconnect",
+    "volumes": "create/remove",
+    "compose": "Compose v2; CLI-backed",
+    "stack": "Compose on Swarm; CLI-backed",
+    "swarm": "init/join/leave/unlock; manager node only",
+    "services": "Swarm services and tasks: ps/logs of one task or all in the swarm; manager node only",
+    "nodes": "Swarm nodes; manager node only",
     "secrets": "Swarm secrets; manager node only",
     "configs": "Swarm configs; manager node only",
-    "buildx": "multi-arch builds, imagetools (supersedes `docker manifest`), build history; CLI-backed",
-    "scout": "CVE scan, SBOM, base-image recommendations; CLI-backed",
+    "buildx": "builds, multi-arch, build cache prune, imagetools; CLI-backed",
+    "scout": "CVEs, SBOM; CLI-backed",
     "context": "docker CLI contexts; CLI-backed",
-    "registry": "OCI registries + Docker Hub over HTTPS; no daemon needed",
-    "plugins": "plugin lifecycle (create/install/push/enable/disable/configure/upgrade/remove)",
-    "system": "ping, version, info, df (disk usage), events, login, logout, host_list (configured daemons)",
+    "registry": "tags/manifests over HTTPS; no daemon needed",
+    "plugins": "install (dry run shows privileges), upgrade",
+    "system": "info, df (disk usage), events, login, host_list",
 }
 
 # CLI- and swarm-tied caveats are only worth emitting when the relevant domains actually registered.
@@ -598,6 +673,12 @@ _CLI_DOMAINS = ("compose", "stack", "buildx", "scout", "context")
 # installed. `context` is absent deliberately and permanently: its tools manage *this* host's CLI
 # context registry, which a remote host knows nothing about.
 _REMOTE_EXEC_DOMAINS = ("compose", "stack", "buildx", "scout")
+
+# Claude Code cuts a server's `instructions` at 2,048 characters (UTF-16 code units) without telling the
+# server or the model, and was seen to show only about 2,035 of a longer string. The router is therefore
+# ordered by what is worst to lose - how to find a tool first, the domain words next, the caveats last -
+# and `tests/test_server.py` holds its longest rendering under this limit.
+INSTRUCTIONS_CHAR_LIMIT = 2048
 
 
 def build_instructions(registered_domains: set[str] | None = None) -> str:
@@ -621,22 +702,28 @@ def build_instructions(registered_domains: set[str] | None = None) -> str:
     )
 
     lines = [
-        "docker-mcp-server - manage Docker through the docker-py SDK and the docker CLI.",
+        "docker-mcp-server: Docker through docker-py and the docker CLI.",
         "",
-        "Tools load on demand: search by a domain keyword below to pull a tool's full schema before calling it.",
+        # First because it is the one thing an agent cannot work out for itself: what to do when its
+        # client's own search misses. Each tool is named by the occasion that should trigger it, not by
+        # why it was added - `docs_lookup` once sat here as a fallback "if your client can't read
+        # resources", which told every client that could to skip it.
+        "Finding a tool: search for a word from the domains below; if that misses, call `tool_list` "
+        "with a few words as `keyword` (best matches first; `matched: 0` means none exists). Call "
+        "`docs_lookup` before guessing Compose/Dockerfile/bake syntax or an `extra_kwargs` key.",
         "",
         "Domains (and the words that find them):",
     ]
     lines += [f"- {domain} - {blurb}" for domain, blurb in _DOMAIN_BLURBS.items() if domain in present]
 
+    # Most consequential first: a wrong host or a call that runs on another machine is worse than a
+    # large payload or a missed filter.
     caveats = []
-    if present & {"containers", "images"}:
+    if _hosts.is_multi():
         caveats.append(
-            "To persist output to the host disk, pass `dest_path` to `container_export`/`image_save`, "
-            "or use `container_archive_get_to_file` (prefer these over in-band bytes for anything large)."
+            f"Multiple hosts are configured ({_hosts.labels()}): read-only tools default to the first; "
+            "writes need an explicit `host`; `(ro)` hosts refuse writes, `(nd)` destructive calls."
         )
-    if present & {"containers", "networks", "volumes", "services"}:
-        caveats.append("`list_*(managed_only=True)` returns only resources this server created (provenance-labeled).")
     cli_present = [d for d in _CLI_DOMAINS if d in present]
     if cli_present:
         # Only worth the tokens when a domain that actually has the fallback is registered.
@@ -653,42 +740,26 @@ def build_instructions(registered_domains: set[str] | None = None) -> str:
             # to agree with a length that varies.
             no_fallback = [d for d in cli_present if d not in fallback_present]
             caveat = (
-                "CLI-backed domains (marked above) shell out to the docker CLI/plugins. With the CLI or "
-                "a required plugin missing locally, the call runs on the target host instead when that "
-                "host is reached over `ssh://` - its CLI, its registry credentials, and local files (a "
-                "compose project dir, a build context) copied over, so keep them small; a usable local "
-                f"CLI always wins. Applies to {', '.join(fallback_present)}"
+                "CLI-backed domains (marked above) use the docker CLI. With the CLI or a required plugin "
+                "missing locally, a host reached over `ssh://` runs the call itself, with local files "
+                f"copied over; a usable local CLI always wins. Applies to {', '.join(fallback_present)}"
             )
             caveat += f"; no fallback for {', '.join(no_fallback)}, which raises instead." if no_fallback else "."
             caveats.append(caveat)
     # No swarm caveat: every domain in that family carries "manager node only" in its own blurb
     # above, so a group-level restatement is a sixth copy of a fact already on five lines. If the
     # requirement ever stops being per-domain, change the blurbs rather than adding a caveat back.
-    if _hosts.is_multi():
-        caveats.append(
-            f"Multiple hosts are configured ({_hosts.labels()}): read-only tools take `host=<label>` "
-            "(omit → the default, the first listed); mutating/destructive tools require an explicit "
-            "`host`; a host marked `(ro)` rejects writes, and one marked `(nd)` rejects destructive "
-            "calls only. See the `docker-mcp://hosts` resource."
-        )
+    if present & {"containers", "images"}:
+        caveats.append("Large output: `dest_path` or `container_archive_get_to_file` writes to disk.")
+    if present & {"containers", "networks", "volumes", "services"}:
+        caveats.append("`list_*(managed_only=True)` returns only what this server created.")
     if caveats:
         lines += ["", "Picking the right tool:"]
         lines += [f"- {c}" for c in caveats]
 
     lines += [
         "",
-        # Each entry leads with the occasion that should trigger the tool, not with why the tool was
-        # added. A lazy-loading client never sees a tool's own description unless it already went
-        # looking, so this text is the only thing that can prompt the search - and `docs_lookup` spent
-        # its life here described as a fallback "if your client can't read resources", which told a
-        # client that *could* read them to skip it.
-        "To survey an unfamiliar domain, check which tools are destructive, or confirm that nothing "
-        "matches, call `tool_list`; the registered surface changes with env switches. Before guessing "
-        "a docker-py keyword for an `extra_kwargs` passthrough, or writing Compose/Dockerfile/buildx "
-        "bake syntax, call `docs_lookup`. Each has a resource equivalent "
-        "(`docker-mcp://tool-catalog`, `docker-docs://contents`). For multi-step jobs (deploy, "
-        "troubleshoot, prune, audit, migrate, multi-arch build, volume backup/restore) prefer the "
-        "matching MCP prompt.",
+        "Multi-step jobs: prefer the matching MCP prompt.",
     ]
     return "\n".join(lines)
 
