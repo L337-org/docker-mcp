@@ -25,6 +25,10 @@ updating is configuration that names a tool or a domain, listed at the end.
 - **`service_logs`**: takes `task` as an alternative to `id_or_name`; pass exactly one.
 - **`plugin_install`, `plugin_upgrade`**: take `dry_run`, which returns `{"remote", "privileges"}`
   and changes nothing.
+- **`plugin_upgrade`** now actually upgrades. Before 2.2.8 it returned `True` without sending the
+  upgrade to the daemon at all, so a plugin "upgraded" by an earlier version is still on its old
+  version. It now returns only once the upgrade has finished, and raises if the daemon reports a
+  failure or the upgrade runs past 600 seconds.
 - **`buildx_prune`**: works without the buildx plugin, through the Engine API, and then returns the
   Engine's `{"CachesDeleted", "SpaceReclaimed"}` instead of the CLI result.
 - **`tool_list`**: `keyword` may be several words. A tool matching any of them is returned, those

@@ -1,5 +1,9 @@
 from unittest.mock import MagicMock, patch
 
+import pytest
+
+from docker_mcp.exceptions import RemoteFailureError
+
 from docker_mcp.tools.plugins import (
     plugin_configure,
     plugin_disable,
@@ -112,17 +116,61 @@ def test_plugin_remove():
     plugin.remove.assert_called_once_with(force=True)
 
 
-def test_upgrade_plugin_default_remote():
+def _upgrade_plugin(records=(), *, consumed=None):
+    """A plugin whose `upgrade` is a real generator, as docker-py's is.
+
+    A MagicMock method runs its body the moment it is called, which is exactly what hid the original
+    bug: `Plugin.upgrade` does nothing until its stream is read, and a mock cannot show that.
+    """
     plugin = MagicMock()
+    calls = []
+
+    def upgrade(*args):
+        calls.append(args)
+        for record in records:
+            if consumed is not None:
+                consumed.append(record)
+            yield record
+
+    plugin.upgrade.side_effect = upgrade
+    return plugin, calls
+
+
+def test_plugin_upgrade_reads_the_whole_stream_so_the_upgrade_actually_runs():
+    consumed = []
+    plugin, calls = _upgrade_plugin([{"status": "Pulling"}, {"status": "Done"}], consumed=consumed)
     with _patch() as mock_client:
         mock_client.return_value.plugins.get.return_value = plugin
         assert plugin_upgrade("myplugin") is True
-    plugin.upgrade.assert_called_once_with()
+    assert calls == [()]
+    assert consumed == [{"status": "Pulling"}, {"status": "Done"}], "the upgrade stream was not read to the end"
 
 
-def test_upgrade_plugin_with_remote():
-    plugin = MagicMock()
+def test_plugin_upgrade_passes_the_remote_through():
+    plugin, calls = _upgrade_plugin([{"status": "Done"}])
     with _patch() as mock_client:
         mock_client.return_value.plugins.get.return_value = plugin
         assert plugin_upgrade("myplugin", remote="vieux/sshfs:v2") is True
-    plugin.upgrade.assert_called_once_with("vieux/sshfs:v2")
+    assert calls == [("vieux/sshfs:v2",)]
+
+
+def test_plugin_upgrade_raises_an_error_the_daemon_reports_inside_the_stream():
+    # The HTTP status is already 200 by the time the stream starts, so a failed pull arrives as an
+    # `error` record - returning True after it would report a failed upgrade as a success.
+    plugin, _ = _upgrade_plugin([{"status": "Pulling"}, {"error": "manifest unknown", "errorDetail": {}}])
+    with _patch() as mock_client:
+        mock_client.return_value.plugins.get.return_value = plugin
+        with pytest.raises(RemoteFailureError, match=r"upgrading plugin 'myplugin' to 'x:v9': manifest unknown"):
+            plugin_upgrade("myplugin", remote="x:v9")
+
+
+def test_plugin_upgrade_gives_up_on_a_stream_that_runs_past_its_deadline(monkeypatch):
+    from docker_mcp.tools import plugins
+
+    clock = iter([0.0, 1.0, 10_000.0])
+    monkeypatch.setattr(plugins.time, "monotonic", lambda: next(clock))
+    plugin, _ = _upgrade_plugin([{"status": "Pulling"}, {"status": "Pulling"}, {"status": "Done"}])
+    with _patch() as mock_client:
+        mock_client.return_value.plugins.get.return_value = plugin
+        with pytest.raises(RemoteFailureError, match="still streaming progress"):
+            plugin_upgrade("myplugin")

@@ -2,8 +2,15 @@
 
 # library of mcp tools relating to plugin management
 
+import time
+
+from docker_mcp.exceptions import RemoteFailureError
 from docker_mcp.server import tool
 from docker_mcp.tools.system import _get_client
+
+# Ceiling on reading an upgrade's progress stream. An upgrade pulls the new version from its registry,
+# so it is sized like an image pull rather than a query.
+_UPGRADE_TIMEOUT_SECONDS = 600.0
 
 
 @tool()
@@ -162,7 +169,7 @@ def plugin_remove(name: str, force: bool = False, host: str | None = None) -> bo
 
 
 @tool()
-def plugin_upgrade(  # noqa: DOC101,DOC103
+def plugin_upgrade(  # noqa: DOC101,DOC103,DOC501,DOC503
     name: str,
     remote: str | None = None,
     dry_run: bool = False,
@@ -172,7 +179,8 @@ def plugin_upgrade(  # noqa: DOC101,DOC103
     Upgrade an installed plugin to a newer version, or with `dry_run=True` only show the privileges it would get.
 
     The daemon grants whatever privileges the new version requests without prompting, exactly as
-    `plugin_install` does, so a dry run first shows them and changes nothing. The plugin must be
+    `plugin_install` does, so a dry run first shows them and changes nothing. Returns only once the
+    upgrade has finished, and raises if the daemon reports a failure partway or it runs past 600s. The plugin must be
     disabled first - call `plugin_disable` before this, then `plugin_enable` afterwards to bring it
     back up. `remote` lets you upgrade to a different reference (e.g. a newer tag) than the plugin's
     current name; omit it to re-pull the same reference. Existing settings and volumes created by the
@@ -194,8 +202,21 @@ def plugin_upgrade(  # noqa: DOC101,DOC103
         # `plugin_privileges` returns for it, so the preview asks about that same reference.
         target = remote if remote is not None else plugin.name
         return {"remote": target, "privileges": client.api.plugin_privileges(target)}
-    if remote is None:
-        plugin.upgrade()
-    else:
-        plugin.upgrade(remote)
+    # `Plugin.upgrade` is a generator: calling it sends nothing, and the upgrade request is made only
+    # as its progress stream is read. So the stream is read to the end, and a failure the daemon
+    # reports inside it - the HTTP status was already 200 - is raised rather than returned as success.
+    progress = plugin.upgrade() if remote is None else plugin.upgrade(remote)
+    deadline = time.monotonic() + _UPGRADE_TIMEOUT_SECONDS
+    for record in progress:
+        if isinstance(record, dict) and record.get("error"):
+            raise RemoteFailureError(
+                f"the daemon reported an error while upgrading plugin {name!r}"
+                f"{f' to {remote!r}' if remote else ''}: {record['error']}"
+            )
+        # Each read is bounded by docker-py's own socket timeout; this bounds the loop around them.
+        if time.monotonic() > deadline:
+            raise RemoteFailureError(
+                f"upgrading plugin {name!r} was still streaming progress after {_UPGRADE_TIMEOUT_SECONDS:.0f}s, so "
+                "it was abandoned; check the plugin's state with plugin_inspect before retrying"
+            )
     return True
