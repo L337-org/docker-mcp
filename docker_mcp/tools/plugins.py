@@ -4,7 +4,7 @@
 
 import time
 
-from docker_mcp.exceptions import RemoteFailureError
+from docker_mcp.exceptions import RemoteFailureError, ToolInputError
 from docker_mcp.server import tool
 from docker_mcp.tools.system import _get_client
 
@@ -180,7 +180,7 @@ def plugin_upgrade(  # noqa: DOC101,DOC103,DOC501,DOC503
 
     The daemon grants whatever privileges the new version requests without prompting, exactly as
     `plugin_install` does, so a dry run first shows them and changes nothing. Returns only once the
-    upgrade has finished, and raises if the daemon reports a failure partway or it runs past 600s. The plugin must be
+    upgrade has finished, and raises if the daemon reports a failure partway or it runs too long. The plugin must be
     disabled first - call `plugin_disable` before this, then `plugin_enable` afterwards to bring it
     back up. `remote` lets you upgrade to a different reference (e.g. a newer tag) than the plugin's
     current name; omit it to re-pull the same reference. Existing settings and volumes created by the
@@ -202,6 +202,13 @@ def plugin_upgrade(  # noqa: DOC101,DOC103,DOC501,DOC503
         # `plugin_privileges` returns for it, so the preview asks about that same reference.
         target = remote if remote is not None else plugin.name
         return {"remote": target, "privileges": client.api.plugin_privileges(target)}
+    # Checked here rather than left to docker-py, whose own check raises `errors.DockerError` - a name
+    # docker-py 7.2.0 does not define, so it fails as an AttributeError with its message withheld.
+    if plugin.enabled:
+        raise ToolInputError(
+            f"plugin {name!r} is enabled, and the daemon upgrades only a disabled plugin; call plugin_disable "
+            "first, then plugin_enable once the upgrade is done"
+        )
     # `Plugin.upgrade` is a generator: calling it sends nothing, and the upgrade request is made only
     # as its progress stream is read. So the stream is read to the end, and a failure the daemon
     # reports inside it - the HTTP status was already 200 - is raised rather than returned as success.

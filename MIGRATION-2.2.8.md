@@ -1,9 +1,10 @@
 # Upgrading to docker-mcp-server 2.2.8
 
 2.2.8 removes seven tools to cut what every session pays for the server's tool list. Six of them
-did jobs another tool now does, so an agent can still do everything it could before; it simply
-calls a different tool, and finds it the same way it finds any other. Only one capability is gone:
-creating and publishing plugins, which is a build-pipeline job for the `docker plugin` CLI.
+did jobs another tool now does, so with the default configuration an agent can still do everything
+it could before; it simply calls a different tool, and finds it the same way it finds any other.
+One capability is gone everywhere: creating and publishing plugins, which is a build-pipeline job
+for the `docker plugin` CLI. Two more are gone in particular configurations, listed at the end.
 
 An agent needs nothing from you: tool definitions are fetched afresh each session. What may need
 updating is configuration that names a tool or a domain, listed at the end.
@@ -27,8 +28,9 @@ updating is configuration that names a tool or a domain, listed at the end.
   and changes nothing.
 - **`plugin_upgrade`** now actually upgrades. Before 2.2.8 it returned `True` without sending the
   upgrade to the daemon at all, so a plugin "upgraded" by an earlier version is still on its old
-  version. It now returns only once the upgrade has finished, and raises if the daemon reports a
-  failure or the upgrade runs past 600 seconds.
+  version. It now returns only once the upgrade has finished, raises if the daemon reports a
+  failure or the upgrade runs too long, and refuses an enabled plugin up front, naming
+  `plugin_disable`.
 - **`buildx_prune`**: works without the buildx plugin, through the Engine API, and then returns the
   Engine's `{"CachesDeleted", "SpaceReclaimed"}` instead of the CLI result.
 - **`tool_list`**: `keyword` may be several words. A tool matching any of them is returned, those
@@ -43,7 +45,10 @@ updating is configuration that names a tool or a domain, listed at the end.
   domain of `service_ps` and `service_logs`, not to `swarm`. `DOCKER_MCP_SERVER_DISABLE=swarm` no
   longer hides it; `DOCKER_MCP_SERVER_DISABLE=services` does. `tool_list(domain="swarm")` no longer
   lists it either.
-- **`DOCKER_MCP_SERVER_READONLY`**: previewing a plugin's privileges is a dry run of
-  `plugin_install` / `plugin_upgrade`, which a read-only server does not register, so it is no
-  longer available there.
+- **`DOCKER_MCP_SERVER_READONLY` and `(ro)` hosts**: previewing a plugin's privileges is a dry run
+  of `plugin_install` / `plugin_upgrade`, which count as writes. A read-only server does not register
+  them, and a host marked `(ro)` refuses them, so the preview is no longer available on either. With
+  several hosts configured, a dry run also needs an explicit `host`, as any write does.
+- **`DOCKER_MCP_SERVER_DISABLE=buildx`** now leaves no way to prune the build cache: `buildx_prune`
+  is the only tool that does it, where `image_prune_builds` used to remain under `images`.
 - **Scripts** that call a removed tool by name fail with an unknown-tool error.

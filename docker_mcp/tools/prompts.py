@@ -253,7 +253,9 @@ def clean_environment(scope: str = "stopped") -> str:
         "4. Reclaim the build cache - if the `system_df` from step 1 showed a large `BuildCache`, this is "
         "where most of the space comes back: use `buildx_prune`. It always runs with `--force`, and it "
         "also sees a non-default builder's own cache; without the buildx plugin it prunes the daemon's "
-        "default build cache through the Engine API instead. "
+        "default build cache through the Engine API instead. If `buildx_prune` is not available, the "
+        "buildx domain is disabled and this server cannot prune the build cache: say so rather than "
+        "skipping it silently. "
         "Mention that an immediately-following rebuild will be slower with a cold cache.\n"
     )
     if scope == "all":

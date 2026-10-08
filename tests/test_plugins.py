@@ -2,7 +2,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from docker_mcp.exceptions import RemoteFailureError
+from docker_mcp.exceptions import RemoteFailureError, ToolInputError
 
 from docker_mcp.tools.plugins import (
     plugin_configure,
@@ -123,6 +123,7 @@ def _upgrade_plugin(records=(), *, consumed=None):
     bug: `Plugin.upgrade` does nothing until its stream is read, and a mock cannot show that.
     """
     plugin = MagicMock()
+    plugin.enabled = False
     calls = []
 
     def upgrade(*args):
@@ -174,3 +175,26 @@ def test_plugin_upgrade_gives_up_on_a_stream_that_runs_past_its_deadline(monkeyp
         mock_client.return_value.plugins.get.return_value = plugin
         with pytest.raises(RemoteFailureError, match="still streaming progress"):
             plugin_upgrade("myplugin")
+
+
+def test_plugin_upgrade_refuses_an_enabled_plugin_with_the_step_to_take():
+    # docker-py's own check raises `errors.DockerError`, which docker-py 7.2.0 does not define, so left
+    # to it the caller would get an AttributeError with the explanation withheld.
+    plugin, calls = _upgrade_plugin([{"status": "Done"}])
+    plugin.enabled = True
+    with _patch() as mock_client:
+        mock_client.return_value.plugins.get.return_value = plugin
+        with pytest.raises(ToolInputError, match="plugin_disable"):
+            plugin_upgrade("myplugin")
+    assert calls == [], "nothing is sent for an enabled plugin"
+
+
+def test_plugin_upgrade_dry_run_works_on_an_enabled_plugin():
+    # Previewing changes nothing, so it has no reason to require the plugin disabled first.
+    plugin, _ = _upgrade_plugin()
+    plugin.enabled = True
+    plugin.name = "vieux/sshfs:latest"
+    with _patch() as mock_client:
+        mock_client.return_value.plugins.get.return_value = plugin
+        mock_client.return_value.api.plugin_privileges.return_value = []
+        assert plugin_upgrade("sshfs", dry_run=True) == {"remote": "vieux/sshfs:latest", "privileges": []}

@@ -489,11 +489,12 @@ All ✓: `docker context create/ls/inspect/rm/use`.
 
 All ✓: `docker plugin install/ls/inspect/enable/disable/set/upgrade/rm`.
 `plugin_configure` -> `docker plugin set`.
-`plugin_install` / `plugin_upgrade` with `dry_run` ≈ no `docker plugin` subcommand prints the privileges, and `docker plugin inspect` needs
-the plugin installed first; the skill reads the plugin's registry config blob over `curl` instead
-(`reference/system.md`), reproducing the install prompt's privilege list without installing
-anything. The recipe mirrors the daemon's own `computePrivileges`, so it reports whichever of the
-seven privilege kinds a given plugin declares rather than a fixed subset.
+`plugin_install` / `plugin_upgrade` with `dry_run` ≈ no `docker plugin` subcommand prints the
+privileges, and `docker plugin inspect` needs the plugin installed first; the skill reads the
+plugin's registry config blob over `curl` instead (`reference/system.md`), reproducing the install
+prompt's privilege list without installing anything. The recipe mirrors the daemon's own
+`computePrivileges`, so it reports whichever of the seven privilege kinds a given plugin declares
+rather than a fixed subset.
 
 ### registry (7) - `reference/registry.md`
 

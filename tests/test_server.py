@@ -554,7 +554,11 @@ def test_query_catalog_keyword_ranks_tools_matching_more_words_first():
 def test_query_catalog_keyword_trims_common_endings():
     # "failing" finds a summary that only says "fail..."; "tasks" finds one that says "task".
     assert query_catalog(keyword="tasks")["matched"] == query_catalog(keyword="task")["matched"] > 0
-    assert query_catalog(keyword="pruning")["matched"] >= query_catalog(keyword="prune")["matched"] - 1 > 0
+    # "pruning" is trimmed to "prun", a substring of every match for "prune", so nothing is lost.
+    assert query_catalog(keyword="pruning")["matched"] >= query_catalog(keyword="prune")["matched"] > 0
+    # The example the router and the description give: "failing" also finds "fail" and "failed".
+    assert query_catalog(keyword="failing")["filters"]["keyword_terms"] == ["failing"]
+    assert query_catalog(keyword="failing")["matched"] == query_catalog(keyword="fail")["matched"] > 0
 
 
 def test_query_catalog_keyword_of_only_filler_matches_nothing_rather_than_everything():
@@ -844,8 +848,7 @@ def test_instructions_put_finding_a_tool_first_and_the_caveats_last():
     """Ordered by what is worst to lose, because a client may cut the text short without saying so.
 
     How to find a tool when the client's search misses is the one thing an agent cannot work out for
-    itself, so it leads; the domain words come next, and the caveats last. The `tool_list` pointer
-    used to be the final paragraph, which is exactly the part Claude Code was seen to cut off.
+    itself, so it leads; the domain words come next, and the caveats last.
     """
     text = build_instructions()
     finder = text.index("if that misses, call `tool_list`")
@@ -864,8 +867,8 @@ def test_multi_host_caveat_leads_the_caveats_end_to_end():
 def test_instructions_fit_claude_codes_cut_off_at_their_longest_end_to_end():
     """Every domain, every caveat and three hosts still fit in what Claude Code shows the agent.
 
-    Claude Code cuts a server's instructions at 2,048 UTF-16 code units and tells neither the server
-    nor the model, so a router that grows past it loses its tail silently. Three hosts with realistic
+    A router that grows past `INSTRUCTIONS_CHAR_LIMIT` loses its tail silently in the client that
+    applies it, so the limit is checked here rather than discovered there. Three hosts with realistic
     labels and endpoints stand in for "several": the host caveat is the only part whose length the
     operator controls, and the ordering test above is what limits the damage beyond that.
     """
