@@ -7,7 +7,9 @@ Producing them, moving them between daemon and registry, and inspecting what is 
 
 from typing import cast
 
-from docker_mcp.exceptions import ToolInputError
+from docker.errors import DockerException
+
+from docker_mcp.exceptions import RemoteFailureError, ToolInputError
 from docker_mcp.server import tool
 from docker_mcp.tools._utils import (
     MAX_PAYLOAD_BYTES,
@@ -305,23 +307,46 @@ def image_search(term: str, limit: int | None = None, host: str | None = None) -
 
 
 @tool()
-def image_prune(filters: dict | None = None, host: str | None = None) -> dict:  # noqa: DOC101,DOC103
+def image_prune(  # noqa: DOC101,DOC103,DOC501,DOC503
+    filters: dict | None = None,
+    build_cache: bool = False,
+    host: str | None = None,
+) -> dict:
     """
-    Remove unused local images to reclaim disk space.
+    Remove unused local images to reclaim disk space, and with `build_cache=True` the daemon's build cache too.
 
     Without filters removes only "dangling" images - untagged layers not referenced by any
     tag or container. To remove all images not used by any container (including tagged ones)
     pass `filters={"dangling": False}`. Valid filter keys: `dangling` (bool as string
     "true"/"false"), `until` (RFC3339 timestamp or duration like "24h"), `label`
-    (key or key=value). Use `system_df` first to see how much space is reclaimable.
+    (key or key=value). Use `system_df` first to see how much space is reclaimable. The build cache
+    is a separate resource, often the larger one on a machine that builds images; `build_cache=True`
+    prunes its unused records through the Engine API, with `filters` applying to images only. For a
+    non-default builder's cache, cache filters, or a space floor, use `buildx_prune` instead.
 
     Args:
         filters: Narrow which images to remove; omit to remove dangling images only
+        build_cache: Also prune the daemon's unused build cache
 
     Returns:
-        dict: {"ImagesDeleted": [...], "SpaceReclaimed": <bytes>}
+        dict: {"ImagesDeleted": [...], "SpaceReclaimed": <bytes>}, plus with `build_cache` a "BuildCache" key holding
+            {"CachesDeleted": [...], "SpaceReclaimed": <bytes>}
     """
-    return _get_client(host).images.prune(filters=filters)
+    client = _get_client(host)
+    if not build_cache:
+        return client.images.prune(filters=filters)
+    # The cache first, so that if it fails nothing else has been removed yet. No arguments: every
+    # prune_builds argument is version-gated, image filters mean nothing to the cache, and its
+    # `keep_storage` is the deprecated spelling an Engine may ignore - see buildx_prune for limits.
+    cache = client.api.prune_builds()
+    try:
+        result = client.images.prune(filters=filters)
+    except DockerException as exc:
+        raise RemoteFailureError(
+            f"pruning images failed after the build cache was already pruned "
+            f"({cache.get('SpaceReclaimed', 0)} bytes reclaimed there): {exc}"
+        ) from exc
+    return {**result, "BuildCache": cache}
 
 
 @tool()

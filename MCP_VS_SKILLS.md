@@ -437,7 +437,7 @@ Legend: **✓** direct CLI equivalent; **≈** covered by a documented recipe (l
 | image_inspect ✓ | `docker image inspect` |
 | image_save / load ✓ | `docker save -o` / `load -i` |
 | image_import ✓ | `docker import` |
-| image_prune ✓ | `docker image prune` |
+| image_prune ✓ | `docker image prune` (`build_cache=True` adds `docker builder prune`) |
 | image_search ✓ | `docker search` (Hub only) |
 | image_registry_data ✓ | `docker buildx imagetools inspect` |
 

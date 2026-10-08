@@ -1,9 +1,11 @@
 import inspect
 from unittest.mock import MagicMock, patch
 
+from docker.errors import APIError
+
 import pytest
 
-from docker_mcp.exceptions import ToolInputError
+from docker_mcp.exceptions import RemoteFailureError, ToolInputError
 from docker_mcp.tools.images import (
     image_build,
     image_inspect,
@@ -122,6 +124,49 @@ def test_image_prune():
     with _patch() as mock_client:
         mock_client.return_value.images.prune.return_value = {"SpaceReclaimed": 200}
         assert image_prune() == {"SpaceReclaimed": 200}
+
+
+def test_image_prune_leaves_the_build_cache_alone_by_default():
+    with _patch() as mock_client:
+        mock_client.return_value.images.prune.return_value = {"SpaceReclaimed": 200}
+        assert image_prune() == {"SpaceReclaimed": 200}
+    assert not mock_client.return_value.api.prune_builds.called
+
+
+def test_image_prune_with_build_cache_prunes_both_and_reports_each():
+    with _patch() as mock_client:
+        client = mock_client.return_value
+        client.images.prune.return_value = {"ImagesDeleted": [], "SpaceReclaimed": 200}
+        client.api.prune_builds.return_value = {"CachesDeleted": ["c1"], "SpaceReclaimed": 900}
+        result = image_prune(filters={"until": "24h"}, build_cache=True)
+    assert result == {
+        "ImagesDeleted": [],
+        "SpaceReclaimed": 200,
+        "BuildCache": {"CachesDeleted": ["c1"], "SpaceReclaimed": 900},
+    }
+    client.images.prune.assert_called_once_with(filters={"until": "24h"})
+    # No arguments: they are all version-gated, image filters mean nothing to the cache, and
+    # `keep_storage` is the deprecated name an Engine may ignore, which would prune past a floor.
+    client.api.prune_builds.assert_called_once_with()
+
+
+def test_image_prune_stops_before_images_when_the_build_cache_prune_fails():
+    with _patch() as mock_client:
+        client = mock_client.return_value
+        client.api.prune_builds.side_effect = APIError("cache prune refused")
+        with pytest.raises(APIError):
+            image_prune(build_cache=True)
+    assert not client.images.prune.called
+
+
+def test_image_prune_reports_the_cache_already_pruned_when_the_image_prune_fails():
+    # The cache is gone by then, so the error has to say so rather than look like nothing happened.
+    with _patch() as mock_client:
+        client = mock_client.return_value
+        client.api.prune_builds.return_value = {"CachesDeleted": [], "SpaceReclaimed": 900}
+        client.images.prune.side_effect = APIError("image prune refused")
+        with pytest.raises(RemoteFailureError, match=r"build cache was already pruned \(900 bytes"):
+            image_prune(build_cache=True)
 
 
 def test_image_load():

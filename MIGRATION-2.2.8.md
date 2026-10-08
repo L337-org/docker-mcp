@@ -4,7 +4,7 @@
 did jobs another tool now does, so with the default configuration an agent can still do everything
 it could before; it simply calls a different tool, and finds it the same way it finds any other.
 One capability is gone everywhere: creating and publishing plugins, which is a build-pipeline job
-for the `docker plugin` CLI. Two more are gone in particular configurations, listed at the end.
+for the `docker plugin` CLI. One more is gone in particular configurations, listed at the end.
 
 An agent needs nothing from you: tool definitions are fetched afresh each session. What may need
 updating is configuration that names a tool or a domain, listed at the end.
@@ -17,7 +17,7 @@ updating is configuration that names a tool or a domain, listed at the end.
 | `swarm_task_inspect` | `service_ps(filters={"id": ...})` for a full id or id prefix, or `{"name": ...}` for the full `<service>.<slot>.<taskid>` name. Both match by prefix, so an ambiguous prefix returns several tasks rather than an error, and only container tasks come back unless `runtime` is filtered |
 | `swarm_task_logs` | `service_logs(task=...)`, with the same `tail`, `since` and `max_bytes` applying to that one task |
 | `plugin_privileges` | `plugin_install(remote, dry_run=True)` before an install, or `plugin_upgrade(name, dry_run=True)` before an upgrade, which grants new privileges the same way |
-| `image_prune_builds` | `buildx_prune`, which prunes through the Engine API itself when the buildx plugin is missing. On that path it refuses `builder` and the space limits rather than ignoring them |
+| `image_prune_builds` | `image_prune(build_cache=True)`, which also prunes images, or `buildx_prune`, which prunes through the Engine API itself when the buildx plugin is missing. On that path `buildx_prune` refuses `builder` and the space limits rather than ignoring them |
 | `plugin_create`, `plugin_push` | No replacement. Use `docker plugin create` and `docker plugin push` |
 
 ## Changed tools
@@ -31,6 +31,8 @@ updating is configuration that names a tool or a domain, listed at the end.
   version. It now returns only once the upgrade has finished, raises if the daemon reports a
   failure or the upgrade runs too long, and refuses an enabled plugin up front, naming
   `plugin_disable`.
+- **`image_prune`**: takes `build_cache`, which also prunes the daemon's unused build cache and
+  reports it under `BuildCache`.
 - **`buildx_prune`**: works without the buildx plugin, through the Engine API, and then returns the
   Engine's `{"CachesDeleted", "SpaceReclaimed"}` instead of the CLI result.
 - **`tool_list`**: `keyword` may be several words. A tool matching any of them is returned, those
@@ -49,6 +51,4 @@ updating is configuration that names a tool or a domain, listed at the end.
   of `plugin_install` / `plugin_upgrade`, which count as writes. A read-only server does not register
   them, and a host marked `(ro)` refuses them, so the preview is no longer available on either. With
   several hosts configured, a dry run also needs an explicit `host`, as any write does.
-- **`DOCKER_MCP_SERVER_DISABLE=buildx`** now leaves no way to prune the build cache: `buildx_prune`
-  is the only tool that does it, where `image_prune_builds` used to remain under `images`.
 - **Scripts** that call a removed tool by name fail with an unknown-tool error.

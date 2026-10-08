@@ -46,8 +46,8 @@ say why. **Anything deliberately not wrapped, or wrapped in an unobvious way, be
     find one task, and moby matches both by prefix against the same full task name inspect resolves.
   - **`APIClient.tasks` and the task logs route as tools of their own** (were `swarm_task_list` and
     `swarm_task_logs`). They are `service_ps` with no service, and `service_logs(task=...)`.
-  - **`ImageCollection.prune_builds` as a tool of its own** (was `image_prune_builds`). `buildx_prune`
-    prunes through it when the buildx plugin is missing.
+  - **`ImageCollection.prune_builds` as a tool of its own** (was `image_prune_builds`). `image_prune`'s
+    `build_cache` option calls it, and `buildx_prune` prunes through it when the buildx plugin is missing.
 - **`Container.attach` / `attach_socket` / `resize`** - real methods, deliberately unwrapped: they
   open an interactive bidirectional stream/TTY, which does not fit a request/response tool call.
   `container_exec` covers scripted one-shot execution.
@@ -111,9 +111,10 @@ routinely behind what `pyproject.toml`'s floor lets a fresh `uvx`/`pip install` 
 the installed tree alone misses whatever published users are already running. And it should flag
 **deprecated** surface we still depend on, not only missing coverage. Sort those by failure mode:
 one that will fail loudly can wait, one that will fail *silently* is worth acting on early.
-`keep_storage` is never sent from `buildx_prune`'s Engine API fallback, and a space limit asked for
-there is refused, because docker-py sends only that deprecated name - so once moby drops the fallback
-an ignored value would prune the whole cache while the caller believed a floor was set.
+`keep_storage` is never sent - not from `image_prune(build_cache=True)`, nor from `buildx_prune`'s
+Engine API fallback, where a space limit asked for is refused. docker-py sends only that deprecated
+name, so once moby drops the fallback an ignored value would prune the whole cache while the caller
+believed a floor was set.
 
 Docker SDK docs: https://docker-py.readthedocs.io/en/stable/index.html  
 Docker SDK low-level API: https://docker-py.readthedocs.io/en/stable/api.html  
