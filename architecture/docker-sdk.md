@@ -34,16 +34,6 @@ merits, and are **not** to be re-proposed - a periodic audit has no memory of la
 this list it re-files the same rejected candidates forever. Removing an entry is a real decision;
 say why. **Anything deliberately not wrapped, or wrapped in an unobvious way, belongs here.**
 
-- **Removed tools: do not propose them as gaps.** Each was cut to keep the advertised surface down;
-  re-adding one is a decision about surface cost, not coverage.
-  - **`create_plugin`, `push_plugin`** (`plugin_create`, `plugin_push`): plugin authoring is a
-    build-pipeline job for the CLI. `push_plugin` is also broken upstream (see above).
-  - **`plugin_privileges`**: the dry run of `plugin_install` / `plugin_upgrade` covers it.
-  - **`inspect_task`, and `tasks` / task logs as tools of their own** (`swarm_task_inspect`,
-    `swarm_task_list`, `swarm_task_logs`): covered by `service_ps` (no service, or an `id` / `name`
-    filter) and `service_logs(task=...)`.
-  - **`prune_builds` as a tool of its own** (`image_prune_builds`): covered by
-    `image_prune(build_cache=True)` and `buildx_prune`.
 - **`Container.attach` / `attach_socket` / `resize`** - real methods, deliberately unwrapped: they
   open an interactive bidirectional stream/TTY, which does not fit a request/response tool call.
   `container_exec` covers scripted one-shot execution.
