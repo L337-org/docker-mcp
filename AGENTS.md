@@ -355,10 +355,6 @@ Removing an entry is a real decision, not a tidy-up.
 **SDK surface deliberately not wrapped, or wrapped unobviously.** A recurring audit routine
 re-proposes these; it has no memory of last time.
 
-- **Tools removed to keep the surface down.** `plugin_create`, `plugin_push`, `plugin_privileges`,
-  `swarm_task_inspect`, `swarm_task_list`, `swarm_task_logs` and `image_prune_builds` were removed on
-  purpose, and their jobs moved into other tools where they had one. Re-adding one is a decision about
-  surface cost, not a coverage gap; the reasons are in `architecture/docker-sdk.md`.
 - **`Container.attach` / `attach_socket` / `resize` unwrapped.** An interactive bidirectional stream
   does not fit a request/response tool call. `container_exec` covers scripted execution.
 - **`service_rollback`'s `api.inspect_service` + `api.update_service`.** The high-level

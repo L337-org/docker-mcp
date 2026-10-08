@@ -17,9 +17,9 @@ When the high-level SDK has no method for an operation (e.g. service rollback, o
 
 **Pass `host` through - always.** `_get_client(host: str | None = None)` makes it optional, so `_get_client()` compiles, reads as idiomatic and silently talks to the default daemon, discarding the caller's host selection. That is the one failure this server's whole multi-host design exists to prevent (see [hosts.md](hosts.md)). Every low-level call site in `docker_mcp/tools/` passes it, and a new one must not be the first that does not. The single deliberate exception is `startup_preflight`, which pings the default host before any caller exists (see [hosts.md](hosts.md)); nothing in a tool body should use the bare form.
 
-**Verify against the source, not just the rendered docs, and treat "the method exists" as separate from "the method works."** The rendered docs show a method's docstring, not the URL it builds, so a method can be documented, importable, and still non-functional. docker-py's `Plugin.push()` is the standing example: `Plugin.push()` / `APIClient.push_plugin()` both POST to `/plugins/{name}/pull`, a route the Engine does not define (push is `POST /plugins/{name}/push`), so they 404 against every daemon - a copy-paste from the pull method present since 2017 and still in `main`, surviving because upstream has no test covering it. Where a *documented* method is provably broken, the fallback ladder is: (1) another public SDK path, (2) the correct endpoint through docker-py's private request helpers (`_url`/`_post`/`_raise_for_status`/`_stream_helper`), resolved via `getattr` and guarded so a missing helper raises an actionable message rather than an `AttributeError` - the same treatment as `system_logout`'s `api._auth_configs` reach-in and `stage_build_context`'s use of docker-py's `tar`/`exclude_paths`, (3) a CLI shell-out, if the domain is already CLI-backed. Each such reach-in must name the bug and the escape hatch in the tool's docstring, so it can be removed when upstream fixes it.
+**Verify against the source, not just the rendered docs, and treat "the method exists" as separate from "the method works."** The rendered docs show a method's docstring, not the URL it builds, so a method can be documented, importable, and still non-functional. docker-py's `Plugin.push()` is the standing example: `Plugin.push()` / `APIClient.push_plugin()` both POST to `/plugins/{name}/pull`, a route the Engine does not define (push is `POST /plugins/{name}/push`), so they 404 against every daemon. Where a *documented* method is provably broken, the fallback ladder is: (1) another public SDK path, (2) the correct endpoint through docker-py's private request helpers (`_url`/`_post`/`_raise_for_status`/`_stream_helper`), resolved via `getattr` and guarded so a missing helper raises an actionable message rather than an `AttributeError` - the same treatment as `system_logout`'s `api._auth_configs` reach-in and `stage_build_context`'s use of docker-py's `tar`/`exclude_paths`, (3) a CLI shell-out, if the domain is already CLI-backed. Each such reach-in must name the bug and the escape hatch in the tool's docstring, so it can be removed when upstream fixes it.
 
-**Rungs (2) and (3) are not an agent's call to make.** Rung (1) is ordinary work; anything below it leaves the supported surface, so an agent - a routine, or anyone implementing from an audit issue - must **stop, write up what it found and why the public path fails, and escalate for a human decision** rather than implementing it. This is not a formality: it is how the former `plugin_push` was actually settled. The draft-PR routine hit the broken method, declined to reach past the public SDK, shipped the rest, and *documented the omission*; that write-up is what prompted the investigation that found the real endpoint and the human judgement to take it. A routine that had "helpfully" hand-rolled the call instead would have made a trust decision nobody asked it to make, and one that silently dropped the candidate would have buried it. **Document and escalate is the correct behaviour, not a failure to finish the job** - a parked candidate with a clear rationale is a better outcome than an autonomous workaround. Sign-off is needed once, when the reach-in is introduced: the ones listed here are already blessed, so touching or refactoring them later needs no fresh approval.
+**Rungs (2) and (3) are not an agent's call to make.** Rung (1) is ordinary work; anything below it leaves the supported surface, so an agent - a routine, or anyone implementing from an audit issue - must **stop, write up what it found and why the public path fails, and escalate for a human decision** rather than implementing it. **Document and escalate is the correct behaviour, not a failure to finish the job** - a parked candidate with a clear rationale is a better outcome than an autonomous workaround. Sign-off is needed once, when the reach-in is introduced: the ones listed here are already blessed, so touching or refactoring them later needs no fresh approval.
 
 **Confirm the real route from the Engine API spec (`moby/moby`'s `api/swagger.yaml`) before writing a hand-built path, and note which kind of bet it is** - the two are not equivalent risks:
 
@@ -34,20 +34,16 @@ merits, and are **not** to be re-proposed - a periodic audit has no memory of la
 this list it re-files the same rejected candidates forever. Removing an entry is a real decision;
 say why. **Anything deliberately not wrapped, or wrapped in an unobvious way, belongs here.**
 
-- **Tools removed on purpose, not uncovered surface.** Each of these was a tool and was taken out to
-  keep the advertised surface down; the audit must not propose it again as a gap. Re-adding one is a
-  decision about whether it is worth what every session pays for it, not about coverage.
-  - **`PluginCollection.create` / `APIClient.create_plugin`, and `push_plugin`** (were `plugin_create`
-    and `plugin_push`). Building and publishing a plugin is a build-pipeline job done with the CLI,
-    not one an agent is asked to do. `push_plugin` is also broken upstream (wrong URL, see above).
-  - **`APIClient.plugin_privileges` as a tool of its own** (was `plugin_privileges`). It is the dry run
-    of `plugin_install` and `plugin_upgrade`, which is the only point at which it is useful.
-  - **`APIClient.inspect_task`** (was `swarm_task_inspect`). `service_ps`'s `id` and `name` filters
-    find one task, and moby matches both by prefix against the same full task name inspect resolves.
-  - **`APIClient.tasks` and the task logs route as tools of their own** (were `swarm_task_list` and
-    `swarm_task_logs`). They are `service_ps` with no service, and `service_logs(task=...)`.
-  - **`ImageCollection.prune_builds` as a tool of its own** (was `image_prune_builds`). `image_prune`'s
-    `build_cache` option calls it, and `buildx_prune` prunes through it when the buildx plugin is missing.
+- **Removed tools: do not propose them as gaps.** Each was cut to keep the advertised surface down;
+  re-adding one is a decision about surface cost, not coverage.
+  - **`create_plugin`, `push_plugin`** (`plugin_create`, `plugin_push`): plugin authoring is a
+    build-pipeline job for the CLI. `push_plugin` is also broken upstream (see above).
+  - **`plugin_privileges`**: the dry run of `plugin_install` / `plugin_upgrade` covers it.
+  - **`inspect_task`, and `tasks` / task logs as tools of their own** (`swarm_task_inspect`,
+    `swarm_task_list`, `swarm_task_logs`): covered by `service_ps` (no service, or an `id` / `name`
+    filter) and `service_logs(task=...)`.
+  - **`prune_builds` as a tool of its own** (`image_prune_builds`): covered by
+    `image_prune(build_cache=True)` and `buildx_prune`.
 - **`Container.attach` / `attach_socket` / `resize`** - real methods, deliberately unwrapped: they
   open an interactive bidirectional stream/TTY, which does not fit a request/response tool call.
   `container_exec` covers scripted one-shot execution.

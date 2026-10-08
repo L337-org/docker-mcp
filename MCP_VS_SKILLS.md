@@ -474,8 +474,7 @@ All ✓ - each maps to the identically-named `docker compose <sub>`: `up`, `down
 ### buildx (13) - `reference/buildx.md`
 
 All ✓: `docker buildx build/bake/create/rm/use/ls/inspect/du/prune`,
-`imagetools create/inspect`, `history ls/inspect`. Without the buildx plugin, `buildx_prune` falls
-back to `docker builder prune`'s Engine endpoint, without the space limits.
+`imagetools create/inspect`, `history ls/inspect`.
 
 ### scout (5) - `reference/scout.md`
 

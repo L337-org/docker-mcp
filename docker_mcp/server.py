@@ -705,9 +705,8 @@ def build_instructions(registered_domains: set[str] | None = None) -> str:
         "docker-mcp-server: Docker through docker-py and the docker CLI.",
         "",
         # First because it is the one thing an agent cannot work out for itself: what to do when its
-        # client's own search misses. Each tool is named by the occasion that should trigger it, not by
-        # why it was added - `docs_lookup` once sat here as a fallback "if your client can't read
-        # resources", which told every client that could to skip it.
+        # client's own search misses. Name each tool by the occasion that should trigger it, not by why
+        # it exists: "if your client can't read resources" tells every client that can to skip it.
         "Finding a tool: search for a word from the domains below; if that misses, call `tool_list` "
         "with a few words as `keyword` (best matches first; `matched: 0` means none exists). Call "
         "`docs_lookup` before guessing Compose/Dockerfile/bake syntax or an `extra_kwargs` key.",

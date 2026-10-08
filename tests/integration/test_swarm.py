@@ -57,8 +57,8 @@ def test_service_ps_finds_one_task_by_id_prefix_full_name_and_slot_name(running_
     """The list filters do the single-task lookup the removed `swarm_task_inspect` did.
 
     moby maps the `id` and `name` filters to prefix matches against the task's full name, which is
-    what `service_ps`'s description now promises - including that `<service>.<slot>`, which inspect
-    could not resolve, finds that slot's tasks. If the daemon changes any of this, the description
+    what `service_ps`'s description promises - including that `<service>.<slot>` finds that slot's
+    tasks. If the daemon changes any of this, the description
     is wrong and this fails rather than it quietly becoming so.
     """
     service_wait(running_service, until="running", timeout_seconds=30, poll_interval=1.0)
