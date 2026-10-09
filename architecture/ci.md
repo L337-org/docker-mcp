@@ -33,19 +33,20 @@ A `Code review` workflow (`code-review.yaml`) calls the shared Claude review wor
 pinned commit. The header of that file says when this repository asks for a review; the shared
 README describes how the review itself runs.
 
-**A failed run nobody is watching is posted to `#docker-mcp`.**  A run started by a schedule, a
-push to `main` or a release has no pull request to show its failure on.
+**A failed run nobody is watching is posted to Slack.**  A run started by a schedule, a push to
+`main` or a release has no pull request to show its failure on.
 `.github/workflows/report-failures.yaml` names the workflows to watch and calls the shared Slack
-reporter from github-workflows, pinned by SHA like the actions above; that repository's README
-says what is posted and when.  The post goes to the webhook in this repository's `SLACK_WEBHOOK`
-secret, which overrides the organisation's secret of the same name, and a post that fails fails
-the *Report failures* run with Slack's answer in its log.  This is in addition to the
-`ci-failure` issues the canary and the release file: the post says a run failed, the issue is
-the deduplicated record of a failure stream.  To add a workflow triggered by `schedule`, `push`
-or `release`, give it a `name:` and add that name to the `workflows:` list in
-`report-failures.yaml`, exactly as written, since GitHub matches on it.  The repository hygiene
-check fails on such a workflow missing from the list and on a listed name no workflow has, so a
-rename that leaves the list behind fails too.
+reporter from github-workflows, pinned by SHA like the actions above.  What the reporter posts
+and when is in that repository's README; it is not restated here because it would drift.  This
+repository has it report runs started by `schedule`, `push` or `release`, and leaves out pull
+request and manual runs on purpose: a pull request's run shows its failure on the pull request,
+and a manual run is watched by whoever started it.  The post goes to the Slack channel of the
+webhook in the `SLACK_WEBHOOK` secret; a repository secret of that name overrides an
+organisation one.  This is in addition to the `ci-failure` issues the canary and the release
+file: the post says a run failed, the issue is the deduplicated record of a failure stream.  To
+add a workflow triggered by `schedule`, `push` or `release`, give it a `name:` and add that name
+to the `workflows:` list in `report-failures.yaml`, exactly as written, since GitHub matches on
+it; the shared hygiene check enforces the list.
 
 An `mcp<2` cap existed briefly: mcp 2.0.0 removed `mcp.server.fastmcp`, which `server.py` imported
 `FastMCP` from, and an uncapped 2.2.0 shipped dead on arrival at import while every CI job stayed
@@ -87,6 +88,6 @@ label retires Aug 2027), and `windows-latest` - `import docker_mcp` and `uvx doc
 exercises PR content), so a dependency change that breaks a platform is caught before merge; the
 published-package legs and issue filing stay schedule/dispatch-only. Failures on unattended runs
 file a deduplicated `ci-failure` + `wf:canary` issue via `.github/actions/file-failure-issue`,
-and a scheduled run's failure is also posted to `#docker-mcp` (above).
+and a scheduled run's failure is also posted to Slack (above).
 `main()` handles `--version` (print the installed version, exit) before any daemon/network
 contact - the canary's entry-point smoke depends on it.

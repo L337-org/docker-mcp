@@ -1,9 +1,8 @@
 name: 'Report failures'
 
-# Posts a failed run of a workflow named below, started by one of the events below, to
-# #docker-mcp, through the webhook in this repository's SLACK_WEBHOOK secret and the shared
-# reporter pinned here (architecture/ci.md).  GitHub reads this trigger only from the default
-# branch.
+# Posts a failed run of a workflow named below, started by one of the events below, to the Slack
+# channel of the webhook in the SLACK_WEBHOOK secret, through the shared reporter pinned here
+# (architecture/ci.md).  GitHub reads this trigger only from the default branch.
 on:
   workflow_run:
     workflows:
