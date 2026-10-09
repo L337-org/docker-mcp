@@ -8,6 +8,7 @@ on:
     workflows:
       - 'Weekly canary'
       - 'CodeQL'
+      - 'Code review'
       - 'Build container images'
       - 'Check inbound changes'
       - 'Release'
@@ -24,6 +25,6 @@ jobs:
     name: Report to Slack
     uses: L337-org/github-workflows/.github/workflows/slack-on-failure.yaml@c406e0fddc7d1212c17979cfb667c7cb5d97a6a5 # v1.3.0
     with:
-      events: '["schedule", "push", "release"]'
+      events: '["schedule", "push", "release", "pull_request"]'
     secrets:
       SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
