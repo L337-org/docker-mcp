@@ -23,7 +23,7 @@ permissions:
 jobs:
   slack:
     name: Report to Slack
-    uses: L337-org/github-workflows/.github/workflows/slack-on-failure.yaml@PIN
+    uses: L337-org/github-workflows/.github/workflows/slack-on-failure.yaml@c406e0fddc7d1212c17979cfb667c7cb5d97a6a5 # v1.3.0
     with:
       events: '["schedule", "push", "release"]'
     secrets:
