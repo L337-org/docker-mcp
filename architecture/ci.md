@@ -38,8 +38,9 @@ opens.  `.github/workflows/report-failures.yaml` names the workflows to watch an
 shared Slack reporter from github-workflows, pinned by SHA like the actions above.  What the
 reporter posts and when is in that repository's README; it is not restated here because it
 would drift.  This repository has it report runs started by `schedule`, `push`, `release` or
-`pull_request`: a failing pull request run is rare and its page is easy to miss.  Manual runs
-are left out on purpose, because whoever started one is watching.  The post goes to the Slack
+`pull_request`, since a failing pull request run's page is easy to miss.  A run started by hand,
+or a review asked for by comment, is left out on purpose, because whoever started it is
+watching.  The post goes to the Slack
 channel of the webhook in the `SLACK_WEBHOOK` secret; a repository secret of that name
 overrides an organisation one.  This is in addition to the `ci-failure` issues the canary and
 the release file: the post says a run failed, the issue is the deduplicated record of a failure
