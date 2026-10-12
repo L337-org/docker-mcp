@@ -585,6 +585,8 @@ def query_catalog(
         "domains": dict(sorted(counts.items())),
         "no_domain": no_domain,
         "hidden_by_configuration": dict(sorted(hidden.items())),
+        # What the disable switch asked for and did not get; empty when it is fine.
+        "configuration_warnings": disable_switch_warnings(),
         "switches": {
             "DOCKER_MCP_SERVER_READONLY": READONLY,
             "DOCKER_MCP_SERVER_NO_DESTRUCTIVE": NO_DESTRUCTIVE,
@@ -690,6 +692,56 @@ _REMOTE_EXEC_DOMAINS = ("compose", "stack", "buildx", "scout")
 INSTRUCTIONS_CHAR_LIMIT = 2048
 
 
+# A bound on what the operator's DOCKER_MCP_SERVER_DISABLE value can add to text every session reads.
+_WARNING_NAMES_SHOWN = 3
+_WARNING_NAME_CHARS = 24
+
+
+def _quote_names(names: list[str]) -> str:
+    """Quote operator-supplied names for a warning, keeping their length bounded.
+
+    Args:
+        names: the names, sorted
+
+    Returns:
+        str: up to `_WARNING_NAMES_SHOWN` names, each quoted and cut to `_WARNING_NAME_CHARS`, then a count
+            of the rest
+    """
+    shown = [repr(n if len(n) <= _WARNING_NAME_CHARS else n[:_WARNING_NAME_CHARS] + "...") for n in names]
+    more = len(shown) - _WARNING_NAMES_SHOWN
+    return ", ".join(shown[:_WARNING_NAMES_SHOWN]) + (f" and {more} more" if more > 0 else "")
+
+
+def disable_switch_warnings() -> list[str]:
+    """What DOCKER_MCP_SERVER_DISABLE asked for and did not get, worded for the operator who set it.
+
+    Read after every tool module has registered, since "unknown" means no registered tool has that
+    domain. Both cases leave the server running with a different surface from the one asked for, and
+    the operator may not be watching stderr, so the same text also reaches the agent through the server
+    instructions and `tool_list`.
+
+    Returns:
+        list: one sentence per kind of problem, each starting "DOCKER_MCP_SERVER_DISABLE names"; empty when
+            the switch is fine
+    """
+    known = {record.domain for record in _tool_registry.values() if record.domain}
+    unknown = sorted(DISABLED_DOMAINS - known)
+    warnings = []
+    if unknown:
+        warnings.append(
+            f"DOCKER_MCP_SERVER_DISABLE names {_quote_names(unknown)}, which "
+            f"{'matches' if len(unknown) == 1 else 'match'} no domain, so nothing was disabled for "
+            f"{'it' if len(unknown) == 1 else 'them'} (a typo?); `tool_list` lists the domains."
+        )
+    if IGNORED_DISABLED_DOMAINS:
+        warnings.append(
+            f"DOCKER_MCP_SERVER_DISABLE names {_quote_names(sorted(IGNORED_DISABLED_DOMAINS))}, which cannot "
+            "be disabled and stays registered; DOCKER_MCP_SERVER_READONLY=1 keeps the agent from logging in "
+            "to a registry."
+        )
+    return warnings
+
+
 def build_instructions(registered_domains: set[str] | None = None) -> str:
     """Render the server `instructions` router from the domains that actually registered tools.
 
@@ -713,6 +765,15 @@ def build_instructions(registered_domains: set[str] | None = None) -> str:
     lines = [
         "docker-mcp-server: Docker through docker-py and the docker CLI.",
         "",
+    ]
+    # Ahead of everything, so a client that cuts the text short still shows it: the operator asked for a
+    # surface they did not get, and the agent is often the only party who will see that this session.
+    # A fixed pointer, not the warnings themselves: the longest rendering has under 80 units to spare
+    # below INSTRUCTIONS_CHAR_LIMIT, and the operator's own names would make the length unbounded.
+    # `tool_list` carries the full text in `configuration_warnings`.
+    if disable_switch_warnings():
+        lines += ["DOCKER_MCP_SERVER_DISABLE misconfigured: see `tool_list`, tell the user.", ""]
+    lines += [
         # First because it is the one thing an agent cannot work out for itself: what to do when its
         # client's own search misses. Name each tool by the occasion that should trigger it, not by why
         # it exists: "if your client can't read resources" tells every client that can to skip it.

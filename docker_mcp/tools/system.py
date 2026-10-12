@@ -34,7 +34,7 @@ from docker_mcp._hosts import (
     resolve as _resolve_host,
     resolve_auto,
 )
-from docker_mcp.server import IGNORED_DISABLED_DOMAINS, is_domain_disabled, tool
+from docker_mcp.server import disable_switch_warnings, is_domain_disabled, tool
 from docker_mcp.tools._ssh_proxy import _CONNECT_TIMEOUT_CAP_SECONDS, connect_socket_with_family_fallback, parse_ssh_url
 from docker_mcp.tools._utils import classify_host_kernel, close_stream_quietly, env_flag, in_container
 
@@ -1027,21 +1027,6 @@ def _connection_summary(client: docker.DockerClient, host: Host) -> str:
     return f"docker-mcp-server: connected to default host {host.label!r} - {os_name}{suffix}{note}.{roster}"
 
 
-def _ignored_disable_warning() -> str | None:
-    """The startup warning for domains DOCKER_MCP_SERVER_DISABLE named but cannot drop.
-
-    Returns:
-        str or None: one stderr line naming them and what to use instead, or None when there are none
-    """
-    if not IGNORED_DISABLED_DOMAINS:
-        return None
-    names = ", ".join(sorted(IGNORED_DISABLED_DOMAINS))
-    return (
-        f"docker-mcp-server: WARNING: DOCKER_MCP_SERVER_DISABLE names {names}, which cannot be disabled and "
-        "stays registered. To keep the agent from logging in to a registry, set DOCKER_MCP_SERVER_READONLY=1."
-    )
-
-
 def startup_preflight() -> None:
     """Best-effort startup diagnostics, written only to stderr (stdout is the MCP stdio channel).
 
@@ -1053,9 +1038,8 @@ def startup_preflight() -> None:
     """
     global _self_container_id, _self_host_label
     # Before the ping, so it is shown even when the daemon cannot be reached.
-    ignored = _ignored_disable_warning()
-    if ignored is not None:
-        print(ignored, file=sys.stderr, flush=True)
+    for warning in disable_switch_warnings():
+        print(f"docker-mcp-server: WARNING: {warning}", file=sys.stderr, flush=True)
     scrub_unresolved_env()
     default = _default_host()
     try:

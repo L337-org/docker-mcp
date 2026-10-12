@@ -955,22 +955,21 @@ def test_system_wait_description_fits_what_claude_code_shows():
     assert len((tool.description or "").encode("utf-16-le")) // 2 <= 2048
 
 
-def test_ignored_disable_warning_names_the_domain_and_what_to_use_instead(monkeypatch):
-    monkeypatch.setattr(system_module, "IGNORED_DISABLED_DOMAINS", frozenset({"system"}))
-    warning = system_module._ignored_disable_warning()
-    assert warning is not None
-    assert "names system, which cannot be disabled" in warning
-    assert "DOCKER_MCP_SERVER_READONLY=1" in warning
-
-
-def test_no_ignored_disable_warning_when_nothing_was_ignored(monkeypatch):
-    monkeypatch.setattr(system_module, "IGNORED_DISABLED_DOMAINS", frozenset())
-    assert system_module._ignored_disable_warning() is None
-
-
-def test_startup_preflight_prints_the_ignored_disable_warning_even_when_the_daemon_is_down(monkeypatch, capsys):
-    monkeypatch.setattr(system_module, "IGNORED_DISABLED_DOMAINS", frozenset({"system"}))
-    with patch.object(system_module, "_get_client", side_effect=DockerException("connection refused")):
+def test_startup_preflight_prints_each_disable_switch_warning_even_when_the_daemon_is_down(capsys):
+    warnings = ["DOCKER_MCP_SERVER_DISABLE names 'swram', ...", "DOCKER_MCP_SERVER_DISABLE names 'system', ..."]
+    with (
+        patch.object(system_module, "disable_switch_warnings", return_value=warnings),
+        patch.object(system_module, "_get_client", side_effect=DockerException("connection refused")),
+    ):
         system_module.startup_preflight()
-    err = capsys.readouterr().err
-    assert err.splitlines()[0].startswith("docker-mcp-server: WARNING: DOCKER_MCP_SERVER_DISABLE names system")
+    lines = capsys.readouterr().err.splitlines()
+    assert lines[:2] == [f"docker-mcp-server: WARNING: {w}" for w in warnings]
+
+
+def test_startup_preflight_prints_no_warning_for_a_sound_disable_switch(capsys):
+    with (
+        patch.object(system_module, "disable_switch_warnings", return_value=[]),
+        patch.object(system_module, "_get_client", side_effect=DockerException("connection refused")),
+    ):
+        system_module.startup_preflight()
+    assert "WARNING" not in capsys.readouterr().err

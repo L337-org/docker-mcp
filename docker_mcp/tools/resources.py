@@ -484,7 +484,8 @@ def tool_list(
 
     Returns:
         dict: {"matched": int, "tools": [{"name", "domain", "category", "summary"}], "domains": {domain: count},
-            "no_domain": int, "hidden_by_configuration": {domain: count}, "switches", "filters"}, with `tools` best
+            "no_domain": int, "hidden_by_configuration": {domain: count}, "configuration_warnings", "switches",
+            "filters"}, with `tools` best
             match first. Every `domains` key is a value `domain` accepts; `no_domain` counts the domain-less tools,
             whose rows carry `domain: null` and which no `domain` value selects. `filters.keyword_terms` lists the
             words actually searched for.
