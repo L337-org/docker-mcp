@@ -9,6 +9,7 @@ import pytest
 from docker_mcp.tools._cli import has_plugin
 from tests.integration.conftest import fail_unless_environmental
 from docker_mcp.tools.compose import (
+    compose_run,
     compose_config,
     compose_down,
     compose_images,
@@ -19,6 +20,7 @@ from docker_mcp.tools.compose import (
     compose_unpause,
     compose_up,
 )
+from docker_mcp.tools.containers import container_logs, container_remove
 from docker_mcp.tools.system import system_wait
 
 # A tiny compose project: one alpine container that sleeps. Avoids pulling a large image
@@ -197,3 +199,23 @@ def test_system_wait_compose_running_accepts_a_completed_dependency(compose_proj
         ("migrate", "exited", 0),
         ("web", "running", None),
     }
+
+
+def test_a_one_shot_compose_run_gives_its_exit_code_and_output_afterwards(compose_project):
+    # compose_run never blocks: its stdout is the new container's id, which system_wait and
+    # container_logs take; the container is kept so its logs survive the exit.
+    _pull_or_skip(compose_project)
+    run = compose_run(
+        service="sleeper",
+        command=["sh", "-c", "echo compose-one-shot; exit 4"],
+        project_dir=compose_project["dir"],
+        project_name=compose_project["name"],
+    )
+    assert run["returncode"] == 0, run["stderr"]
+    container = run["stdout"].strip()
+    try:
+        done = system_wait(kind="container", target=container, until="not-running", timeout_seconds=60)
+        assert (done["met"], done["detail"]["status_code"]) == (True, 4)
+        assert container_logs(container).strip() == "compose-one-shot"
+    finally:
+        container_remove(container, force=True)

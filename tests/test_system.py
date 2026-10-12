@@ -973,3 +973,28 @@ def test_startup_preflight_prints_no_warning_for_a_sound_disable_switch(capsys):
     ):
         system_module.startup_preflight()
     assert "WARNING" not in capsys.readouterr().err
+
+
+# Tools allowed a parameter that makes them wait, each with its reason. Anything else that grows one fails.
+_BLOCKING_OPTION_EXCEPTIONS = {
+    # Its result is its command's output, which exists only while the command runs, so it blocks by design.
+    "container_exec": {"detach"},
+}
+
+
+def test_no_registered_tool_keeps_an_option_that_makes_it_wait():
+    # Waiting is system_wait's job alone: an action tool returns once its work is started. Derived from the
+    # registry rather than a list, so a new tool that grows `detach=`, `wait=` or `remove=` fails here too.
+    # `rm` is not checked: image_build's `rm` removes intermediate build containers and waits for nothing.
+    from docker_mcp.server import _tool_registry
+
+    offenders = {
+        record.name: blocking
+        for record in _tool_registry.values()
+        if record.name != "system_wait"
+        and (
+            blocking := {"detach", "wait", "remove"}
+            & set(record.params) - _BLOCKING_OPTION_EXCEPTIONS.get(record.name, set())
+        )
+    }
+    assert offenders == {}

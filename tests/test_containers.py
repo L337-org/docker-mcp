@@ -62,13 +62,16 @@ def test_run_container_detached():
     assert args == ("nginx",)
     assert kwargs["detach"] is True
     assert kwargs["name"] == "web"
+    # run hands back the object fetched before the start; it must be re-read to describe the started container.
+    container.reload.assert_called_once_with()
 
 
-def test_run_container_foreground_returns_decoded_logs():
-    with _patch() as mock_client:
-        mock_client.return_value.containers.run.return_value = b"hello\n"
-        result = container_run("alpine", command="echo hello", detach=False)
-    assert result == "hello\n"
+@pytest.mark.parametrize("key", ["detach", "remove"])
+def test_container_run_refuses_the_blocking_options_through_extra_kwargs(key):
+    # Forwarded after the defaults, either would bring the unbounded blocking run back.
+    with _patch() as mock_client, pytest.raises(ToolInputError, match=f"does not take \\['{key}'\\]"):
+        container_run("alpine", extra_kwargs={key: False})
+    mock_client.return_value.containers.run.assert_not_called()
 
 
 def test_container_create():

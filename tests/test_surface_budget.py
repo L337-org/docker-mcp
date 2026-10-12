@@ -42,7 +42,7 @@ from docker_mcp.server import DISABLED_DOMAINS, NO_DESTRUCTIVE, READONLY, mcp
 #   print(sum(len(json.dumps(t.model_dump(mode='json'),separators=(',',':')).encode()) \
 #   for t in asyncio.run(mcp.list_tools())))"
 MAX_SINGLE_TOOL_WIRE_BYTES = 5_300  # buildx_build, 5,108
-MAX_TOOL_WIRE_BYTES = 218_800  # 214,792
+MAX_TOOL_WIRE_BYTES = 218_800  # 214,577
 MAX_PROMPT_WIRE_BYTES = 7_900  # 7,646
 # Lowered from 6,400 with the three `docker://` listing indexes: the saving is ratcheted in here
 # rather than left as headroom, so re-adding an index has to argue for itself the same way.
@@ -50,7 +50,7 @@ MAX_RESOURCE_WIRE_BYTES = 4_700  # 4,614, resources and templates together
 # The default rendering only: the host caveat adds to it, and `tests/test_server.py` checks the longest
 # rendering against `INSTRUCTIONS_CHAR_LIMIT`, so this ceiling only has to stop the default creeping up.
 MAX_INSTRUCTIONS_BYTES = 1_790  # 1,777
-MAX_TOTAL_WIRE_BYTES = 233_100  # 228,829
+MAX_TOTAL_WIRE_BYTES = 233_100  # 228,614
 
 # Registration is gated at import time, so a switch in effect when `docker_mcp.server` was
 # imported shrinks the surface, and every budget below would pass while measuring something

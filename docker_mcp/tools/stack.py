@@ -38,8 +38,8 @@ from docker_mcp.tools.services import _read_service_task_summary
 from docker_mcp.tools.system import _get_client
 
 _TIMEOUT_QUERY = 60.0
-# deploy pulls images and submits service specs; give it a generous ceiling (it converges
-# asynchronously when detached, but a non-detached deploy waits for the rollout).
+# deploy resolves image digests against the registry and submits the service specs; the rollout itself
+# happens after it returns, so the ceiling only has to cover a slow registry.
 _TIMEOUT_DEPLOY = 1800.0
 _TIMEOUT_RM = 300.0
 
@@ -128,7 +128,6 @@ def stack_deploy(  # noqa: DOC101,DOC103,DOC501,DOC503
     with_registry_auth: bool = False,
     prune: bool = False,
     resolve_image: ResolveImage | None = None,
-    detach: bool = True,
     cwd: str | None = None,
     timeout_seconds: float = _TIMEOUT_DEPLOY,
     host: str | None = None,
@@ -137,10 +136,9 @@ def stack_deploy(  # noqa: DOC101,DOC103,DOC501,DOC503
     Deploy (or update) a stack to the swarm from one or more Compose files.
 
     Requires the target daemon to be a swarm manager. Re-running with the same `name` updates the
-    stack in place. Defaults to `detach=True` (returns once specs are submitted, not on
-    convergence); set `detach=False` to wait for the rollout (give it a generous
-    `timeout_seconds`). The swarm analogue of `compose_up`; watch the rollout with
-    `stack_services` / `stack_ps`.
+    stack in place. Returns once the service specs are submitted, never waiting for the rollout: wait
+    for it with `system_wait(kind="stack", target=name, until="converged")`, or see its state without
+    waiting with `stack_services` / `stack_ps`. The swarm analogue of `compose_up`.
     Does not raise on a non-zero CLI exit (a missing `docker` binary or a timeout still raises) - inspect
     `returncode`/`stderr` in the result.
 
@@ -150,7 +148,6 @@ def stack_deploy(  # noqa: DOC101,DOC103,DOC501,DOC503
         with_registry_auth: Send registry credentials to swarm agents (needed for private images)
         prune: Remove services no longer defined in the Compose file
         resolve_image: Image-digest resolution; omit for the CLI default ("always")
-        detach: Return immediately after submitting specs (True) vs wait for convergence (False)
         cwd: Working directory for resolving relative Compose paths (defaults to the server's cwd; copied to the target
             host if no local docker CLI)
         timeout_seconds: Subprocess timeout (default 1800s)
@@ -171,7 +168,9 @@ def stack_deploy(  # noqa: DOC101,DOC103,DOC501,DOC503
         args.append("--prune")
     if resolve_image is not None:
         args.append(f"--resolve-image={resolve_image}")
-    args.append(f"--detach={'true' if detach else 'false'}")
+    # Always detached: a foreground deploy blocks until the rollout converges, which `system_wait` does
+    # with a timeout and a result.
+    args.append("--detach=true")
     args.append(safe_positional(name, "stack name"))
     return _run_stack(args, cwd=cwd, timeout=timeout_seconds, host=host, stage_cwd=True).to_dict()
 
@@ -251,20 +250,19 @@ def stack_services(name: str, filters: dict | None = None, host: str | None = No
 
 @tool()
 def stack_remove(  # noqa: DOC101,DOC103,DOC501,DOC503
-    names: list[str], detach: bool = True, timeout_seconds: float = _TIMEOUT_RM, host: str | None = None
+    names: list[str], timeout_seconds: float = _TIMEOUT_RM, host: str | None = None
 ) -> dict:
     """
     Remove one or more stacks from the swarm (tears down their services, networks, and secrets).
 
     Destructive: this stops and deletes every service in the named stack(s) - the reverse of
-    `stack_deploy` and the swarm analogue of `compose_down`. Defaults to `detach=True` so the call
-    returns once removal is requested rather than waiting for teardown.
+    `stack_deploy` and the swarm analogue of `compose_down`. Returns once removal is requested, never
+    waiting for teardown: `system_wait(kind="stack", target=<name>, until="removed")` waits for it.
     Does not raise on a non-zero CLI exit (a missing `docker` binary or a timeout still raises) - inspect
     `returncode`/`stderr` in the result.
 
     Args:
         names: One or more stack names to remove. At least one is required.
-        detach: Return immediately (True) vs wait for the stack(s) to be fully removed (False)
         timeout_seconds: Subprocess timeout (default 300s)
 
     Returns:
@@ -272,7 +270,7 @@ def stack_remove(  # noqa: DOC101,DOC103,DOC501,DOC503
     """
     if not names:
         raise ToolInputError("stack_remove requires at least one entry in names.")
-    args = ["stack", "rm", f"--detach={'true' if detach else 'false'}"]
+    args = ["stack", "rm", "--detach=true"]
     args.extend(safe_positional(name, "stack name") for name in names)
     return _run_stack(args, timeout=timeout_seconds, host=host).to_dict()
 

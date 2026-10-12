@@ -192,8 +192,9 @@ discovery layers. Four cleanup rounds have chased the same failure.
   option on an action tool: action tools return once their work is started. `kind`/`until` are built from the
   enabled domains at import, so a disabled domain's waits are not offered. Its `target` parameter is a
   deliberate exception to the identifier spellings above, because one argument names a container, service,
-  node, stack, compose project or `repository:tag`. `system` itself cannot be disabled (`ALWAYS_ON_DOMAINS` in
-  `server.py`); naming it in `DOCKER_MCP_SERVER_DISABLE` is reported as ignored, not silently dropped.
+  node, stack, compose project or `repository:tag`. `system` and `containers` cannot be disabled
+  (`ALWAYS_ON_DOMAINS` in `server.py`); naming either in `DOCKER_MCP_SERVER_DISABLE` is reported as ignored,
+  not silently dropped.
 - Every new `docker_mcp/tools/` file must be imported in `docker_mcp/tools/__init__.py` (private `_*.py` helpers excluded).
 - Every new `docker_mcp/tools/<module>.py` must have a matching `tests/test_<module>.py`.
 - Tool functions are decorated with `@tool()` (imported from `docker_mcp.server`) and must have a `TOOL_CATEGORIES` entry in `docker_mcp/server.py`.
