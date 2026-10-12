@@ -105,6 +105,9 @@ def test_system_wait_stack_converged_waits_out_a_rolling_update(tmp_path):
         assert stack_deploy(name, compose_files=[str(compose_file)])["returncode"] == 0
         second = system_wait(kind="stack", target=name, until="converged", timeout_seconds=180, poll_interval=1.0)
         assert (second["met"], second["timed_out"]) == (True, False)
-        assert [s["update_state"] for s in second["detail"]["services"]] == ["completed"]
+        # Every running task is on the redeployed spec, whether or not swarm has recorded the update yet.
+        [service] = second["detail"]["services"]
+        assert (service["current_tasks"], service["desired_tasks"]) == (3, 3)
+        assert service["update_state"] in (None, "completed")
     finally:
         stack_remove([name])

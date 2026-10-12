@@ -256,11 +256,23 @@ def test_a_stack_deploy_with_no_compose_file_says_so_on_the_wire(on_the_wire):
 # ---------- the stack wait (system_wait(kind="stack")) ----------
 
 
+_TEMPLATE = {"ContainerSpec": {"Image": "alpine:3", "Args": ["sleep", "301"]}, "ForceUpdate": 0, "Runtime": "container"}
+_OLD_SPEC = {"ContainerSpec": {"Image": "alpine:3", "Args": ["sleep", "300"]}, "ForceUpdate": 0}
+# A task's spec carries every template key but Runtime, as the Engine reports it.
+_CURRENT_SPEC = {k: v for k, v in _TEMPLATE.items() if k != "Runtime"}
+
+
 def _service(name):
     service = MagicMock()
     service.name = name
     service.id = f"id-{name}"
+    service.attrs = {"Spec": {"TaskTemplate": _TEMPLATE}}
     return service
+
+
+def _running(*specs):
+    """A service's tasks with desired state running, each on the given spec."""
+    return [{"Status": {"State": "running"}, "Spec": spec} for spec in specs]
 
 
 def _summary(running, desired, update_state=None):
@@ -271,22 +283,38 @@ def _task(state):
     return {"Status": {"State": state}}
 
 
-def _stack_wait(until, services, summaries=None, tasks=None, **kwargs):
+def _stack_wait(until, services, summaries=None, tasks=None, service_tasks=None, **kwargs):
     """Run the stack wait against successive readings, without sleeping.
 
-    `services` and `tasks` are one list per poll; `summaries` maps a service id to its successive summaries.
+    `services` and `tasks` are one list per poll; `summaries` and `service_tasks` map a service id to its
+    successive summaries and running-task lists. A service with no `service_tasks` has every running task
+    its summary counts on the current spec.
     """
     summaries = {k: iter(v) for k, v in (summaries or {}).items()}
+    per_service = {k: iter(v) for k, v in (service_tasks or {}).items()}
+    stack_tasks = iter(tasks or [[] for _ in services])
+    last_running: dict[str, int] = {}
+
+    def summary(service_id, host=None):
+        reading = next(summaries[service_id])
+        last_running[service_id] = reading["running_tasks"]
+        return reading
+
+    def api_tasks(filters):
+        if "service" not in filters:
+            return next(stack_tasks)
+        if filters["service"] in per_service:
+            return next(per_service[filters["service"]])
+        return _running(*[_CURRENT_SPEC] * last_running.get(filters["service"], 0))
+
     with (
         patch("docker_mcp.tools.stack._get_client") as get_client,
-        patch(
-            "docker_mcp.tools.stack._read_service_task_summary", side_effect=lambda sid, host=None: next(summaries[sid])
-        ),
+        patch("docker_mcp.tools.stack._read_service_task_summary", side_effect=summary),
         patch("docker_mcp.tools.stack.time.sleep") as sleep,
     ):
         client = get_client.return_value
         client.services.list.side_effect = services
-        client.api.tasks.side_effect = tasks or [[] for _ in services]
+        client.api.tasks.side_effect = api_tasks
         timeout, interval = kwargs.pop("timeout_seconds", 5), kwargs.pop("poll_interval", 0.01)
         result = _wait_stack("shop", until, timeout, interval, **kwargs)
     return result, client, sleep
@@ -308,6 +336,35 @@ def test_stack_wait_converged_once_every_service_has_its_tasks():
     assert (result["met"], result["timed_out"]) == (True, False)
     assert [r["service"] for r in result["services"]] == ["shop_db", "shop_web"]
     assert sleep.call_count == 1
+
+
+def test_stack_wait_converged_counts_only_tasks_on_the_current_spec():
+    # Just after a redeploy the old tasks still run and swarm may not have recorded an update yet: the
+    # running count is met and update_state is None, but the tasks are on the previous spec.
+    web = _service("shop_web")
+    result, _, sleep = _stack_wait(
+        "converged",
+        [[web], [web], [web]],
+        summaries={"id-shop_web": [_summary(2, 2), _summary(2, 2), _summary(2, 2)]},
+        service_tasks={
+            "id-shop_web": [
+                _running(_OLD_SPEC, _OLD_SPEC),
+                # On the current spec but not started yet: counting it would make this poll converge.
+                _running(_CURRENT_SPEC) + [{"Status": {"State": "starting"}, "Spec": _CURRENT_SPEC}],
+                _running(_CURRENT_SPEC, _CURRENT_SPEC),
+            ]
+        },
+    )
+    assert result["met"] is True
+    assert result["services"][0]["current_tasks"] == 2
+    assert sleep.call_count == 2
+
+
+def test_runs_current_spec_ignores_the_runtime_key_tasks_do_not_carry():
+    from docker_mcp.tools.stack import _runs_current_spec
+
+    assert _runs_current_spec({"Spec": _CURRENT_SPEC}, _TEMPLATE) is True
+    assert _runs_current_spec({"Spec": _OLD_SPEC}, _TEMPLATE) is False
 
 
 def test_stack_wait_converged_waits_for_a_rolling_update_to_finish():
@@ -348,7 +405,9 @@ def test_stack_wait_skips_a_service_removed_while_it_is_read():
         patch("docker_mcp.tools.stack.time.sleep"),
     ):
         get_client.return_value.services.list.return_value = [web, db]
-        get_client.return_value.api.tasks.return_value = []
+        get_client.return_value.api.tasks.side_effect = lambda filters: (
+            _running(_CURRENT_SPEC) if "service" in filters else []
+        )
         result = _wait_stack("shop", "converged", 5, 0.01)
     assert result["met"] is True
     assert [r["service"] for r in result["services"]] == ["shop_web"]

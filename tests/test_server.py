@@ -955,10 +955,13 @@ def test_instructions_fit_claude_codes_cut_off_at_their_longest_end_to_end():
     text = _live_instructions(
         [
             "DOCKER_MCP_SERVER_HOSTS=local=unix:///var/run/docker.sock, "
-            "staging=ssh://deploy@staging.example.org(ro), production=ssh://deploy@production.example.org(nd)"
+            "staging=ssh://deploy@staging.example.org(ro), production=ssh://deploy@production.example.org(nd)",
+            # A misconfigured switch adds its pointer line; the operator's names must not lengthen it.
+            "DOCKER_MCP_SERVER_DISABLE=system," + ",".join(f"unknown-{i}-{'x' * 40}" for i in range(5)),
         ]
     ).rstrip("\n")
     assert "Multiple hosts are configured" in text, "the longest rendering must include the host caveat"
+    assert "DOCKER_MCP_SERVER_DISABLE misconfigured" in text, "the longest rendering must include the warning"
     units = len(text.encode("utf-16-le")) // 2
     assert units <= INSTRUCTIONS_CHAR_LIMIT, f"instructions are {units} UTF-16 units, over {INSTRUCTIONS_CHAR_LIMIT}"
 
@@ -2015,3 +2018,70 @@ def test_the_docstring_exemption_names_the_decorators_in_use() -> None:
             f"ignore-decorators names {path!r}, which does not exist - ruff would match nothing "
             f"and every advertised docstring would fall under the convention"
         )
+
+
+# ---------- DOCKER_MCP_SERVER_DISABLE misconfiguration warnings ----------
+
+
+def _warnings(monkeypatch, disabled, ignored=frozenset()):
+    import docker_mcp.server as server
+
+    monkeypatch.setattr(server, "DISABLED_DOMAINS", frozenset(disabled))
+    monkeypatch.setattr(server, "IGNORED_DISABLED_DOMAINS", frozenset(ignored))
+    return server.disable_switch_warnings()
+
+
+def test_disable_switch_warnings_are_empty_for_a_sound_switch(monkeypatch):
+    assert _warnings(monkeypatch, {"scout", "swarm"}) == []
+
+
+def test_disable_switch_warnings_name_an_unknown_domain(monkeypatch):
+    assert _warnings(monkeypatch, {"swram", "scout"}) == [
+        "DOCKER_MCP_SERVER_DISABLE names 'swram', which matches no domain, so nothing was disabled for it "
+        "(a typo?); the README and `tool_list` list the domains."
+    ]
+
+
+def test_the_catalog_and_the_warnings_agree_on_what_is_unknown(monkeypatch):
+    # One derivation feeds both, so a name the catalog calls unknown is one the warning names, and no other.
+    import docker_mcp.server as server
+
+    monkeypatch.setattr(server, "DISABLED_DOMAINS", frozenset({"swram", "scout", "plugns"}))
+    assert server.tool_catalog()["unknown_disabled_domains"] == ["plugns", "swram"]
+    [warning] = server.disable_switch_warnings()
+    assert warning.startswith("DOCKER_MCP_SERVER_DISABLE names 'plugns', 'swram', which match no domain")
+
+
+def test_disable_switch_warnings_agree_in_number_and_cap_what_they_quote(monkeypatch):
+    names = {"aa", "bb", "cc", "dd", "e" * 30}
+    [warning] = _warnings(monkeypatch, names)
+    # Sorted, at most three shown, each cut to 24 characters, and the rest counted.
+    assert warning.startswith("DOCKER_MCP_SERVER_DISABLE names 'aa', 'bb', 'cc' and 2 more, which match no domain")
+    assert "nothing was disabled for them" in warning
+    assert _warnings(monkeypatch, {"e" * 30})[0].startswith(f"DOCKER_MCP_SERVER_DISABLE names '{'e' * 24}...'")
+    # Exactly the limit is shown whole.
+    assert _warnings(monkeypatch, {"f" * 24})[0].startswith(f"DOCKER_MCP_SERVER_DISABLE names '{'f' * 24}', which")
+
+
+def test_disable_switch_warnings_name_an_always_on_domain_and_the_alternative(monkeypatch):
+    assert _warnings(monkeypatch, set(), ignored=frozenset({"system"})) == [
+        "DOCKER_MCP_SERVER_DISABLE names 'system', which cannot be disabled and stays registered; "
+        "DOCKER_MCP_SERVER_READONLY=1 keeps the agent from logging in to a registry."
+    ]
+
+
+def test_instructions_point_the_agent_at_a_misconfigured_switch_first(monkeypatch):
+    monkeypatch.setattr("docker_mcp.server.disable_switch_warnings", lambda: ["anything"])
+    lines = build_instructions().splitlines()
+    assert lines[2] == "DOCKER_MCP_SERVER_DISABLE misconfigured: see `tool_list`, tell the user."
+    monkeypatch.setattr("docker_mcp.server.disable_switch_warnings", lambda: [])
+    assert "misconfigured" not in build_instructions()
+
+
+def test_tool_list_carries_the_disable_switch_warnings_end_to_end():
+    catalog = _catalog_in_child(["DOCKER_MCP_SERVER_DISABLE=swram,system"])
+    assert [w.split(",", 1)[0] for w in catalog["configuration_warnings"]] == [
+        "DOCKER_MCP_SERVER_DISABLE names 'swram'",
+        "DOCKER_MCP_SERVER_DISABLE names 'system'",
+    ]
+    assert _catalog_in_child([])["configuration_warnings"] == []

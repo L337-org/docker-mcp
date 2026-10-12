@@ -292,6 +292,23 @@ _UPDATE_DONE = frozenset({"completed", "rollback_completed"})
 _UPDATE_STUCK = frozenset({"paused", "rollback_paused"})
 
 
+def _runs_current_spec(task: dict, template: dict) -> bool:
+    """Whether a task was created from its service's current task template, i.e. an update left it alone.
+
+    Compares the keys the task's own spec carries: the template also holds `Runtime`, which tasks omit.
+    Swarm decides whether a task needs replacing the same way, from its spec against the template.
+
+    Args:
+        task: a task document, as `client.api.tasks()` returns it
+        template: the service's `Spec.TaskTemplate`
+
+    Returns:
+        bool: True when every key of the task's spec equals the template's
+    """
+    spec = task.get("Spec") or {}
+    return all(template.get(key) == value for key, value in spec.items())
+
+
 def _wait_stack(
     name: str,
     until: str,
@@ -303,10 +320,10 @@ def _wait_stack(
 
     Never raises on timeout. Finds the stack's services and tasks by the label `docker stack deploy`
     stamps, through the Engine API. "converged" is met when every service in the stack has its
-    desired number of running tasks and no rolling update still in progress; it returns promptly with
-    `met: false` when no service carries the label, or when an update has paused on a failure. "removed"
-    is met when no service carries the label and none of its tasks is still starting or running. A
-    service removed while it is being read is treated as gone.
+    desired number of running tasks on its current spec and no rolling update still in progress; it
+    returns promptly with `met: false` when no service carries the label, or when an update has paused
+    on a failure. "removed" is met when no service carries the label and none of its tasks is still
+    starting or running. A service removed while it is being read is treated as gone.
 
     Args:
         name: the stack name
@@ -317,8 +334,8 @@ def _wait_stack(
 
     Returns:
         dict: {"stack", "until", "met", "timed_out", "services", "active_tasks", "waited_seconds"}, where
-            `services` has one row per service still present: {"service", "running_tasks", "desired_tasks",
-            "failed_tasks", "update_state"} for "converged", and only {"service"} for "removed"
+            `services` has one row per service still present: {"service", "running_tasks", "current_tasks",
+            "desired_tasks", "failed_tasks", "update_state"} for "converged", and only {"service"} for "removed"
 
     Raises:
         ToolInputError: a negative timeout or a non-positive poll interval
@@ -341,13 +358,22 @@ def _wait_stack(
                 continue
             try:
                 summary = _read_service_task_summary(service.id, host=host)
+                running = client.api.tasks(filters={"service": service.id, "desired-state": "running"})
             except docker.errors.NotFound:
                 # Removed between the list and this read (a `stack rm` or a pruning deploy elsewhere).
                 continue
+            template = (service.attrs.get("Spec") or {}).get("TaskTemplate") or {}
             rows.append(
                 {
                     "service": service.name,
                     "running_tasks": summary["running_tasks"],
+                    # Running tasks already on the current spec: right after a redeploy the old ones still
+                    # run, and swarm may not have recorded the update as started yet.
+                    "current_tasks": sum(
+                        1
+                        for task in running
+                        if (task.get("Status") or {}).get("State") == "running" and _runs_current_spec(task, template)
+                    ),
                     "desired_tasks": summary["desired_tasks"],
                     "failed_tasks": summary["failed_tasks"],
                     "update_state": summary["update_state"],
@@ -362,12 +388,13 @@ def _wait_stack(
         verdict: bool | None
         if until == "converged":
             # No service at all is not "converging": nothing was deployed under that name. A rolling update
-            # keeps the old tasks running until each is replaced, so the task count alone is met partway
-            # through a redeploy; a service is settled only once its update, if any, has finished too.
+            # keeps the old tasks running until each is replaced, so a count of running tasks is met partway
+            # through a redeploy, and `UpdateStatus` can still be unset just after the deploy returns. So
+            # count only tasks on the current spec, and also wait out an update swarm has recorded.
             if not rows or any(r["update_state"] in _UPDATE_STUCK for r in rows):
                 verdict = False
             elif all(
-                r["running_tasks"] >= r["desired_tasks"] and r["update_state"] in (None, *_UPDATE_DONE) for r in rows
+                r["current_tasks"] >= r["desired_tasks"] and r["update_state"] in (None, *_UPDATE_DONE) for r in rows
             ):
                 verdict = True
             else:
