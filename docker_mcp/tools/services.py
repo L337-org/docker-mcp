@@ -22,6 +22,40 @@ from docker_mcp.tools.system import _get_client
 # resources.py, and by the service and stack waits behind system_wait ---
 
 _FAILING_TASK_STATES = frozenset({"failed", "rejected"})
+# Desired states up to and including "running", the ones swarm still means a task to reach (docker/cli's
+# `numberedStates` in cli/command/service/progress/progress.go). A replacement waiting out its restart
+# delay is desired "ready", so this keeps its node counted between a rejection and the retry.
+_LIVE_DESIRED_STATES = frozenset(
+    {"new", "allocated", "pending", "assigned", "accepted", "preparing", "ready", "starting", "running"}
+)
+
+
+def _global_node_counts(service, client) -> tuple[int, int]:
+    """How many nodes a global service wants a task on, and on how many one is running.
+
+    Counted by node rather than by task, as docker/cli's `globalProgressUpdater` does: a node whose task
+    was rejected keeps a replacement swarm still means to run, so it stays wanted rather than dropping out
+    of both counts until the retry. A drained node's tasks are shut down and stop counting; a task on a
+    node that is down is not counted as running.
+
+    Args:
+        service: the docker-py Service model
+        client: the docker-py client it came from
+
+    Returns:
+        tuple: (nodes wanted, nodes running)
+    """
+    tasks = service.tasks()
+    down = {node.id for node in client.nodes.list() if (node.attrs.get("Status") or {}).get("State") == "down"}
+    wanted = {t.get("NodeID") for t in tasks if t.get("NodeID") and t.get("DesiredState") in _LIVE_DESIRED_STATES}
+    running = {
+        t.get("NodeID")
+        for t in tasks
+        if t.get("DesiredState") == "running"
+        and (t.get("Status") or {}).get("State") == "running"
+        and t.get("NodeID") not in down
+    }
+    return len(wanted), len(running)
 
 
 def _read_service_log_tail(id_or_name: str, tail: int = 200, host: str | None = None) -> str:
@@ -52,9 +86,10 @@ def _read_service_task_summary(id_or_name: str, host: str | None = None) -> dict
     """Return a computed task/rollout status summary for a swarm service.
 
     Reproduces what the `audit_swarm_health` prompt already does by hand: counts tasks whose
-    *desired* state is "running" by their actual `Status.State`, compares the count against the
-    service's desired replica count (Replicated mode) or the total returned tasks (Global mode -
-    one task per eligible node, no fixed target), and surfaces any failing tasks' id/node/error.
+    *desired* state is "running" by their actual `Status.State` and compares the count against the
+    service's desired replica count (Replicated mode). A Global service has no fixed target, so it is
+    counted by node instead: the nodes swarm still means to run a task on, against those running one.
+    Surfaces any failing tasks' id/node/error.
     Also includes `UpdateStatus.State` from the same service read, so this one summary doubles as
     a rollout-progress view.
 
@@ -65,7 +100,8 @@ def _read_service_task_summary(id_or_name: str, host: str | None = None) -> dict
     Returns:
         dict: the task and rollout status summary
     """
-    service = _get_client(host).services.get(id_or_name)
+    client = _get_client(host)
+    service = client.services.get(id_or_name)
     attrs = service.attrs
     mode = (attrs.get("Spec", {}) or {}).get("Mode", {}) or {}
     tasks = service.tasks(filters={"desired-state": "running"})
@@ -74,7 +110,9 @@ def _read_service_task_summary(id_or_name: str, host: str | None = None) -> dict
     # service could in principle omit it - fall back to the observed task count in that case too,
     # the same fallback already used for every non-Replicated mode.
     desired = mode.get("Replicated", {}).get("Replicas") if "Replicated" in mode else None
-    if desired is None:
+    if "Global" in mode:
+        desired, running = _global_node_counts(service, client)
+    elif desired is None:
         desired = len(tasks)
     failed_tasks = [
         {
@@ -101,10 +139,11 @@ def _read_service_task_summary(id_or_name: str, host: str | None = None) -> dict
 def _awaiting_global_tasks(summary: dict) -> bool:
     """Whether a global service has no tasks yet, so its desired count says nothing about its nodes.
 
-    A global service's desired count is the tasks it has, which is zero until the orchestrator creates
-    them, so "every task runs" would be met before anything ran. The orchestrator creates every eligible
-    node's task at once, so docker/cli's own `--detach=false` waits for the first (cli/command/service/
-    progress/progress.go, `globalProgressUpdater`); the waits do the same. A global service whose
+    A global service's desired count is the nodes it has a live task on, which is zero until the
+    orchestrator creates them, so "every node runs one" would be met before anything ran. The
+    orchestrator creates every eligible node's task at once, so docker/cli's own `--detach=false` waits
+    for the first (cli/command/service/progress/progress.go, `globalProgressUpdater`); the waits do the
+    same. A global service whose
     constraints match no node therefore waits to its timeout, as the CLI does.
 
     Args:
