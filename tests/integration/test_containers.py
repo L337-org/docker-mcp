@@ -17,7 +17,7 @@ from docker_mcp.tools.containers import (
 )
 from docker_mcp.tools.resources import get_container_logs_resource, get_container_stats_resource
 from tests.integration.conftest import fail_unless_environmental_error
-from docker_mcp.tools.system import system_wait
+from docker_mcp.tools.system import _get_client, system_wait
 
 
 @pytest.fixture
@@ -161,7 +161,8 @@ def test_container_exec_returns_at_its_timeout_while_the_command_runs_on(exec_ta
     assert elapsed < 10, f"returned after {elapsed:.1f}s, not near its 2s timeout"
     assert (result["timed_out"], result["exit_code"]) == (True, None)
     assert result["output"] == "started\n"
-    assert result["exec_id"]
+    # What the description promises: the command is still running in the container after the call returns.
+    assert _get_client().api.exec_inspect(result["exec_id"])["Running"] is True
 
 
 def test_container_exec_cuts_a_large_output_at_max_bytes(exec_target):

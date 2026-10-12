@@ -506,8 +506,12 @@ def test_container_exec_demux_returns_stdout_and_stderr_apart():
 
 
 def test_container_exec_cuts_output_at_max_bytes_and_says_so():
-    stream = _ExecStream([b"abcdef", b"ghij"])
-    result, api = _exec(stream, inspect={"ExitCode": None, "Running": True}, max_bytes=8)
+    # The stream never ends by itself, like `yes`: reaching the cap has to stop the read and return at once,
+    # not sit out the timeout and report it.
+    stream = _ExecStream([b"abcdef", b"ghij"], block=True)
+    started = time.monotonic()
+    result, api = _exec(stream, inspect={"ExitCode": None, "Running": True}, max_bytes=8, timeout_seconds=5)
+    assert time.monotonic() - started < 2
     assert (result["output"], result["truncated"], result["timed_out"]) == ("abcdefgh", True, False)
     # The command may still be running once the read stops: the Engine has no exit code for it yet.
     assert result["exit_code"] is None
@@ -556,7 +560,14 @@ def test_container_exec_raises_a_read_failure():
 
 @pytest.mark.parametrize(
     ("kwargs", "message"),
-    [({"timeout_seconds": 0}, "timeout_seconds must be > 0"), ({"max_bytes": 0}, "max_bytes must be > 0")],
+    [
+        ({"timeout_seconds": 0}, "timeout_seconds must be a finite number above 0"),
+        # Thread.join raises on these, and only after the command has started.
+        ({"timeout_seconds": float("nan")}, "timeout_seconds must be a finite number above 0"),
+        ({"timeout_seconds": float("inf")}, "timeout_seconds must be a finite number above 0"),
+        ({"timeout_seconds": 1e10}, "timeout_seconds must be a finite number above 0"),
+        ({"max_bytes": 0}, "max_bytes must be > 0"),
+    ],
 )
 def test_container_exec_refuses_a_bad_bound_before_touching_the_daemon(kwargs, message):
     with _patch() as mock_client, pytest.raises(ToolInputError, match=message):

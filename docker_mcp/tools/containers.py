@@ -759,10 +759,11 @@ def container_exec(  # noqa: DOC101,DOC103,DOC501,DOC503
     Run a command inside a running container and return its output (for a compose service, prefer `compose_exec`).
 
     Waits for the command, bounded by `timeout_seconds` (default 120). A command still running then is
-    reported with `timed_out: true` and whatever output arrived - and keeps running in the container,
-    because the Engine has no way to stop an exec; `exec_id` identifies it. Output past `max_bytes`
-    (default 32 MiB) is cut off and reported with `truncated: true`. For a long-running or background
-    job, start a container with `container_run` and wait with `system_wait` instead.
+    reported with `timed_out: true` and whatever output arrived. Output past `max_bytes` (default 32 MiB)
+    is cut off with `truncated: true`, and the call returns at once rather than waiting for the command.
+    Either way `exit_code` is null and the command keeps running in the container, because the Engine has
+    no way to stop an exec: `container_top` shows it, and another `container_exec` can kill it. For a
+    long-running or background job, start a container with `container_run` and wait with `system_wait`.
 
     Security: when any element of `cmd` is agent-controlled, use an exec-form argv list that does not
     invoke a shell (e.g. `["python", "-V"]`, `["ls", path]`). A string `cmd`, or a shell form like
@@ -783,8 +784,13 @@ def container_exec(  # noqa: DOC101,DOC103,DOC501,DOC503
         dict: {"exit_code", "output", "timed_out", "truncated", "exec_id"}; output is combined stdout+stderr, or a
             [stdout, stderr] pair with demux=True; exit_code is null when the command had not finished
     """
-    if timeout_seconds <= 0:
-        raise ToolInputError(f"timeout_seconds must be > 0, got {timeout_seconds}.")
+    # Thread.join rejects NaN and anything past threading.TIMEOUT_MAX, and it runs only once the command has
+    # started, so a bound it would refuse is refused here instead, before anything runs.
+    if not (math.isfinite(timeout_seconds) and 0 < timeout_seconds <= threading.TIMEOUT_MAX):
+        raise ToolInputError(
+            f"timeout_seconds must be a finite number above 0 and at most {threading.TIMEOUT_MAX:.0f}, "
+            f"got {timeout_seconds}."
+        )
     if max_bytes <= 0:
         raise ToolInputError(f"max_bytes must be > 0, got {max_bytes}.")
     client = _get_client(host)
@@ -833,7 +839,7 @@ def container_exec(  # noqa: DOC101,DOC103,DOC501,DOC503
     reader.join(timeout_seconds)
     timed_out = reader.is_alive()
     close_stream_quietly(stream)
-    if not timed_out and not state["truncated"] and state["error"] is not None:
+    if not timed_out and state["error"] is not None:
         raise state["error"]
     with lock:
         out = buffers[0].decode("utf-8", errors="replace")
