@@ -846,8 +846,9 @@ def buildx_du(builder: str | None = None, host: str | None = None) -> list:  # n
     A large cache can easily generate more output than MAX_CLI_OUTPUT_BYTES; if that happens the
     captured stdout is truncated and this tool drops the final (partial) record before parsing.
     For an exhaustive accounting on a busy builder, run `docker buildx du --format '{{json .}}'`
-    on the host directly. Reclaim the cache with `buildx_prune` (`system_df` covers daemon-side
-    disk, not builder cache).
+    on the host directly. Reclaim the cache with `buildx_prune`. `system_df`'s `BuildCache` reports
+    the same records for a `docker`-driver builder without needing buildx; a builder on another
+    driver keeps its own cache, which only this tool reports.
     Raises RemoteFailureError if the CLI call fails.
 
     Args:

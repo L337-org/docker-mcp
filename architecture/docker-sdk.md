@@ -92,6 +92,22 @@ re-files the same rejected candidates forever. Removing an entry is a real decis
   would stay registered under a partial `DOCKER_MCP_SERVER_DISABLE` and refuse at call time, which
   SU.8.1 forbids. Roughly 1,600 bytes for a rare need. Re-propose only with evidence of demand, not
   because the routes are uncovered - that much is known.
+- **The `context_*` tools on `docker.context.ContextAPI`** - declined until docker-py fixes it, not
+  on the merits: leaving the CLI here is wanted, and it would let `context_create` refuse plaintext.
+  docker-py 7.2.0 writes and reads the CLI's own context store but disagrees with the CLI on three
+  points, each checkable against the published release before this is re-proposed:
+  `skip_tls_verify=True` makes `create_context` save `tcp://` as `http://`, so skipping verification
+  also drops encryption (`set_endpoint` passes `not skip_tls_verify` to `get_context_host` as its
+  `tls` flag); a description cannot be set, and one the CLI wrote is dropped on read, because
+  `Context.Metadata` rebuilds the metadata from the orchestrator alone; and `get_current_context()`
+  reads `currentContext` from `config.json` and ignores `DOCKER_CONTEXT`, which the CLI honours.
+  `DockerClient.from_context()` above is a separate decision and stays excluded either way.
+- **The `compose_*` tools on the Engine API**, by the `com.docker.compose.project` /
+  `com.docker.compose.service` labels - declined on the merits. Compose decides a lot on the client:
+  which compose files apply, how the project name is normalised, profiles, one-off and orphan
+  containers, and dependency order. A re-implementation would have to reproduce all of it, and
+  wherever it fell short its answers would quietly disagree with `docker compose`. docker-py has no
+  compose support to build on.
 - **`GET /images/{name}/attestations`** - no docker-py surface, deliberately not wrapped. Declined
   as covered: `buildx_imagetools_inspect` handles attestations, with `scout_sbom` and
   `registry_manifest` nearby. The residue is a local-only image, since imagetools resolves against a
