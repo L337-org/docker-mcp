@@ -483,7 +483,7 @@ def test_compose_port_raises_on_failure():
 # ---------- the compose wait (system_wait(kind="compose")) ----------
 
 
-def _compose_container(name, service, status, health=None, exit_code=0, oneoff=False):
+def _compose_container(name, service, status, health=None, exit_code=0, oneoff=False, depends_on=None):
     """A container as the Engine API lists it, with the labels compose stamps."""
     container = MagicMock()
     container.name = name
@@ -492,6 +492,8 @@ def _compose_container(name, service, status, health=None, exit_code=0, oneoff=F
         "com.docker.compose.service": service,
         "com.docker.compose.oneoff": "True" if oneoff else "False",
     }
+    if depends_on is not None:
+        container.labels["com.docker.compose.depends_on"] = depends_on
     state = {"Status": status, "ExitCode": exit_code}
     if health is not None:
         state["Health"] = {"Status": health}
@@ -515,7 +517,8 @@ def _compose_wait(readings, until, **kwargs):
 
 def test_compose_wait_reads_the_project_by_label_including_stopped_containers():
     _, listing, _ = _compose_wait([[_compose_container("app-web-1", "web", "running")]], "running")
-    listing.assert_called_with(all=True, filters={"label": "com.docker.compose.project=app"})
+    # `ignore_removed`: a container gone between the list and docker-py's inspect must not fail the wait.
+    listing.assert_called_with(all=True, ignore_removed=True, filters={"label": "com.docker.compose.project=app"})
 
 
 def test_compose_wait_running_is_met_once_every_container_runs():
@@ -582,6 +585,51 @@ def test_compose_wait_running_gives_up_at_once_when_a_container_has_stopped():
     result, _, sleep = _compose_wait([reading], "running")
     assert (result["met"], result["timed_out"]) == (False, False)
     sleep.assert_not_called()
+
+
+_WEB_AFTER_MIGRATE = "db:service_healthy:false,migrate:service_completed_successfully:false"
+
+
+@pytest.mark.parametrize("until", ["running", "healthy"])
+def test_compose_wait_accepts_a_completed_dependency_that_exited_zero(until):
+    # What `docker compose up --wait` accepts: a job another service waits on to complete may have exited 0.
+    reading = [
+        _compose_container("app-migrate-1", "migrate", "exited", exit_code=0),
+        _compose_container("app-db-1", "db", "running", health="healthy"),
+        _compose_container("app-web-1", "web", "running", depends_on=_WEB_AFTER_MIGRATE),
+    ]
+    result, _, _ = _compose_wait([reading], until)
+    assert (result["met"], result["timed_out"]) == (True, False)
+
+
+def test_compose_wait_fails_at_once_on_a_completed_dependency_that_exited_non_zero():
+    reading = [
+        _compose_container("app-migrate-1", "migrate", "exited", exit_code=1),
+        _compose_container("app-web-1", "web", "running", depends_on=_WEB_AFTER_MIGRATE),
+    ]
+    result, _, sleep = _compose_wait([reading], "running")
+    assert (result["met"], result["timed_out"]) == (False, False)
+    sleep.assert_not_called()
+
+
+def test_compose_wait_fails_at_once_on_a_stopped_service_nothing_waits_on_to_complete():
+    # `db` is a dependency, but `service_healthy` means it must stay up: exiting 0 is still a failure.
+    reading = [
+        _compose_container("app-db-1", "db", "exited", exit_code=0),
+        _compose_container("app-web-1", "web", "running", depends_on=_WEB_AFTER_MIGRATE),
+    ]
+    result, _, _ = _compose_wait([reading], "running")
+    assert (result["met"], result["timed_out"]) == (False, False)
+
+
+def test_compose_wait_reads_dependencies_from_containers_the_services_filter_leaves_out():
+    reading = [
+        _compose_container("app-migrate-1", "migrate", "exited", exit_code=0),
+        _compose_container("app-web-1", "web", "running", depends_on=_WEB_AFTER_MIGRATE),
+    ]
+    result, _, _ = _compose_wait([reading], "running", services=["migrate"])
+    assert result["met"] is True
+    assert [c["service"] for c in result["containers"]] == ["migrate"]
 
 
 def test_compose_wait_exited_reports_each_exit_code():

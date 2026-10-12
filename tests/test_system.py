@@ -1,3 +1,4 @@
+import inspect
 import os
 import threading
 import types
@@ -884,43 +885,65 @@ def test_system_wait_bad_until_is_refused_on_the_wire(on_the_wire):
         on_the_wire("system_wait", {"kind": "node", "target": "n1", "until": "healthy"})
 
 
-def test_describe_enabled_kinds_drops_only_the_disabled_kinds_lines(monkeypatch):
-    monkeypatch.setattr(system_module, "_WAIT_ENABLED", ("container", "compose"))
+def _fitted(monkeypatch, enabled, stub):
+    monkeypatch.setattr(system_module, "_WAIT_ENABLED", enabled)
+    return system_module._fit_to_enabled_kinds(stub)
 
-    def stub():
+
+def test_fit_to_enabled_kinds_drops_a_disabled_kinds_lines_args_and_parameters(monkeypatch):
+    def stub(kind, pattern=None, regex=False, username=None, password=None, limit=1000, poll_interval=None):
         """
+        Hand-tuned summary.
+
         Lead.
 
         - container: one
           continued
-        - service: two
+        - registry_tag: two
           continued
-        - compose: three
-        - registry_tag: four
-
-        Tail.
-        """
-
-    lines = [line.strip() for line in (system_module._describe_enabled_kinds(stub).__doc__ or "").splitlines()]
-    # The enabled kind keeps its continuation; the disabled one loses its bullet and its continuation.
-    assert [line for line in lines if line] == ["Lead.", "- container: one", "continued", "- compose: three", "Tail."]
-
-
-def test_describe_enabled_kinds_keeps_a_paragraph_straight_after_a_dropped_bullet(monkeypatch):
-    monkeypatch.setattr(system_module, "_WAIT_ENABLED", ("container",))
-
-    def stub():
-        """
-        - container: one
-        - stack: two
         Not a continuation: it is not indented past the bullet.
+
+        Args:
+            poll_interval: shared
+            pattern: container only
+                continued
+            username: registry only
+            limit: registry only
+                continued
+
+        Returns:
+            dict: the result
         """
 
-    lines = [line.strip() for line in (system_module._describe_enabled_kinds(stub).__doc__ or "").splitlines()]
-    assert [line for line in lines if line] == [
+    fitted = _fitted(monkeypatch, ("container",), stub)
+    lines = [line.strip() for line in (fitted.__doc__ or "").splitlines() if line.strip()]
+    assert lines == [
+        "Wait until a container exits or is healthy.",
+        "Lead.",
         "- container: one",
+        "continued",
         "Not a continuation: it is not indented past the bullet.",
+        "Args:",
+        "poll_interval: shared",
+        "pattern: container only",
+        "continued",
+        "Returns:",
+        "dict: the result",
     ]
+    assert list(inspect.signature(fitted).parameters) == ["kind", "pattern", "regex", "poll_interval"]
+
+
+def test_fit_to_enabled_kinds_changes_nothing_with_every_kind_enabled(monkeypatch):
+    def stub(kind, username=None):
+        """Hand-tuned summary.
+
+        - registry_tag: kept
+        """
+
+    before = stub.__doc__
+    fitted = _fitted(monkeypatch, tuple(system_module._WAIT_KINDS), stub)
+    assert fitted.__doc__ == before
+    assert list(inspect.signature(fitted).parameters) == ["kind", "username"]
 
 
 def test_system_wait_description_fits_what_claude_code_shows():

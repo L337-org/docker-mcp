@@ -267,11 +267,11 @@ def _parse_domains(value: str | None) -> frozenset[str]:
 # tool list the client has to reason about. This filters *registration*, not classification - disabled
 # tools still appear in the tool-catalog resource so the choice is auditable.
 #
-# `system` cannot be disabled. It holds what an agent needs to orient itself and recover (ping, version,
-# info, df, events, host_list, reconnect) and the one wait tool every other domain's waits go through, so
-# dropping it breaks far more than it saves. The one thing anyone could want from disabling it, keeping
-# the agent from logging in to a registry, DOCKER_MCP_SERVER_READONLY already gives. Naming it is not
-# silently accepted: it is reported as ignored, at startup and in the tool catalog.
+# `system` cannot be disabled. It holds what an agent needs to orient itself and recover, and the one
+# wait tool every other domain's waits go through, so dropping it breaks far more than it saves. The
+# one thing anyone could want from disabling it, keeping the agent from logging in to a registry,
+# DOCKER_MCP_SERVER_READONLY already gives. Naming it is not silently accepted: it is reported as
+# ignored, at startup and in the tool catalog.
 ALWAYS_ON_DOMAINS: frozenset[str] = frozenset({"system"})
 _REQUESTED_DISABLED_DOMAINS = _parse_domains(read_env("DOCKER_MCP_SERVER_DISABLE"))
 # What the switch asked for and was refused, for the startup warning and the catalog.

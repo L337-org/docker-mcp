@@ -6,6 +6,7 @@ configured hosts are reachable from here.
 
 # library of mcp tools relating to the system domain: daemon info/auth and client connection control
 
+import inspect
 import ipaddress
 import os
 import re
@@ -629,6 +630,23 @@ WaitUntil = Literal[  # pyright: ignore[reportInvalidTypeForm]
 ]
 # The registry is polled over HTTPS and may rate-limit; everything else is a local daemon read.
 _WAIT_DEFAULT_POLL = {"registry_tag": 5.0}
+# Parameters only one kind uses: they leave the schema with their kind, so nothing disabled is advertised.
+_WAIT_KIND_PARAMS: dict[str, tuple[str, ...]] = {
+    "container": ("pattern", "regex"),
+    "service": ("replicas",),
+    "compose": ("services",),
+    "registry_tag": ("username", "password", "limit"),
+}
+# The summary when some kind is disabled; with every kind enabled the hand-written first line stands,
+# because it is tuned for what `tool_list` matches within one source line.
+_WAIT_SUMMARY_CLAUSES = {
+    "container": "a container exits or is healthy",
+    "service": "a service converges",
+    "node": "a node is ready",
+    "stack": "a stack converges or is removed",
+    "compose": "a compose project is up or done",
+    "registry_tag": "a tag lands in a registry",
+}
 # What each kind's helper names its target, so the result can carry it once as `target`.
 _WAIT_TARGET_KEYS = frozenset({"container", "service", "node", "stack", "project", "repository", "tag"})
 
@@ -688,37 +706,59 @@ def _wait_check_options(kind: str, until: str, given: dict[str, bool]) -> None:
         raise ToolInputError(f"system_wait(kind={kind!r}, until={until!r}) does not take {stray}")
 
 
-def _describe_enabled_kinds[F: Callable[..., Any]](func: F) -> F:
-    """Drop the docstring lines of disabled kinds, so the description offers what the schema does.
+def _fit_to_enabled_kinds[F: Callable[..., Any]](func: F) -> F:
+    """Take a disabled kind out of the wait tool's description and schema, so neither offers it.
 
-    Applied beneath `@tool` so it runs first: the registered description is then the trimmed one,
-    while the source keeps every line for the linters that read it.
+    Drops the kind's bullet, the `Args:` entries and parameters only it uses, and rebuilds the summary
+    from the enabled kinds. Applied beneath `@tool` so it runs first: the registered description and
+    schema are the trimmed ones, while the source keeps every line for the linters that read it. With
+    every kind enabled it changes nothing.
 
     Args:
         func: the wait tool
 
     Returns:
-        Callable: the same function, its `__doc__` holding only the enabled kinds' lines
+        Callable: the same function, its `__doc__` and `__signature__` fitted to the enabled kinds
     """
-    kept, skipping, bullet_indent = [], False, 0
+    disabled = [kind for kind in _WAIT_KINDS if kind not in _WAIT_ENABLED]
+    # Nothing to fit with every kind enabled, and nothing to advertise with none: the tool is then not
+    # registered at all, and there is no enabled kind to build a summary from.
+    if not disabled or not _WAIT_ENABLED:
+        return func
+    dropped = {param for kind in disabled for param in _WAIT_KIND_PARAMS.get(kind, ())}
+    kept, skipping, item_indent, in_args = [], False, 0, False
     for line in (func.__doc__ or "").splitlines(keepends=True):
-        bullet = re.match(r"^(\s*)- (\w+):", line)
+        stripped = line.strip()
         indent = len(line) - len(line.lstrip())
+        if stripped.endswith(":") and " " not in stripped:
+            in_args = stripped == "Args:"
+        bullet = re.match(r"^(\s*)- (\w+):", line)
+        entry = re.match(r"^(\s*)(\w+): ", line) if in_args else None
         if bullet:
-            bullet_indent = len(bullet.group(1))
-            skipping = bullet.group(2) in _WAIT_KINDS and bullet.group(2) not in _WAIT_ENABLED
-        elif not line.strip() or indent <= bullet_indent:
-            # A continuation is indented past its bullet. Measured relative to the bullet, because the
-            # compiler dedents docstrings (Python 3.13+), so absolute columns differ by context.
+            item_indent = len(bullet.group(1))
+            skipping = bullet.group(2) in disabled
+        elif entry and entry.group(2) in func.__code__.co_varnames:
+            item_indent = len(entry.group(1))
+            skipping = entry.group(2) in dropped
+        elif not stripped or indent <= item_indent:
+            # A continuation is indented past its item. Measured relative to the item, because the compiler
+            # dedents docstrings (Python 3.13+), so absolute columns differ by context.
             skipping = False
         if not skipping:
             kept.append(line)
-    func.__doc__ = "".join(kept)
+    clauses = [_WAIT_SUMMARY_CLAUSES[kind] for kind in _WAIT_ENABLED]
+    summary = clauses[0] if len(clauses) == 1 else ", ".join(clauses[:-1]) + " or " + clauses[-1]
+    body = "".join(kept).lstrip("\n").split("\n", 1)[1]
+    func.__doc__ = f"Wait until {summary}.\n{body}"
+    signature = inspect.signature(func)
+    func.__signature__ = signature.replace(  # pyright: ignore[reportFunctionMemberAccess]
+        parameters=[param for name, param in signature.parameters.items() if name not in dropped]
+    )
     return func
 
 
 @tool(enabled=bool(_WAIT_ENABLED))
-@_describe_enabled_kinds
+@_fit_to_enabled_kinds
 def system_wait(  # noqa: DOC101,DOC103,DOC501,DOC503
     kind: WaitKind,  # pyright: ignore[reportInvalidTypeForm] - built from the enabled kinds at import
     target: str,
@@ -737,24 +777,27 @@ def system_wait(  # noqa: DOC101,DOC103,DOC501,DOC503
     """
     Wait until a container/compose project exits or is healthy, a service/stack converges, a node is ready, a tag lands.
 
-    The one wait tool: action tools return once their work is started, and this waits for the result.
-    Never raises on timeout. `met: false` without `timed_out` means the condition can no longer be met
-    (the container exited, has no HEALTHCHECK, or the stack is not deployed): `detail` says why.
+    The one wait tool: action tools return once their work is started, and this waits for the result. For
+    a status read without waiting use `container_inspect`, `service_ps` or `compose_ps`; to follow changes
+    as they happen, `system_events`. Never raises on timeout. `met: false` without `timed_out` means the
+    condition can no longer be met (the target stopped, has nothing to wait for, or is gone): `detail`
+    says why.
 
     `kind`: `target` - `until` values:
     - container: id or name - not-running (exit code in `detail.status_code`), next-exit, removed,
-      healthy, log-match (finds `pattern` in recent logs)
+      healthy (no HEALTHCHECK: not met), log-match (finds `pattern` in recent logs)
     - service: id or name - running (all desired tasks, or `replicas`), update-converged
     - node: id or hostname - ready, down, disconnected, unknown
-    - stack: stack name - converged (every service's tasks running), removed (no services or live tasks)
-    - compose: project name from `compose_list` - running, healthy, exited (exit codes in `detail`)
-    - registry_tag: "repository:tag" - present (polls the registry over HTTPS; no daemon, no `host`)
+    - stack: stack name - converged (every service's tasks running, updates finished), removed
+    - compose: project name from `compose_list` - running, healthy (no HEALTHCHECK: running is enough;
+      a job others wait on may have exited 0), exited (exit codes in `detail`); `services` narrows it
+    - registry_tag: "repository:tag" - present (polls the registry over HTTPS every 5 s by default; no
+      daemon, no `host`)
 
     Args:
-        poll_interval: Seconds between checks (default 2; 5 for registry_tag), capped by the time left
+        poll_interval: Seconds between checks (default 2, unless the kind says otherwise), capped by the time left
         pattern: log-match: a plain substring, or with `regex=True` a regular expression (trusted patterns
             only: a hostile one run over attacker-influenced logs can exhaust CPU)
-        services: compose: wait on only these services
         username: registry_tag: overrides DOCKER_MCP_SERVER_REGISTRY_USERNAME
         password: registry_tag: overrides DOCKER_MCP_SERVER_REGISTRY_PASSWORD
         limit: registry_tag: most tags read per poll; a tag beyond it is never found

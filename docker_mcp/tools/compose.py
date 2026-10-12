@@ -762,10 +762,13 @@ _COMPOSE_PROJECT_LABEL = "com.docker.compose.project"
 _COMPOSE_SERVICE_LABEL = "com.docker.compose.service"
 # `compose run` containers carry this as the string "True"; they are not part of the project's state.
 _COMPOSE_ONEOFF_LABEL = "com.docker.compose.oneoff"
+# On a dependent container: "<service>:<condition>:<restart>" per dependency, comma-separated, e.g.
+# "migrate:service_completed_successfully:false" (observed with Compose 5.5.1).
+_COMPOSE_DEPENDS_ON_LABEL = "com.docker.compose.depends_on"
 _STOPPED = ("exited", "dead")
 
 
-def _compose_containers(project: str, services: list[str] | None, host: str | None) -> list[dict]:
+def _compose_containers(project: str, services: list[str] | None, host: str | None) -> tuple[list[dict], set[str]]:
     """Read the state of a compose project's service containers through the Engine API.
 
     Args:
@@ -774,15 +777,27 @@ def _compose_containers(project: str, services: list[str] | None, host: str | No
         host: the host label to target, or None for the default
 
     Returns:
-        list: one {"name", "service", "status", "health", "exit_code"} per container, sorted by name;
-            `exit_code` is set only once the container has stopped
+        tuple: one {"name", "service", "status", "health", "exit_code"} per container, sorted by name and
+            with `exit_code` set only once it has stopped; and the services some other service depends on
+            with `condition: service_completed_successfully`, which are meant to exit
     """
-    found = _get_client(host).containers.list(all=True, filters={"label": f"{_COMPOSE_PROJECT_LABEL}={project}"})
-    rows = []
+    # `ignore_removed`: a container can go between the list and docker-py's inspect of it (a `compose
+    # run --rm` one-off, or a recreate), which would otherwise fail the whole wait with NotFound.
+    found = _get_client(host).containers.list(
+        all=True, ignore_removed=True, filters={"label": f"{_COMPOSE_PROJECT_LABEL}={project}"}
+    )
+    rows, completing = [], set()
     for container in found:
         labels = container.labels or {}
+        if labels.get(_COMPOSE_ONEOFF_LABEL) == "True":
+            continue
+        # Read before the `services` filter: the dependency is declared on the dependent's container.
+        for dependency in filter(None, (labels.get(_COMPOSE_DEPENDS_ON_LABEL) or "").split(",")):
+            name, _, rest = dependency.partition(":")
+            if rest.split(":", 1)[0] == "service_completed_successfully":
+                completing.add(name)
         service = labels.get(_COMPOSE_SERVICE_LABEL)
-        if labels.get(_COMPOSE_ONEOFF_LABEL) == "True" or (services and service not in services):
+        if services and service not in services:
             continue
         state = container.attrs.get("State") or {}
         status = state.get("Status")
@@ -795,31 +810,38 @@ def _compose_containers(project: str, services: list[str] | None, host: str | No
                 "exit_code": state.get("ExitCode") if status in _STOPPED else None,
             }
         )
-    return sorted(rows, key=lambda row: row["name"])
+    return sorted(rows, key=lambda row: row["name"]), completing
 
 
-def _compose_condition(until: str, rows: list[dict]) -> bool | None:
+def _compose_condition(until: str, rows: list[dict], completing: set[str]) -> bool | None:
     """Decide a compose wait from one reading: met, cannot be met, or not yet.
 
     Args:
         until: "running", "healthy" or "exited"
         rows: the project's containers, from `_compose_containers`
+        completing: services another service waits on to complete successfully
 
     Returns:
-        bool or None: True when met, False when it can no longer be met (nothing to wait on, or a
-            container stopped or turned unhealthy), None while it is still settling
+        bool or None: True when met, False when it can no longer be met (nothing to wait on, a container
+            stopped that was not meant to, a job that exited non-zero, or an unhealthy container), None
+            while it is still settling
     """
     if not rows:
         return False
     if until == "exited":
         return True if all(row["status"] in _STOPPED for row in rows) else None
-    if any(row["status"] in _STOPPED or row["health"] == "unhealthy" for row in rows):
+    # What `docker compose up --wait` accepts (docker/compose `getDependencyCondition`): a service another
+    # depends on with `service_completed_successfully` only has to exit 0; any other stop is a failure.
+    stopped = [row for row in rows if row["status"] in _STOPPED]
+    if any(row["service"] not in completing or row["exit_code"] != 0 for row in stopped):
         return False
+    if any(row["health"] == "unhealthy" for row in rows):
+        return False
+    live = [row for row in rows if row["status"] not in _STOPPED]
     if until == "running":
-        return True if all(row["status"] == "running" for row in rows) else None
-    # "healthy": a container with a HEALTHCHECK must report healthy, one without must be running, which
-    # is what `docker compose up --wait` checks.
-    ready = all(row["health"] == "healthy" or (row["health"] is None and row["status"] == "running") for row in rows)
+        return True if all(row["status"] == "running" for row in live) else None
+    # "healthy": a container with a HEALTHCHECK must report healthy, one without must be running.
+    ready = all(row["health"] == "healthy" or (row["health"] is None and row["status"] == "running") for row in live)
     return True if ready else None
 
 
@@ -834,9 +856,12 @@ def _wait_compose(
     """Wait for a compose project's containers; `system_wait(kind="compose")` is the tool that calls this.
 
     Never raises on timeout. Reads the containers by their compose labels through the Engine API, so
-    no compose plugin is needed, and leaves out `compose run` one-off containers. Returns promptly
-    with `met: false` when the condition can no longer be met: no container carries the project
-    label, or, for "running" and "healthy", a container has stopped or reports unhealthy.
+    no compose plugin is needed, and leaves out `compose run` one-off containers. "running" and
+    "healthy" accept what `docker compose up --wait` accepts: a service another depends on with
+    `service_completed_successfully` may have exited 0, and for "healthy" a container without a
+    HEALTHCHECK counts once it runs. Returns promptly with `met: false` when the condition can no
+    longer be met: no container carries the project label, a container stopped that was not meant to,
+    a job exited non-zero, or a container reports unhealthy.
 
     Args:
         project: the compose project name, as `compose_list` reports it
@@ -860,8 +885,8 @@ def _wait_compose(
     start = time.monotonic()
     deadline = start + timeout_seconds
     while True:
-        rows = _compose_containers(project, services, host)
-        verdict = _compose_condition(until, rows)
+        rows, completing = _compose_containers(project, services, host)
+        verdict = _compose_condition(until, rows, completing)
         remaining = deadline - time.monotonic()
         if verdict is not None or remaining <= 0:
             return {

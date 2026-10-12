@@ -16,6 +16,8 @@
 # that stages its working directory; the queries and `stack rm` name nothing local.
 
 import time
+
+import docker.errors
 from typing import Literal, get_args
 
 from docker_mcp.exceptions import ToolInputError
@@ -284,6 +286,10 @@ _STACK_LABEL = "com.docker.stack.namespace"
 _ACTIVE_TASK_STATES = frozenset(
     {"new", "allocated", "pending", "assigned", "accepted", "preparing", "ready", "starting", "running"}
 )
+# `UpdateStatus.State` values after which a rolling update is over, and those where it stopped on a failure
+# and will not move again without someone acting (moby `api/types/swarm` UpdateState).
+_UPDATE_DONE = frozenset({"completed", "rollback_completed"})
+_UPDATE_STUCK = frozenset({"paused", "rollback_paused"})
 
 
 def _wait_stack(
@@ -297,9 +303,10 @@ def _wait_stack(
 
     Never raises on timeout. Finds the stack's services and tasks by the label `docker stack deploy`
     stamps, through the Engine API. "converged" is met when every service in the stack has its
-    desired number of running tasks, and returns promptly with `met: false` when no service carries
-    the label. "removed" is met when no service carries the label and none of its tasks is still
-    starting or running.
+    desired number of running tasks and no rolling update still in progress; it returns promptly with
+    `met: false` when no service carries the label, or when an update has paused on a failure. "removed"
+    is met when no service carries the label and none of its tasks is still starting or running. A
+    service removed while it is being read is treated as gone.
 
     Args:
         name: the stack name
@@ -310,8 +317,8 @@ def _wait_stack(
 
     Returns:
         dict: {"stack", "until", "met", "timed_out", "services", "active_tasks", "waited_seconds"}, where
-            `services` is one {"service", "running_tasks", "desired_tasks", "failed_tasks", "update_state"}
-            per service still present
+            `services` has one row per service still present: {"service", "running_tasks", "desired_tasks",
+            "failed_tasks", "update_state"} for "converged", and only {"service"} for "removed"
 
     Raises:
         ToolInputError: a negative timeout or a non-positive poll interval
@@ -328,7 +335,15 @@ def _wait_stack(
         services = client.services.list(filters=label_filter)
         rows = []
         for service in services:
-            summary = _read_service_task_summary(service.id, host=host)
+            if until == "removed":
+                # Only whether anything remains matters here, so skip the per-service reads.
+                rows.append({"service": service.name})
+                continue
+            try:
+                summary = _read_service_task_summary(service.id, host=host)
+            except docker.errors.NotFound:
+                # Removed between the list and this read (a `stack rm` or a pruning deploy elsewhere).
+                continue
             rows.append(
                 {
                     "service": service.name,
@@ -344,11 +359,19 @@ def _wait_stack(
             for task in client.api.tasks(filters=label_filter)
             if (task.get("Status") or {}).get("State") in _ACTIVE_TASK_STATES
         )
+        verdict: bool | None
         if until == "converged":
-            # No service at all is not "converging": nothing was deployed under that name.
-            verdict: bool | None = (
-                False if not rows else (True if all(r["running_tasks"] >= r["desired_tasks"] for r in rows) else None)
-            )
+            # No service at all is not "converging": nothing was deployed under that name. A rolling update
+            # keeps the old tasks running until each is replaced, so the task count alone is met partway
+            # through a redeploy; a service is settled only once its update, if any, has finished too.
+            if not rows or any(r["update_state"] in _UPDATE_STUCK for r in rows):
+                verdict = False
+            elif all(
+                r["running_tasks"] >= r["desired_tasks"] and r["update_state"] in (None, *_UPDATE_DONE) for r in rows
+            ):
+                verdict = True
+            else:
+                verdict = None
         else:  # "removed"
             verdict = True if not rows and active_tasks == 0 else None
         remaining = deadline - time.monotonic()

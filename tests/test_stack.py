@@ -310,6 +310,64 @@ def test_stack_wait_converged_once_every_service_has_its_tasks():
     assert sleep.call_count == 1
 
 
+def test_stack_wait_converged_waits_for_a_rolling_update_to_finish():
+    # During a rollout the old tasks keep running until replaced, so the count alone is met too early.
+    web = _service("shop_web")
+    result, _, sleep = _stack_wait(
+        "converged",
+        [[web], [web]],
+        summaries={"id-shop_web": [_summary(3, 3, update_state="updating"), _summary(3, 3, update_state="completed")]},
+    )
+    assert result["met"] is True
+    assert sleep.call_count == 1
+
+
+@pytest.mark.parametrize("state", ["paused", "rollback_paused"])
+def test_stack_wait_converged_gives_up_at_once_on_a_paused_update(state):
+    web = _service("shop_web")
+    result, _, sleep = _stack_wait(
+        "converged", [[web]], summaries={"id-shop_web": [_summary(3, 3, update_state=state)]}
+    )
+    assert (result["met"], result["timed_out"]) == (False, False)
+    sleep.assert_not_called()
+
+
+def test_stack_wait_skips_a_service_removed_while_it_is_read():
+    import docker.errors
+
+    web, db = _service("shop_web"), _service("shop_db")
+
+    def summary(service_id, host=None):
+        if service_id == "id-shop_db":
+            raise docker.errors.NotFound("service gone")
+        return _summary(1, 1)
+
+    with (
+        patch("docker_mcp.tools.stack._get_client") as get_client,
+        patch("docker_mcp.tools.stack._read_service_task_summary", side_effect=summary),
+        patch("docker_mcp.tools.stack.time.sleep"),
+    ):
+        get_client.return_value.services.list.return_value = [web, db]
+        get_client.return_value.api.tasks.return_value = []
+        result = _wait_stack("shop", "converged", 5, 0.01)
+    assert result["met"] is True
+    assert [r["service"] for r in result["services"]] == ["shop_web"]
+
+
+def test_stack_wait_removed_reads_no_per_service_summary():
+    web = _service("shop_web")
+    with (
+        patch("docker_mcp.tools.stack._get_client") as get_client,
+        patch("docker_mcp.tools.stack._read_service_task_summary") as summary,
+        patch("docker_mcp.tools.stack.time.sleep"),
+    ):
+        get_client.return_value.services.list.side_effect = [[web], []]
+        get_client.return_value.api.tasks.return_value = []
+        result = _wait_stack("shop", "removed", 5, 0.01)
+    assert result["met"] is True
+    summary.assert_not_called()
+
+
 def test_stack_wait_converged_with_no_services_is_not_met_and_does_not_poll():
     result, _, sleep = _stack_wait("converged", [[]])
     assert (result["met"], result["timed_out"], result["services"]) == (False, False, [])
@@ -335,7 +393,7 @@ def test_stack_wait_removed_waits_for_the_last_live_task_to_stop():
 
 def test_stack_wait_removed_is_not_met_while_a_service_remains():
     web = _service("shop_web")
-    result, _, _ = _stack_wait("removed", [[web]], summaries={"id-shop_web": [_summary(0, 0)]}, timeout_seconds=0.0)
+    result, _, _ = _stack_wait("removed", [[web]], timeout_seconds=0.0)
     assert (result["met"], result["timed_out"]) == (False, True)
 
 

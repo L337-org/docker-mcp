@@ -79,3 +79,32 @@ def test_system_wait_stack_converges_then_is_removed(deployed_stack):
     removed = system_wait(kind="stack", target=deployed_stack, until="removed", timeout_seconds=120, poll_interval=1.0)
     assert (removed["met"], removed["timed_out"]) == (True, False)
     assert removed["detail"] == {"services": [], "active_tasks": 0}
+
+
+def test_system_wait_stack_converged_waits_out_a_rolling_update(tmp_path):
+    # A redeploy keeps the old tasks running until each is replaced, so a count-only check would be met
+    # while the update is still rolling. One replica at a time, 3 s apart, makes the rollout observable.
+    name = f"dmcp-it-{uuid.uuid4().hex[:8]}"
+    compose_file = tmp_path / "stack.yml"
+
+    def write(command):
+        compose_file.write_text(
+            "services:\n  sleeper:\n    image: alpine:3\n"
+            f"    command: {command}\n"
+            "    deploy:\n      replicas: 3\n      update_config:\n        parallelism: 1\n        delay: 3s\n",
+            encoding="utf-8",
+        )
+
+    try:
+        write('["sleep", "300"]')
+        assert stack_deploy(name, compose_files=[str(compose_file)])["returncode"] == 0
+        first = system_wait(kind="stack", target=name, until="converged", timeout_seconds=120, poll_interval=1.0)
+        assert first["met"] is True
+
+        write('["sleep", "301"]')
+        assert stack_deploy(name, compose_files=[str(compose_file)])["returncode"] == 0
+        second = system_wait(kind="stack", target=name, until="converged", timeout_seconds=180, poll_interval=1.0)
+        assert (second["met"], second["timed_out"]) == (True, False)
+        assert [s["update_state"] for s in second["detail"]["services"]] == ["completed"]
+    finally:
+        stack_remove([name])

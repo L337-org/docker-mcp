@@ -746,6 +746,21 @@ def test_system_wait_offers_only_the_kinds_whose_domain_is_enabled():
     assert {"healthy", "log-match", "update-converged", "exited", "removed"} <= set(props["until"]["enum"])
 
 
+def test_system_wait_advertises_nothing_of_a_disabled_kind():
+    code = (
+        "import asyncio; from docker_mcp.server import mcp\n"
+        "t = {t.name: t for t in asyncio.run(mcp.list_tools())}['system_wait']\n"
+        "print(json.dumps({'description': t.description, 'params': list(t.input_schema['properties'])}))"
+    )
+    advertised = json.loads(_in_child(code, ["DOCKER_MCP_SERVER_DISABLE=registry,stack"]))
+    description = advertised["description"]
+    for gone in ("registry_tag", "- stack:", "username", "password", "limit", "a tag lands", "REGISTRY"):
+        assert gone not in description, gone
+    assert description.startswith("Wait until a container exits or is healthy")
+    assert not {"username", "password", "limit"} & set(advertised["params"])
+    assert {"pattern", "regex", "replicas", "services"} <= set(advertised["params"])
+
+
 def test_system_wait_is_unregistered_but_catalogued_when_every_kind_is_disabled():
     env = ["DOCKER_MCP_SERVER_DISABLE=containers,services,nodes,stack,compose,registry"]
     assert _wait_schema(env) is None
