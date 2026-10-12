@@ -28,7 +28,7 @@ from docker_mcp.tools._cli import (
     safe_positional,
     should_remote_exec,
 )
-from docker_mcp.tools.services import _read_service_task_summary
+from docker_mcp.tools.services import _awaiting_global_tasks, _read_service_task_summary
 from docker_mcp.tools.system import _get_client
 
 # deploy resolves image digests against the registry and submits the service specs; the rollout itself
@@ -366,7 +366,8 @@ def _wait_stack(
 
     Never raises on timeout. Finds the stack's services and tasks by the label `docker stack deploy`
     stamps, through the Engine API. "converged" is met when every service in the stack has its
-    desired number of running tasks on its current spec and no rolling update still in progress; it
+    desired number of running tasks on its current spec (a global service, at least one) and no rolling
+    update still in progress; it
     returns promptly with `met: false` when no service carries the label, or when an update has paused
     on a failure. "removed" is met when no service carries the label and none of its tasks is still
     starting or running. A service removed while it is being read is treated as gone.
@@ -397,6 +398,7 @@ def _wait_stack(
     while True:
         services = client.services.list(filters=label_filter)
         rows = []
+        awaiting: set[str] = set()
         for service in services:
             if until == "removed":
                 # Only whether anything remains matters here, so skip the per-service reads.
@@ -412,6 +414,8 @@ def _wait_stack(
             # Both counts come from this one read rather than the summary's own: a task that starts between
             # two reads would otherwise be met on as current while the row still reports nothing running.
             running = [task for task in running if (task.get("Status") or {}).get("State") == "running"]
+            if _awaiting_global_tasks(summary):
+                awaiting.add(service.name)
             rows.append(
                 {
                     "service": service.name,
@@ -438,7 +442,7 @@ def _wait_stack(
             # count only tasks on the current spec, and also wait out an update swarm has recorded.
             if not rows or any(r["update_state"] in _UPDATE_STUCK for r in rows):
                 verdict = False
-            elif all(
+            elif not awaiting and all(
                 r["current_tasks"] >= r["desired_tasks"] and r["update_state"] in (None, *_UPDATE_DONE) for r in rows
             ):
                 verdict = True

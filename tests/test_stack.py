@@ -483,7 +483,13 @@ def _running(*specs):
 
 
 def _summary(running, desired, update_state=None):
-    return {"running_tasks": running, "desired_tasks": desired, "failed_tasks": [], "update_state": update_state}
+    return {
+        "mode": "replicated",
+        "running_tasks": running,
+        "desired_tasks": desired,
+        "failed_tasks": [],
+        "update_state": update_state,
+    }
 
 
 def _task(state):
@@ -593,6 +599,31 @@ def test_stack_wait_does_not_count_a_task_desired_running_that_is_not_yet():
     )
     [row] = result["services"]
     assert (result["met"], row["running_tasks"], row["current_tasks"]) == (False, 0, 0)
+
+
+def _global_summary(running):
+    return {**_summary(running, running), "mode": "global"}
+
+
+def test_stack_wait_converged_waits_for_a_global_service_to_have_tasks():
+    # Right after a deploy a global service has no tasks, so 0 current >= 0 desired would be met at once.
+    agent = _service("shop_agent")
+    result, _, sleep = _stack_wait(
+        "converged",
+        [[agent], [agent]],
+        summaries={"id-shop_agent": [_global_summary(0), _global_summary(2)]},
+    )
+    assert result["met"] is True
+    assert [(r["running_tasks"], r["desired_tasks"]) for r in result["services"]] == [(2, 2)]
+    sleep.assert_called_once()
+
+
+def test_stack_wait_converged_with_no_global_task_times_out_unmet():
+    agent = _service("shop_agent")
+    result, _, _ = _stack_wait(
+        "converged", [[agent]], summaries={"id-shop_agent": [_global_summary(0)]}, timeout_seconds=0
+    )
+    assert (result["met"], result["timed_out"]) == (False, True)
 
 
 def test_runs_current_spec_ignores_the_runtime_key_tasks_do_not_carry():

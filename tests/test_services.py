@@ -344,6 +344,32 @@ def test_wait_service_running_already_converged_returns_immediately():
     sleep.assert_not_called()
 
 
+def test_wait_service_running_waits_for_a_global_service_to_have_tasks():
+    # Just after creation a global service has no tasks, so its desired count is 0 and 0 >= 0 would be met.
+    none_yet = _task_service({"Global": {}}, [])
+    started = _task_service({"Global": {}}, [{"ID": "t1", "Status": {"State": "running"}}])
+    with _patch() as mock_client, patch("docker_mcp.tools.services.time.sleep") as sleep:
+        mock_client.return_value.services.get.side_effect = [none_yet, started]
+        result = wait_service("agent", until="running", timeout_seconds=10, poll_interval=0.01)
+    assert (result["met"], result["running_tasks"], result["desired_tasks"]) == (True, 1, 1)
+    sleep.assert_called_once()
+
+
+def test_wait_service_running_with_no_global_task_times_out_unmet():
+    with _patch() as mock_client, patch("docker_mcp.tools.services.time.sleep"):
+        mock_client.return_value.services.get.return_value = _task_service({"Global": {}}, [])
+        result = wait_service("agent", until="running", timeout_seconds=0)
+    assert (result["met"], result["timed_out"]) == (False, True)
+
+
+def test_wait_service_running_a_replicated_service_scaled_to_zero_is_met():
+    with _patch() as mock_client, patch("docker_mcp.tools.services.time.sleep") as sleep:
+        mock_client.return_value.services.get.return_value = _task_service({"Replicated": {"Replicas": 0}}, [])
+        result = wait_service("web", until="running", timeout_seconds=5)
+    assert result["met"] is True
+    sleep.assert_not_called()
+
+
 def test_wait_service_running_polls_through_scale_up():
     early = _task_service({"Replicated": {"Replicas": 3}}, [{"ID": "t1", "Status": {"State": "running"}}])
     converged = _task_service(

@@ -6,7 +6,7 @@ import uuid
 
 import pytest
 
-from docker_mcp.tools.system import system_info, system_wait
+from docker_mcp.tools.system import _get_client, system_info, system_wait
 from docker_mcp.tools.stack import stack_deploy, stack_list, stack_ps, stack_remove, stack_services
 
 # A minimal stack: one alpine service that sleeps. `deploy.replicas` is what makes it a swarm service.
@@ -56,7 +56,8 @@ def test_stack_lifecycle(deployed_stack):
         "running",
         None,
     )
-    assert task["node"] == system_info()["Name"]
+    # The hostname of whichever node runs it, which on a multi-node swarm need not be this one.
+    assert task["node"] in {n.attrs["Description"]["Hostname"] for n in _get_client().nodes.list()}
 
 
 def test_stack_remove_reports_what_it_removed_and_what_was_not_there(deployed_stack):
@@ -71,6 +72,38 @@ def test_stack_remove_reports_what_it_removed_and_what_was_not_there(deployed_st
         "failed": [],
     }
     assert {"name": deployed_stack, "services": 1} not in stack_list()
+
+
+def test_stack_remove_removes_the_secrets_and_configs_a_stack_created(tmp_path):
+    # File-based secrets and configs are created by the deploy and carry the stack label, so removal must
+    # take them too - after the service using them, or the Engine refuses them as in use.
+    name = f"dmcp-it-{uuid.uuid4().hex[:8]}"
+    (tmp_path / "token.txt").write_text(uuid.uuid4().hex, encoding="utf-8")
+    (tmp_path / "app.conf").write_text("level=debug\n", encoding="utf-8")
+    compose_file = tmp_path / "stack.yml"
+    compose_file.write_text(
+        'services:\n  sleeper:\n    image: alpine:3\n    command: ["sleep", "300"]\n'
+        "    secrets: [token]\n    configs: [app]\n"
+        "secrets:\n  token:\n    file: ./token.txt\n"
+        "configs:\n  app:\n    file: ./app.conf\n",
+        encoding="utf-8",
+    )
+    try:
+        assert stack_deploy(name, compose_files=[str(compose_file)], cwd=str(tmp_path))["returncode"] == 0
+        assert system_wait(kind="stack", target=name, until="converged", timeout_seconds=120, poll_interval=1.0)["met"]
+        [result] = stack_remove([name])
+        assert result["failed"] == [], result
+        assert result["removed"] == {
+            "services": [f"{name}_sleeper"],
+            "secrets": [f"{name}_token"],
+            "configs": [f"{name}_app"],
+            "networks": [f"{name}_default"],
+        }
+        assert system_wait(kind="stack", target=name, until="removed", timeout_seconds=120, poll_interval=1.0)["met"]
+        [again] = stack_remove([name])
+        assert again["found"] is False, again
+    finally:
+        stack_remove([name])
 
 
 def test_system_wait_stack_converges_then_is_removed(deployed_stack):

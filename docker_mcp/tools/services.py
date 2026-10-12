@@ -98,6 +98,24 @@ def _read_service_task_summary(id_or_name: str, host: str | None = None) -> dict
     }
 
 
+def _awaiting_global_tasks(summary: dict) -> bool:
+    """Whether a global service has no tasks yet, so its desired count says nothing about its nodes.
+
+    A global service's desired count is the tasks it has, which is zero until the orchestrator creates
+    them, so "every task runs" would be met before anything ran. The orchestrator creates every eligible
+    node's task at once, so docker/cli's own `--detach=false` waits for the first (cli/command/service/
+    progress/progress.go, `globalProgressUpdater`); the waits do the same. A global service whose
+    constraints match no node therefore waits to its timeout, as the CLI does.
+
+    Args:
+        summary: a `_read_service_task_summary` result
+
+    Returns:
+        bool: True for a global service with no task to count yet
+    """
+    return summary["mode"] == "global" and summary["desired_tasks"] == 0
+
+
 @tool()
 def service_create(  # noqa: DOC101,DOC103
     image: str, command: str | list | None = None, extra_kwargs: dict | None = None, host: str | None = None
@@ -529,7 +547,7 @@ def _wait_service(
 
     Never raises on timeout. "running" polls task state with the same counting as
     `service-tasks://{id_or_name}` until running tasks reach the desired count, or every returned task
-    runs for a global service. "update-converged" polls `UpdateStatus.State` until it is `completed` or
+    runs for a global service once it has any. "update-converged" polls `UpdateStatus.State` until it is `completed` or
     `rollback_completed`, and returns promptly with `met: false` for a service never updated.
 
     Args:
@@ -565,7 +583,8 @@ def _wait_service(
             "update_state": summary["update_state"],
         }
         if until == "running":
-            if summary["running_tasks"] >= desired:
+            awaiting = replicas is None and _awaiting_global_tasks(summary)
+            if summary["running_tasks"] >= desired and not awaiting:
                 return _service_wait_result(id_or_name, until, met=True, start=start, **common)
         else:  # "update-converged"
             update_state = summary["update_state"]
