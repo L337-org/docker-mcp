@@ -547,8 +547,9 @@ def _wait_service(
 
     Never raises on timeout. "running" polls task state with the same counting as
     `service-tasks://{id_or_name}` until running tasks reach the desired count, or every returned task
-    runs for a global service once it has any. "update-converged" polls `UpdateStatus.State` until it is `completed` or
-    `rollback_completed`, and returns promptly with `met: false` for a service never updated.
+    runs for a global service once it has any. "update-converged" polls `UpdateStatus.State` until it
+    is `completed` or `rollback_completed`, and returns promptly with `met: false` for a service never
+    updated.
 
     Args:
         id_or_name: the service to wait on

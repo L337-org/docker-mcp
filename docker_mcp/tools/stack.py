@@ -367,10 +367,10 @@ def _wait_stack(
     Never raises on timeout. Finds the stack's services and tasks by the label `docker stack deploy`
     stamps, through the Engine API. "converged" is met when every service in the stack has its
     desired number of running tasks on its current spec (a global service, at least one) and no rolling
-    update still in progress; it
-    returns promptly with `met: false` when no service carries the label, or when an update has paused
-    on a failure. "removed" is met when no service carries the label and none of its tasks is still
-    starting or running. A service removed while it is being read is treated as gone.
+    update still in progress; it returns promptly with `met: false` when no service carries the label,
+    or when an update has paused on a failure. "removed" is met when no service carries the label and
+    none of its tasks is still starting or running. A service removed while it is being read is treated
+    as gone.
 
     Args:
         name: the stack name
