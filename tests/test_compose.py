@@ -110,7 +110,6 @@ def test_compose_up_passes_global_flags_and_subcommand_flags():
             build=True,
             pull="always",
             remove_orphans=True,
-            wait=True,
         )
     args = run.call_args.args[0]
     # Global flags come before the subcommand
@@ -121,7 +120,8 @@ def test_compose_up_passes_global_flags_and_subcommand_flags():
     assert "--build" in args
     assert "--pull" in args and args[args.index("--pull") + 1] == "always"
     assert "--remove-orphans" in args
-    assert "--wait" in args
+    # Never blocks: waiting for the project is system_wait(kind="compose").
+    assert "--wait" not in args
     # Services tacked on at the end
     assert args[-2:] == ["web", "db"]
     # cwd forwarded
@@ -283,14 +283,15 @@ def test_compose_restart_with_stop_timeout():
 # ---------- compose_run / compose_exec ----------
 
 
-def test_compose_run_defaults_to_detach_rm_and_no_tty():
+def test_compose_run_is_always_detached_keeps_its_container_and_has_no_tty():
     with patch("docker_mcp.tools.compose.run_docker", return_value=_ok()) as run:
         compose_run(service="web", command=["python", "-V"])
     args = run.call_args.args[0]
     assert args[:2] == ["compose", "run"]
     assert "-T" in args
     assert "-d" in args
-    assert "--rm" in args
+    # Removing it on exit would delete the logs and exit code before anything could read them.
+    assert "--rm" not in args
     # service must come before command argv so docker can distinguish them
     assert args.index("web") < args.index("python")
     assert args[-2:] == ["python", "-V"]
@@ -305,13 +306,9 @@ def test_compose_run_with_env_workdir_user_name():
             user="1000:1000",
             env={"FOO": "1", "BAR": "two"},
             name="oneoff",
-            rm=False,
-            detach=False,
             no_deps=True,
         )
     args = run.call_args.args[0]
-    assert "-d" not in args
-    assert "--rm" not in args
     assert "--no-deps" in args
     assert args[args.index("--workdir") + 1] == "/srv"
     assert args[args.index("--user") + 1] == "1000:1000"

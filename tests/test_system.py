@@ -973,3 +973,21 @@ def test_startup_preflight_prints_no_warning_for_a_sound_disable_switch(capsys):
     ):
         system_module.startup_preflight()
     assert "WARNING" not in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("module", "tool"),
+    [
+        ("containers", "container_run"),
+        ("compose", "compose_run"),
+        ("compose", "compose_up"),
+        ("stack", "stack_deploy"),
+        ("stack", "stack_remove"),
+    ],
+)
+def test_no_action_tool_keeps_an_option_that_makes_it_wait(module, tool):
+    # Waiting is system_wait's job alone; an action tool returns once its work is started.
+    import importlib
+
+    params = inspect.signature(getattr(importlib.import_module(f"docker_mcp.tools.{module}"), tool)).parameters
+    assert not {"detach", "wait", "remove", "rm"} & set(params)

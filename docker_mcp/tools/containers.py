@@ -42,11 +42,10 @@ class RestartPolicy(TypedDict, total=False):
 
 
 @tool()
-def container_run(  # noqa: DOC101,DOC103
+def container_run(  # noqa: DOC101,DOC103,DOC501,DOC503
     image: str,
     command: str | list | None = None,
     name: str | None = None,
-    detach: bool = True,
     environment: dict | list | None = None,
     ports: dict | None = None,
     volumes: dict | list | None = None,
@@ -57,7 +56,6 @@ def container_run(  # noqa: DOC101,DOC103
     entrypoint: str | list | None = None,
     restart_policy: RestartPolicy | None = None,
     labels: dict | list | None = None,
-    remove: bool = False,
     auto_remove: bool = False,
     privileged: bool = False,
     tty: bool = False,
@@ -66,19 +64,19 @@ def container_run(  # noqa: DOC101,DOC103
     cpu_count: int | None = None,
     extra_kwargs: dict | None = None,
     host: str | None = None,
-) -> dict | str:
+) -> dict:
     """
     Run a container from an image (create and start in one call, like `docker run`).
 
-    Use `container_create` to prepare a container without starting it, or `container_exec` to run
-    a command in a container that already exists. With detach=False the call blocks until the
-    container exits and returns its output, so long-running images need detach=True. Created
-    containers are stamped with provenance labels.
+    Returns once the container has started; it never waits for it to finish. For a one-shot command,
+    `system_wait(kind="container", until="not-running")` gives the exit code, `container_logs` the
+    output and `container_remove` the cleanup. Use `container_create` to prepare a container without
+    starting it, or `container_exec` to run a command in one that already exists. Created containers
+    are stamped with provenance labels.
 
     Args:
         command: The command to run in the container
         name: Name to assign to the container
-        detach: Run in the background and return container info
         environment: Environment variables, as `{"KEY": "value"}` or a list of "KEY=value" strings
         ports: Port mappings, e.g. {'2222/tcp': 3333}
         volumes: Volumes to mount, as `{"/host/path": {"bind": "/in/container", "mode": "rw"}}`
@@ -90,8 +88,8 @@ def container_run(  # noqa: DOC101,DOC103
         entrypoint: Entrypoint to override the image default
         restart_policy: Restart policy, e.g. {'Name': 'on-failure', 'MaximumRetryCount': 3}
         labels: Labels to set on the container
-        remove: Remove the container when it exits (only with detach=False)
-        auto_remove: Enable auto-removal of the container on daemon side
+        auto_remove: Have the daemon delete the container when it exits, which also deletes its logs and exit
+            code: leave it off when either is wanted, and call `container_remove` afterwards
         privileged: Give extended privileges to the container
         tty: Allocate a pseudo-TTY
         mem_limit: Memory limit: bytes as an int, or a units string ("100000b", "1000k", "128m", "1g")
@@ -100,10 +98,12 @@ def container_run(  # noqa: DOC101,DOC103
             `docs_lookup(section="containers")` for the full accepted set)
 
     Returns:
-        dict | str: The container's full inspect payload when detach=True, else stdout/stderr as a string
+        dict: The started container's full inspect payload
     """
+    # Always detached: a blocking run waits for the image to finish, with no bound, and an image that
+    # never exits would hang the call for good. `system_wait` is how a caller waits, with a timeout.
     kwargs: dict = {
-        "detach": detach,
+        "detach": True,
         **drop_none(
             command=command,
             name=name,
@@ -122,7 +122,6 @@ def container_run(  # noqa: DOC101,DOC103
         ),
     }
     for key, value in {
-        "remove": remove,
         "auto_remove": auto_remove,
         "privileged": privileged,
         "tty": tty,
@@ -131,6 +130,14 @@ def container_run(  # noqa: DOC101,DOC103
         if value:
             kwargs[key] = value
     if extra_kwargs:
+        # Forwarded after the defaults, so these two would bring back the blocking run by the side door.
+        blocked = sorted({"detach", "remove"} & set(extra_kwargs))
+        if blocked:
+            raise ToolInputError(
+                f"container_run does not take {blocked} in extra_kwargs: it always returns once the container "
+                "starts. Wait with system_wait(kind='container'), read the output with container_logs, and clean "
+                "up with container_remove or auto_remove=True."
+            )
         kwargs.update(extra_kwargs)
     # Stamped after extra_kwargs, matching container_create/service_create. Stamping before the
     # update let extra_kwargs={"labels": ...} replace the whole dict and drop the managed labels,
@@ -139,12 +146,7 @@ def container_run(  # noqa: DOC101,DOC103
     provenance = with_provenance(kwargs.get("labels"), "container_run")
     if provenance is not None:
         kwargs["labels"] = provenance
-    result = _get_client(host).containers.run(image, **kwargs)
-    if detach:
-        return result.attrs
-    if isinstance(result, bytes):
-        return result.decode("utf-8", errors="replace")
-    return str(result)
+    return _get_client(host).containers.run(image, **kwargs).attrs
 
 
 @tool()

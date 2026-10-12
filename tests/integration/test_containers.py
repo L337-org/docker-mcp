@@ -7,6 +7,7 @@ import uuid
 import pytest
 
 from docker_mcp.tools.containers import (
+    container_logs,
     container_stats,
     container_list,
     container_remove,
@@ -110,3 +111,16 @@ def test_container_stats_tool_against_real_container(healthy_container):
     # The raw snapshot carries the cgroup sections the summary is derived from.
     assert "memory_stats" in snapshot
     assert "cpu_stats" in snapshot
+
+
+def test_a_one_shot_container_run_gives_its_exit_code_and_output_afterwards():
+    # container_run never blocks, so a one-shot command's result comes from waiting and then reading.
+    name = f"docker-mcp-it-oneshot-{uuid.uuid4().hex[:8]}"
+    started = container_run("alpine:3", command=["sh", "-c", "echo one-shot-output; exit 3"], name=name)
+    try:
+        assert started["Name"].lstrip("/") == name
+        done = system_wait(kind="container", target=name, until="not-running", timeout_seconds=60)
+        assert (done["met"], done["detail"]["status_code"]) == (True, 3)
+        assert container_logs(name).strip() == "one-shot-output"
+    finally:
+        container_remove(name, force=True)

@@ -133,15 +133,15 @@ def compose_up(  # noqa: DOC101,DOC103
     build: bool = False,
     pull: Literal["always", "missing", "never"] | None = None,
     remove_orphans: bool = False,
-    wait: bool = False,
     timeout_seconds: float = _TIMEOUT_UP,
     host: str | None = None,
 ) -> dict:
     """
     Bring up a Docker Compose project, detached.
 
-    Always runs detached (`-d`) so it can't block the server. Use `compose_ps` to confirm
-    services are running, or `wait=True` to block until they're healthy.
+    Always runs detached (`-d`), so it returns once the containers are started. To wait for them,
+    `system_wait(kind="compose", target=<project name>, until="healthy")`, or "running"; `compose_ps`
+    shows their state without waiting.
     Does not raise on a non-zero CLI exit (a missing compose plugin or a timeout still raises) - inspect
     `returncode`/`stderr` in the result.
 
@@ -154,7 +154,6 @@ def compose_up(  # noqa: DOC101,DOC103
         build: Build images before starting
         pull: Pull strategy; omit to use each service's own `pull_policy`
         remove_orphans: Remove containers for services not in the compose file
-        wait: Block until services are healthy (adds `--wait`)
         timeout_seconds: Subprocess timeout (default 600s)
 
     Returns:
@@ -167,8 +166,6 @@ def compose_up(  # noqa: DOC101,DOC103
         args.extend(["--pull", pull])
     if remove_orphans:
         args.append("--remove-orphans")
-    if wait:
-        args.append("--wait")
     if services:
         args.extend(safe_positional(s, "service") for s in services)
     return _run_compose(args, cwd=project_dir, timeout=timeout_seconds, host=host).to_dict()
@@ -549,8 +546,6 @@ def compose_run(  # noqa: DOC101,DOC103
     project_dir: str | None = None,
     files: list[str] | None = None,
     project_name: str | None = None,
-    detach: bool = True,
-    rm: bool = True,
     no_deps: bool = False,
     workdir: str | None = None,
     user: str | None = None,
@@ -562,9 +557,12 @@ def compose_run(  # noqa: DOC101,DOC103
     """
     Run a one-off command against a compose service.
 
-    Always passes `-T` (no TTY under MCP). Defaults to detached with `--rm` so the call returns
-    promptly. Unlike `compose_exec`, this starts a NEW container for the service rather than
-    running inside the existing one.
+    Always detached (`-d`) and `-T` (no TTY under MCP): it returns once the container starts, with the
+    container's id as `stdout`. For its result, `system_wait(kind="container", target=<that id>,
+    until="not-running")` gives the exit code, `container_logs` the output, and `container_remove` the
+    cleanup; the container is kept until then, because removing it on exit would delete its logs. Unlike
+    `compose_exec`, this starts a NEW container for the service rather than running inside the existing
+    one.
     Does not raise on a non-zero CLI exit (a missing compose plugin or a timeout still raises) - inspect
     `returncode`/`stderr` in the result.
 
@@ -574,8 +572,6 @@ def compose_run(  # noqa: DOC101,DOC103
         project_dir: Dir with the compose file (default: server cwd; copied to the target host if no local plugin)
         files: Explicit compose file paths (repeatable, `-f`)
         project_name: Compose project name override
-        detach: Run detached
-        rm: Remove the container after the run
         no_deps: Don't start linked services
         workdir: Working directory inside the container
         user: User to run as inside the container (uid or name)
@@ -586,11 +582,9 @@ def compose_run(  # noqa: DOC101,DOC103
     Returns:
         dict: {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
     """
-    args = [*_global_args(files, project_name, None), "run", "-T"]
-    if detach:
-        args.append("-d")
-    if rm:
-        args.append("--rm")
+    # Detached and kept: a foreground run blocks for as long as the command runs, and `--rm` would delete
+    # the logs and exit code before `system_wait` and `container_logs` could read them.
+    args = [*_global_args(files, project_name, None), "run", "-T", "-d"]
     if no_deps:
         args.append("--no-deps")
     if workdir:

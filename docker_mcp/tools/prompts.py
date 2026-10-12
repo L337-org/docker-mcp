@@ -84,7 +84,7 @@ def deploy_container(image: str, name: str) -> str:
         f"1. Call `image_pull` to ensure the image is present locally.\n"
         f"2. Decide whether the workload needs a dedicated network or named volume; create them with "
         f"`network_create` / `volume_create` if so.\n"
-        f"3. Call `container_run` with sensible defaults: `detach=True`, a restart policy, and any port or volume "
+        f"3. Call `container_run` with sensible defaults: a restart policy, and any port or volume "
         f"mappings the image requires.\n"
         f'4. Call `system_wait(kind="container", target=name, until="healthy")` to confirm it started successfully. '
         f"`met=True` means the image's HEALTHCHECK passed; `detail.health: null` with `met=False` just means the image "
@@ -377,6 +377,8 @@ def deploy_compose_project(project_dir: str, project_name: str | None = None) ->
     """
     name_clause = f" with project name `{project_name}`" if project_name else ""
     project_name_arg = f', project_name="{project_name}"' if project_name else ""
+    # The wait takes the project name, which compose derives from the directory unless one is given.
+    wait_target = f'"{project_name}"' if project_name else "<the project name `compose_list` shows>"
     return (
         f"Bring up the Docker Compose project at `{project_dir}`{name_clause}:\n"
         f'1. Call `compose_config(project_dir="{project_dir}"{project_name_arg}, format="json")` to render '
@@ -385,8 +387,10 @@ def deploy_compose_project(project_dir: str, project_name: str | None = None) ->
         f"mounts that escape the project, or env that looks like a secret.\n"
         f'2. After approval, call `compose_pull(project_dir="{project_dir}"{project_name_arg})` to fetch images '
         f"upfront so failures surface before containers start.\n"
-        f'3. Call `compose_up(project_dir="{project_dir}"{project_name_arg}, wait=True)` so the call blocks '
-        f"until services are healthy (or fails fast if a healthcheck is failing).\n"
+        f'3. Call `compose_up(project_dir="{project_dir}"{project_name_arg})`, then '
+        f'`system_wait(kind="compose", target={wait_target}, until="healthy")` to block until services are '
+        f"healthy. It returns at once with `met=false` if a healthcheck fails or a container stops that should "
+        f"not have; `detail.containers` says which.\n"
         f"4. Verify with `compose_ps` that every service is in `running` state.\n"
         f"5. Tail recent logs with `compose_logs(tail=100)` and report anything that looks like an error.\n"
         f"Stop and ask before adding `--volumes` to a later `compose_down` - that removes persistent data."

@@ -55,11 +55,11 @@ def test_stack_deploy_builds_args_and_returns_raw_dict():
     assert kwargs["cwd"] == "/srv/app"
 
 
-def test_stack_deploy_detach_false_passes_flag():
+def test_stack_deploy_always_detaches():
     with _patch_run() as run:
         run.return_value = _ok()
-        stack_deploy("web", compose_files=["c.yml"], detach=False)
-    assert "--detach=false" in run.call_args.args[0]
+        stack_deploy("web", compose_files=["c.yml"])
+    assert "--detach=true" in run.call_args.args[0]
 
 
 def test_stack_deploy_does_not_raise_on_non_zero():
@@ -169,11 +169,11 @@ def test_stack_rm_builds_args_for_multiple_stacks():
     assert argv[-2:] == ["web", "db"]
 
 
-def test_stack_rm_detach_false():
+def test_stack_rm_always_detaches():
     with _patch_run() as run:
         run.return_value = _ok()
-        stack_remove(["web"], detach=False)
-    assert "--detach=false" in run.call_args.args[0]
+        stack_remove(["web"])
+    assert "--detach=true" in run.call_args.args[0]
 
 
 def test_stack_rm_requires_a_stack_name():
