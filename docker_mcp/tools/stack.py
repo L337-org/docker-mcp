@@ -138,15 +138,23 @@ def _label_filters(name: str | None, filters: dict | None = None) -> dict:
 
     Args:
         name: the stack, or None for anything belonging to any stack
-        filters: the caller's filters; a `label` there is kept alongside the stack's
+        filters: the caller's filters; a `label` there must also match, alongside the stack's
 
     Returns:
         dict: the filters to pass to the Engine
+
+    Raises:
+        ToolInputError: a caller `label` filter on the stack label's own key
     """
     merged = dict(filters or {})
     own = _STACK_LABEL if name is None else f"{_STACK_LABEL}={name}"
     theirs = merged.get("label")
-    merged["label"] = [own] + ([theirs] if isinstance(theirs, str) else list(theirs or []))
+    theirs = [theirs] if isinstance(theirs, str) else list(theirs or [])
+    # The Engine turns `label` values into a map keyed by label name (moby `daemon/cluster/utils.go`
+    # `convertKVStringsToMap`), so a caller value on the same key would replace the stack's, not narrow it.
+    if any(value.partition("=")[0] == _STACK_LABEL for value in theirs):
+        raise ToolInputError(f"filters may not set a {_STACK_LABEL!r} label; name the stack instead.")
+    merged["label"] = [own, *theirs]
     return merged
 
 
@@ -170,7 +178,7 @@ def stack_list(host: str | None = None) -> list:  # noqa: DOC101,DOC103
 
 
 def _service_mode(spec: dict) -> str | None:
-    """A service's scheduling mode as the CLI prints it, e.g. "replicated" or "global-job".
+    """A service's scheduling mode as the CLI prints it, e.g. "replicated" or "global job".
 
     Args:
         spec: the service's `Spec`
@@ -179,7 +187,7 @@ def _service_mode(spec: dict) -> str | None:
         str or None: the mode, or None when the spec names none
     """
     mode = next(iter(spec.get("Mode") or {}), None)
-    return {"ReplicatedJob": "replicated-job", "GlobalJob": "global-job"}.get(mode, mode.lower()) if mode else None
+    return {"ReplicatedJob": "replicated job", "GlobalJob": "global job"}.get(mode, mode.lower()) if mode else None
 
 
 @tool()
@@ -193,7 +201,8 @@ def stack_services(name: str, filters: dict | None = None, host: str | None = No
 
     Args:
         name: The stack to list services for
-        filters: Engine service filters, e.g. {"name": "web"}; a list value matches any of them
+        filters: Engine service filters, e.g. {"name": "web"}; a list value matches any of them, except
+            `label`, where every one must match
 
     Returns:
         list: One {"id", "name", "mode", "running_tasks", "desired_tasks", "image", "ports", "update_state"} per
@@ -201,7 +210,8 @@ def stack_services(name: str, filters: dict | None = None, host: str | None = No
             `update_state` is a rolling update's state, or null when there has been none
     """
     rows = []
-    for service in _get_client(host).api.services(filters=_label_filters(name, filters), status=True):
+    for model in _get_client(host).services.list(filters=_label_filters(name, filters), status=True):
+        service = model.attrs
         spec = service.get("Spec") or {}
         status = service.get("ServiceStatus") or {}
         rows.append(
@@ -233,7 +243,8 @@ def stack_ps(name: str, filters: dict | None = None, host: str | None = None) ->
 
     Args:
         name: The stack to list tasks for
-        filters: Engine task filters, e.g. {"desired-state": "running"}; a list value matches any of them
+        filters: Engine task filters, e.g. {"desired-state": "running"}; a list value matches any of them,
+            except `label`, where every one must match
 
     Returns:
         list: One {"id", "name", "service", "node", "image", "desired_state", "state", "error", "since"} per task,
@@ -241,7 +252,7 @@ def stack_ps(name: str, filters: dict | None = None, host: str | None = None) ->
             when it entered its state
     """
     client = _get_client(host)
-    services = {s["ID"]: (s.get("Spec") or {}).get("Name") for s in client.api.services(filters=_label_filters(name))}
+    services = {s.id: s.name for s in client.services.list(filters=_label_filters(name))}
     nodes = {n.id: (n.attrs.get("Description") or {}).get("Hostname") for n in client.nodes.list()}
     rows = []
     for task in client.api.tasks(filters=_label_filters(name, filters)):

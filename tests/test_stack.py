@@ -109,6 +109,16 @@ def _named(name):
     return obj
 
 
+def _models(documents):
+    """Service models over raw Engine documents, as `services.list` returns them."""
+    models = []
+    for document in documents:
+        model = MagicMock()
+        model.attrs, model.id, model.name = document, document.get("ID"), (document.get("Spec") or {}).get("Name")
+        models.append(model)
+    return models
+
+
 def _patch_client():
     return patch("docker_mcp.tools.stack._get_client")
 
@@ -157,19 +167,21 @@ def _api_service(name, *, mode, running=1, desired=1, ports=(), update=None):
 def test_stack_services_reports_each_service_with_its_task_counts():
     with _patch_client() as get_client:
         client = get_client.return_value
-        client.api.services.return_value = [
-            _api_service(
-                "web_ui",
-                mode={"Replicated": {"Replicas": 3}},
-                running=2,
-                desired=3,
-                ports=[{"Protocol": "tcp", "TargetPort": 80, "PublishedPort": 8080}],
-                update="updating",
-            ),
-            _api_service("web_agent", mode={"Global": {}}),
-        ]
+        client.services.list.return_value = _models(
+            [
+                _api_service(
+                    "web_ui",
+                    mode={"Replicated": {"Replicas": 3}},
+                    running=2,
+                    desired=3,
+                    ports=[{"Protocol": "tcp", "TargetPort": 80, "PublishedPort": 8080}],
+                    update="updating",
+                ),
+                _api_service("web_agent", mode={"Global": {}}),
+            ]
+        )
         result = stack_services("web", filters={"name": "web_"})
-    client.api.services.assert_called_once_with(filters={"name": "web_", "label": [f"{_NS}=web"]}, status=True)
+    client.services.list.assert_called_once_with(filters={"name": "web_", "label": [f"{_NS}=web"]}, status=True)
     assert result == [
         {
             "id": "id-web_agent",
@@ -196,11 +208,11 @@ def test_stack_services_reports_each_service_with_its_task_counts():
 
 @pytest.mark.parametrize(
     ("mode", "expected"),
-    [({"ReplicatedJob": {}}, "replicated-job"), ({"GlobalJob": {}}, "global-job"), ({}, None)],
+    [({"ReplicatedJob": {}}, "replicated job"), ({"GlobalJob": {}}, "global job"), ({}, None)],
 )
 def test_stack_services_names_job_modes_as_the_cli_does(mode, expected):
     with _patch_client() as get_client:
-        get_client.return_value.api.services.return_value = [_api_service("s_job", mode=mode)]
+        get_client.return_value.services.list.return_value = _models([_api_service("s_job", mode=mode)])
         [row] = stack_services("s")
     assert row["mode"] == expected
 
@@ -215,15 +227,23 @@ def test_stack_services_names_job_modes_as_the_cli_does(mode, expected):
 def test_a_caller_label_filter_narrows_the_stack_rather_than_replacing_it(theirs, expected):
     with _patch_client() as get_client:
         client = get_client.return_value
-        client.api.services.return_value = []
+        client.services.list.return_value = _models([])
         stack_services("web", filters={"label": theirs})
-    assert client.api.services.call_args.kwargs["filters"]["label"] == expected
+    assert client.services.list.call_args.kwargs["filters"]["label"] == expected
+
+
+@pytest.mark.parametrize("label", [f"{_NS}=other", _NS, ["tier=front", f"{_NS}=other"]])
+def test_a_caller_label_on_the_stack_key_is_refused_rather_than_replacing_the_stack(label):
+    # The Engine keys label filters by name, so this would select another stack, or every stack.
+    with _patch_client() as get_client, pytest.raises(ToolInputError, match=_NS):
+        stack_ps("web", filters={"label": label})
+    get_client.return_value.api.tasks.assert_not_called()
 
 
 def test_stack_services_does_not_change_the_callers_filters():
     filters = {"label": ["tier=front"]}
     with _patch_client() as get_client:
-        get_client.return_value.api.services.return_value = []
+        get_client.return_value.services.list.return_value = []
         stack_services("web", filters=filters)
     assert filters == {"label": ["tier=front"]}
 
@@ -253,10 +273,12 @@ def test_stack_ps_names_tasks_by_slot_or_node_and_resolves_node_hostnames():
     ]
     with _patch_client() as get_client:
         client = get_client.return_value
-        client.api.services.return_value = [
-            {"ID": "id-web_ui", "Spec": {"Name": "web_ui"}},
-            {"ID": "id-web_agent", "Spec": {"Name": "web_agent"}},
-        ]
+        client.services.list.return_value = _models(
+            [
+                {"ID": "id-web_ui", "Spec": {"Name": "web_ui"}},
+                {"ID": "id-web_agent", "Spec": {"Name": "web_agent"}},
+            ]
+        )
         client.nodes.list.return_value = [node]
         client.api.tasks.return_value = tasks
         result = stack_ps("web", filters={"desired-state": "running"})
@@ -291,7 +313,7 @@ def test_stack_ps_falls_back_to_ids_for_a_service_or_node_it_cannot_name():
     # A task can outlive its service between the two reads, and a pending task has no node yet.
     with _patch_client() as get_client:
         client = get_client.return_value
-        client.api.services.return_value = []
+        client.services.list.return_value = _models([])
         client.nodes.list.return_value = []
         client.api.tasks.return_value = [{"ID": "t", "ServiceID": "gone", "NodeID": "node-9", "Slot": 2}]
         [row] = stack_ps("web")
@@ -389,7 +411,7 @@ def test_only_stack_deploy_reaches_the_docker_cli():
     ):
         client = get_client.return_value
         _stack_parts(client)
-        client.api.services.return_value = []
+        client.services.list.return_value = _models([])
         client.api.tasks.return_value = []
         client.nodes.list.return_value = []
         stack_list(host="prod")

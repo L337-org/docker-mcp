@@ -38,7 +38,7 @@ The only host prerequisite is Docker. Point your MCP client at `docker run`:
 
 ## Image variants
 
-Two multi-arch (linux/amd64 + linux/arm64) variants are published, both built from one `Dockerfile`. The CLI-backed domains (Compose, Stack, Buildx, Scout, Context) shell out to the `docker` CLI and its plugins.
+Two multi-arch (linux/amd64 + linux/arm64) variants are published, both built from one `Dockerfile`. The CLI-backed domains (Compose, Stack, Buildx, Scout, Context) shell out to the `docker` CLI and its plugins; in Stack, only `stack_deploy` does.
 
 | Variant | Tags | Approx. size | Includes |
 |---------|------|-------------|----------|

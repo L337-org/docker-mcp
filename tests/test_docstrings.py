@@ -327,19 +327,18 @@ def test_no_advertised_docstring_carries_a_raises_section():
     )
 
 
-def _calls_get_client(node):
-    """Whether a definition's own body calls `_get_client`, i.e. talks to the Engine through docker-py.
+def _engine_only(node):
+    """Whether a definition talks to the Engine through docker-py and never names a way to the CLI.
 
     Args:
         node: the function or method
 
     Returns:
-        bool: True when `_get_client(...)` is called anywhere in its body
+        bool: True when its body calls `_get_client` and names no `run_docker`, `remote_*` or `_run_*`
     """
-    return any(
-        isinstance(call, ast.Call) and isinstance(call.func, ast.Name) and call.func.id == "_get_client"
-        for call in ast.walk(node)
-    )
+    names = {n.id for n in ast.walk(node) if isinstance(n, ast.Name)}
+    reaches_cli = any(n == "run_docker" or n.startswith(("remote_", "_run_")) for n in names)
+    return "_get_client" in names and not reaches_cli
 
 
 def test_every_cli_backed_tool_states_its_error_convention():
@@ -358,8 +357,10 @@ def test_every_cli_backed_tool_states_its_error_convention():
     `buildx_history_list` both mentioned raising for an unrelated special case while saying nothing
     about the convention, which is exactly the shape a looser check would pass.
 
-    A tool in a CLI-backed domain that calls `_get_client` itself is Engine-backed - `stack_list`, for
-    one, makes the CLI's own Engine calls - and has no CLI exit to describe, so it is not held to this.
+    A tool in a CLI-backed domain that calls `_get_client` itself and reaches the CLI by no name of its
+    own is Engine-backed - `stack_list`, for one, makes the CLI's own Engine calls - and has no CLI exit
+    to describe, so it is not held to this. What it cannot see is a CLI call made inside a helper with a
+    name outside `run_docker`, `remote_*` and `_run_*`, which no current module has.
     """
     domains = {name.split("_")[0] for name in _tool_names()} & set(_CLI_DOMAINS)
     conventions = (
@@ -371,7 +372,7 @@ def test_every_cli_backed_tool_states_its_error_convention():
         for path, node, _ in _definitions()
         if _is_tool(node)
         and node.name.split("_")[0] in domains
-        and not _calls_get_client(node)
+        and not _engine_only(node)
         and not any(c in (ast.get_docstring(node) or "") for c in conventions)
     ]
 

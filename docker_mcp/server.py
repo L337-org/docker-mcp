@@ -183,7 +183,7 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "compose_kill": ToolCategory.DESTRUCTIVE,
     "compose_pause": ToolCategory.MUTATING,
     "compose_unpause": ToolCategory.MUTATING,
-    # stack (Compose-on-Swarm, CLI)
+    # stack (Compose-on-Swarm; deploy via the CLI, the rest via docker-py)
     "stack_deploy": ToolCategory.MUTATING,
     "stack_list": ToolCategory.READ_ONLY,
     "stack_ps": ToolCategory.READ_ONLY,
@@ -669,7 +669,7 @@ _DOMAIN_BLURBS: dict[str, str] = {
     "networks": "connect/disconnect",
     "volumes": "create/remove",
     "compose": "Compose v2; CLI-backed",
-    "stack": "Compose on Swarm; CLI-backed",
+    "stack": "Compose on Swarm; deploy CLI-backed",
     "swarm": "init/join/leave/unlock; manager node only",
     "services": "Swarm services and tasks: ps/logs of one task or all in the swarm; manager node only",
     "nodes": "Swarm nodes; manager node only",
@@ -830,7 +830,7 @@ def build_instructions(registered_domains: set[str] | None = None) -> str:
             caveat = (
                 "CLI-backed domains (marked above) use the docker CLI. With the CLI or a required plugin "
                 "missing locally, a host reached over `ssh://` runs the call itself, with local files "
-                f"copied over; a usable local CLI always wins. Applies to {', '.join(fallback_present)}"
+                f"copied; a usable local CLI always wins. Applies to {', '.join(fallback_present)}"
             )
             caveat += f"; no fallback for {', '.join(no_fallback)}, which raises instead." if no_fallback else "."
             caveats.append(caveat)

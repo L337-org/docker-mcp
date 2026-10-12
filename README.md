@@ -137,7 +137,7 @@ pin a version, replace `:latest` with a release tag (e.g. `:1.5.1`). To pull fro
 **Image variants.** Two variants are published to both registries (`gavinlucas/docker-mcp-server` on
 Docker Hub and `ghcr.io/l337-org/docker-mcp-server` on GHCR), both built from one `Dockerfile`. The
 CLI-backed domains (Compose, Stack, Buildx, Scout, Context) shell out to the `docker` CLI and its
-plugins.
+plugins; in Stack, only `stack_deploy` does.
 
 | Variant | Tags | Approx. size | Includes |
 |---------|------|-------------|----------|
@@ -216,7 +216,7 @@ That ephemeral `127.0.0.1` listener bridges to the remote (root-equivalent) daem
 
 #### No local Docker
  
-If Docker is not installed locally - or the plugin a call needs is missing - most tools will still operate on a remote host exactly as before. A few tool families (**Compose, Stack, Buildx, Scout**) will be run **on the target host itself**, over SSH. For these commands TCP and TLS connections will not work without a local Docker install.
+If Docker is not installed locally - or the plugin a call needs is missing - most tools will still operate on a remote host exactly as before. A few tool families (**Compose, Buildx, Scout**, and `stack_deploy`) will be run **on the target host itself**, over SSH. For these commands TCP and TLS connections will not work without a local Docker install.
 
 Worth knowing:
 - **It's a fallback, never a preference.** A local CLI that can serve the call - binary plus the plugin that call needs - is always used instead, so nothing changes for a normal install.
