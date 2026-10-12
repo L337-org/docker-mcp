@@ -202,7 +202,7 @@ def stack_services(name: str, filters: dict | None = None, host: str | None = No
     Args:
         name: The stack to list services for
         filters: Engine service filters, e.g. {"name": "web"}; a list value matches any of them, except
-            `label`, where every one must match
+            `label`, where every one must match and the stack's own label key is refused
 
     Returns:
         list: One {"id", "name", "mode", "running_tasks", "desired_tasks", "image", "ports", "update_state"} per
@@ -244,7 +244,7 @@ def stack_ps(name: str, filters: dict | None = None, host: str | None = None) ->
     Args:
         name: The stack to list tasks for
         filters: Engine task filters, e.g. {"desired-state": "running"}; a list value matches any of them,
-            except `label`, where every one must match
+            except `label`, where every one must match and the stack's own label key is refused
 
     Returns:
         list: One {"id", "name", "service", "node", "image", "desired_state", "state", "error", "since"} per task,
