@@ -976,10 +976,7 @@ def test_startup_preflight_prints_no_warning_for_a_sound_disable_switch(capsys):
 
 
 # Tools allowed a parameter that makes them wait, each with its reason. Anything else that grows one fails.
-_BLOCKING_OPTION_EXCEPTIONS = {
-    # Its result is its command's output, which exists only while the command runs, so it blocks by design.
-    "container_exec": {"detach"},
-}
+_BLOCKING_OPTION_EXCEPTIONS: dict[str, set[str]] = {}
 
 
 def test_no_registered_tool_keeps_an_option_that_makes_it_wait():

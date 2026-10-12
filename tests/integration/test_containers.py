@@ -2,11 +2,13 @@
 # run with: uv run pytest -m integration
 
 import json
+import time
 import uuid
 
 import pytest
 
 from docker_mcp.tools.containers import (
+    container_exec,
     container_logs,
     container_stats,
     container_list,
@@ -126,3 +128,43 @@ def test_a_one_shot_container_run_gives_its_exit_code_and_output_afterwards():
         assert container_logs(name).strip() == "one-shot-output"
     finally:
         container_remove(name, force=True)
+
+
+@pytest.fixture
+def exec_target():
+    """A running container to exec into, removed afterwards."""
+    name = f"docker-mcp-it-exec-{uuid.uuid4().hex[:8]}"
+    container_run("alpine:3", command=["sleep", "300"], name=name)
+    yield name
+    container_remove(name, force=True)
+
+
+def test_container_exec_returns_output_and_exit_code(exec_target):
+    result = container_exec(exec_target, ["sh", "-c", "echo hello; exit 5"])
+    assert (result["exit_code"], result["output"], result["timed_out"], result["truncated"]) == (
+        5,
+        "hello\n",
+        False,
+        False,
+    )
+
+
+def test_container_exec_demux_separates_stdout_and_stderr(exec_target):
+    result = container_exec(exec_target, ["sh", "-c", "echo out; echo err >&2"], demux=True)
+    assert result["output"] == ["out\n", "err\n"]
+
+
+def test_container_exec_returns_at_its_timeout_while_the_command_runs_on(exec_target):
+    started = time.monotonic()
+    result = container_exec(exec_target, ["sh", "-c", "echo started; sleep 60"], timeout_seconds=2)
+    elapsed = time.monotonic() - started
+    assert elapsed < 10, f"returned after {elapsed:.1f}s, not near its 2s timeout"
+    assert (result["timed_out"], result["exit_code"]) == (True, None)
+    assert result["output"] == "started\n"
+    assert result["exec_id"]
+
+
+def test_container_exec_cuts_a_large_output_at_max_bytes(exec_target):
+    result = container_exec(exec_target, ["sh", "-c", "yes | head -c 100000"], max_bytes=1000)
+    assert result["truncated"] is True
+    assert len(result["output"]) == 1000
