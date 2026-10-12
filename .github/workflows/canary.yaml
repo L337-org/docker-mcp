@@ -58,7 +58,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ "$GITHUB_EVENT_NAME" != "pull_request" ]; then
-            latest="$(curl -fsSL https://pypi.org/pypi/docker-mcp-server/json | jq -r .info.version)"
+            latest="$(curl -fsSL --max-time 30 --retry 3 https://pypi.org/pypi/docker-mcp-server/json | jq -r .info.version)"
             echo "Latest published release: $latest"
           fi
           failed=0
