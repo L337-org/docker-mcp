@@ -270,11 +270,11 @@ def _parse_domains(value: str | None) -> frozenset[str]:
 # `system` cannot be disabled. It holds what an agent needs to orient itself and recover, and the one
 # wait tool every other domain's waits go through, so dropping it breaks far more than it saves. The
 # one thing anyone could want from disabling it, keeping the agent from logging in to a registry,
-# DOCKER_MCP_SERVER_READONLY already gives. Naming it is not silently accepted: it is reported as
-# ignored, at startup and in the tool catalog.
+# DOCKER_MCP_SERVER_READONLY already gives. Naming it is not silently accepted: disable_switch_warnings()
+# reports it wherever that function's warnings go.
 ALWAYS_ON_DOMAINS: frozenset[str] = frozenset({"system"})
 _REQUESTED_DISABLED_DOMAINS = _parse_domains(read_env("DOCKER_MCP_SERVER_DISABLE"))
-# What the switch asked for and was refused, for the startup warning and the catalog.
+# What the switch asked for and was refused; disable_switch_warnings() and the catalog report it.
 IGNORED_DISABLED_DOMAINS: frozenset[str] = _REQUESTED_DISABLED_DOMAINS & ALWAYS_ON_DOMAINS
 # The effective set every gate reads, so an always-on domain needs no special case anywhere else.
 DISABLED_DOMAINS = _REQUESTED_DISABLED_DOMAINS - ALWAYS_ON_DOMAINS
@@ -522,10 +522,12 @@ def query_catalog(
             names; a tool matching any word is returned, tools matching more words first
 
     Returns:
-        dict: {"matched", "tools", "domains", "no_domain", "hidden_by_configuration", "switches", "filters"}. `domains`
-            and `hidden_by_configuration` are keyed by real domain names only; `no_domain` counts the always-registered
-            domain-less tools, whose rows carry `domain: None` and which no `domain=` value selects. `filters` echoes
-            the arguments, plus `keyword_terms`: the words the keyword was actually searched for.
+        dict: {"matched", "tools", "domains", "no_domain", "hidden_by_configuration", "configuration_warnings",
+            "switches", "filters"}. `domains` and `hidden_by_configuration` are keyed by real domain names only;
+            `no_domain` counts the always-registered domain-less tools, whose rows carry `domain: None` and which
+            no `domain=` value selects. `configuration_warnings` is a list of sentences about a
+            DOCKER_MCP_SERVER_DISABLE mistake, empty when the switch is sound. `filters` echoes the arguments, plus
+            `keyword_terms`: the words the keyword was actually searched for.
     """
     # Any word may match, ranked by how many do: an agent's words for a job rarely all appear in the
     # summary of the tool that does it, so requiring every word would miss more than it filters out.
@@ -630,7 +632,7 @@ def tool_catalog() -> dict[str, Any]:
             "DOCKER_MCP_SERVER_DISABLE": sorted(DISABLED_DOMAINS),
         },
         # Disabled domains that match no known tool - usually a typo in DOCKER_MCP_SERVER_DISABLE.
-        "unknown_disabled_domains": sorted(DISABLED_DOMAINS - set(domains)),
+        "unknown_disabled_domains": _unknown_disabled_domains(),
         # Domains DOCKER_MCP_SERVER_DISABLE named but cannot drop (see ALWAYS_ON_DOMAINS).
         "ignored_disabled_domains": sorted(IGNORED_DISABLED_DOMAINS),
         "domains": domain_summary,
@@ -712,6 +714,18 @@ def _quote_names(names: list[str]) -> str:
     return ", ".join(shown[:_WARNING_NAMES_SHOWN]) + (f" and {more} more" if more > 0 else "")
 
 
+def _unknown_disabled_domains() -> list[str]:
+    """The names DOCKER_MCP_SERVER_DISABLE gives that no tool's domain matches - usually a typo.
+
+    Unregistered records count as known, so a domain whose tools a read-only switch dropped is not
+    mistaken for a typo. Read after every tool module has registered.
+
+    Returns:
+        list: the unknown names, sorted
+    """
+    return sorted(DISABLED_DOMAINS - {record.domain for record in _tool_registry.values() if record.domain})
+
+
 def disable_switch_warnings() -> list[str]:
     """What DOCKER_MCP_SERVER_DISABLE asked for and did not get, worded for the operator who set it.
 
@@ -724,16 +738,17 @@ def disable_switch_warnings() -> list[str]:
         list: one sentence per kind of problem, each starting "DOCKER_MCP_SERVER_DISABLE names"; empty when
             the switch is fine
     """
-    known = {record.domain for record in _tool_registry.values() if record.domain}
-    unknown = sorted(DISABLED_DOMAINS - known)
+    unknown = _unknown_disabled_domains()
     warnings = []
     if unknown:
         warnings.append(
             f"DOCKER_MCP_SERVER_DISABLE names {_quote_names(unknown)}, which "
             f"{'matches' if len(unknown) == 1 else 'match'} no domain, so nothing was disabled for "
-            f"{'it' if len(unknown) == 1 else 'them'} (a typo?); `tool_list` lists the domains."
+            f"{'it' if len(unknown) == 1 else 'them'} (a typo?); the README and `tool_list` list the domains."
         )
     if IGNORED_DISABLED_DOMAINS:
+        # Worded for ALWAYS_ON_DOMAINS as it is, {"system"}: one name, and the READONLY hint is about
+        # system_login. A second always-on domain needs this sentence revisited.
         warnings.append(
             f"DOCKER_MCP_SERVER_DISABLE names {_quote_names(sorted(IGNORED_DISABLED_DOMAINS))}, which cannot "
             "be disabled and stays registered; DOCKER_MCP_SERVER_READONLY=1 keeps the agent from logging in "
@@ -768,9 +783,9 @@ def build_instructions(registered_domains: set[str] | None = None) -> str:
     ]
     # Ahead of everything, so a client that cuts the text short still shows it: the operator asked for a
     # surface they did not get, and the agent is often the only party who will see that this session.
-    # A fixed pointer, not the warnings themselves: the longest rendering has under 80 units to spare
-    # below INSTRUCTIONS_CHAR_LIMIT, and the operator's own names would make the length unbounded.
-    # `tool_list` carries the full text in `configuration_warnings`.
+    # A fixed pointer, not the warnings themselves: the operator's own names would make the length
+    # unbounded, and the longest rendering, this line included, has to stay under INSTRUCTIONS_CHAR_LIMIT
+    # (held by tests/test_server.py). `tool_list` carries the full text in `configuration_warnings`.
     if disable_switch_warnings():
         lines += ["DOCKER_MCP_SERVER_DISABLE misconfigured: see `tool_list`, tell the user.", ""]
     lines += [

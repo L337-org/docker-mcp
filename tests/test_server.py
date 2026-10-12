@@ -2038,8 +2038,18 @@ def test_disable_switch_warnings_are_empty_for_a_sound_switch(monkeypatch):
 def test_disable_switch_warnings_name_an_unknown_domain(monkeypatch):
     assert _warnings(monkeypatch, {"swram", "scout"}) == [
         "DOCKER_MCP_SERVER_DISABLE names 'swram', which matches no domain, so nothing was disabled for it "
-        "(a typo?); `tool_list` lists the domains."
+        "(a typo?); the README and `tool_list` list the domains."
     ]
+
+
+def test_the_catalog_and_the_warnings_agree_on_what_is_unknown(monkeypatch):
+    # One derivation feeds both, so a name the catalog calls unknown is one the warning names, and no other.
+    import docker_mcp.server as server
+
+    monkeypatch.setattr(server, "DISABLED_DOMAINS", frozenset({"swram", "scout", "plugns"}))
+    assert server.tool_catalog()["unknown_disabled_domains"] == ["plugns", "swram"]
+    [warning] = server.disable_switch_warnings()
+    assert warning.startswith("DOCKER_MCP_SERVER_DISABLE names 'plugns', 'swram', which match no domain")
 
 
 def test_disable_switch_warnings_agree_in_number_and_cap_what_they_quote(monkeypatch):
@@ -2049,6 +2059,8 @@ def test_disable_switch_warnings_agree_in_number_and_cap_what_they_quote(monkeyp
     assert warning.startswith("DOCKER_MCP_SERVER_DISABLE names 'aa', 'bb', 'cc' and 2 more, which match no domain")
     assert "nothing was disabled for them" in warning
     assert _warnings(monkeypatch, {"e" * 30})[0].startswith(f"DOCKER_MCP_SERVER_DISABLE names '{'e' * 24}...'")
+    # Exactly the limit is shown whole.
+    assert _warnings(monkeypatch, {"f" * 24})[0].startswith(f"DOCKER_MCP_SERVER_DISABLE names '{'f' * 24}', which")
 
 
 def test_disable_switch_warnings_name_an_always_on_domain_and_the_alternative(monkeypatch):
