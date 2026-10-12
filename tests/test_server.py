@@ -17,6 +17,7 @@ import docker_mcp._hosts as _hosts
 from docker_mcp._hosts import parse_registry
 from docker_mcp.exceptions import HostGuardError
 from docker_mcp.server import (
+    ALWAYS_ON_DOMAINS,
     TOOL_CATEGORIES,
     TRANSLATES_FAILURES,
     _NO_DOMAIN_TOOLS,
@@ -692,7 +693,84 @@ def test_tool_list_survives_every_domain_being_disabled():
     every_domain = ",".join(sorted({r.domain for r in _tool_registry.values() if r.domain}))
     names = _registered_names([f"DOCKER_MCP_SERVER_DISABLE={every_domain}"])
     assert "tool_list" in names
-    assert names == set(_NO_DOMAIN_TOOLS)
+    # `system` cannot be disabled, so its tools stay too - all but system_wait, which has nothing left
+    # to wait on once every domain it serves is gone.
+    always_on = {r.name for r in _tool_registry.values() if r.domain in ALWAYS_ON_DOMAINS} - {"system_wait"}
+    assert names == set(_NO_DOMAIN_TOOLS) | always_on
+
+
+def _in_child(code: str, env_vars: list[str]) -> str:
+    """Run `code` after importing the package, in a child process under the given env switches."""
+    result = subprocess.run(  # noqa: S603 — fixed argv, sys.executable, no shell; trusted test input
+        [sys.executable, "-c", "import json, docker_mcp\n" + code],
+        capture_output=True,
+        text=True,
+        env=_env_with(env_vars),
+        check=True,
+    )
+    return result.stdout
+
+
+def test_system_cannot_be_disabled_and_the_catalog_says_it_was_ignored():
+    system_tools = {r.name for r in _tool_registry.values() if r.domain == "system"}
+    assert "system_wait" in system_tools
+    assert system_tools <= _registered_names(["DOCKER_MCP_SERVER_DISABLE=System,scout"])
+    catalog = json.loads(
+        _in_child(
+            "from docker_mcp.server import tool_catalog; print(json.dumps(tool_catalog()))",
+            ["DOCKER_MCP_SERVER_DISABLE=System,scout"],
+        )
+    )
+    assert catalog["ignored_disabled_domains"] == ["system"]
+    # The effective switch no longer lists it, and it is not mistaken for a typo.
+    assert catalog["switches"]["DOCKER_MCP_SERVER_DISABLE"] == ["scout"]
+    assert catalog["unknown_disabled_domains"] == []
+
+
+def _wait_schema(env_vars: list[str]) -> dict | None:
+    code = (
+        "import asyncio; from docker_mcp.server import mcp\n"
+        "t = {t.name: t for t in asyncio.run(mcp.list_tools())}.get('system_wait')\n"
+        "print(json.dumps(t.input_schema['properties'] if t else None))"
+    )
+    return json.loads(_in_child(code, env_vars))
+
+
+def test_system_wait_offers_only_the_kinds_whose_domain_is_enabled():
+    props = _wait_schema(["DOCKER_MCP_SERVER_DISABLE=stack,registry,nodes"])
+    assert props is not None
+    assert props["kind"]["enum"] == ["container", "service", "compose"]
+    # Conditions that only a disabled kind has are not offered either.
+    for gone in ("converged", "present", "ready", "disconnected"):
+        assert gone not in props["until"]["enum"]
+    assert {"healthy", "log-match", "update-converged", "exited", "removed"} <= set(props["until"]["enum"])
+
+
+def test_system_wait_advertises_nothing_of_a_disabled_kind():
+    code = (
+        "import asyncio; from docker_mcp.server import mcp\n"
+        "t = {t.name: t for t in asyncio.run(mcp.list_tools())}['system_wait']\n"
+        "print(json.dumps({'description': t.description, 'params': list(t.input_schema['properties'])}))"
+    )
+    advertised = json.loads(_in_child(code, ["DOCKER_MCP_SERVER_DISABLE=registry,stack"]))
+    description = advertised["description"]
+    for gone in ("registry_tag", "- stack:", "username", "password", "limit", "a tag lands", "REGISTRY"):
+        assert gone not in description, gone
+    assert description.startswith("Wait until a container exits or is healthy")
+    assert not {"username", "password", "limit"} & set(advertised["params"])
+    assert {"pattern", "regex", "replicas", "services"} <= set(advertised["params"])
+
+
+def test_system_wait_is_unregistered_but_catalogued_when_every_kind_is_disabled():
+    env = ["DOCKER_MCP_SERVER_DISABLE=containers,services,nodes,stack,compose,registry"]
+    assert _wait_schema(env) is None
+    rows = json.loads(
+        _in_child(
+            "from docker_mcp.server import tool_catalog; print(json.dumps(tool_catalog()['tools']))",
+            env,
+        )
+    )
+    assert {"name": "system_wait", "domain": "system", "category": "read_only", "registered": False} in rows
 
 
 def _names_by_category(*categories: ToolCategory) -> set[str]:

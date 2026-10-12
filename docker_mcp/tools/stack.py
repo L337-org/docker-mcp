@@ -15,7 +15,10 @@
 # fallback in `_cli.py`. `stack_deploy` is the only one that reads local files, so it is the only one
 # that stages its working directory; the queries and `stack rm` name nothing local.
 
+import time
 from typing import Literal, get_args
+
+import docker.errors
 
 from docker_mcp.exceptions import ToolInputError
 from docker_mcp.server import tool
@@ -31,6 +34,8 @@ from docker_mcp.tools._cli import (
     safe_positional,
     should_remote_exec,
 )
+from docker_mcp.tools.services import _read_service_task_summary
+from docker_mcp.tools.system import _get_client
 
 _TIMEOUT_QUERY = 60.0
 # deploy pulls images and submits service specs; give it a generous ceiling (it converges
@@ -270,3 +275,115 @@ def stack_remove(  # noqa: DOC101,DOC103,DOC501,DOC503
     args = ["stack", "rm", f"--detach={'true' if detach else 'false'}"]
     args.extend(safe_positional(name, "stack name") for name in names)
     return _run_stack(args, timeout=timeout_seconds, host=host).to_dict()
+
+
+# The label `docker stack deploy` puts on every service, network, secret, config and task it creates
+# (docker/cli `cli/compose/convert`, LabelNamespace). Filtering on it is how the CLI itself finds a
+# stack's parts, so the Engine API alone answers "what belongs to this stack".
+_STACK_LABEL = "com.docker.stack.namespace"
+# Swarm task states before a task stops for good (moby `api/types/swarm` TaskState). A stack is gone
+# only once none of its tasks is in one of these.
+_ACTIVE_TASK_STATES = frozenset(
+    {"new", "allocated", "pending", "assigned", "accepted", "preparing", "ready", "starting", "running"}
+)
+# `UpdateStatus.State` values after which a rolling update is over, and those where it stopped on a failure
+# and will not move again without someone acting (moby `api/types/swarm` UpdateState).
+_UPDATE_DONE = frozenset({"completed", "rollback_completed"})
+_UPDATE_STUCK = frozenset({"paused", "rollback_paused"})
+
+
+def _wait_stack(
+    name: str,
+    until: str,
+    timeout_seconds: float,
+    poll_interval: float,
+    host: str | None = None,
+) -> dict:
+    """Wait for a swarm stack to converge or be removed; `system_wait(kind="stack")` calls this.
+
+    Never raises on timeout. Finds the stack's services and tasks by the label `docker stack deploy`
+    stamps, through the Engine API. "converged" is met when every service in the stack has its
+    desired number of running tasks and no rolling update still in progress; it returns promptly with
+    `met: false` when no service carries the label, or when an update has paused on a failure. "removed"
+    is met when no service carries the label and none of its tasks is still starting or running. A
+    service removed while it is being read is treated as gone.
+
+    Args:
+        name: the stack name
+        until: "converged" or "removed"
+        timeout_seconds: seconds to wait before returning with timed_out=true
+        poll_interval: seconds between re-checks, capped by the time left
+        host: the host label to target, or None for the default
+
+    Returns:
+        dict: {"stack", "until", "met", "timed_out", "services", "active_tasks", "waited_seconds"}, where
+            `services` has one row per service still present: {"service", "running_tasks", "desired_tasks",
+            "failed_tasks", "update_state"} for "converged", and only {"service"} for "removed"
+
+    Raises:
+        ToolInputError: a negative timeout or a non-positive poll interval
+    """
+    if timeout_seconds < 0:
+        raise ToolInputError(f"timeout_seconds must be >= 0, got {timeout_seconds}.")
+    if poll_interval <= 0:
+        raise ToolInputError(f"poll_interval must be > 0, got {poll_interval}.")
+    client = _get_client(host)
+    label_filter = {"label": f"{_STACK_LABEL}={name}"}
+    start = time.monotonic()
+    deadline = start + timeout_seconds
+    while True:
+        services = client.services.list(filters=label_filter)
+        rows = []
+        for service in services:
+            if until == "removed":
+                # Only whether anything remains matters here, so skip the per-service reads.
+                rows.append({"service": service.name})
+                continue
+            try:
+                summary = _read_service_task_summary(service.id, host=host)
+            except docker.errors.NotFound:
+                # Removed between the list and this read (a `stack rm` or a pruning deploy elsewhere).
+                continue
+            rows.append(
+                {
+                    "service": service.name,
+                    "running_tasks": summary["running_tasks"],
+                    "desired_tasks": summary["desired_tasks"],
+                    "failed_tasks": summary["failed_tasks"],
+                    "update_state": summary["update_state"],
+                }
+            )
+        rows.sort(key=lambda row: row["service"])
+        active_tasks = sum(
+            1
+            for task in client.api.tasks(filters=label_filter)
+            if (task.get("Status") or {}).get("State") in _ACTIVE_TASK_STATES
+        )
+        verdict: bool | None
+        if until == "converged":
+            # No service at all is not "converging": nothing was deployed under that name. A rolling update
+            # keeps the old tasks running until each is replaced, so the task count alone is met partway
+            # through a redeploy; a service is settled only once its update, if any, has finished too.
+            if not rows or any(r["update_state"] in _UPDATE_STUCK for r in rows):
+                verdict = False
+            elif all(
+                r["running_tasks"] >= r["desired_tasks"] and r["update_state"] in (None, *_UPDATE_DONE) for r in rows
+            ):
+                verdict = True
+            else:
+                verdict = None
+        else:  # "removed"
+            verdict = True if not rows and active_tasks == 0 else None
+        remaining = deadline - time.monotonic()
+        if verdict is not None or remaining <= 0:
+            return {
+                "stack": name,
+                "until": until,
+                "met": verdict is True,
+                "timed_out": verdict is None,
+                "services": rows,
+                "active_tasks": active_tasks,
+                "waited_seconds": round(time.monotonic() - start, 2),
+            }
+        # Bound the sleep by the time left so a large poll_interval can't push past the timeout.
+        time.sleep(min(poll_interval, remaining))

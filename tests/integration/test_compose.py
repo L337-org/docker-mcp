@@ -19,6 +19,7 @@ from docker_mcp.tools.compose import (
     compose_unpause,
     compose_up,
 )
+from docker_mcp.tools.system import system_wait
 
 # A tiny compose project: one alpine container that sleeps. Avoids pulling a large image
 # while still exercising the up/ps/down cycle.
@@ -147,3 +148,52 @@ def test_compose_images_top_pause_unpause(compose_project):
     assert paused["returncode"] == 0, paused["stderr"]
     unpaused = compose_unpause(project_dir=compose_project["dir"], project_name=compose_project["name"])
     assert unpaused["returncode"] == 0, unpaused["stderr"]
+
+
+def test_system_wait_compose_running(compose_project):
+    _pull_or_skip(compose_project)
+    up = compose_up(project_dir=compose_project["dir"], project_name=compose_project["name"], timeout_seconds=120.0)
+    assert up["returncode"] == 0, up["stderr"]
+    result = system_wait(
+        kind="compose", target=compose_project["name"], until="running", timeout_seconds=60, poll_interval=1.0
+    )
+    assert (result["met"], result["timed_out"]) == (True, False)
+    assert [c["service"] for c in result["detail"]["containers"]] == ["sleeper"]
+
+
+def test_system_wait_compose_exited_reports_the_exit_code(compose_project):
+    # A one-shot service instead of the sleeper: it exits with a known code, which the wait must report.
+    Path(compose_project["file"]).write_text(
+        'services:\n  job:\n    image: alpine:3\n    command: ["sh", "-c", "exit 3"]\n', encoding="utf-8"
+    )
+    _pull_or_skip(compose_project)
+    up = compose_up(project_dir=compose_project["dir"], project_name=compose_project["name"], timeout_seconds=120.0)
+    assert up["returncode"] == 0, up["stderr"]
+    result = system_wait(
+        kind="compose", target=compose_project["name"], until="exited", timeout_seconds=60, poll_interval=1.0
+    )
+    assert (result["met"], result["timed_out"]) == (True, False)
+    assert [(c["service"], c["exit_code"]) for c in result["detail"]["containers"]] == [("job", 3)]
+
+
+def test_system_wait_compose_running_accepts_a_completed_dependency(compose_project):
+    # Holds the `com.docker.compose.depends_on` label format the wait parses to what compose really stamps:
+    # `docker compose up --wait` accepts a job another service waits on to complete once it exits 0.
+    Path(compose_project["file"]).write_text(
+        "services:\n"
+        '  migrate:\n    image: alpine:3\n    command: ["sh", "-c", "exit 0"]\n'
+        '  web:\n    image: alpine:3\n    command: ["sleep", "300"]\n'
+        "    depends_on:\n      migrate:\n        condition: service_completed_successfully\n",
+        encoding="utf-8",
+    )
+    _pull_or_skip(compose_project)
+    up = compose_up(project_dir=compose_project["dir"], project_name=compose_project["name"], timeout_seconds=120.0)
+    assert up["returncode"] == 0, up["stderr"]
+    result = system_wait(
+        kind="compose", target=compose_project["name"], until="running", timeout_seconds=60, poll_interval=1.0
+    )
+    assert (result["met"], result["timed_out"]) == (True, False)
+    assert {(c["service"], c["status"], c["exit_code"]) for c in result["detail"]["containers"]} == {
+        ("migrate", "exited", 0),
+        ("web", "running", None),
+    }

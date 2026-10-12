@@ -58,6 +58,7 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "system_info": ToolCategory.READ_ONLY,
     "system_df": ToolCategory.READ_ONLY,
     "system_events": ToolCategory.READ_ONLY,
+    "system_wait": ToolCategory.READ_ONLY,
     "host_list": ToolCategory.READ_ONLY,
     "system_login": ToolCategory.MUTATING,
     "system_logout": ToolCategory.MUTATING,
@@ -84,7 +85,6 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "container_diff": ToolCategory.READ_ONLY,
     "container_rename": ToolCategory.MUTATING,
     "container_update": ToolCategory.MUTATING,
-    "container_wait": ToolCategory.READ_ONLY,
     "container_export": ToolCategory.MUTATING,  # can write a file on the server host (dest_path)
     "container_archive_get": ToolCategory.READ_ONLY,
     "container_archive_get_to_file": ToolCategory.MUTATING,  # writes a file on the server host
@@ -133,7 +133,6 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "node_list": ToolCategory.READ_ONLY,
     "node_update": ToolCategory.MUTATING,
     "node_remove": ToolCategory.DESTRUCTIVE,
-    "node_wait": ToolCategory.READ_ONLY,
     # services
     "service_create": ToolCategory.MUTATING,
     "service_inspect": ToolCategory.READ_ONLY,
@@ -144,7 +143,6 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "service_logs": ToolCategory.READ_ONLY,
     "service_scale": ToolCategory.MUTATING,
     "service_rollback": ToolCategory.MUTATING,
-    "service_wait": ToolCategory.READ_ONLY,
     # swarm
     "swarm_init": ToolCategory.MUTATING,
     "swarm_join": ToolCategory.MUTATING,
@@ -179,7 +177,6 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "compose_list": ToolCategory.READ_ONLY,
     "compose_images": ToolCategory.READ_ONLY,
     "compose_port": ToolCategory.READ_ONLY,
-    "compose_wait": ToolCategory.READ_ONLY,
     "compose_top": ToolCategory.READ_ONLY,
     "compose_cp": ToolCategory.MUTATING,
     "compose_kill": ToolCategory.DESTRUCTIVE,
@@ -219,7 +216,6 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "scout_sbom": ToolCategory.READ_ONLY,
     # registry (HTTPS, no daemon)
     "registry_tags": ToolCategory.READ_ONLY,
-    "registry_tag_wait": ToolCategory.READ_ONLY,
     "registry_manifest": ToolCategory.READ_ONLY,
     "registry_image_config": ToolCategory.READ_ONLY,
     "hub_tags": ToolCategory.READ_ONLY,
@@ -270,7 +266,18 @@ def _parse_domains(value: str | None) -> frozenset[str]:
 # user who never touches swarm can drop the whole swarm/services/nodes/configs/secrets surface from the
 # tool list the client has to reason about. This filters *registration*, not classification - disabled
 # tools still appear in the tool-catalog resource so the choice is auditable.
-DISABLED_DOMAINS = _parse_domains(read_env("DOCKER_MCP_SERVER_DISABLE"))
+#
+# `system` cannot be disabled. It holds what an agent needs to orient itself and recover, and the one
+# wait tool every other domain's waits go through, so dropping it breaks far more than it saves. The
+# one thing anyone could want from disabling it, keeping the agent from logging in to a registry,
+# DOCKER_MCP_SERVER_READONLY already gives. Naming it is not silently accepted: it is reported as
+# ignored, at startup and in the tool catalog.
+ALWAYS_ON_DOMAINS: frozenset[str] = frozenset({"system"})
+_REQUESTED_DISABLED_DOMAINS = _parse_domains(read_env("DOCKER_MCP_SERVER_DISABLE"))
+# What the switch asked for and was refused, for the startup warning and the catalog.
+IGNORED_DISABLED_DOMAINS: frozenset[str] = _REQUESTED_DISABLED_DOMAINS & ALWAYS_ON_DOMAINS
+# The effective set every gate reads, so an always-on domain needs no special case anywhere else.
+DISABLED_DOMAINS = _REQUESTED_DISABLED_DOMAINS - ALWAYS_ON_DOMAINS
 
 
 @dataclass(frozen=True)
@@ -622,6 +629,8 @@ def tool_catalog() -> dict[str, Any]:
         },
         # Disabled domains that match no known tool - usually a typo in DOCKER_MCP_SERVER_DISABLE.
         "unknown_disabled_domains": sorted(DISABLED_DOMAINS - set(domains)),
+        # Domains DOCKER_MCP_SERVER_DISABLE named but cannot drop (see ALWAYS_ON_DOMAINS).
+        "ignored_disabled_domains": sorted(IGNORED_DISABLED_DOMAINS),
         "domains": domain_summary,
         "tools": [
             {"name": r.name, "domain": r.domain, "category": r.category.value, "registered": r.registered}
@@ -664,7 +673,7 @@ _DOMAIN_BLURBS: dict[str, str] = {
     "context": "docker CLI contexts; CLI-backed",
     "registry": "tags/manifests over HTTPS; no daemon needed",
     "plugins": "install (dry run shows privileges), upgrade",
-    "system": "info, df (disk usage), events, login, host_list",
+    "system": "wait (healthy/exited/converged), info, df (disk usage), events, login, host_list",
 }
 
 # CLI- and swarm-tied caveats are only worth emitting when the relevant domains actually registered.
@@ -1268,7 +1277,7 @@ def _translate_failures[F: Callable[..., Any]](func: F, error_cls: type[ToolErro
     return cast(F, wrapper)  # see the note on the async branch
 
 
-def tool[F: Callable[..., Any]](**kwargs: Any) -> Callable[[F], F]:
+def tool[F: Callable[..., Any]](*, enabled: bool = True, **kwargs: Any) -> Callable[[F], F]:
     """Register an @mcp.tool with central classification - the drop-in `@tool()` every tool module uses.
 
     The tool's category comes from TOOL_CATEGORIES (defaulting to MUTATING, the safe assumption, for
@@ -1277,6 +1286,10 @@ def tool[F: Callable[..., Any]](**kwargs: Any) -> Callable[[F], F]:
     attach the matching ToolAnnotations.
 
     Args:
+        enabled: False records the tool as seen but leaves it unregistered, for a tool whose module
+            decides at import that it has nothing to offer under the active switches (`system_wait`
+            with every domain it waits on disabled). The catalog then reports it as hidden by
+            configuration, rather than not knowing it exists.
         **kwargs: passed to the SDK's own tool decorator
 
     Returns:
@@ -1287,8 +1300,10 @@ def tool[F: Callable[..., Any]](**kwargs: Any) -> Callable[[F], F]:
         name = func.__name__
         domain = _domain_for(func)
         category = TOOL_CATEGORIES.get(name, ToolCategory.MUTATING)
-        registered = _should_register(category, readonly=READONLY, no_destructive=NO_DESTRUCTIVE) and (
-            domain is None or _domain_enabled(domain, DISABLED_DOMAINS)
+        registered = (
+            enabled
+            and _should_register(category, readonly=READONLY, no_destructive=NO_DESTRUCTIVE)
+            and (domain is None or _domain_enabled(domain, DISABLED_DOMAINS))
         )
         _seen_tool_names.add(name)
         _tool_registry[name] = ToolRecord(

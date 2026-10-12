@@ -14,9 +14,9 @@ from docker_mcp.tools.registry import (
     hub_repo_info,
     registry_image_config,
     registry_manifest,
-    registry_tag_wait,
     registry_tags,
 )
+from docker_mcp.tools.system import system_wait
 
 
 @pytest.fixture(autouse=True, scope="module")
@@ -68,10 +68,12 @@ def test_registry_list_tags_alpine_public():
     assert len(result["tags"]) <= 20
 
 
-def test_registry_tag_wait_already_present_real():
+def test_system_wait_registry_tag_already_present_real():
     # A true "wait for a not-yet-published tag" test isn't practical here (nothing can publish
     # mid-test) — this covers the immediate-match fast path against a known-stable public tag.
-    result = _call_or_skip(registry_tag_wait, "alpine", "latest", timeout_seconds=15)
+    result = _call_or_skip(
+        system_wait, kind="registry_tag", target="alpine:latest", until="present", timeout_seconds=15
+    )
     assert result["met"] is True
     assert result["timed_out"] is False
 
