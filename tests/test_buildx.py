@@ -332,10 +332,12 @@ def _no_buildx_and_no_ssh():
 
 def test_buildx_prune_without_the_plugin_prunes_through_the_engine_api():
     with _no_buildx_and_no_ssh() as (client, run):
-        client.return_value.api.prune_builds.return_value = {"CachesDeleted": ["c1"], "SpaceReclaimed": 400}
+        client.return_value.images.prune_builds.return_value = {"CachesDeleted": ["c1"], "SpaceReclaimed": 400}
         result = buildx_prune(all=True, filters={"until": "24h"})
     assert result == {"CachesDeleted": ["c1"], "SpaceReclaimed": 400}
-    client.return_value.api.prune_builds.assert_called_once_with(filters={"until": "24h"}, all=True)
+    client.return_value.images.prune_builds.assert_called_once_with(filters={"until": "24h"}, all=True)
+    # The public high-level path; the low-level APIClient one is not used.
+    assert not client.return_value.api.prune_builds.called
     assert not run.called, "nothing is shelled out when the plugin is missing"
 
 
@@ -344,7 +346,7 @@ def test_buildx_prune_through_the_engine_api_sends_no_arguments_by_default():
     # none of them rather than passing explicit Nones or False to an older daemon.
     with _no_buildx_and_no_ssh() as (client, _):
         buildx_prune()
-    client.return_value.api.prune_builds.assert_called_once_with()
+    client.return_value.images.prune_builds.assert_called_once_with()
 
 
 @pytest.mark.parametrize(
@@ -364,13 +366,13 @@ def test_buildx_prune_through_the_engine_api_refuses_what_it_cannot_send(kwargs)
     with _no_buildx_and_no_ssh() as (client, _):
         with pytest.raises(CapabilityError, match=next(iter(kwargs))):
             buildx_prune(**kwargs)
-    assert not client.return_value.api.prune_builds.called
+    assert not client.return_value.images.prune_builds.called
 
 
 def test_buildx_prune_never_sends_the_deprecated_keep_storage():
     with _no_buildx_and_no_ssh() as (client, _):
         buildx_prune(all=True)
-    assert "keep_storage" not in client.return_value.api.prune_builds.call_args.kwargs
+    assert "keep_storage" not in client.return_value.images.prune_builds.call_args.kwargs
 
 
 def test_buildx_prune_on_an_ssh_host_without_the_plugin_runs_remotely_not_through_the_engine():

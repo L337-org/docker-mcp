@@ -338,7 +338,7 @@ def image_prune(  # noqa: DOC101,DOC103,DOC501,DOC503
     # The cache first, so that if it fails nothing else has been removed yet. No arguments: every
     # prune_builds argument is version-gated, image filters mean nothing to the cache, and its
     # `keep_storage` is the deprecated spelling an Engine may ignore - see buildx_prune for limits.
-    cache = client.api.prune_builds()
+    cache = client.images.prune_builds()
     try:
         result = client.images.prune(filters=filters)
     except DockerException as exc:
