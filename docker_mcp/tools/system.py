@@ -247,7 +247,12 @@ def _ensure_reachable_family(url: str) -> str:
     # paramiko checks the host key against whatever name the URL carries, so splicing in an address makes
     # it look up `[address]:port` in known_hosts, where many entries are only by name. Splice only when an
     # earlier address failed - the case this exists for - and leave the hostname when the first answered.
-    first = socket.getaddrinfo(hostname, port, socket.AF_UNSPEC, socket.SOCK_STREAM)[0][4][0]
+    try:
+        first = socket.getaddrinfo(hostname, port, socket.AF_UNSPEC, socket.SOCK_STREAM)[0][4][0]
+    except OSError:
+        # The name resolved a moment ago for the probe; if it fails now, splice as before rather than
+        # hand paramiko a name it may not resolve either.
+        first = None
     if peer_host == first:
         return url
     literal = f"[{peer_host}]" if ":" in peer_host else peer_host

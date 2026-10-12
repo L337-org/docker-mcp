@@ -1,5 +1,6 @@
 import inspect
 import os
+import socket
 import threading
 import types
 from typing import Any
@@ -732,6 +733,18 @@ def test_ensure_reachable_family_keeps_the_hostname_when_the_first_address_answe
     monkeypatch.setattr(system_module, "connect_socket_with_family_fallback", MagicMock(return_value=fake_sock))
     assert system_module._ensure_reachable_family("ssh://bob@example.com:2222") == "ssh://bob@example.com:2222"
     fake_sock.close.assert_called_once()
+
+
+def test_ensure_reachable_family_splices_as_before_if_the_second_lookup_fails(monkeypatch):
+    # A transient resolver failure on the second lookup must not escape: fall back to the old behaviour.
+    def no_answer(*args, **kwargs):
+        raise socket.gaierror("temporary failure in name resolution")
+
+    monkeypatch.setattr(system_module.socket, "getaddrinfo", no_answer)
+    fake_sock = MagicMock()
+    fake_sock.getpeername.return_value = ("203.0.113.5", 2222)
+    monkeypatch.setattr(system_module, "connect_socket_with_family_fallback", MagicMock(return_value=fake_sock))
+    assert system_module._ensure_reachable_family("ssh://bob@example.com:2222") == "ssh://bob@203.0.113.5:2222"
 
 
 def test_ensure_reachable_family_splices_in_the_reachable_address(monkeypatch):
