@@ -5,6 +5,9 @@
 import time
 from typing import Literal, cast
 
+import docker
+import docker.models.services
+
 from docker_mcp.exceptions import CapabilityError, RemoteFailureError, ToolInputError
 from docker_mcp.server import tool
 from docker_mcp.tools._labels import managed_filter, with_provenance
@@ -30,7 +33,7 @@ _LIVE_DESIRED_STATES = frozenset(
 )
 
 
-def _global_node_counts(service, client) -> tuple[int, int]:
+def _global_node_counts(service: docker.models.services.Service, client: docker.DockerClient) -> tuple[int, int]:
     """How many nodes a global service wants a task on, and on how many one is running.
 
     Counted by node rather than by task, as docker/cli's `globalProgressUpdater` does: a node whose task
