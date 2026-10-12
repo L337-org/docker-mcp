@@ -97,7 +97,7 @@ Each file maps to one Docker SDK domain (or, for CLI-only and registry-only feat
 | `docker_mcp/tools/services.py` | Swarm services | docker-py |
 | `docker_mcp/tools/swarm.py` | Swarm init, join, leave | docker-py |
 | `docker_mcp/tools/compose.py` | Docker Compose v2 | `docker compose` CLI via `_cli.py` |
-| `docker_mcp/tools/stack.py` | Docker stacks (Compose-on-Swarm) | `docker stack` CLI via `_cli.py` (core CLI, no plugin probe) |
+| `docker_mcp/tools/stack.py` | Docker stacks (Compose-on-Swarm) | `stack_deploy`: `docker stack deploy` via `_cli.py` (core CLI, no plugin probe); the rest: docker-py, filtered on the stack label |
 | `docker_mcp/tools/context.py` | Docker CLI contexts | `docker context` CLI via `_cli.py` |
 | `docker_mcp/tools/buildx.py` | Buildx / BuildKit (multi-arch builds, imagetools - supersedes `docker manifest` - and build history) | `docker buildx` CLI via `_cli.py` |
 | `docker_mcp/tools/scout.py` | Vulnerability scanning, SBOMs, base-image recommendations | `docker scout` CLI via `_cli.py` |

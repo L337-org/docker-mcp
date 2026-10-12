@@ -288,20 +288,73 @@ def test_read_service_task_summary_surfaces_failing_tasks():
     ]
 
 
-def test_read_service_task_summary_global_mode_desired_is_task_count():
+def _gtask(node, desired, state, task_id=None):
+    """A global service's task on `node`, as the Engine reports it."""
+    return {"ID": task_id or f"{node}-{state}", "NodeID": node, "DesiredState": desired, "Status": {"State": state}}
+
+
+def _node(node_id, state="ready"):
+    node = MagicMock()
+    node.id, node.attrs = node_id, {"Status": {"State": state}}
+    return node
+
+
+def _global_summary(tasks, nodes=()):
     service = MagicMock()
-    service.name = "worker"
+    service.name = "agent"
     service.attrs = {"Spec": {"Mode": {"Global": {}}}}
-    service.tasks.return_value = [
-        {"ID": "t1", "Status": {"State": "running"}},
-        {"ID": "t2", "Status": {"State": "starting"}},
-    ]
+    service.tasks.side_effect = lambda filters=None: (
+        [t for t in tasks if t["DesiredState"] == "running"] if filters else list(tasks)
+    )
     with _patch() as mock_client:
         mock_client.return_value.services.get.return_value = service
-        summary = _read_service_task_summary("svc1")
-    assert summary["mode"] == "global"
-    assert summary["running_tasks"] == 1
-    assert summary["desired_tasks"] == 2  # no fixed target: len(returned tasks)
+        mock_client.return_value.nodes.list.return_value = list(nodes)
+        return _read_service_task_summary("agent")
+
+
+def test_read_service_task_summary_global_mode_counts_nodes():
+    summary = _global_summary([_gtask("n1", "running", "running"), _gtask("n2", "running", "starting")])
+    assert (summary["mode"], summary["running_tasks"], summary["desired_tasks"]) == ("global", 1, 2)
+
+
+def test_a_global_node_whose_task_was_rejected_stays_wanted_until_its_retry_runs():
+    # The rejected task is shut down and its replacement waits out the restart delay at desired "ready":
+    # counting only desired-running tasks would drop n2 from both counts and read 1 of 1.
+    summary = _global_summary(
+        [
+            _gtask("n1", "running", "running"),
+            _gtask("n2", "shutdown", "rejected"),
+            _gtask("n2", "ready", "ready", task_id="n2-retry"),
+        ]
+    )
+    assert (summary["running_tasks"], summary["desired_tasks"]) == (1, 2)
+
+
+def test_a_drained_node_stops_counting_for_a_global_service():
+    summary = _global_summary([_gtask("n1", "running", "running"), _gtask("n2", "shutdown", "shutdown")])
+    assert (summary["running_tasks"], summary["desired_tasks"]) == (1, 1)
+
+
+def test_a_global_task_still_stopping_on_a_draining_node_is_not_running():
+    # Swarm has shut the task down but it has not stopped yet, so its node is neither wanted nor running.
+    summary = _global_summary([_gtask("n1", "running", "running"), _gtask("n2", "shutdown", "running")])
+    assert (summary["running_tasks"], summary["desired_tasks"]) == (1, 1)
+
+
+def test_a_global_task_on_a_down_node_is_wanted_but_not_running():
+    summary = _global_summary(
+        [_gtask("n1", "running", "running"), _gtask("n2", "running", "running")],
+        nodes=[_node("n1"), _node("n2", state="down")],
+    )
+    assert (summary["running_tasks"], summary["desired_tasks"]) == (1, 2)
+
+
+def test_a_global_node_counts_once_however_many_tasks_it_has():
+    # Old tasks on the same node (an update's previous spec, say) do not make it count twice.
+    summary = _global_summary(
+        [_gtask("n1", "running", "running"), _gtask("n1", "running", "running", task_id="n1-old")]
+    )
+    assert (summary["running_tasks"], summary["desired_tasks"]) == (1, 1)
 
 
 def test_read_service_task_summary_replicated_without_replicas_falls_back_to_task_count():
@@ -341,6 +394,32 @@ def test_wait_service_running_already_converged_returns_immediately():
     assert result["timed_out"] is False
     assert result["running_tasks"] == 2
     assert result["desired_tasks"] == 2
+    sleep.assert_not_called()
+
+
+def test_wait_service_running_waits_for_a_global_service_to_have_tasks():
+    # Just after creation a global service has no tasks, so its desired count is 0 and 0 >= 0 would be met.
+    none_yet = _task_service({"Global": {}}, [])
+    started = _task_service({"Global": {}}, [_gtask("n1", "running", "running")])
+    with _patch() as mock_client, patch("docker_mcp.tools.services.time.sleep") as sleep:
+        mock_client.return_value.services.get.side_effect = [none_yet, started]
+        result = wait_service("agent", until="running", timeout_seconds=10, poll_interval=0.01)
+    assert (result["met"], result["running_tasks"], result["desired_tasks"]) == (True, 1, 1)
+    sleep.assert_called_once()
+
+
+def test_wait_service_running_with_no_global_task_times_out_unmet():
+    with _patch() as mock_client, patch("docker_mcp.tools.services.time.sleep"):
+        mock_client.return_value.services.get.return_value = _task_service({"Global": {}}, [])
+        result = wait_service("agent", until="running", timeout_seconds=0)
+    assert (result["met"], result["timed_out"]) == (False, True)
+
+
+def test_wait_service_running_a_replicated_service_scaled_to_zero_is_met():
+    with _patch() as mock_client, patch("docker_mcp.tools.services.time.sleep") as sleep:
+        mock_client.return_value.services.get.return_value = _task_service({"Replicated": {"Replicas": 0}}, [])
+        result = wait_service("web", until="running", timeout_seconds=5)
+    assert result["met"] is True
     sleep.assert_not_called()
 
 

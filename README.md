@@ -137,7 +137,7 @@ pin a version, replace `:latest` with a release tag (e.g. `:1.5.1`). To pull fro
 **Image variants.** Two variants are published to both registries (`gavinlucas/docker-mcp-server` on
 Docker Hub and `ghcr.io/l337-org/docker-mcp-server` on GHCR), both built from one `Dockerfile`. The
 CLI-backed domains (Compose, Stack, Buildx, Scout, Context) shell out to the `docker` CLI and its
-plugins.
+plugins; in Stack, only `stack_deploy` does.
 
 | Variant | Tags | Approx. size | Includes |
 |---------|------|-------------|----------|
@@ -216,7 +216,7 @@ That ephemeral `127.0.0.1` listener bridges to the remote (root-equivalent) daem
 
 #### No local Docker
  
-If Docker is not installed locally - or the plugin a call needs is missing - most tools will still operate on a remote host exactly as before. A few tool families (**Compose, Stack, Buildx, Scout**) will be run **on the target host itself**, over SSH. For these commands TCP and TLS connections will not work without a local Docker install.
+If Docker is not installed locally - or the plugin a call needs is missing - most tools will still operate on a remote host exactly as before. A few tool families (**Compose, Buildx, Scout**, and `stack_deploy`) will be run **on the target host itself**, over SSH. For these commands TCP and TLS connections will not work without a local Docker install.
 
 Worth knowing:
 - **It's a fallback, never a preference.** A local CLI that can serve the call - binary plus the plugin that call needs - is always used instead, so nothing changes for a normal install.
@@ -256,7 +256,7 @@ Once loaded, the agent gets MCP tools grouped by Docker domain. A few examples:
 - **Swarm** - `swarm_init`, `swarm_join_tokens` (close the init-to-join loop), `swarm_update` (rotate join tokens / unlock key), `service_create`, `service_scale`, `service_rollback` (re-apply the previous service spec), `service_ps` (one service's tasks, or with no service every task in the cluster, filterable by node or desired state - no single CLI command does this), `service_logs` (a service's logs, or one task's), `node_list`, `node_remove`, `secret_create`, `config_create`
 - **System** - `system_wait` (the one wait: until a container exits, is healthy or logs a line, a service or stack converges, a stack is removed, a node is ready, a compose project is running, healthy or exited, or a tag lands in a registry - every wait has a timeout, 600 s by default, and reports one rather than raising), `system_ping`, `system_info`, `system_version`, `system_df`, `system_events`, `host_list` (the configured daemons and which is the default - see [Managing several daemons](#managing-several-daemons)), `system_login` / `system_logout` (cache or clear registry credentials), `system_reconnect` (rebuild a host's SDK client to recover a wedged connection)
 - **Compose** - `compose_up`, `compose_down`, `compose_stop`, `compose_start`, `compose_restart`, `compose_pause` / `compose_unpause`, `compose_kill`, `compose_ps`, `compose_list`, `compose_images`, `compose_top`, `compose_port`, `compose_logs`, `compose_config`, `compose_build`, `compose_pull`, `compose_run`, `compose_exec`, `compose_cp` *(wraps the `docker compose` CLI plugin)*
-- **Stacks** - `stack_deploy`, `stack_list`, `stack_ps`, `stack_services`, `stack_remove` *(deploy a Compose file to a swarm as a stack; wraps the `docker stack` CLI - requires a swarm manager)*
+- **Stacks** - `stack_deploy`, `stack_list`, `stack_ps`, `stack_services`, `stack_remove` *(deploy a Compose file to a swarm as a stack - `stack_deploy` wraps `docker stack deploy`, which translates the Compose file; the rest use the Engine API - requires a swarm manager)*
 - **Contexts** - `context_list`, `context_inspect`, `context_create`, `context_use`, `context_remove` *(wraps the `docker context` CLI)*
 - **Registry / Hub** - `registry_tags`, `registry_manifest`, `registry_image_config` (read an image's env/entrypoint/labels without pulling), `hub_tags`, `hub_repo_info`, `hub_rate_limit` (remaining pull budget) *(HTTPS to OCI v2 registries and the Docker Hub API - no daemon required; transparent retry on a brief 429)*
 - **Buildx** - `buildx_build`, `buildx_bake`, `buildx_imagetools_inspect`, `buildx_imagetools_create`, `buildx_list`, `buildx_inspect`, `buildx_du`, `buildx_history_list` / `buildx_history_inspect` (drill into past build records), `buildx_prune`, `buildx_create`, `buildx_use`, `buildx_remove` *(wraps the `docker buildx` CLI plugin). Use `buildx_imagetools_*` in place of `docker manifest` - that command is in maintenance mode and lacks support for OCI image indexes and attestations.*
