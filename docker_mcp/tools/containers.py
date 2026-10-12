@@ -146,7 +146,11 @@ def container_run(  # noqa: DOC101,DOC103,DOC501,DOC503
     provenance = with_provenance(kwargs.get("labels"), "container_run")
     if provenance is not None:
         kwargs["labels"] = provenance
-    return _get_client(host).containers.run(image, **kwargs).attrs
+    container = _get_client(host).containers.run(image, **kwargs)
+    # docker-py's run returns the object it fetched before starting it, so its attrs still say "created";
+    # re-read it, as container_start does, so the payload describes the started container.
+    container.reload()
+    return container.attrs
 
 
 @tool()

@@ -139,9 +139,9 @@ def compose_up(  # noqa: DOC101,DOC103
     """
     Bring up a Docker Compose project, detached.
 
-    Always runs detached (`-d`), so it returns once the containers are started. To wait for them,
-    `system_wait(kind="compose", target=<project name>, until="healthy")`, or "running"; `compose_ps`
-    shows their state without waiting.
+    Always runs detached (`-d`), so it returns once the containers are started. To wait for them, call
+    `system_wait(kind="compose", target=<project name>, until="healthy")` (or `until="running"`);
+    `compose_ps` shows their state without waiting.
     Does not raise on a non-zero CLI exit (a missing compose plugin or a timeout still raises) - inspect
     `returncode`/`stderr` in the result.
 

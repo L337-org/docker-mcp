@@ -184,6 +184,9 @@ def test_deploy_compose_project_includes_config_pull_up_ps_logs_in_order():
     assert out.index("compose_pull") < out.index("compose_up")
     assert out.index("compose_up") < out.index("compose_ps")
     assert out.index("compose_ps") < out.index("compose_logs")
+    # Waits through system_wait once the project is up, on the name it was given.
+    wait = 'system_wait(kind="compose", target="demo", until="healthy")'
+    assert out.index("compose_up") < out.index(wait) < out.index("compose_ps")
     # Should warn about destructive teardown flags.
     assert "--volumes" in out
 
@@ -191,6 +194,8 @@ def test_deploy_compose_project_includes_config_pull_up_ps_logs_in_order():
 def test_deploy_compose_project_without_project_name_omits_arg():
     out = deploy_compose_project("/tmp/myproj")
     assert 'project_name="' not in out
+    # With no name given, the wait is told where to find the one compose derived, without nested backticks.
+    assert 'system_wait(kind="compose", target=<the project name compose_list shows>, until="healthy")' in out
 
 
 def test_troubleshoot_compose_project_gathers_state_first():

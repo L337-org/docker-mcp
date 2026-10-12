@@ -119,6 +119,8 @@ def test_a_one_shot_container_run_gives_its_exit_code_and_output_afterwards():
     started = container_run("alpine:3", command=["sh", "-c", "echo one-shot-output; exit 3"], name=name)
     try:
         assert started["Name"].lstrip("/") == name
+        # The payload describes the started container, not the one docker-py fetched before starting it.
+        assert started["State"]["Status"] != "created"
         done = system_wait(kind="container", target=name, until="not-running", timeout_seconds=60)
         assert (done["met"], done["detail"]["status_code"]) == (True, 3)
         assert container_logs(name).strip() == "one-shot-output"

@@ -62,14 +62,8 @@ def test_run_container_detached():
     assert args == ("nginx",)
     assert kwargs["detach"] is True
     assert kwargs["name"] == "web"
-
-
-def test_container_run_always_detaches_and_returns_the_inspect_payload():
-    with _patch() as mock_client:
-        mock_client.return_value.containers.run.return_value.attrs = {"Id": "abc"}
-        result = container_run("alpine", command="echo hello")
-    assert result == {"Id": "abc"}
-    assert mock_client.return_value.containers.run.call_args.kwargs["detach"] is True
+    # run hands back the object fetched before the start; it must be re-read to describe the started container.
+    container.reload.assert_called_once_with()
 
 
 @pytest.mark.parametrize("key", ["detach", "remove"])

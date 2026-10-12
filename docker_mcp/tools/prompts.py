@@ -378,7 +378,7 @@ def deploy_compose_project(project_dir: str, project_name: str | None = None) ->
     name_clause = f" with project name `{project_name}`" if project_name else ""
     project_name_arg = f', project_name="{project_name}"' if project_name else ""
     # The wait takes the project name, which compose derives from the directory unless one is given.
-    wait_target = f'"{project_name}"' if project_name else "<the project name `compose_list` shows>"
+    wait_target = f'"{project_name}"' if project_name else "<the project name compose_list shows>"
     return (
         f"Bring up the Docker Compose project at `{project_dir}`{name_clause}:\n"
         f'1. Call `compose_config(project_dir="{project_dir}"{project_name_arg}, format="json")` to render '
