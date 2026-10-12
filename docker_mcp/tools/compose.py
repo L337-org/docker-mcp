@@ -763,7 +763,7 @@ _COMPOSE_SERVICE_LABEL = "com.docker.compose.service"
 # `compose run` containers carry this as the string "True"; they are not part of the project's state.
 _COMPOSE_ONEOFF_LABEL = "com.docker.compose.oneoff"
 # On a dependent container: "<service>:<condition>:<restart>" per dependency, comma-separated, e.g.
-# "migrate:service_completed_successfully:false" (observed with Compose 5.5.1).
+# "migrate:service_completed_successfully:false". An integration test holds the format to a real project.
 _COMPOSE_DEPENDS_ON_LABEL = "com.docker.compose.depends_on"
 _STOPPED = ("exited", "dead")
 

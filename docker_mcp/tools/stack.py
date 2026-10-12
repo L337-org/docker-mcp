@@ -16,9 +16,9 @@
 # that stages its working directory; the queries and `stack rm` name nothing local.
 
 import time
+from typing import Literal, get_args
 
 import docker.errors
-from typing import Literal, get_args
 
 from docker_mcp.exceptions import ToolInputError
 from docker_mcp.server import tool
