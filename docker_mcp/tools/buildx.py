@@ -967,7 +967,7 @@ def _prune_build_cache_through_engine(
             "host at an ssh:// endpoint that has it via DOCKER_MCP_SERVER_HOSTS, or call again without those "
             "arguments to prune the daemon's default build cache through the Engine API"
         )
-    return _get_client(host).api.prune_builds(**drop_none(filters=filters, all=True if all else None))
+    return _get_client(host).images.prune_builds(**drop_none(filters=filters, all=True if all else None))
 
 
 @tool()
