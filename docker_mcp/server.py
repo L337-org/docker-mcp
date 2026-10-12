@@ -22,6 +22,7 @@ from typing import Any, NoReturn, cast
 
 import docker.errors
 import httpx
+import paramiko
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ResourceError, ToolError
 from mcp.types import ToolAnnotations
@@ -1273,6 +1274,10 @@ _LIBRARY_FAILURES: tuple[tuple[type[BaseException], type[DockerMcpError]], ...] 
     # for the same reason as above: the leaf is the one you happen to think of while reading the
     # code that raises it.
     (subprocess.SubprocessError, RemoteFailureError),
+    # paramiko's failures on an ssh:// host: an unknown host key, refused authentication, a dropped
+    # channel. docker-py lets them through unwrapped, so without this entry an agent saw only
+    # `Error executing tool` for a host key it could have been told to verify.
+    (paramiko.SSHException, RemoteFailureError),
 )
 
 _LIBRARY_FAILURE_TYPES: tuple[type[BaseException], ...] = tuple(exc for exc, _ in _LIBRARY_FAILURES)

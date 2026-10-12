@@ -717,7 +717,26 @@ def test_ensure_reachable_family_leaves_literal_ip_unchanged(monkeypatch):
     assert system_module._ensure_reachable_family("ssh://bob@[::1]:2222") == "ssh://bob@[::1]:2222"
 
 
+def _resolves_to(monkeypatch, *addresses):
+    """Make the hostname resolve to `addresses`, in that order, as getaddrinfo reports them."""
+    infos = [(None, None, None, "", (address, 0)) for address in addresses]
+    monkeypatch.setattr(system_module.socket, "getaddrinfo", lambda *args, **kwargs: infos)
+
+
+def test_ensure_reachable_family_keeps_the_hostname_when_the_first_address_answers(monkeypatch):
+    # paramiko checks known_hosts against the name in the URL; splicing in an address that paramiko would
+    # have reached anyway turned a known `[host]:port` entry into an unknown `[address]:port` one.
+    _resolves_to(monkeypatch, "2001:db8::1", "203.0.113.5")
+    fake_sock = MagicMock()
+    fake_sock.getpeername.return_value = ("2001:db8::1", 2222, 0, 0)
+    monkeypatch.setattr(system_module, "connect_socket_with_family_fallback", MagicMock(return_value=fake_sock))
+    assert system_module._ensure_reachable_family("ssh://bob@example.com:2222") == "ssh://bob@example.com:2222"
+    fake_sock.close.assert_called_once()
+
+
 def test_ensure_reachable_family_splices_in_the_reachable_address(monkeypatch):
+    # The first address (IPv6) failed and IPv4 answered: the case the workaround exists for.
+    _resolves_to(monkeypatch, "2001:db8::1", "203.0.113.5")
     fake_sock = MagicMock()
     fake_sock.getpeername.return_value = ("203.0.113.5", 2222)
     probe = MagicMock(return_value=fake_sock)
@@ -729,6 +748,7 @@ def test_ensure_reachable_family_splices_in_the_reachable_address(monkeypatch):
 
 
 def test_ensure_reachable_family_brackets_an_ipv6_literal_result(monkeypatch):
+    _resolves_to(monkeypatch, "203.0.113.5", "2001:db8::1")
     fake_sock = MagicMock()
     fake_sock.getpeername.return_value = ("2001:db8::1", 22)
     monkeypatch.setattr(system_module, "connect_socket_with_family_fallback", MagicMock(return_value=fake_sock))
@@ -752,6 +772,7 @@ def test_ensure_reachable_family_leaves_url_alone_when_every_address_fails(monke
 
 
 def test_ensure_reachable_family_preserves_username(monkeypatch):
+    _resolves_to(monkeypatch, "2001:db8::1", "203.0.113.5")
     fake_sock = MagicMock()
     fake_sock.getpeername.return_value = ("203.0.113.5", 22)
     monkeypatch.setattr(system_module, "connect_socket_with_family_fallback", MagicMock(return_value=fake_sock))
