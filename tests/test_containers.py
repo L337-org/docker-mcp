@@ -36,8 +36,15 @@ from docker_mcp.tools.containers import (
     container_stop,
     container_unpause,
     container_update,
-    container_wait,
 )
+from docker_mcp.tools.containers import _wait_container
+
+
+def wait_container(
+    id_or_name, until="not-running", timeout_seconds=600.0, poll_interval=2.0, pattern=None, regex=False
+):
+    """The container helper with the defaults `system_wait` supplies, so these cases read as they did."""
+    return _wait_container(id_or_name, until, timeout_seconds, poll_interval, pattern=pattern, regex=regex)
 
 
 def _patch():
@@ -499,12 +506,12 @@ def test_container_update():
     container.update.assert_called_once_with(cpu_shares=512)
 
 
-def test_container_wait_uses_finite_default_timeout():
+def test_wait_container_uses_finite_default_timeout():
     container = MagicMock()
     container.wait.return_value = {"StatusCode": 0}
     with _patch() as mock_client:
         mock_client.return_value.containers.get.return_value = container
-        result = container_wait("web")
+        result = wait_container("web")
     assert result["met"] is True
     assert result["timed_out"] is False
     assert result["status_code"] == 0
@@ -512,38 +519,38 @@ def test_container_wait_uses_finite_default_timeout():
     container.wait.assert_called_once_with(timeout=600, condition="not-running")
 
 
-def test_container_wait_rounds_fractional_timeout_up():
+def test_wait_container_rounds_fractional_timeout_up():
     container = MagicMock()
     container.wait.return_value = {"StatusCode": 0}
     with _patch() as mock_client:
         mock_client.return_value.containers.get.return_value = container
-        container_wait("web", timeout_seconds=0.5)
+        wait_container("web", timeout_seconds=0.5)
     # int() would truncate 0.5 to an immediate 0s daemon timeout; the tool rounds up instead.
     container.wait.assert_called_once_with(timeout=1, condition="not-running")
 
 
-def test_container_wait_rejects_negative_timeout():
+def test_wait_container_rejects_negative_timeout():
     with pytest.raises(ToolInputError, match="timeout_seconds"):
-        container_wait("web", timeout_seconds=-1)
+        wait_container("web", timeout_seconds=-1)
 
 
-def test_container_wait_returns_timed_out_instead_of_raising():
+def test_wait_container_returns_timed_out_instead_of_raising():
     container = MagicMock()
     container.wait.side_effect = requests.exceptions.ReadTimeout("timed out")
     with _patch() as mock_client:
         mock_client.return_value.containers.get.return_value = container
-        result = container_wait("web")
+        result = wait_container("web")
     assert result["met"] is False
     assert result["timed_out"] is True
     assert result["status_code"] is None
 
 
-def test_container_wait_surfaces_daemon_error_message():
+def test_wait_container_surfaces_daemon_error_message():
     container = MagicMock()
     container.wait.return_value = {"StatusCode": 137, "Error": {"Message": "oom"}}
     with _patch() as mock_client:
         mock_client.return_value.containers.get.return_value = container
-        result = container_wait("web", until="next-exit")
+        result = wait_container("web", until="next-exit")
     assert result["status_code"] == 137
     assert result["error"] == "oom"
     container.wait.assert_called_once_with(timeout=600, condition="next-exit")
@@ -675,7 +682,7 @@ def test_container_logs_follow_returns_collected_when_stream_close_raises():
     assert result == "line1\nline2"
 
 
-# ---------- container_wait(until="healthy") ----------
+# ---------- wait_container(until="healthy") ----------
 
 
 def _health_container(*states: dict) -> MagicMock:
@@ -692,86 +699,86 @@ def _health_container(*states: dict) -> MagicMock:
     return container
 
 
-def test_container_wait_healthy_returns_when_healthy():
+def test_wait_container_healthy_returns_when_healthy():
     container = _health_container({"State": {"Status": "running", "Health": {"Status": "healthy"}}})
     with _patch() as mock_client:
         mock_client.return_value.containers.get.return_value = container
-        result = container_wait("web", until="healthy", timeout_seconds=5)
+        result = wait_container("web", until="healthy", timeout_seconds=5)
     assert result["met"] is True
     assert result["health"] == "healthy"
     assert result["timed_out"] is False
     container.reload.assert_called()
 
 
-def test_container_wait_healthy_polls_through_starting():
+def test_wait_container_healthy_polls_through_starting():
     container = _health_container(
         {"State": {"Status": "running", "Health": {"Status": "starting"}}},
         {"State": {"Status": "running", "Health": {"Status": "healthy"}}},
     )
     with _patch() as mock_client, patch("docker_mcp.tools.containers.time.sleep") as sleep:
         mock_client.return_value.containers.get.return_value = container
-        result = container_wait("web", until="healthy", timeout_seconds=10, poll_interval=0.01)
+        result = wait_container("web", until="healthy", timeout_seconds=10, poll_interval=0.01)
     assert result["met"] is True
     assert container.reload.call_count == 2  # starting, then healthy
     sleep.assert_called_once()  # slept once between the two polls
 
 
-def test_container_wait_healthy_reports_unhealthy():
+def test_wait_container_healthy_reports_unhealthy():
     container = _health_container({"State": {"Status": "running", "Health": {"Status": "unhealthy"}}})
     with _patch() as mock_client:
         mock_client.return_value.containers.get.return_value = container
-        result = container_wait("web", until="healthy", timeout_seconds=5)
+        result = wait_container("web", until="healthy", timeout_seconds=5)
     assert result["met"] is False
     assert result["health"] == "unhealthy"
 
 
-def test_container_wait_healthy_stops_if_container_exits():
+def test_wait_container_healthy_stops_if_container_exits():
     container = _health_container({"State": {"Status": "exited", "Health": {"Status": "starting"}}})
     with _patch() as mock_client:
         mock_client.return_value.containers.get.return_value = container
-        result = container_wait("batch", until="healthy", timeout_seconds=5)
+        result = wait_container("batch", until="healthy", timeout_seconds=5)
     assert result["met"] is False
     assert result["status"] == "exited"
 
 
-def test_container_wait_healthy_no_healthcheck_returns_promptly():
+def test_wait_container_healthy_no_healthcheck_returns_promptly():
     # Running container with no Health key (no HEALTHCHECK): return at once, health=None.
     container = _health_container({"State": {"Status": "running"}})
     with _patch() as mock_client, patch("docker_mcp.tools.containers.time.sleep") as sleep:
         mock_client.return_value.containers.get.return_value = container
-        result = container_wait("web", until="healthy", timeout_seconds=5)
+        result = wait_container("web", until="healthy", timeout_seconds=5)
     assert result["met"] is False
     assert result["health"] is None
     assert result["status"] == "running"
     sleep.assert_not_called()  # did not poll-wait
 
 
-def test_container_wait_healthy_times_out():
+def test_wait_container_healthy_times_out():
     container = _health_container({"State": {"Status": "running", "Health": {"Status": "starting"}}})
     with _patch() as mock_client:
         mock_client.return_value.containers.get.return_value = container
-        result = container_wait("web", until="healthy", timeout_seconds=0.0)  # deadline already passed
+        result = wait_container("web", until="healthy", timeout_seconds=0.0)  # deadline already passed
     assert result["met"] is False
     assert result["timed_out"] is True
     assert result["health"] == "starting"
 
 
-def test_container_wait_healthy_sleep_bounded_by_timeout():
+def test_wait_container_healthy_sleep_bounded_by_timeout():
     # A poll_interval far larger than the timeout must NOT push the total wait past the timeout:
     # the sleep is clamped to the remaining time, so this returns in ~timeout, not ~poll_interval.
     container = _health_container({"State": {"Status": "running", "Health": {"Status": "starting"}}})
     with _patch() as mock_client:
         mock_client.return_value.containers.get.return_value = container
         started = time.monotonic()
-        result = container_wait("web", until="healthy", timeout_seconds=0.05, poll_interval=100)
+        result = wait_container("web", until="healthy", timeout_seconds=0.05, poll_interval=100)
         elapsed = time.monotonic() - started
     assert result["timed_out"] is True
     assert elapsed < 2.0, f"sleep overshot the timeout ({elapsed:.2f}s); should be bounded near 0.05s"
 
 
-def test_container_wait_healthy_rejects_nonpositive_poll_interval():
+def test_wait_container_healthy_rejects_nonpositive_poll_interval():
     with pytest.raises(ToolInputError, match="poll_interval"):
-        container_wait("web", until="healthy", poll_interval=0)
+        wait_container("web", until="healthy", poll_interval=0)
 
 
 def _log_container(*log_outputs: bytes) -> MagicMock:
@@ -781,64 +788,64 @@ def _log_container(*log_outputs: bytes) -> MagicMock:
     return container
 
 
-def test_container_wait_log_match_finds_existing_line():
+def test_wait_container_log_match_finds_existing_line():
     container = _log_container(b"starting up\nREADY\n")
     with _patch() as mock_client, patch("docker_mcp.tools.containers.time.sleep") as sleep:
         mock_client.return_value.containers.get.return_value = container
-        result = container_wait("web", until="log-match", pattern="READY", timeout_seconds=5)
+        result = wait_container("web", until="log-match", pattern="READY", timeout_seconds=5)
     assert result["met"] is True
     assert result["matched_line"] == "READY"
     sleep.assert_not_called()
 
 
-def test_container_wait_log_match_polls_until_line_appears():
+def test_wait_container_log_match_polls_until_line_appears():
     container = _log_container(b"starting up\n", b"starting up\nREADY\n")
     with _patch() as mock_client, patch("docker_mcp.tools.containers.time.sleep") as sleep:
         mock_client.return_value.containers.get.return_value = container
-        result = container_wait("web", until="log-match", pattern="READY", timeout_seconds=5, poll_interval=0.01)
+        result = wait_container("web", until="log-match", pattern="READY", timeout_seconds=5, poll_interval=0.01)
     assert result["met"] is True
     assert container.logs.call_count == 2
     sleep.assert_called_once()
 
 
-def test_container_wait_log_match_is_substring_by_default_not_regex():
+def test_wait_container_log_match_is_substring_by_default_not_regex():
     # A literal-looking-but-regex-special pattern must be treated as a plain substring by default.
     container = _log_container(b"cost: $5.00 (ok)\n")
     with _patch() as mock_client:
         mock_client.return_value.containers.get.return_value = container
-        result = container_wait("web", until="log-match", pattern="$5.00 (ok)", timeout_seconds=5)
+        result = wait_container("web", until="log-match", pattern="$5.00 (ok)", timeout_seconds=5)
     assert result["met"] is True
 
 
-def test_container_wait_log_match_regex_opt_in():
+def test_wait_container_log_match_regex_opt_in():
     container = _log_container(b"error code: 42\n")
     with _patch() as mock_client:
         mock_client.return_value.containers.get.return_value = container
-        result = container_wait("web", until="log-match", pattern=r"error code: \d+", regex=True, timeout_seconds=5)
+        result = wait_container("web", until="log-match", pattern=r"error code: \d+", regex=True, timeout_seconds=5)
     assert result["met"] is True
     assert result["matched_line"] == "error code: 42"
 
 
-def test_container_wait_log_match_regex_false_treats_special_chars_literally():
+def test_wait_container_log_match_regex_false_treats_special_chars_literally():
     # Without regex=True, a regex metacharacter in `pattern` must not be interpreted specially.
     container = _log_container(b"no digits here\n")
     with _patch() as mock_client:
         mock_client.return_value.containers.get.return_value = container
-        result = container_wait("web", until="log-match", pattern=r"\d+", timeout_seconds=0.0)
+        result = wait_container("web", until="log-match", pattern=r"\d+", timeout_seconds=0.0)
     assert result["met"] is False  # literal backslash-d-plus isn't in the log
 
 
-def test_container_wait_log_match_times_out():
+def test_wait_container_log_match_times_out():
     container = _log_container(b"still waiting\n")
     with _patch() as mock_client:
         mock_client.return_value.containers.get.return_value = container
-        result = container_wait("web", until="log-match", pattern="READY", timeout_seconds=0.0)
+        result = wait_container("web", until="log-match", pattern="READY", timeout_seconds=0.0)
     assert result["met"] is False
     assert result["timed_out"] is True
     assert result["matched_line"] is None
 
 
-def test_container_wait_log_match_returns_promptly_when_container_exits_unmatched():
+def test_wait_container_log_match_returns_promptly_when_container_exits_unmatched():
     # A container that exits without ever printing the pattern must not poll to the full
     # timeout — there are no further logs coming, so this should return immediately.
     container = _log_container(b"still waiting\n")
@@ -846,7 +853,7 @@ def test_container_wait_log_match_returns_promptly_when_container_exits_unmatche
     with _patch() as mock_client, patch("docker_mcp.tools.containers.time.sleep") as sleep:
         mock_client.return_value.containers.get.return_value = container
         started = time.monotonic()
-        result = container_wait("web", until="log-match", pattern="READY", timeout_seconds=60)
+        result = wait_container("web", until="log-match", pattern="READY", timeout_seconds=60)
         elapsed = time.monotonic() - started
     assert result["met"] is False
     assert result["timed_out"] is False
@@ -855,14 +862,14 @@ def test_container_wait_log_match_returns_promptly_when_container_exits_unmatche
     assert elapsed < 2.0, f"should return promptly on exit, not poll toward the 60s timeout ({elapsed:.2f}s)"
 
 
-def test_container_wait_log_match_requires_pattern():
+def test_wait_container_log_match_requires_pattern():
     with pytest.raises(ToolInputError, match="pattern"):
-        container_wait("web", until="log-match")
+        wait_container("web", until="log-match")
 
 
-def test_container_wait_log_match_rejects_nonpositive_poll_interval():
+def test_wait_container_log_match_rejects_nonpositive_poll_interval():
     with pytest.raises(ToolInputError, match="poll_interval"):
-        container_wait("web", until="log-match", pattern="x", poll_interval=0)
+        wait_container("web", until="log-match", pattern="x", poll_interval=0)
 
 
 # ---------- shared resource helpers: log tail + computed stats summary ----------
@@ -938,6 +945,6 @@ def test_a_bad_timeout_says_what_is_wrong_on_the_wire(on_the_wire):
     from mcp.server.mcpserver.exceptions import ToolError, UnexpectedToolError
 
     with pytest.raises(ToolError) as excinfo:
-        on_the_wire("container_wait", {"id_or_name": "x", "timeout_seconds": -1})
+        on_the_wire("system_wait", {"kind": "container", "target": "x", "until": "not-running", "timeout_seconds": -1})
     assert not isinstance(excinfo.value, UnexpectedToolError)
     assert "timeout_seconds must be >= 0" in str(excinfo.value)

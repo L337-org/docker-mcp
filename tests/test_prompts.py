@@ -53,7 +53,7 @@ def test_deploy_container_lists_steps_in_order():
     assert "nginx:1.27" in out
     assert "web" in out
     assert out.index("image_pull") < out.index("container_run")
-    assert out.index("container_run") < out.index("container_wait")
+    assert out.index("container_run") < out.index('system_wait(kind="container"')
     assert "container_logs" in out
     # health:null (no HEALTHCHECK) must not be conflated with unhealthy
     assert "no HEALTHCHECK" in out
@@ -116,8 +116,8 @@ def test_migrate_container_preserves_config_with_rename_rollback():
     assert out.index("container_inspect") < out.index("container_stop")
     assert out.index("container_stop") < out.index("container_rename")
     assert out.index("container_rename") < out.index("container_run")
-    assert out.index("container_run") < out.index("container_wait")
-    assert out.index("container_wait") < out.rindex("container_remove")
+    assert out.index("container_run") < out.index('system_wait(kind="container"')
+    assert out.index('system_wait(kind="container"') < out.rindex("container_remove")
     assert "api-1-old" in out
     assert "rollback" in out.lower()
     # health:null (no HEALTHCHECK) must not be conflated with unhealthy
@@ -218,8 +218,7 @@ def test_audit_swarm_health_covers_nodes_services_and_tasks():
     assert "do not call it" in out.lower() or "do not change anything" in out.lower()
     # Points at the wait tools as the follow-up for mid-convergence findings, without becoming a
     # blocking call itself — the audit stays read-only/instantaneous.
-    assert "node_wait" in out
-    assert "service_wait" in out
+    assert "`system_wait` (kind `node` or `service`)" in out
     assert "this audit itself stays read-only" in out.lower()
 
 
@@ -383,8 +382,7 @@ def test_deploy_swarm_stack_validates_swarm_then_deploys_and_verifies():
     assert out.index("info") < out.index("stack_deploy")
     # Validate the compose file before mutating, then verify convergence after.
     assert out.index("compose_config") < out.index("stack_deploy")
-    assert out.index("stack_deploy") < out.index("stack_services")
-    assert out.index("stack_services") < out.index("service_wait")
+    assert out.index("stack_deploy") < out.index('system_wait(kind="stack", target="web", until="converged")')
     assert "stack_ps" in out
     # Mentions teardown but does not invoke it.
     assert "stack_remove" in out

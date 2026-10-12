@@ -42,7 +42,7 @@ dependencies = [
     # or the error classification the code relies on.
     "mcp>=2.1.0",
     # Pulled in transitively by docker, but we import requests.exceptions directly
-    # (container_wait catches ReadTimeout), so declare it explicitly.
+    # (system_wait's container wait catches ReadTimeout), so declare it explicitly.
     "requests>=2.26.0",
 ]
 

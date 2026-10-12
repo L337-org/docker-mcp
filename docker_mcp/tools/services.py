@@ -19,7 +19,7 @@ from docker_mcp.tools.system import _get_client
 
 
 # --- shared read helpers, also used by the service-logs:// / service-tasks:// resources in
-# resources.py, and by service_wait's "running" mode ---
+# resources.py, and by the service and stack waits behind system_wait ---
 
 _FAILING_TASK_STATES = frozenset({"failed", "rejected"})
 
@@ -488,7 +488,7 @@ def _service_wait_result(
     failed_tasks: list | None = None,
     update_state: str | None = None,
 ) -> dict:
-    """Build the unified service_wait result snapshot - the same shape for every `until` mode.
+    """Build the unified service wait result snapshot - the same shape for every `until` mode.
 
     Args:
         id_or_name: the object waited on
@@ -517,38 +517,35 @@ def _service_wait_result(
     }
 
 
-@tool()
-def service_wait(  # noqa: DOC101,DOC103,DOC501,DOC503
+def _wait_service(
     id_or_name: str,
-    until: Literal["running", "update-converged"] = "running",
+    until: str,
+    timeout_seconds: float,
+    poll_interval: float,
     replicas: int | None = None,
-    timeout_seconds: float = 600.0,
-    poll_interval: float = 2.0,
     host: str | None = None,
 ) -> dict:
-    """
-    Block until a swarm service's tasks converge, or a rolling update finishes.
+    """Wait for a swarm service to converge; `system_wait(kind="service")` is the tool that calls this.
 
-    One contract for both modes: never raises on timeout - the result always carries `met` and
-    `timed_out`. "running" polls task state via the same task-counting logic as
-    `service-tasks://{id_or_name}` (not the unconfirmed daemon `ServiceStatus` field) until running
-    tasks reach the desired count (Replicated mode) or every returned task is running (Global mode,
-    which has no fixed target). "update-converged" polls `UpdateStatus.State` until it reaches a
-    terminal value (`completed` or `rollback_completed`); if the service has never been updated (no
-    `UpdateStatus` at all), returns promptly with `met=false` - there's nothing to converge to, same
-    as `container_wait`'s no-healthcheck case.
+    Never raises on timeout. "running" polls task state with the same counting as
+    `service-tasks://{id_or_name}` until running tasks reach the desired count, or every returned task
+    runs for a global service. "update-converged" polls `UpdateStatus.State` until it is `completed` or
+    `rollback_completed`, and returns promptly with `met: false` for a service never updated.
 
     Args:
-        until: Condition to wait for: "running" (default) or "update-converged"
-        replicas: "running" mode only: override the desired replica count (e.g. right after a same-turn `service_scale`
-            call, before polling reflects the new target)
-        timeout_seconds: Max seconds to wait before returning with timed_out=true
-        poll_interval: Seconds between re-checks (default 2, > 0); capped by the time left so a large value can't push
-            the total wait past the timeout
+        id_or_name: the service to wait on
+        until: "running" or "update-converged"
+        timeout_seconds: seconds to wait before returning with timed_out=true
+        poll_interval: seconds between re-checks, capped by the time left
+        replicas: "running" only: the desired count to wait for, overriding the service's own
+        host: the host label to target, or None for the default
 
     Returns:
-        dict: {"service", "until", "met", "timed_out", "running_tasks", "desired_tasks", "failed_tasks", "update_state",
-            "waited_seconds"}
+        dict: {"service", "until", "met", "timed_out", "running_tasks", "desired_tasks", "failed_tasks",
+            "update_state", "waited_seconds"}
+
+    Raises:
+        ToolInputError: a negative timeout or replica count, or a non-positive poll interval
     """
     if timeout_seconds < 0:
         raise ToolInputError(f"timeout_seconds must be >= 0, got {timeout_seconds}.")

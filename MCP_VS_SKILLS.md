@@ -396,7 +396,7 @@ Legend: **✓** direct CLI equivalent; **≈** covered by a documented recipe (l
 
 ## Tools
 
-### containers (25) - `reference/containers.md`
+### containers (24) - `reference/containers.md`
 
 | Tool | CLI |
 |---|---|
@@ -421,8 +421,6 @@ Legend: **✓** direct CLI equivalent; **≈** covered by a documented recipe (l
 | container_archive_get ✓ | `docker cp <c>:<path> -` |
 | container_archive_get_to_file ✓ | `docker cp <c>:<path> <dest>` |
 | container_archive_put ✓ | `docker cp <src> <c>:<path>` |
-| container_wait (exit) ✓ | `docker wait` |
-| container_wait (healthy) ≈ | `wait_healthy` loop, `reference/observability.md` |
 
 ### images (14) - `reference/images.md`
 
@@ -446,13 +444,14 @@ Legend: **✓** direct CLI equivalent; **≈** covered by a documented recipe (l
 All ✓: `docker network create/ls/inspect/connect/disconnect/rm/prune`,
 `docker volume create/ls/inspect/rm/prune`.
 
-### compose (21) - `reference/compose.md`
+### compose (20) - `reference/compose.md`
 
 All ✓ - each maps to the identically-named `docker compose <sub>`: `up`, `down`, `ps`, `ls`,
 `logs`, `build`, `pull`, `config`, `cp`, `exec`, `run`, `start`, `stop`, `restart`, `kill`,
-`pause`, `unpause`, `port`, `top`, `images`, `wait`. (`compose_list` -> `docker compose ls`.)
+`pause`, `unpause`, `port`, `top`, `images`. (`compose_list` -> `docker compose ls`.) Waiting on a project is
+`system_wait(kind="compose")`, under system.
 
-### swarm (8) / services (10) / nodes (5) / secrets (4) / configs (4) / stack (5) - `reference/swarm.md`
+### swarm (8) / services (9) / nodes (4) / secrets (4) / configs (4) / stack (5) - `reference/swarm.md`
 
 | Tool | CLI |
 |---|---|
@@ -465,9 +464,7 @@ All ✓ - each maps to the identically-named `docker compose <sub>`: `up`, `down
 | service_logs with `task` ✓ | `docker service logs <task-id>` - the CLI takes SERVICE\|TASK; docker-py has no task-logs method |
 | service_scale ✓ | `docker service scale` |
 | service_rollback ✓ | `docker service rollback` |
-| service_wait ≈ | `wait_service` loop, `reference/observability.md` |
 | node_list / inspect / update / remove ✓ | `docker node <sub>` |
-| node_wait ≈ | `wait_node` loop |
 | secret_* / config_* ✓ | `docker secret <sub>` / `docker config <sub>` |
 | stack_deploy / list / ps / remove / services ✓ | `docker stack <sub>` |
 
@@ -495,7 +492,7 @@ prompt's privilege list without installing anything. The recipe mirrors the daem
 `computePrivileges`, so it reports whichever of the seven privilege kinds a given plugin declares
 rather than a fixed subset.
 
-### registry (7) - `reference/registry.md`
+### registry (6) - `reference/registry.md`
 
 | Tool | Equivalent |
 |---|---|
@@ -505,9 +502,8 @@ rather than a fixed subset.
 | hub_tags ≈ | `curl` Hub API `?ordering=last_updated` |
 | hub_repo_info ≈ | `curl` Hub API repository endpoint |
 | hub_rate_limit ≈ | `curl -I` `ratelimitpreview/test` - **no CLI equivalent** |
-| registry_tag_wait ≈ | `wait_tag` poll loop |
 
-### system (10) - `reference/system.md`
+### system (11) - `reference/system.md`
 
 | Tool | CLI |
 |---|---|
@@ -516,6 +512,10 @@ rather than a fixed subset.
 | system_ping ✓ | `docker version --format '{{.Server.Version}}'` (fails if unreachable) |
 | system_df ✓ | `docker system df [-v]` |
 | system_events ✓ | `docker events --since ... --until 0s` |
+| system_wait, container stop conditions ✓ | `docker wait [--condition]` |
+| system_wait, compose `exited` ✓ | `docker compose wait` |
+| system_wait, container `healthy`/`log-match`, service, node, stack, compose `running`/`healthy` ≈ | `wait_healthy` / `wait_service` / `wait_node` loops, `reference/observability.md`; `docker compose up --wait` for compose `healthy` |
+| system_wait, registry_tag ≈ | `wait_tag` poll loop |
 | system_login / logout ✓ | `docker login --password-stdin` / `docker logout` |
 | host_list ≈ | `docker context ls` (see [Structural gaps](#structural-gaps)) |
 | system_close / system_reconnect - | not applicable: the CLI is stateless per invocation |

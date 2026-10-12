@@ -11,10 +11,10 @@ from docker_mcp.tools.containers import (
     container_list,
     container_remove,
     container_run,
-    container_wait,
 )
 from docker_mcp.tools.resources import get_container_logs_resource, get_container_stats_resource
 from tests.integration.conftest import fail_unless_environmental_error
+from docker_mcp.tools.system import system_wait
 
 
 @pytest.fixture
@@ -41,10 +41,12 @@ def healthy_container():
     container_remove(name, force=True)
 
 
-def test_container_wait_healthy_real(healthy_container):
-    result = container_wait(healthy_container, until="healthy", timeout_seconds=30, poll_interval=1.0)
+def test_system_wait_container_healthy_real(healthy_container):
+    result = system_wait(
+        kind="container", target=healthy_container, until="healthy", timeout_seconds=30, poll_interval=1.0
+    )
     assert result["met"] is True
-    assert result["health"] == "healthy"
+    assert result["detail"]["health"] == "healthy"
     assert result["timed_out"] is False
 
 
@@ -64,12 +66,17 @@ def log_emitting_container():
     container_remove(name, force=True)
 
 
-def test_container_wait_log_match_real(log_emitting_container):
-    result = container_wait(
-        log_emitting_container, until="log-match", pattern="READY_MARKER", timeout_seconds=15, poll_interval=0.5
+def test_system_wait_container_log_match_real(log_emitting_container):
+    result = system_wait(
+        kind="container",
+        target=log_emitting_container,
+        until="log-match",
+        pattern="READY_MARKER",
+        timeout_seconds=15,
+        poll_interval=0.5,
     )
     assert result["met"] is True
-    assert result["matched_line"] == "READY_MARKER"
+    assert result["detail"]["matched_line"] == "READY_MARKER"
 
 
 def test_run_container_stamps_provenance_and_managed_only_filters(healthy_container):

@@ -28,7 +28,7 @@ from docker_mcp.tools.compose import (
     compose_top,
     compose_unpause,
     compose_up,
-    compose_wait,
+    _wait_compose,
 )
 
 
@@ -480,22 +480,148 @@ def test_compose_port_raises_on_failure():
             compose_port("web", 80)
 
 
-# ---------- compose_wait ----------
+# ---------- the compose wait (system_wait(kind="compose")) ----------
 
 
-def test_compose_wait_builds_args_and_returns_raw():
-    with patch("docker_mcp.tools.compose.run_docker", return_value=_ok("0\n")) as run:
-        result = compose_wait(["batch"], project_dir="/srv/app", timeout_seconds=120)
-    assert result["returncode"] == 0
-    argv = run.call_args.args[0]
-    assert "wait" in argv
-    assert argv[-1] == "batch"
-    assert run.call_args.kwargs["timeout"] == 120
+def _compose_container(name, service, status, health=None, exit_code=0, oneoff=False):
+    """A container as the Engine API lists it, with the labels compose stamps."""
+    container = MagicMock()
+    container.name = name
+    container.labels = {
+        "com.docker.compose.project": "app",
+        "com.docker.compose.service": service,
+        "com.docker.compose.oneoff": "True" if oneoff else "False",
+    }
+    state = {"Status": status, "ExitCode": exit_code}
+    if health is not None:
+        state["Health"] = {"Status": health}
+    container.attrs = {"State": state}
+    return container
 
 
-def test_compose_wait_requires_a_service():
-    with pytest.raises(ToolInputError, match="at least one"):
-        compose_wait([])
+def _compose_wait(readings, until, **kwargs):
+    """Run the compose wait against successive container listings, without sleeping."""
+    with (
+        patch("docker_mcp.tools.compose._get_client") as get_client,
+        patch("docker_mcp.tools.compose.time.sleep") as sleep,
+    ):
+        get_client.return_value.containers.list.side_effect = readings
+        kwargs.setdefault("timeout_seconds", 5)
+        kwargs.setdefault("poll_interval", 0.01)
+        timeout, interval = kwargs.pop("timeout_seconds"), kwargs.pop("poll_interval")
+        result = _wait_compose("app", until, timeout, interval, **kwargs)
+    return result, get_client.return_value.containers.list, sleep
+
+
+def test_compose_wait_reads_the_project_by_label_including_stopped_containers():
+    _, listing, _ = _compose_wait([[_compose_container("app-web-1", "web", "running")]], "running")
+    listing.assert_called_with(all=True, filters={"label": "com.docker.compose.project=app"})
+
+
+def test_compose_wait_running_is_met_once_every_container_runs():
+    readings = [
+        [_compose_container("app-web-1", "web", "created"), _compose_container("app-db-1", "db", "running")],
+        [_compose_container("app-web-1", "web", "running"), _compose_container("app-db-1", "db", "running")],
+    ]
+    result, _, sleep = _compose_wait(readings, "running")
+    assert (result["met"], result["timed_out"]) == (True, False)
+    assert [c["name"] for c in result["containers"]] == ["app-db-1", "app-web-1"]
+    assert sleep.call_count == 1
+
+
+def test_compose_wait_leaves_out_one_off_containers_and_unasked_services():
+    reading = [
+        _compose_container("app-web-1", "web", "running"),
+        _compose_container("app-web-run-1", "web", "exited", oneoff=True),
+        _compose_container("app-db-1", "db", "exited"),
+    ]
+    result, _, _ = _compose_wait([reading], "running", services=["web"])
+    assert result["met"] is True
+    assert [c["name"] for c in result["containers"]] == ["app-web-1"]
+
+
+def test_compose_wait_healthy_counts_a_container_without_a_healthcheck_once_it_runs():
+    readings = [
+        [
+            _compose_container("app-web-1", "web", "running", health="starting"),
+            _compose_container("app-db-1", "db", "running"),
+        ],
+        [
+            _compose_container("app-web-1", "web", "running", health="healthy"),
+            _compose_container("app-db-1", "db", "running"),
+        ],
+    ]
+    result, _, _ = _compose_wait(readings, "healthy")
+    assert result["met"] is True
+    assert {c["name"]: c["health"] for c in result["containers"]} == {"app-db-1": None, "app-web-1": "healthy"}
+
+
+def test_compose_wait_healthy_waits_for_a_container_without_a_healthcheck_to_start():
+    # No HEALTHCHECK means "running is enough", not "ready already": a created container is still settling.
+    readings = [
+        [_compose_container("app-web-1", "web", "created")],
+        [_compose_container("app-web-1", "web", "running")],
+    ]
+    result, _, sleep = _compose_wait(readings, "healthy")
+    assert result["met"] is True
+    assert sleep.call_count == 1
+
+
+def test_compose_wait_healthy_gives_up_at_once_on_an_unhealthy_container():
+    reading = [_compose_container("app-web-1", "web", "running", health="unhealthy")]
+    result, _, sleep = _compose_wait([reading], "healthy")
+    assert (result["met"], result["timed_out"]) == (False, False)
+    sleep.assert_not_called()
+
+
+def test_compose_wait_running_gives_up_at_once_when_a_container_has_stopped():
+    reading = [
+        _compose_container("app-web-1", "web", "running"),
+        _compose_container("app-job-1", "job", "exited", exit_code=1),
+    ]
+    result, _, sleep = _compose_wait([reading], "running")
+    assert (result["met"], result["timed_out"]) == (False, False)
+    sleep.assert_not_called()
+
+
+def test_compose_wait_exited_reports_each_exit_code():
+    readings = [
+        [_compose_container("app-job-1", "job", "running")],
+        [_compose_container("app-job-1", "job", "exited", exit_code=3)],
+    ]
+    result, _, _ = _compose_wait(readings, "exited")
+    assert result["met"] is True
+    assert result["containers"] == [
+        {"name": "app-job-1", "service": "job", "status": "exited", "health": None, "exit_code": 3}
+    ]
+
+
+def test_compose_wait_reports_no_exit_code_for_a_container_still_running():
+    result, _, _ = _compose_wait([[_compose_container("app-web-1", "web", "running", exit_code=0)]], "running")
+    assert result["containers"][0]["exit_code"] is None
+
+
+def test_compose_wait_with_no_containers_is_not_met_and_does_not_poll():
+    result, _, sleep = _compose_wait([[]], "running")
+    assert (result["met"], result["timed_out"], result["containers"]) == (False, False, [])
+    sleep.assert_not_called()
+
+
+def test_compose_wait_times_out_with_the_last_reading():
+    reading = [_compose_container("app-job-1", "job", "running")]
+    result, _, _ = _compose_wait([reading], "exited", timeout_seconds=0.0)
+    assert (result["met"], result["timed_out"]) == (False, True)
+    assert result["containers"][0]["status"] == "running"
+
+
+@pytest.mark.parametrize(
+    ("timeout", "interval", "message"),
+    [(-1, 1.0, "timeout_seconds must be >= 0"), (5, 0, "poll_interval must be > 0")],
+)
+def test_compose_wait_rejects_a_bad_bound_before_reading(timeout, interval, message):
+    with patch("docker_mcp.tools.compose._get_client") as get_client, pytest.raises(ToolInputError, match=message):
+        _wait_compose("app", "running", timeout, interval)
+    get_client.assert_not_called()
 
 
 # ---------- compose_top ----------

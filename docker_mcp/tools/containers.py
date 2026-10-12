@@ -910,7 +910,7 @@ def _wait_result(
     status: str | None = None,
     matched_line: str | None = None,
 ) -> dict:
-    """Build the unified container_wait result snapshot - the same shape for every `until` mode.
+    """Build the unified container wait result snapshot - the same shape for every `until` mode.
 
     Args:
         id_or_name: the container waited on
@@ -945,54 +945,39 @@ def _wait_result(
 _LOG_MATCH_TAIL_LINES = 1000
 
 
-@tool()
-def container_wait(  # noqa: DOC101,DOC103,DOC501,DOC503
+def _wait_container(
     id_or_name: str,
-    until: Literal["not-running", "next-exit", "removed", "healthy", "log-match"] = "not-running",
-    timeout_seconds: float = 600.0,
-    poll_interval: float = 2.0,
+    until: str,
+    timeout_seconds: float,
+    poll_interval: float,
     pattern: str | None = None,
     regex: bool = False,
     host: str | None = None,
 ) -> dict:
-    """
-    Block until a container reaches a condition: stopped, "healthy", or its logs contain a pattern.
+    """Wait for a container condition; `system_wait(kind="container")` is the tool that calls this.
 
-    One contract for every mode: never raises on timeout - the result always carries `met` (condition
-    reached) and `timed_out`. The stop conditions ("not-running"/"next-exit"/"removed") use the
-    daemon's blocking wait and fill `status_code`/`error` (the container's exit info); "healthy" polls
-    the container's HEALTHCHECK every `poll_interval`s and fills `health`/`status`; "log-match" polls
-    recent logs every `poll_interval`s for `pattern` and fills `matched_line`. For a compose
-    project use `compose_wait`; for swarm services use `service_wait`.
-
-    Health semantics: with no HEALTHCHECK defined, once the container is `running` the tool returns
-    promptly with `health: null` and `met: false` (false = "not confirmed healthy", not "unhealthy" -
-    check `health` to tell them apart). A container that exits before becoming healthy returns its
-    terminal `status` and `met: false`.
-
-    Log-match semantics: `pattern` is matched as a **plain substring** by default - safe against any
-    input, including adversarial ones. Pass `regex=True` to match `pattern` as a regular expression
-    (via `re.search`) instead; only do this with patterns you trust, since a regex with catastrophic
-    backtracking run against attacker-influenced log content can exhaust CPU (ReDoS). Checks stdout
-    and stderr, most recent lines first within each poll. If the container exits/dies before the
-    pattern ever appears, returns promptly with `met=false` (not `timed_out`) - no further logs can
-    arrive, so there's nothing to keep polling for.
+    Never raises on timeout: the result always carries `met` and `timed_out`. The stop conditions
+    ("not-running"/"next-exit"/"removed") use the daemon's blocking wait and fill `status_code`/`error`;
+    "healthy" polls the HEALTHCHECK and fills `health`/`status`, returning promptly with `health: null`
+    and `met: false` when no HEALTHCHECK is defined; "log-match" polls recent logs for `pattern`, as a
+    plain substring unless `regex` is set, since a hostile regex run over attacker-influenced logs can
+    exhaust CPU. A container that exits before the condition holds returns promptly with `met: false`.
 
     Args:
-        until: Condition to wait for: "not-running" (default), "next-exit", "removed", "healthy", or "log-match"
-            (requires `pattern`)
-        timeout_seconds: Max seconds to wait before returning with timed_out=true
-        poll_interval: "healthy"/"log-match" only: seconds between re-checks (default 2, > 0); capped by the time left
-            so a large value can't push the total wait past the timeout
-        pattern: "log-match" only: substring (or, with `regex=True`, a regular expression) to look for in the
-            container's logs
-        regex: "log-match" only: treat `pattern` as a regular expression instead of a plain substring
+        id_or_name: the container to wait on
+        until: "not-running", "next-exit", "removed", "healthy" or "log-match"
+        timeout_seconds: seconds to wait before returning with timed_out=true
+        poll_interval: seconds between re-checks for "healthy"/"log-match", capped by the time left
+        pattern: "log-match" only: the substring, or with `regex` the regular expression, to look for
+        regex: "log-match" only: treat `pattern` as a regular expression
+        host: the host label to target, or None for the default
 
     Returns:
-        dict: {"container", "until", "met", "timed_out", "status_code", "error", "health", "status", "matched_line",
-            "waited_seconds"}; stop modes fill status_code/error, "healthy" fills health
-            ("starting"/"healthy"/"unhealthy", or null with no healthcheck) and status, "log-match" fills matched_line
-            when met and status if the container exited without matching.
+        dict: {"container", "until", "met", "timed_out", "status_code", "error", "health", "status",
+            "matched_line", "waited_seconds"}
+
+    Raises:
+        ToolInputError: a negative timeout, a non-positive poll interval, or "log-match" without a pattern
     """
     if timeout_seconds < 0:
         raise ToolInputError(f"timeout_seconds must be >= 0, got {timeout_seconds}.")
@@ -1006,7 +991,13 @@ def container_wait(  # noqa: DOC101,DOC103,DOC501,DOC503
         try:
             # The daemon wait takes whole seconds; round up so a small fractional timeout still
             # waits (int() would truncate 0.5 to an immediate 0s timeout).
-            result = cast(dict, container.wait(timeout=math.ceil(timeout_seconds), condition=until))
+            result = cast(
+                dict,
+                container.wait(
+                    timeout=math.ceil(timeout_seconds),
+                    condition=cast(Literal["not-running", "next-exit", "removed"], until),
+                ),
+            )
         except requests.exceptions.ReadTimeout:
             return _wait_result(id_or_name, until, met=False, start=start, timed_out=True)
         return _wait_result(

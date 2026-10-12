@@ -446,7 +446,7 @@ def _returns_attrs(node):
 
     Only a `return` whose expression is recognisably `<model>.attrs` counts - directly, through a
     comprehension, or through a conditional. A tool that computes its own dict from `.attrs`
-    (`container_wait`, `node_wait`, `swarm_update`) returns a shape of its own making and is not
+    (`system_wait`, `swarm_update`) returns a shape of its own making and is not
     covered here, which is why this looks at the returned expression and not at the body.
 
     A return inside a nested definition is the tool's helper returning, not the tool, so those are

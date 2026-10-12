@@ -8,7 +8,7 @@ import uuid
 import pytest
 
 from docker_mcp.exceptions import RemoteFailureError
-from docker_mcp.tools.system import system_info
+from docker_mcp.tools.system import system_info, system_wait
 from docker_mcp.tools.stack import stack_deploy, stack_list, stack_ps, stack_remove, stack_services
 
 # A minimal stack: one alpine service that sleeps. `deploy.replicas` is what makes it a swarm service.
@@ -63,3 +63,19 @@ def test_stack_lifecycle(deployed_stack):
                 raise
             time.sleep(2)
     assert isinstance(tasks, list)
+
+
+def test_system_wait_stack_converges_then_is_removed(deployed_stack):
+    converged = system_wait(
+        kind="stack", target=deployed_stack, until="converged", timeout_seconds=120, poll_interval=1.0
+    )
+    assert (converged["met"], converged["timed_out"]) == (True, False)
+    assert [s["running_tasks"] for s in converged["detail"]["services"]] == [1]
+    # The running task must be found by the stack label too, or "removed" would be met while it still runs.
+    assert converged["detail"]["active_tasks"] == 1
+
+    result = stack_remove([deployed_stack])
+    assert result["returncode"] == 0, result["stderr"]
+    removed = system_wait(kind="stack", target=deployed_stack, until="removed", timeout_seconds=120, poll_interval=1.0)
+    assert (removed["met"], removed["timed_out"]) == (True, False)
+    assert removed["detail"] == {"services": [], "active_tasks": 0}

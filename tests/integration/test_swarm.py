@@ -12,7 +12,8 @@ import uuid
 
 import pytest
 
-from docker_mcp.tools.services import service_create, service_logs, service_ps, service_remove, service_wait
+from docker_mcp.tools.services import service_create, service_logs, service_ps, service_remove
+from docker_mcp.tools.system import system_wait
 
 pytestmark = pytest.mark.usefixtures("skip_if_no_swarm")
 
@@ -41,7 +42,7 @@ def running_service():
 
 
 def test_service_ps_without_a_service_sees_every_task_and_agrees_with_the_per_service_view(running_service):
-    service_wait(running_service, until="running", timeout_seconds=30, poll_interval=1.0)
+    system_wait(kind="service", target=running_service, until="running", timeout_seconds=30, poll_interval=1.0)
     per_service = service_ps(running_service)
     assert per_service
 
@@ -61,7 +62,7 @@ def test_service_ps_finds_one_task_by_id_prefix_full_name_and_slot_name(running_
     tasks. If the daemon changes any of this, the description
     is wrong and this fails rather than it quietly becoming so.
     """
-    service_wait(running_service, until="running", timeout_seconds=30, poll_interval=1.0)
+    system_wait(kind="service", target=running_service, until="running", timeout_seconds=30, poll_interval=1.0)
     task = service_ps(running_service)[0]
 
     assert [t["ID"] for t in service_ps(filters={"id": task["ID"]})] == [task["ID"]]
@@ -84,7 +85,7 @@ def test_service_logs_reads_a_real_task_through_the_hand_built_route(running_ser
     the task, so the code path is identical - what a multi-node cluster would add is coverage of the
     Engine's own forwarding, not of anything here.
     """
-    service_wait(running_service, until="running", timeout_seconds=120)
+    system_wait(kind="service", target=running_service, until="running", timeout_seconds=120)
     tasks = service_ps(running_service)
     assert tasks, "expected the service to have produced a task"
 
