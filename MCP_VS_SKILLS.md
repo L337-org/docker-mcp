@@ -2,7 +2,7 @@
 
 This repo ships two ways to give an AI agent control of Docker:
 
-- **`docker-mcp-server`** - an MCP server exposing 158 typed tools, 30 prompts and a set of
+- **`docker-mcp-server`** - an MCP server exposing 154 typed tools, 30 prompts and a set of
   resources, over the Docker SDK plus the docker CLI.
 - **`l337-docker`** - a Claude Code [agent skill](skills/l337-docker/) that drives the `docker`
   CLI directly, with no server process at all. Download it from the
@@ -31,11 +31,11 @@ We have no commercial interest in either. Both are MIT-licensed and free.
 | | MCP server | `l337-docker` skill |
 |---|---|---|
 | **Agent needs shell access** | **No** - calls typed tools; can run with no Bash tool at all | **Yes** - it is Bash all the way down |
-| **Needs a local `docker` binary** | No for SDK-backed domains (talks to the socket/TCP/SSH). Compose/buildx/scout need the CLI, or an `ssh://` host to run it on | **Yes**, always |
+| **Needs a local `docker` binary** | No for SDK-backed domains (talks to the socket/TCP/SSH). Compose/buildx/scout and `stack_deploy` need the CLI, or an `ssh://` host to run it on | **Yes**, always |
 | **Other prerequisites** | Python ≥3.14 + uv, or a container runtime | None |
 | **Works with** | Any MCP client: Claude Code, Claude Desktop, Cursor, Zed, Continue, ... | Claude Code, claude.ai and GitHub Copilot; **no other MCP client loads them** |
 | **Ships executable code** | Yes - a Python package you run | **No** - markdown only |
-| **Choosing the right operation** | 158 names anchored to the CLI's own structure, and 99% of descriptions name a sibling to prefer or avoid | A router table points at one domain file, which carries prose discriminators and worked examples |
+| **Choosing the right operation** | 154 names anchored to the CLI's own structure, and 99% of descriptions name a sibling to prefer or avoid | A router table points at one domain file, which carries prose discriminators and worked examples |
 | **Getting the arguments right** | Every argument typed, 80% with an explicit default, **validated before the call runs** | The model composes a shell string; wrong flags surface only when Docker rejects them, at execution |
 | **Searching the documentation** | Names are a complete always-in-context index, and `tool_list` answers structured queries (by domain, category or parameter) with a definitive negative; full descriptions are still fetched one at a time, through whatever search the client implements | The whole corpus is files on disk: greppable with standard tools, and readable end to end |
 | **Output** | Structured JSON, typed, **capped** with a `truncated` flag | Raw text/NDJSON the model must parse; bounding is a written rule |
@@ -46,7 +46,7 @@ We have no commercial interest in either. Both are MIT-licensed and free.
 | **Runtime auditability** | `tool-catalog` resource reports exactly what is registered | None |
 | **Updates** | Version-pinned via `uvx`/image tag | Manual re-download; goes stale silently |
 | **Trim the surface to fit the job** | `DOCKER_MCP_SERVER_DISABLE` drops whole domains; read-only / no-destructive drop categories - **and the router and prompts shrink with them** | Not really - the router is one file, though you can delete reference files you'll never use |
-| **Token cost, eager client, idle** | **~49,000** at full surface; **~19,500** trimmed to a triage-shaped config. Add up to ~2,100 for a client that also loads prompts, resources and resource templates | **~140** |
+| **Token cost, eager client, idle** | **~47,600** at full surface; **~19,300** trimmed to a triage-shaped config. Add up to ~2,100 for a client that also loads prompts, resources and resource templates | **~140** |
 | **Token cost, lazy client, idle** | ~1,000 full; ~400 trimmed | ~140 |
 | **Token cost, typical task** | **~1,300-2,600** (lazy) | ~5,500-7,800 |
 | **Failure mode** | Server can fail to start / resolve deps | Cannot fail to "start"; a wrong command just errors |
@@ -79,7 +79,7 @@ need a proper evaluation harness. Treat it accordingly.
 It splits into two jobs that do not come out the same way.
 
 **Picking the operation is closer than you would expect.** The server has the more systematic
-machinery: 157 of its 158 descriptions name at least one sibling tool by exact name, 1.9 on
+machinery: 153 of its 154 descriptions name at least one sibling tool by exact name, 2.0 on
 average, saying which to prefer and when. On a lazy client that text is fetched at the exact moment
 of choice, usually alongside the siblings it names, so the disambiguation arrives when it is
 needed. The skill answers with a router table pointing at one domain file, plus 49 explicit
@@ -94,8 +94,8 @@ roughly level, with the server ahead on unusual or easily-confused operations an
 the common ones.
 
 **Getting the arguments right is where the server is properly ahead**, and this is the substantial
-half. Across 601 parameters, every one carries a declared type, 80% carry an explicit default and
-118 are marked required. That schema is enforced by the client before the call reaches the server,
+half. Across 578 parameters, every one carries a declared type, 80% carry an explicit default and
+115 are marked required. That schema is enforced by the client before the call reaches the server,
 so a wrong argument name or type is rejected as a validation error with nothing executed. The skill
 composes a shell string, and a wrong flag is caught by Docker itself at execution, which may be
 after a side effect has already happened.
@@ -107,7 +107,7 @@ macOS, `status` fatal as a variable name in zsh, `jq -s` applied to something th
 array. A JSON Schema makes that entire class of mistake unrepresentable. Nothing in the skill can,
 because the CLI has no machine-readable description of its own flags.
 
-One honest qualification: only 14 of those 601 parameters carry an `enum`. The other 98% have their
+One honest qualification: only 13 of those 578 parameters carry an `enum`. The other 98% have their
 legal values documented in prose on both sides, so the server's advantage is mostly over argument
 names, types and requiredness rather than over the set of legal values.
 
@@ -159,14 +159,14 @@ finding.
 An MCP client chooses how much of a server it puts in front of the model, and the two strategies
 differ by orders of magnitude.
 
-**Eager loading** sends every tool definition at the start of the conversation: all 158 names,
+**Eager loading** sends every tool definition at the start of the conversation: all 154 names,
 descriptions and JSON schemas, present whether or not Docker ever comes up. **Lazy loading**
 advertises only the tool *names* plus the server's `instructions` string, and fetches a tool's full
 definition at the moment the model reaches for it. Claude Code is a lazy client. Several others,
 including Claude Desktop today, still load eagerly.
 
 **The trend is firmly towards lazy loading**, and it is the single biggest variable in this
-document. As a client adopts it, the server's idle cost falls by roughly 40x and most of the
+document. As a client adopts it, the server's idle cost falls by roughly 50x and most of the
 skill's advantage goes with it. So read the column that matches your client, and treat the eager
 numbers as a snapshot of a situation that is improving rather than a permanent property of MCP.
 
@@ -193,19 +193,19 @@ The range between the loosest and tightest usable configuration is wide:
 
 | Config | Tools | Eager idle | Lazy idle |
 |---|---|---|---|
-| Full whack: everything enabled | 158 | 48,982 | 980 |
-| Read-only, all domains | 73 | 20,363 | 696 |
-| **Triage config** (below) | **63** | **19,466** | **408** |
-| Core only: `containers` + `system` | 37 | 11,073 | 296 |
-| Floor: core, read-only | 16 | 5,068 | 226 |
+| Full whack: everything enabled | 154 | 47,604 | 976 |
+| Read-only, all domains | 69 | 18,821 | 692 |
+| **Triage config** (below) | **63** | **19,300** | **417** |
+| Core only: `containers` + `system` | 37 | 10,907 | 305 |
+| Floor: core, read-only | 16 | 4,730 | 235 |
 
 The eager column is **tools plus the router**: what every eager client pays. Prompts, resources and
 resource templates are counted separately, because each is fetched by a separate call and only by a
 client that supports it - see [Idle](#idle---loaded-but-not-used).
 
-**On an eager client that spread is 5,068 to 48,982 tokens, roughly 9.7x**, which makes trimming
-the single biggest lever available to you. **On a lazy client the same spread is 226 to 980: the
-whole saving is around 750 tokens**, so there is little to gain from trimming for footprint alone.
+**On an eager client that spread is 4,730 to 47,604 tokens, roughly 10x**, which makes trimming
+the single biggest lever available to you. **On a lazy client the same spread is 235 to 976: the
+whole saving is around 740 tokens**, so there is little to gain from trimming for footprint alone.
 On a lazy client, configure the surface for safety or clarity and treat any context saving as
 incidental.
 
@@ -220,7 +220,7 @@ kept:
 DOCKER_MCP_SERVER_DISABLE=compose,stack,swarm,services,nodes,secrets,configs,buildx,scout,registry,plugins,context
 ```
 
-That is a **2.6x** cut, with the router falling from 658 tokens to 343 as it stops advertising
+That is a **2.5x** cut, with the router falling from 440 tokens to 212 as it stops advertising
 absent domains, and the prompts from 30 to 16. The trade is real, though: a disabled tool is not
 merely hidden, it is *gone*. If the triage turns out to need `compose_logs`, you have to change the
 config and restart, whereas the skill always has every recipe available at no idle cost.
@@ -229,15 +229,15 @@ config and restart, whereas the skill always has every recipe available at no id
 
 | | MCP (eager, full) | MCP (eager, triage config) | MCP (lazy, full) | Skill |
 |---|---|---|---|---|
-| Always in context | all 158 tool defs + router | 63 tool defs + router | router + tool names | name + description |
-| | 48,551 (tools) | 19,263 (tools) | 431 (router) | 136 |
-| | 431 (router) | 203 (router) | 549 (names) | |
-| **Floor - every eager client** | **~49,000 tok** | **~19,500 tok** | **~1,000 tok** | **~140 tok** |
+| Always in context | all 154 tool defs + router | 63 tool defs + router | router + tool names | name + description |
+| | 47,164 (tools) | 19,088 (tools) | 440 (router) | 136 |
+| | 440 (router) | 212 (router) | 536 (names) | |
+| **Floor - every eager client** | **~47,600 tok** | **~19,300 tok** | **~1,000 tok** | **~140 tok** |
 | *plus, for a client that loads them:* | | | | |
 | prompts | +1,113 (30) | +596 (16) | - | - |
 | resources | +405 (3) | +405 (3) | - | - |
 | resource templates | +569 (5) | +569 (5) | - | - |
-| **Ceiling - all of them** | **~51,100 tok** | **~21,000 tok** | **~1,000 tok** | **~140 tok** |
+| **Ceiling - all of them** | **~49,700 tok** | **~20,900 tok** | **~1,000 tok** | **~140 tok** |
 
 "Triage config" here and below means the `DOCKER_MCP_SERVER_DISABLE` line in
 [Configuring the server down](#the-triage-config): `containers`, `images`, `networks`, `volumes`
@@ -247,10 +247,10 @@ and `system` kept, the other twelve domains dropped.
 calls - `tools/list`, `prompts/list`, `resources/list` and `resources/templates/list` - and a
 client pays only for the ones it implements. Every eager client fetches tools, so that plus the
 router is the floor; the other three are conditional. At full surface they come to ~2,100 tokens,
-4% of that configuration's 49,000-token floor. They do not shrink the way the tools do when you
+4% of that configuration's 47,600-token floor. They do not shrink the way the tools do when you
 trim, though - resources and resource templates do not shrink at all - so in the tightest
 configuration in the table above (*Floor: core, read-only*) they are ~1,440 tokens against a
-5,068-token floor, or **28%**. That is why, on a trimmed server, your client's feature support
+4,730-token floor, or **30%**. That is why, on a trimmed server, your client's feature support
 matters more than some of the config switches. Quoting a single blended total would state a figure
 for a client we have not identified, so both ends are given and the figures elsewhere in this
 document use the floor.
@@ -261,9 +261,9 @@ its own attachment picker. So treat the conditional rows as an upper bound on wh
 charged for. Settling it needs an instrumented client, not more arithmetic.
 
 This is still the skill's strongest result. On a client that eagerly loads every tool, the server
-at full surface costs roughly **49,000 tokens of every conversation** whether or not Docker comes
+at full surface costs roughly **47,600 tokens of every conversation** whether or not Docker comes
 up - around a third of a 128k window before you have said anything. Trimming to the triage config
-cuts that to ~19,500 - a large and genuine saving, though still around 140 times what the skill
+cuts that to ~19,300 - a large and genuine saving, though still around 140 times what the skill
 costs to sit installed.
 
 On a lazy client the server's idle cost drops ~50x to ~1,000 (or ~400 trimmed), and the gap
@@ -273,9 +273,9 @@ narrows to something most people would not notice either way.
 
 | Task | MCP (lazy, full) | MCP (lazy, triage cfg) | MCP (eager, full) | MCP (eager, triage cfg) | Skill |
 |---|---|---|---|---|---|
-| List containers (one-off) | 1,348 | **776** | 48,982 | 19,466 | 5,549 |
-| Triage a crashed container | 2,580 | **2,008** | 48,982 | 19,466 | 7,812 |
-| Bring up a Compose project | 2,490 | n/a¹ | 48,982 | n/a¹ | 6,489 |
+| List containers (one-off) | 1,344 | **785** | 47,604 | 19,300 | 5,549 |
+| Triage a crashed container | 2,576 | **2,017** | 47,604 | 19,300 | 7,812 |
+| Bring up a Compose project | 2,482 | n/a¹ | 47,604 | n/a¹ | 6,489 |
 
 ¹ Compose is disabled in the triage config (`containers`, `images`, `networks`, `volumes`,
 `system` only), which is the point: a trimmed surface is trimmed for a purpose, and a task outside
@@ -287,7 +287,7 @@ top of the ~1,000 baseline (or ~400 trimmed). The skill has to load its router (
 domain reference (~1,900) plus often a workflow (~2,300), because prose cannot be fetched a
 paragraph at a time.
 
-Note the eager+trimmed column never beats the skill on these tasks - 19,466 against 5,549-7,812 -
+Note the eager+trimmed column never beats the skill on these tasks - 19,300 against 5,549-7,812 -
 but it is the difference between "too expensive to leave installed" and "fine". If you are on an
 eager client and want the server, disabling the domains you do not use is the single highest-value
 change available.
@@ -295,8 +295,8 @@ change available.
 So the honest summary is:
 
 - **Eager-loading client** -> the skill is dramatically cheaper: ~6-9x on a real task at full
-  surface, ~2.5-3.5x even against a trimmed server, and ~140-360x at idle.
-- **Lazy-loading client** -> the server is cheaper in use, by ~2.6-4.1x at full surface and ~3.9-7.2x
+  surface, ~2.5-3.5x even against a trimmed server, and ~140-350x at idle.
+- **Lazy-loading client** -> the server is cheaper in use, by ~2.6-4.1x at full surface and ~3.9-7.1x
   when trimmed, and both are cheap at idle.
 - **Docker rarely comes up in your work** -> the skill, decisively; it costs ~140 tokens to have
   installed and you may never pay more.
@@ -338,8 +338,8 @@ workflow file at once; in practice a task touches one or two.
   what "production" means mid-session.
 - Cheaper per task on a lazy client.
 - **The surface is configurable.** Disable the domains you do not use and the tools, prompts *and*
-  router shrink together - a triage-shaped config is 63 tools and ~19,500 eager tokens instead of
-  158 and ~49,000. The skill has no equivalent lever beyond deleting reference files by hand.
+  router shrink together - a triage-shaped config is 63 tools and ~19,300 eager tokens instead of
+  154 and ~47,600. The skill has no equivalent lever beyond deleting reference files by hand.
 - Auditable at runtime - one resource reports exactly which tools are registered under the current
   configuration, so you can confirm what a given config actually exposes rather than inferring it.
 
@@ -361,7 +361,7 @@ Three situations where the answer is clear, and they are mostly about the client
 Docker work:
 
 - **Occasional Docker use from an eager-loading client, Claude Desktop being the common case.**
-  Use the skill. Paying ~49,000 tokens of every conversation for a capability you reach for once a
+  Use the skill. Paying ~47,600 tokens of every conversation for a capability you reach for once a
   fortnight is a bad trade, and ~140 is not. This is the skill's strongest case by a distance, and
   it is worth being clear that **it is a case created by the client, not by the skill being
   better**. If and when Claude Desktop moves to lazy loading, the idle cost drops to ~1,000 and
@@ -381,7 +381,7 @@ Docker work:
 # Detailed mapping
 
 **Everything from here on is written from the skill's point of view.** It takes the MCP server's
-surface as the reference: 158 tools, 31 prompts (30 of them registered on a single-host server, as
+surface as the reference: 154 tools, 31 prompts (30 of them registered on a single-host server, as
 [Prompts](#prompts-31-defined-30-registered-on-a-single-host-server) explains, which is why the
 measured figures above say 30) and the resource endpoints, in the server's own categories, and for
 each one records what the skill does instead. It is a coverage record for the skill, not a
