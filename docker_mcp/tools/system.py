@@ -10,6 +10,7 @@ import inspect
 import ipaddress
 import os
 import re
+import socket
 import sys
 import threading
 import urllib.parse
@@ -209,15 +210,18 @@ def _ensure_reachable_family(url: str) -> str:
     connection per client build; `_get_client`'s pool means that happens once per host, not per call.
 
     A URL that isn't `ssh://`, has no hostname, or is already a literal address (no family ambiguity
-    to resolve) is returned unchanged, as is one where every resolved address fails to connect - in
-    that last case the normal (paramiko-native) connection attempt still runs and produces its own
-    error, rather than this helper raising first.
+    to resolve) is returned unchanged, as is one whose first resolved address answers - paramiko would
+    connect there itself, and keeping the hostname keeps its known_hosts lookup by name - and one where
+    every resolved address fails to connect, where the normal (paramiko-native) connection attempt
+    still runs and produces its own error, rather than this helper raising first. Only a fallback past
+    a failed address splices in a literal, and then known_hosts needs an entry for that address.
 
     Args:
         url: a DOCKER_HOST/host URL; only `ssh://` URLs are affected
 
     Returns:
-        str: `url` unchanged, or with its hostname replaced by the literal address that answered
+        str: `url` unchanged, or with its hostname replaced by the literal address that answered after
+            an earlier one failed
     """
     if not is_ssh_url(url):
         return url
@@ -240,6 +244,17 @@ def _ensure_reachable_family(url: str) -> str:
         peer_host = sock.getpeername()[0]
     finally:
         sock.close()
+    # paramiko checks the host key against whatever name the URL carries, so splicing in an address makes
+    # it look up `[address]:port` in known_hosts, where many entries are only by name. Splice only when an
+    # earlier address failed - the case this exists for - and leave the hostname when the first answered.
+    try:
+        first = socket.getaddrinfo(hostname, port, socket.AF_UNSPEC, socket.SOCK_STREAM)[0][4][0]
+    except OSError:
+        # The name resolved a moment ago for the probe; if it fails now, splice as before rather than
+        # hand paramiko a name it may not resolve either.
+        first = None
+    if peer_host == first:
+        return url
     literal = f"[{peer_host}]" if ":" in peer_host else peer_host
     userinfo = f"{parsed.username}@" if parsed.username else ""
     return urllib.parse.urlunparse(parsed._replace(netloc=f"{userinfo}{literal}:{port}"))

@@ -10,6 +10,7 @@ from unittest.mock import MagicMock
 
 import docker.errors
 import httpx
+import paramiko
 import pytest
 
 import docker_mcp  # noqa: F401 — imported for its side effect of registering every tool
@@ -1838,8 +1839,19 @@ def test_the_library_failure_table_orders_narrow_before_broad():
             httpx.HTTPStatusError("404", request=httpx.Request("GET", "https://x"), response=httpx.Response(404)),
             "RemoteFailureError",
         ),
+        # An unknown host key on an ssh:// host: actionable text the client must see.
+        (paramiko.SSHException("Server '[2001:db8::1]:22' not found in known_hosts"), "RemoteFailureError"),
     ],
-    ids=["NotFound", "APIError", "TimeoutExpired", "InvalidURL", "ConnectError", "ConnectTimeout", "HTTPStatusError"],
+    ids=[
+        "NotFound",
+        "APIError",
+        "TimeoutExpired",
+        "InvalidURL",
+        "ConnectError",
+        "ConnectTimeout",
+        "HTTPStatusError",
+        "SSHException",
+    ],
 )
 def test_a_library_failure_is_classified_by_the_table(exception, expected):
     from docker_mcp.server import _as_project_failure

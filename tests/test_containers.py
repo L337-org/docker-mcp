@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 import requests.exceptions
-from docker.errors import DockerException
+from docker.errors import APIError, DockerException
 
 from docker_mcp.exceptions import ToolInputError
 from docker_mcp.tools._utils import MAX_PAYLOAD_BYTES
@@ -455,14 +455,124 @@ def test_container_top():
         assert container_top("web") == {"Processes": []}
 
 
-def test_exec_in_container_decodes_output():
-    container = MagicMock()
-    exec_result = MagicMock(exit_code=0, output=b"ok\n")
-    container.exec_run.return_value = exec_result
+class _ExecStream:
+    """An exec output stream: yields `chunks`, then optionally blocks until closed, like a live command."""
+
+    def __init__(self, chunks, block=False, error=None):
+        self.chunks, self.block, self.error = chunks, block, error
+        self.closed = threading.Event()
+
+    def __iter__(self):
+        yield from self.chunks
+        if self.error is not None:
+            raise self.error
+        if self.block:
+            self.closed.wait(10)
+
+    def close(self):
+        self.closed.set()
+
+
+def _exec(stream, inspect=None, **kwargs):
+    """Run container_exec against `stream`; return the result and the mocked APIClient."""
     with _patch() as mock_client:
-        mock_client.return_value.containers.get.return_value = container
-        result = container_exec("web", ["sh", "-c", "echo ok"])
-    assert result == {"exit_code": 0, "output": "ok\n"}
+        client = mock_client.return_value
+        client.containers.get.return_value.id = "cid"
+        client.api.exec_create.return_value = {"Id": "exec123456789"}
+        client.api.exec_start.return_value = stream
+        client.api.exec_inspect.return_value = inspect if inspect is not None else {"ExitCode": 0}
+        result = container_exec("web", ["sh", "-c", "echo ok"], **kwargs)
+    return result, client.api
+
+
+def test_container_exec_returns_the_output_and_exit_code():
+    result, api = _exec(_ExecStream([b"o", b"k\n"]), inspect={"ExitCode": 3}, user="app", workdir="/srv")
+    assert result == {
+        "exit_code": 3,
+        "output": "ok\n",
+        "timed_out": False,
+        "truncated": False,
+        "exec_id": "exec123456789",
+    }
+    assert api.exec_create.call_args.args == ("cid", ["sh", "-c", "echo ok"])
+    assert api.exec_create.call_args.kwargs["user"] == "app"
+    assert api.exec_create.call_args.kwargs["workdir"] == "/srv"
+    assert api.exec_start.call_args.kwargs == {"tty": False, "stream": True, "demux": False}
+
+
+def test_container_exec_demux_returns_stdout_and_stderr_apart():
+    result, _ = _exec(_ExecStream([(b"out\n", None), (None, b"err\n")]), demux=True)
+    assert result["output"] == ["out\n", "err\n"]
+
+
+def test_container_exec_cuts_output_at_max_bytes_and_says_so():
+    # The stream never ends by itself, like `yes`: reaching the cap has to stop the read and return at once,
+    # not sit out the timeout and report it.
+    stream = _ExecStream([b"abcdef", b"ghij"], block=True)
+    started = time.monotonic()
+    result, api = _exec(stream, inspect={"ExitCode": None, "Running": True}, max_bytes=8, timeout_seconds=5)
+    assert time.monotonic() - started < 2
+    assert (result["output"], result["truncated"], result["timed_out"]) == ("abcdefgh", True, False)
+    # The command may still be running once the read stops: the Engine has no exit code for it yet.
+    assert result["exit_code"] is None
+    assert stream.closed.is_set()
+
+
+@pytest.mark.parametrize(
+    ("chunks", "output", "truncated"),
+    [
+        ([b"abcdefg", b"h"], "abcdefgh", False),  # exactly fills the cap: nothing was cut
+        ([b"abcdefg", b"hi"], "abcdefgh", True),  # one byte over: cut, and said so
+    ],
+)
+def test_container_exec_cap_boundary(chunks, output, truncated):
+    result, _ = _exec(_ExecStream(chunks), max_bytes=8)
+    assert (result["output"], result["truncated"]) == (output, truncated)
+
+
+def test_container_exec_caps_stdout_and_stderr_together():
+    result, _ = _exec(_ExecStream([(b"12345", None), (None, b"6789")]), demux=True, max_bytes=7)
+    assert result["output"] == ["12345", "67"]
+    assert result["truncated"] is True
+
+
+def test_container_exec_returns_at_its_timeout_with_what_arrived():
+    stream = _ExecStream([b"partial\n"], block=True)
+    started = time.monotonic()
+    result, api = _exec(stream, timeout_seconds=0.2)
+    assert time.monotonic() - started < 5
+    assert result == {
+        "exit_code": None,
+        "output": "partial\n",
+        "timed_out": True,
+        "truncated": False,
+        "exec_id": "exec123456789",
+    }
+    # Closing the stream is what ends the read; the command itself keeps running, so no exit code is asked for.
+    assert stream.closed.is_set()
+    api.exec_inspect.assert_not_called()
+
+
+def test_container_exec_raises_a_read_failure():
+    with pytest.raises(APIError, match="stream broke"):
+        _exec(_ExecStream([b"x"], error=APIError("stream broke")))
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"timeout_seconds": 0}, "timeout_seconds must be a finite number above 0"),
+        # Thread.join raises on these, and only after the command has started.
+        ({"timeout_seconds": float("nan")}, "timeout_seconds must be a finite number above 0"),
+        ({"timeout_seconds": float("inf")}, "timeout_seconds must be a finite number above 0"),
+        ({"timeout_seconds": 1e10}, "timeout_seconds must be a finite number above 0"),
+        ({"max_bytes": 0}, "max_bytes must be > 0"),
+    ],
+)
+def test_container_exec_refuses_a_bad_bound_before_touching_the_daemon(kwargs, message):
+    with _patch() as mock_client, pytest.raises(ToolInputError, match=message):
+        container_exec("web", ["true"], **kwargs)
+    mock_client.assert_not_called()
 
 
 def test_container_commit():

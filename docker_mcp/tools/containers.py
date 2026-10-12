@@ -733,8 +733,13 @@ def container_top(id_or_name: str, ps_args: str | None = None, host: str | None 
     return cast(dict, container.top(ps_args=ps_args))
 
 
+# container_exec's default bound. A command run this way is expected to finish; anything longer passes its
+# own `timeout_seconds`.
+_EXEC_TIMEOUT_SECONDS = 120.0
+
+
 @tool()
-def container_exec(  # noqa: DOC101,DOC103
+def container_exec(  # noqa: DOC101,DOC103,DOC501,DOC503
     id_or_name: str,
     cmd: str | list,
     stdout: bool = True,
@@ -743,14 +748,22 @@ def container_exec(  # noqa: DOC101,DOC103
     tty: bool = False,
     privileged: bool = False,
     user: str = "",
-    detach: bool = False,
     environment: dict | list | None = None,
     workdir: str | None = None,
     demux: bool = False,
+    timeout_seconds: float = _EXEC_TIMEOUT_SECONDS,
+    max_bytes: int = MAX_PAYLOAD_BYTES,
     host: str | None = None,
 ) -> dict:
     """
-    Run a command inside a running container (for a compose service, prefer `compose_exec`).
+    Run a command inside a running container and return its output (for a compose service, prefer `compose_exec`).
+
+    Waits for the command, bounded by `timeout_seconds` (default 120). A command still running then is
+    reported with `timed_out: true` and whatever output arrived. Output past `max_bytes` (default 32 MiB)
+    is cut off with `truncated: true`, and the call returns at once rather than waiting for the command.
+    Either way `exit_code` is null and the command keeps running in the container, because the Engine has
+    no way to stop an exec: `container_top` shows it, and another `container_exec` can kill it. For a
+    long-running or background job, start a container with `container_run` and wait with `system_wait`.
 
     Security: when any element of `cmd` is agent-controlled, use an exec-form argv list that does not
     invoke a shell (e.g. `["python", "-V"]`, `["ls", path]`). A string `cmd`, or a shell form like
@@ -761,16 +774,31 @@ def container_exec(  # noqa: DOC101,DOC103
         tty: Allocate a pseudo-TTY
         privileged: Run with extended privileges
         user: User to run the command as
-        detach: Detach from the exec
         environment: Environment variables, as `{"KEY": "value"}` or a list of "KEY=value" strings
         workdir: Working directory inside the container
         demux: Return stdout and stderr separately
+        timeout_seconds: Wall-clock seconds to wait for the command before returning with timed_out=true
+        max_bytes: Most bytes of output to keep, stdout and stderr together
 
     Returns:
-        dict: {"exit_code", "output"}; output is combined stdout+stderr, or a [stdout, stderr] pair with demux=True
+        dict: {"exit_code", "output", "timed_out", "truncated", "exec_id"}; output is combined stdout+stderr, or a
+            [stdout, stderr] pair with demux=True; exit_code is null when the command had not finished
     """
-    container = _get_client(host).containers.get(id_or_name)
-    result = container.exec_run(
+    # Thread.join rejects NaN and anything past threading.TIMEOUT_MAX, and it runs only once the command has
+    # started, so a bound it would refuse is refused here instead, before anything runs.
+    if not (math.isfinite(timeout_seconds) and 0 < timeout_seconds <= threading.TIMEOUT_MAX):
+        raise ToolInputError(
+            f"timeout_seconds must be a finite number above 0 and at most {threading.TIMEOUT_MAX:.0f}, "
+            f"got {timeout_seconds}."
+        )
+    if max_bytes <= 0:
+        raise ToolInputError(f"max_bytes must be > 0, got {max_bytes}.")
+    client = _get_client(host)
+    container = client.containers.get(id_or_name)
+    # Not Container.exec_run: it has no timeout, and its non-blocking mode discards the exec id and returns
+    # neither output nor exit code. The documented APIClient calls give a stream this can bound.
+    exec_id = client.api.exec_create(
+        container.id,
         cmd,
         stdout=stdout,
         stderr=stderr,
@@ -778,17 +806,53 @@ def container_exec(  # noqa: DOC101,DOC103
         tty=tty,
         privileged=privileged,
         user=user,
-        detach=detach,
-        stream=False,
-        socket=False,
         environment=environment,
         workdir=workdir,
-        demux=demux,
-    )
-    output = result.output
-    if isinstance(output, bytes):
-        output = output.decode("utf-8", errors="replace")
-    return {"exit_code": result.exit_code, "output": output}
+    )["Id"]
+    # With stream=True, exec_start returns a CancellableStream of chunks (or of (stdout, stderr) pairs).
+    stream = cast(Iterable[Any], client.api.exec_start(exec_id, tty=tty, stream=True, demux=demux))
+    buffers = (bytearray(), bytearray())
+    lock = threading.Lock()
+    state: dict[str, Any] = {"truncated": False, "error": None}
+
+    def read() -> None:
+        try:
+            for chunk in stream:
+                parts = zip(buffers, chunk, strict=True) if demux else ((buffers[0], chunk),)
+                with lock:
+                    for buffer, data in parts:
+                        if not data:
+                            continue
+                        room = max_bytes - len(buffers[0]) - len(buffers[1])
+                        buffer += data[: max(room, 0)]
+                        if len(data) > room:
+                            state["truncated"] = True
+                            return
+        except Exception as exc:  # noqa: BLE001 - handed to the caller below, unless the close caused it
+            state["error"] = exc
+
+    # The read runs in a thread the call waits on for at most `timeout_seconds`, so the bound holds on every
+    # transport: closing the stream ends the read on a local or TCP daemon, but docker-py cannot close an
+    # ssh:// stream, where the thread instead stays blocked until the command ends or the connection drops.
+    reader = threading.Thread(target=read, name=f"container_exec {exec_id[:12]}", daemon=True)
+    reader.start()
+    reader.join(timeout_seconds)
+    timed_out = reader.is_alive()
+    close_stream_quietly(stream)
+    if not timed_out and state["error"] is not None:
+        raise state["error"]
+    with lock:
+        out = buffers[0].decode("utf-8", errors="replace")
+        err = buffers[1].decode("utf-8", errors="replace")
+    # Still running after a timeout or a cut-off read, in which case the Engine reports no exit code yet.
+    exit_code = None if timed_out else client.api.exec_inspect(exec_id).get("ExitCode")
+    return {
+        "exit_code": exit_code,
+        "output": [out, err] if demux else out,
+        "timed_out": timed_out,
+        "truncated": state["truncated"],
+        "exec_id": exec_id,
+    }
 
 
 @tool()

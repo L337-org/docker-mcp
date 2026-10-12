@@ -68,6 +68,11 @@ re-files the same rejected candidates forever. Removing an entry is a real decis
   Raft/Orchestration/Dispatcher tuning. Round-tripping the document through those kwargs is lossy in
   its own right: `SwarmSpec` drops the whole `Raft` block unless one of its five values is truthy,
   and knows nothing of Engine fields added later. `APIClient.update_swarm` is the only faithful path.
+- **`container_exec`'s `api.exec_create` + `api.exec_start(stream=True)` + `api.exec_inspect`** - stays
+  low-level permanently. `Container.exec_run` takes no timeout, so a command that never ends would hold
+  the call open, and its `detach=True` mode returns neither output nor exit code and discards the exec id.
+  The streamed `exec_start` lets the tool bound the read by wall clock and cap the output, then ask
+  `exec_inspect` for the exit code. Do not propose moving it back onto `exec_run`.
 - **`DockerClient.from_context()`** (new public surface in docker-py 7.2.0) - never adopt it. It
   resolves the daemon from the local CLI context, which is exactly what `use_context=False` and
   `_hosts.resolve_auto()` exist to prevent: this server selects its daemon per call from its own host
