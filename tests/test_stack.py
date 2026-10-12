@@ -2,7 +2,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from docker_mcp.exceptions import RemoteFailureError, ToolInputError
+from docker_mcp.exceptions import ToolInputError
 from docker_mcp.tools._cli import CliResult
 from docker_mcp.tools.stack import (
     _wait_stack,
@@ -89,101 +89,316 @@ def test_stack_deploy_rejects_flag_like_stack_name():
         stack_deploy("--rm", compose_files=["c.yml"])
 
 
-# ---------- stack_list (parsed query: raises on non-zero) ----------
+# ---------- the Engine-API tools (stack_list / stack_services / stack_ps / stack_remove) ----------
 
 
-def test_stack_ls_parses_ndjson():
-    ndjson = '{"Name":"web","Services":"3"}\n{"Name":"db","Services":"1"}'
-    with _patch_run() as run:
-        run.return_value = _ok(stdout=ndjson)
-        result = stack_list()
-    assert [s["Name"] for s in result] == ["web", "db"]
-    # JSON via the Go template, not the --format json shorthand (which needs docker >= ~v23).
-    assert run.call_args.args[0] == ["stack", "ls", "--format", "{{json .}}"]
+_NS = "com.docker.stack.namespace"
 
 
-def test_stack_ls_single_object_wrapped_in_list():
-    with _patch_run() as run:
-        run.return_value = _ok(stdout='{"Name":"web","Services":"3"}')
-        result = stack_list()
-    assert result == [{"Name": "web", "Services": "3"}]
+def _svc_obj(name, stack="shop"):
+    """A docker-py Service model as `services.list` returns it."""
+    service = MagicMock()
+    service.name = name
+    service.attrs = {"Spec": {"Name": name, "Labels": {_NS: stack}}}
+    return service
 
 
-def test_stack_ls_raises_on_failure():
-    with _patch_run() as run:
-        run.return_value = _fail("This node is not a swarm manager")
-        with pytest.raises(RemoteFailureError, match="stack ls"):
-            stack_list()
+def _named(name):
+    obj = MagicMock()
+    obj.name = name
+    return obj
 
 
-# ---------- stack_ps / stack_services ----------
+def _patch_client():
+    return patch("docker_mcp.tools.stack._get_client")
 
 
-def test_stack_ps_builds_args_with_no_trunc_and_filters():
-    with _patch_run() as run:
-        run.return_value = _ok(stdout='{"Name":"web.1","CurrentState":"Running"}')
-        result = stack_ps("web", no_trunc=True, filters={"desired-state": "running"})
-    assert result == [{"Name": "web.1", "CurrentState": "Running"}]
-    argv = run.call_args.args[0]
-    assert argv[:2] == ["stack", "ps"]
-    assert "--no-trunc" in argv
-    assert argv.count("--filter") == 1
-    assert "desired-state=running" in argv
-    assert argv[-1] == "web"
+def test_stack_list_groups_services_by_their_stack_label():
+    with _patch_client() as get_client:
+        client = get_client.return_value
+        client.services.list.return_value = [
+            _svc_obj("web_api", "web"),
+            _svc_obj("shop_db", "shop"),
+            _svc_obj("web_ui", "web"),
+        ]
+        result = stack_list(host="prod")
+    assert result == [{"name": "shop", "services": 1}, {"name": "web", "services": 2}]
+    client.services.list.assert_called_once_with(filters={"label": [_NS]})
+    get_client.assert_called_once_with("prod")
 
 
-def test_stack_ps_raises_on_failure():
-    with _patch_run() as run:
-        run.return_value = _fail("nothing found in stack: web")
-        with pytest.raises(RemoteFailureError, match="stack ps"):
-            stack_ps("web")
+def test_stack_list_skips_a_service_without_the_stack_label():
+    # The Engine filter should make this impossible; an unlabelled row must not become a stack named None.
+    stray = _svc_obj("stray")
+    stray.attrs["Spec"]["Labels"] = {}
+    with _patch_client() as get_client:
+        get_client.return_value.services.list.return_value = [stray, _svc_obj("web_ui", "web")]
+        assert stack_list() == [{"name": "web", "services": 1}]
 
 
-def test_stack_services_builds_args_with_filters():
-    with _patch_run() as run:
-        run.return_value = _ok(stdout='{"Name":"web_api","Replicas":"3/3"}')
-        result = stack_services("web", filters={"name": "web_api"})
-    assert result == [{"Name": "web_api", "Replicas": "3/3"}]
-    argv = run.call_args.args[0]
-    assert argv[:2] == ["stack", "services"]
-    assert "name=web_api" in argv
-    assert argv[-1] == "web"
+def test_stack_list_with_no_stacks_is_empty():
+    with _patch_client() as get_client:
+        get_client.return_value.services.list.return_value = []
+        assert stack_list() == []
 
 
-def test_stack_services_rejects_flag_like_name():
-    with pytest.raises(ToolInputError, match="flag"):
-        stack_services("-x")
+def _api_service(name, *, mode, running=1, desired=1, ports=(), update=None):
+    service = {
+        "ID": f"id-{name}",
+        "Spec": {"Name": name, "Mode": mode, "TaskTemplate": {"ContainerSpec": {"Image": "nginx:1@sha256:abc"}}},
+        "ServiceStatus": {"RunningTasks": running, "DesiredTasks": desired},
+        "Endpoint": {"Ports": list(ports)},
+    }
+    if update:
+        service["UpdateStatus"] = {"State": update}
+    return service
 
 
-# ---------- stack_remove (action tool) ----------
+def test_stack_services_reports_each_service_with_its_task_counts():
+    with _patch_client() as get_client:
+        client = get_client.return_value
+        client.api.services.return_value = [
+            _api_service(
+                "web_ui",
+                mode={"Replicated": {"Replicas": 3}},
+                running=2,
+                desired=3,
+                ports=[{"Protocol": "tcp", "TargetPort": 80, "PublishedPort": 8080}],
+                update="updating",
+            ),
+            _api_service("web_agent", mode={"Global": {}}),
+        ]
+        result = stack_services("web", filters={"name": "web_"})
+    client.api.services.assert_called_once_with(filters={"name": "web_", "label": [f"{_NS}=web"]}, status=True)
+    assert result == [
+        {
+            "id": "id-web_agent",
+            "name": "web_agent",
+            "mode": "global",
+            "running_tasks": 1,
+            "desired_tasks": 1,
+            "image": "nginx:1@sha256:abc",
+            "ports": [],
+            "update_state": None,
+        },
+        {
+            "id": "id-web_ui",
+            "name": "web_ui",
+            "mode": "replicated",
+            "running_tasks": 2,
+            "desired_tasks": 3,
+            "image": "nginx:1@sha256:abc",
+            "ports": ["8080:80/tcp"],
+            "update_state": "updating",
+        },
+    ]
 
 
-def test_stack_rm_builds_args_for_multiple_stacks():
-    with _patch_run() as run:
-        run.return_value = _ok(stdout="Removing stack: web")
-        result = stack_remove(["web", "db"])
-    assert result["returncode"] == 0
-    argv = run.call_args.args[0]
-    assert argv[:2] == ["stack", "rm"]
-    assert "--detach=true" in argv
-    assert argv[-2:] == ["web", "db"]
+@pytest.mark.parametrize(
+    ("mode", "expected"),
+    [({"ReplicatedJob": {}}, "replicated-job"), ({"GlobalJob": {}}, "global-job"), ({}, None)],
+)
+def test_stack_services_names_job_modes_as_the_cli_does(mode, expected):
+    with _patch_client() as get_client:
+        get_client.return_value.api.services.return_value = [_api_service("s_job", mode=mode)]
+        [row] = stack_services("s")
+    assert row["mode"] == expected
 
 
-def test_stack_rm_always_detaches():
-    with _patch_run() as run:
-        run.return_value = _ok()
-        stack_remove(["web"])
-    assert "--detach=true" in run.call_args.args[0]
+@pytest.mark.parametrize(
+    ("theirs", "expected"),
+    [
+        ("tier=front", [f"{_NS}=web", "tier=front"]),
+        (["tier=front", "team=a"], [f"{_NS}=web", "tier=front", "team=a"]),
+    ],
+)
+def test_a_caller_label_filter_narrows_the_stack_rather_than_replacing_it(theirs, expected):
+    with _patch_client() as get_client:
+        client = get_client.return_value
+        client.api.services.return_value = []
+        stack_services("web", filters={"label": theirs})
+    assert client.api.services.call_args.kwargs["filters"]["label"] == expected
 
 
-def test_stack_rm_requires_a_stack_name():
+def test_stack_services_does_not_change_the_callers_filters():
+    filters = {"label": ["tier=front"]}
+    with _patch_client() as get_client:
+        get_client.return_value.api.services.return_value = []
+        stack_services("web", filters=filters)
+    assert filters == {"label": ["tier=front"]}
+
+
+def test_stack_ps_names_tasks_by_slot_or_node_and_resolves_node_hostnames():
+    node = MagicMock()
+    node.id = "node-1"
+    node.attrs = {"Description": {"Hostname": "worker-a"}}
+    tasks = [
+        {
+            "ID": "t2",
+            "ServiceID": "id-web_ui",
+            "NodeID": "node-1",
+            "Slot": 1,
+            "DesiredState": "shutdown",
+            "Spec": {"ContainerSpec": {"Image": "nginx:1"}},
+            "Status": {"State": "failed", "Err": "task: non-zero exit (1)", "Timestamp": "2026-10-12T10:00:00Z"},
+        },
+        {
+            "ID": "t1",
+            "ServiceID": "id-web_agent",
+            "NodeID": "node-1",
+            "DesiredState": "running",
+            "Spec": {"ContainerSpec": {"Image": "agent:2"}},
+            "Status": {"State": "running", "Timestamp": "2026-10-12T10:01:00Z"},
+        },
+    ]
+    with _patch_client() as get_client:
+        client = get_client.return_value
+        client.api.services.return_value = [
+            {"ID": "id-web_ui", "Spec": {"Name": "web_ui"}},
+            {"ID": "id-web_agent", "Spec": {"Name": "web_agent"}},
+        ]
+        client.nodes.list.return_value = [node]
+        client.api.tasks.return_value = tasks
+        result = stack_ps("web", filters={"desired-state": "running"})
+    client.api.tasks.assert_called_once_with(filters={"desired-state": "running", "label": [f"{_NS}=web"]})
+    assert result == [
+        {
+            "id": "t1",
+            "name": "web_agent.node-1",
+            "service": "web_agent",
+            "node": "worker-a",
+            "image": "agent:2",
+            "desired_state": "running",
+            "state": "running",
+            "error": None,
+            "since": "2026-10-12T10:01:00Z",
+        },
+        {
+            "id": "t2",
+            "name": "web_ui.1",
+            "service": "web_ui",
+            "node": "worker-a",
+            "image": "nginx:1",
+            "desired_state": "shutdown",
+            "state": "failed",
+            "error": "task: non-zero exit (1)",
+            "since": "2026-10-12T10:00:00Z",
+        },
+    ]
+
+
+def test_stack_ps_falls_back_to_ids_for_a_service_or_node_it_cannot_name():
+    # A task can outlive its service between the two reads, and a pending task has no node yet.
+    with _patch_client() as get_client:
+        client = get_client.return_value
+        client.api.services.return_value = []
+        client.nodes.list.return_value = []
+        client.api.tasks.return_value = [{"ID": "t", "ServiceID": "gone", "NodeID": "node-9", "Slot": 2}]
+        [row] = stack_ps("web")
+    assert (row["name"], row["service"], row["node"]) == ("gone.2", "gone", "node-9")
+
+
+def _stack_parts(client, services=(), secrets=(), configs=(), networks=()):
+    client.services.list.return_value = list(services)
+    client.secrets.list.return_value = list(secrets)
+    client.configs.list.return_value = list(configs)
+    client.networks.list.return_value = list(networks)
+
+
+def test_stack_remove_removes_services_before_what_they_use():
+    order = []
+    parts = {
+        "services": [_named("web_ui"), _named("web_api")],
+        "secrets": [_named("web_key")],
+        "configs": [_named("web_conf")],
+        "networks": [_named("web_default")],
+    }
+    for objects in parts.values():
+        for obj in objects:
+            obj.remove.side_effect = lambda name=obj.name: order.append(name)
+    with _patch_client() as get_client:
+        client = get_client.return_value
+        _stack_parts(client, **parts)
+        [result] = stack_remove(["web"])
+    label = {"label": [f"{_NS}=web"]}
+    for collection in (client.services, client.secrets, client.configs, client.networks):
+        collection.list.assert_called_once_with(filters=label)
+    assert order == ["web_api", "web_ui", "web_key", "web_conf", "web_default"]
+    assert result == {
+        "name": "web",
+        "found": True,
+        "removed": {
+            "services": ["web_api", "web_ui"],
+            "secrets": ["web_key"],
+            "configs": ["web_conf"],
+            "networks": ["web_default"],
+        },
+        "failed": [],
+    }
+
+
+def test_stack_remove_reports_a_failure_and_still_removes_the_rest():
+    import docker.errors
+
+    busy = _named("web_default")
+    busy.remove.side_effect = docker.errors.APIError("network web_default has active endpoints")
+    with _patch_client() as get_client:
+        _stack_parts(get_client.return_value, services=[_named("web_ui")], networks=[busy, _named("web_back")])
+        [result] = stack_remove(["web"])
+    assert result["removed"] == {"services": ["web_ui"], "secrets": [], "configs": [], "networks": ["web_back"]}
+    assert result["failed"] == [
+        {"kind": "network", "name": "web_default", "error": "network web_default has active endpoints"}
+    ]
+
+
+def test_stack_remove_counts_a_part_already_gone_as_removed():
+    import docker.errors
+
+    gone = _named("web_ui")
+    gone.remove.side_effect = docker.errors.NotFound("service web_ui not found")
+    with _patch_client() as get_client:
+        _stack_parts(get_client.return_value, services=[gone])
+        [result] = stack_remove(["web"])
+    assert (result["removed"]["services"], result["failed"]) == (["web_ui"], [])
+
+
+def test_stack_remove_says_when_a_stack_has_nothing_to_remove():
+    with _patch_client() as get_client:
+        _stack_parts(get_client.return_value)
+        result = stack_remove(["nope", "also-nope"], host="prod")
+    get_client.assert_called_once_with("prod")
+    empty = {"services": [], "secrets": [], "configs": [], "networks": []}
+    assert result == [
+        {"name": "nope", "found": False, "removed": empty, "failed": []},
+        {"name": "also-nope", "found": False, "removed": empty, "failed": []},
+    ]
+
+
+def test_stack_remove_requires_a_stack_name():
     with pytest.raises(ToolInputError, match="at least one"):
         stack_remove([])
 
 
-def test_stack_rm_rejects_flag_like_name():
-    with pytest.raises(ToolInputError, match="flag"):
-        stack_remove(["web", "-rf"])
+def test_only_stack_deploy_reaches_the_docker_cli():
+    # Every stack tool but deploy is Engine calls, so none may shell out on any path - local or remote.
+    with (
+        _patch_client() as get_client,
+        patch("docker_mcp.tools.stack.run_docker") as run,
+        patch("docker_mcp.tools.stack.remote_stage_and_exec") as staged,
+        patch("docker_mcp.tools.stack.should_remote_exec", return_value=True) as should,
+    ):
+        client = get_client.return_value
+        _stack_parts(client)
+        client.api.services.return_value = []
+        client.api.tasks.return_value = []
+        client.nodes.list.return_value = []
+        stack_list(host="prod")
+        stack_services("web", host="prod")
+        stack_ps("web", host="prod")
+        stack_remove(["web"], host="prod")
+    run.assert_not_called()
+    staged.assert_not_called()
+    should.assert_not_called()
 
 
 # ---------- remote-exec fallback ----------
@@ -203,43 +418,13 @@ def test_stack_deploy_stages_its_working_directory_when_there_is_no_local_cli():
     assert staged.call_args.kwargs["path_values"] == ["docker-stack.yml"]
 
 
-def test_stack_queries_run_remotely_without_staging_anything():
-    # `ls`/`ps`/`services`/`rm` name nothing local, so there is no directory worth copying.
-    for call, expected in (
-        (lambda: stack_list(host="prod"), ["stack", "ls", "--format", "{{json .}}"]),
-        (lambda: stack_ps("api", host="prod"), ["stack", "ps", "--format", "{{json .}}", "api"]),
-        (lambda: stack_services("api", host="prod"), ["stack", "services", "--format", "{{json .}}", "api"]),
-    ):
-        with (
-            patch("docker_mcp.tools.stack.should_remote_exec", return_value=True),
-            patch("docker_mcp.tools.stack.remote_stage_and_exec") as staged,
-            patch("docker_mcp.tools.stack.remote_exec_cli", return_value=_ok("[]")) as remote,
-        ):
-            call()
-        staged.assert_not_called()
-        assert remote.call_args.args == ("prod", expected)
-
-
-def test_stack_remove_runs_remotely_without_staging():
-    with (
-        patch("docker_mcp.tools.stack.should_remote_exec", return_value=True),
-        patch("docker_mcp.tools.stack.remote_stage_and_exec") as staged,
-        patch("docker_mcp.tools.stack.remote_exec_cli", return_value=_ok("")) as remote,
-    ):
-        stack_remove(["api"], host="prod")
-    staged.assert_not_called()
-    assert remote.call_args.args[1][:2] == ["stack", "rm"]
-
-
-def test_stack_uses_the_local_cli_when_it_can():
+def test_stack_deploy_uses_the_local_cli_when_it_can():
     with (
         patch("docker_mcp.tools.stack.should_remote_exec", return_value=False),
-        patch("docker_mcp.tools.stack.remote_exec_cli") as remote,
         patch("docker_mcp.tools.stack.remote_stage_and_exec") as staged,
-        patch("docker_mcp.tools.stack.run_docker", return_value=_ok("[]")) as run,
+        patch("docker_mcp.tools.stack.run_docker", return_value=_ok("")) as run,
     ):
-        stack_list(host="prod")
-    remote.assert_not_called()
+        stack_deploy("api", ["docker-stack.yml"], host="prod")
     staged.assert_not_called()
     assert run.call_args.kwargs["host"] == "prod"
 
@@ -358,6 +543,34 @@ def test_stack_wait_converged_counts_only_tasks_on_the_current_spec():
     assert result["met"] is True
     assert result["services"][0]["current_tasks"] == 2
     assert sleep.call_count == 2
+
+
+def test_stack_wait_reports_running_tasks_from_the_read_it_decides_on():
+    # The summary read saw the task still starting; the task read just after it saw the task running.
+    web = _service("shop_web")
+    result, _, _ = _stack_wait(
+        "converged",
+        [[web]],
+        summaries={"id-shop_web": [_summary(0, 1)]},
+        service_tasks={"id-shop_web": [_running(_CURRENT_SPEC)]},
+    )
+    assert result["met"] is True
+    [row] = result["services"]
+    assert (row["running_tasks"], row["current_tasks"]) == (1, 1)
+
+
+def test_stack_wait_does_not_count_a_task_desired_running_that_is_not_yet():
+    web = _service("shop_web")
+    starting = [{"Status": {"State": "starting"}, "Spec": _CURRENT_SPEC}]
+    result, _, _ = _stack_wait(
+        "converged",
+        [[web]],
+        summaries={"id-shop_web": [_summary(1, 1)]},
+        service_tasks={"id-shop_web": [starting]},
+        timeout_seconds=0,
+    )
+    [row] = result["services"]
+    assert (result["met"], row["running_tasks"], row["current_tasks"]) == (False, 0, 0)
 
 
 def test_runs_current_spec_ignores_the_runtime_key_tasks_do_not_carry():

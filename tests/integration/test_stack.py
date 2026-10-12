@@ -2,12 +2,10 @@
 # We never init a swarm here (that would mutate the host); the module skips cleanly when the daemon
 # isn't already a manager. run with: uv run pytest -m integration
 
-import time
 import uuid
 
 import pytest
 
-from docker_mcp.exceptions import RemoteFailureError
 from docker_mcp.tools.system import system_info, system_wait
 from docker_mcp.tools.stack import stack_deploy, stack_list, stack_ps, stack_remove, stack_services
 
@@ -39,30 +37,40 @@ def deployed_stack(tmp_path):
     result = stack_deploy(name, compose_files=[str(compose_file)])
     assert result["returncode"] == 0, result["stderr"]
     yield name
-    # Best-effort teardown; ignore failures so a missing stack doesn't mask the real assertion.
+    # Teardown; a stack a test already removed is reported as not found rather than failing.
     stack_remove([name])
 
 
 def test_stack_lifecycle(deployed_stack):
     name = deployed_stack
-    # The stack appears in the list.
-    assert any(s.get("Name") == name for s in stack_list())
-    # Its single service is present.
-    services = stack_services(name)
-    assert any(svc.get("Name", "").startswith(name) for svc in services)
-    # stack_ps returns a list of tasks. `docker stack ps` exits 1 ("nothing found in stack")
-    # until the scheduler has created the first task, so poll briefly before asserting.
-    deadline = time.monotonic() + 60
-    while True:
-        try:
-            tasks = stack_ps(name)
-            break
-        except RemoteFailureError as exc:
-            # Only the transient no-tasks-yet case is retryable; anything else is a real failure.
-            if "nothing found in stack" not in str(exc) or time.monotonic() > deadline:
-                raise
-            time.sleep(2)
-    assert isinstance(tasks, list)
+    assert {"name": name, "services": 1} in stack_list()
+    [service] = stack_services(name)
+    assert (service["name"], service["mode"], service["desired_tasks"]) == (f"{name}_sleeper", "replicated", 1)
+    assert service["image"].startswith("alpine:3")
+    # The scheduler creates the task just after deploy returns, so wait for the stack before reading it.
+    assert system_wait(kind="stack", target=name, until="converged", timeout_seconds=120, poll_interval=1.0)["met"]
+    [task] = stack_ps(name, filters={"desired-state": "running"})
+    assert (task["name"], task["service"], task["state"], task["error"]) == (
+        f"{name}_sleeper.1",
+        f"{name}_sleeper",
+        "running",
+        None,
+    )
+    assert task["node"] == system_info()["Name"]
+
+
+def test_stack_remove_reports_what_it_removed_and_what_was_not_there(deployed_stack):
+    [removed, missing] = stack_remove([deployed_stack, f"{deployed_stack}-absent"])
+    assert removed["found"] is True and removed["failed"] == []
+    assert removed["removed"]["services"] == [f"{deployed_stack}_sleeper"]
+    assert removed["removed"]["networks"] == [f"{deployed_stack}_default"]
+    assert missing == {
+        "name": f"{deployed_stack}-absent",
+        "found": False,
+        "removed": {"services": [], "secrets": [], "configs": [], "networks": []},
+        "failed": [],
+    }
+    assert {"name": deployed_stack, "services": 1} not in stack_list()
 
 
 def test_system_wait_stack_converges_then_is_removed(deployed_stack):
@@ -74,8 +82,8 @@ def test_system_wait_stack_converges_then_is_removed(deployed_stack):
     # The running task must be found by the stack label too, or "removed" would be met while it still runs.
     assert converged["detail"]["active_tasks"] == 1
 
-    result = stack_remove([deployed_stack])
-    assert result["returncode"] == 0, result["stderr"]
+    [result] = stack_remove([deployed_stack])
+    assert result["found"] is True and result["failed"] == [], result
     removed = system_wait(kind="stack", target=deployed_stack, until="removed", timeout_seconds=120, poll_interval=1.0)
     assert (removed["met"], removed["timed_out"]) == (True, False)
     assert removed["detail"] == {"services": [], "active_tasks": 0}

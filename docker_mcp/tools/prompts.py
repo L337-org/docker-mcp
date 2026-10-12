@@ -949,7 +949,7 @@ def deploy_swarm_stack(stack_name: str, compose_file: str) -> str:
         f"to block until every service in the stack has its tasks running, instead of polling by hand. If it "
         f"comes back `met=False`/`timed_out=True`, each service in `detail.services` lists its stuck task "
         f"ids/errors under `failed_tasks` - or "
-        f'call `stack_ps(name="{stack_name}", filters=["desired-state=running"])` for the same view.\n'
+        f'call `stack_ps(name="{stack_name}", filters={{"desired-state": "running"}})` for the same view.\n'
         f"5. Re-running `stack_deploy` with the same name updates the stack in place, so iterate on the "
         f"Compose file and redeploy rather than removing first. Mention `stack_remove` as the teardown, but "
         f"do not call it.\n"

@@ -1586,7 +1586,7 @@ def test_cli_tool_threads_host_to_run_docker(monkeypatch):
     # non-ssh transport makes that answer False regardless of whether this machine has a docker binary.
     _set_multi_host(monkeypatch, spec="local=auto, prod=tcp://prod:2376")
     monkeypatch.setattr(stack, "run_docker", fake_run_docker)
-    stack.stack_list(host="prod")
+    stack.stack_deploy("web", compose_files=["c.yml"], host="prod")
     assert captured.get("host") == "prod"
 
 
