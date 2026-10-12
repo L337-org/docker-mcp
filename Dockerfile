@@ -55,16 +55,18 @@ ARG DISABLE_DOMAINS=""
 ARG SCOUT_VERSION=1.21.0
 
 # Install the docker CLI + compose/buildx plugins (and optionally scout) for the CLI-backed domains.
-# Skipped entirely for the `lite` variant (INSTALL_CLI=0). Every download is bounded and retried,
-# because one 504 from GitHub's release CDN or download.docker.com otherwise fails the whole build;
-# curl's --retry only retries timeouts and HTTP 408, 429, 500, 502, 503 and 504, so a 404 or a bad
-# checksum still fails.  --max-time bounds each attempt, not the total.
+# Skipped entirely for the `lite` variant (INSTALL_CLI=0). Every curl download is bounded and
+# retried, because one 504 from GitHub's release CDN or download.docker.com otherwise fails the
+# whole build; curl's --retry only retries timeouts and HTTP 408, 429, 500, 502, 503 and 504, so a
+# 404 or a bad checksum still fails.  --speed-limit/--speed-time abandon a stalled attempt after
+# 30 s, and --max-time caps a slow one (the scout tarball is about 60 MB); both apply per attempt,
+# not in total.  apt's own fetches follow apt's retry settings, which this does not change.
 RUN if [ "$INSTALL_CLI" = "1" ]; then \
         set -eux; \
         apt-get update; \
         apt-get install -y --no-install-recommends ca-certificates curl gnupg; \
         install -m 0755 -d /etc/apt/keyrings; \
-        curl -fsSL --connect-timeout 30 --max-time 300 --retry 3 https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc; \
+        curl -fsSL --connect-timeout 30 --speed-limit 102400 --speed-time 30 --max-time 300 --retry 3 https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc; \
         chmod a+r /etc/apt/keyrings/docker.asc; \
         printf 'deb [arch=%s signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian %s stable\n' \
             "$(dpkg --print-architecture)" "$DEBIAN_RELEASE" > /etc/apt/sources.list.d/docker.list; \
@@ -75,8 +77,8 @@ RUN if [ "$INSTALL_CLI" = "1" ]; then \
             scout_tar="docker-scout_${SCOUT_VERSION}_linux_${scout_arch}.tar.gz"; \
             scout_base="https://github.com/docker/scout-cli/releases/download/v${SCOUT_VERSION}"; \
             mkdir -p /usr/libexec/docker/cli-plugins; \
-            curl -fsSL --connect-timeout 30 --max-time 300 --retry 3 "${scout_base}/${scout_tar}" -o "/tmp/${scout_tar}"; \
-            curl -fsSL --connect-timeout 30 --max-time 300 --retry 3 "${scout_base}/docker-scout_${SCOUT_VERSION}_checksums.txt" -o /tmp/scout_checksums.txt; \
+            curl -fsSL --connect-timeout 30 --speed-limit 102400 --speed-time 30 --max-time 300 --retry 3 "${scout_base}/${scout_tar}" -o "/tmp/${scout_tar}"; \
+            curl -fsSL --connect-timeout 30 --speed-limit 102400 --speed-time 30 --max-time 300 --retry 3 "${scout_base}/docker-scout_${SCOUT_VERSION}_checksums.txt" -o /tmp/scout_checksums.txt; \
             (cd /tmp && grep -F "${scout_tar}" scout_checksums.txt | sha256sum -c -); \
             tar -xzf "/tmp/${scout_tar}" -C /usr/libexec/docker/cli-plugins docker-scout; \
             chmod +x /usr/libexec/docker/cli-plugins/docker-scout; \
