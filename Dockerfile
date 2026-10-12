@@ -59,8 +59,9 @@ ARG SCOUT_VERSION=1.21.0
 # retried, because one 504 from GitHub's release CDN or download.docker.com otherwise fails the
 # whole build; curl's --retry only retries timeouts and HTTP 408, 429, 500, 502, 503 and 504, so a
 # 404 or a bad checksum still fails.  --speed-limit/--speed-time abandon a stalled attempt after
-# 30 s, and --max-time caps a slow one (the scout tarball is about 60 MB); both apply per attempt,
-# not in total.  apt's own fetches follow apt's retry settings, which this does not change.
+# 30 s, and --max-time caps a slow one, so it must stay large enough for the scout tarball; both
+# apply per attempt, not in total.  apt's own fetches follow apt's retry settings, which this does
+# not change.
 RUN if [ "$INSTALL_CLI" = "1" ]; then \
         set -eux; \
         apt-get update; \
