@@ -267,12 +267,14 @@ def _parse_domains(value: str | None) -> frozenset[str]:
 # tool list the client has to reason about. This filters *registration*, not classification - disabled
 # tools still appear in the tool-catalog resource so the choice is auditable.
 #
-# `system` cannot be disabled. It holds what an agent needs to orient itself and recover, and the one
-# wait tool every other domain's waits go through, so dropping it breaks far more than it saves. The
-# one thing anyone could want from disabling it, keeping the agent from logging in to a registry,
-# DOCKER_MCP_SERVER_READONLY already gives. Naming it is not silently accepted: disable_switch_warnings()
-# reports it wherever that function's warnings go.
-ALWAYS_ON_DOMAINS: frozenset[str] = frozenset({"system"})
+# `system` and `containers` cannot be disabled. `system` holds what an agent needs to orient itself and
+# recover, and the one wait tool every other domain's waits go through. `containers` is what a Docker
+# server is for, and the compose, stack and service tools hand back containers that only its tools can
+# wait on, read or remove. Disabling it never stopped the agent running code either: compose, stack,
+# service_create and image_build all do. The switch that does stop that, and registry logins, is
+# DOCKER_MCP_SERVER_READONLY. Naming either is not silently accepted: disable_switch_warnings() reports it
+# wherever that function's warnings go.
+ALWAYS_ON_DOMAINS: frozenset[str] = frozenset({"system", "containers"})
 _REQUESTED_DISABLED_DOMAINS = _parse_domains(read_env("DOCKER_MCP_SERVER_DISABLE"))
 # What the switch asked for and was refused; disable_switch_warnings() and the catalog report it.
 IGNORED_DISABLED_DOMAINS: frozenset[str] = _REQUESTED_DISABLED_DOMAINS & ALWAYS_ON_DOMAINS
@@ -746,13 +748,14 @@ def disable_switch_warnings() -> list[str]:
             f"{'matches' if len(unknown) == 1 else 'match'} no domain, so nothing was disabled for "
             f"{'it' if len(unknown) == 1 else 'them'} (a typo?); the README and `tool_list` list the domains."
         )
-    if IGNORED_DISABLED_DOMAINS:
-        # Worded for ALWAYS_ON_DOMAINS as it is, {"system"}: one name, and the READONLY hint is about
-        # system_login. A second always-on domain needs this sentence revisited.
+    ignored = sorted(IGNORED_DISABLED_DOMAINS)
+    if ignored:
+        # One alternative serves every always-on domain: what anyone disabling one could want is to keep
+        # the agent from changing things (running containers, logging in to a registry), which READONLY does.
         warnings.append(
-            f"DOCKER_MCP_SERVER_DISABLE names {_quote_names(sorted(IGNORED_DISABLED_DOMAINS))}, which cannot "
-            "be disabled and stays registered; DOCKER_MCP_SERVER_READONLY=1 keeps the agent from logging in "
-            "to a registry."
+            f"DOCKER_MCP_SERVER_DISABLE names {_quote_names(ignored)}, which cannot be disabled and "
+            f"{'stays' if len(ignored) == 1 else 'stay'} registered; DOCKER_MCP_SERVER_READONLY=1 is the "
+            "switch that keeps the agent from running containers or logging in to a registry."
         )
     return warnings
 
@@ -1353,7 +1356,7 @@ def _translate_failures[F: Callable[..., Any]](func: F, error_cls: type[ToolErro
     return cast(F, wrapper)  # see the note on the async branch
 
 
-def tool[F: Callable[..., Any]](*, enabled: bool = True, **kwargs: Any) -> Callable[[F], F]:
+def tool[F: Callable[..., Any]](**kwargs: Any) -> Callable[[F], F]:
     """Register an @mcp.tool with central classification - the drop-in `@tool()` every tool module uses.
 
     The tool's category comes from TOOL_CATEGORIES (defaulting to MUTATING, the safe assumption, for
@@ -1362,10 +1365,6 @@ def tool[F: Callable[..., Any]](*, enabled: bool = True, **kwargs: Any) -> Calla
     attach the matching ToolAnnotations.
 
     Args:
-        enabled: False records the tool as seen but leaves it unregistered, for a tool whose module
-            decides at import that it has nothing to offer under the active switches (`system_wait`
-            with every domain it waits on disabled). The catalog then reports it as hidden by
-            configuration, rather than not knowing it exists.
         **kwargs: passed to the SDK's own tool decorator
 
     Returns:
@@ -1376,10 +1375,8 @@ def tool[F: Callable[..., Any]](*, enabled: bool = True, **kwargs: Any) -> Calla
         name = func.__name__
         domain = _domain_for(func)
         category = TOOL_CATEGORIES.get(name, ToolCategory.MUTATING)
-        registered = (
-            enabled
-            and _should_register(category, readonly=READONLY, no_destructive=NO_DESTRUCTIVE)
-            and (domain is None or _domain_enabled(domain, DISABLED_DOMAINS))
+        registered = _should_register(category, readonly=READONLY, no_destructive=NO_DESTRUCTIVE) and (
+            domain is None or _domain_enabled(domain, DISABLED_DOMAINS)
         )
         _seen_tool_names.add(name)
         _tool_registry[name] = ToolRecord(

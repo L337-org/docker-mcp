@@ -693,9 +693,9 @@ def test_tool_list_survives_every_domain_being_disabled():
     every_domain = ",".join(sorted({r.domain for r in _tool_registry.values() if r.domain}))
     names = _registered_names([f"DOCKER_MCP_SERVER_DISABLE={every_domain}"])
     assert "tool_list" in names
-    # `system` cannot be disabled, so its tools stay too - all but system_wait, which has nothing left
-    # to wait on once every domain it serves is gone.
-    always_on = {r.name for r in _tool_registry.values() if r.domain in ALWAYS_ON_DOMAINS} - {"system_wait"}
+    # The always-on domains cannot be disabled, so their tools stay too, system_wait included: its
+    # container kind belongs to one of them.
+    always_on = {r.name for r in _tool_registry.values() if r.domain in ALWAYS_ON_DOMAINS}
     assert names == set(_NO_DOMAIN_TOOLS) | always_on
 
 
@@ -711,17 +711,18 @@ def _in_child(code: str, env_vars: list[str]) -> str:
     return result.stdout
 
 
-def test_system_cannot_be_disabled_and_the_catalog_says_it_was_ignored():
-    system_tools = {r.name for r in _tool_registry.values() if r.domain == "system"}
-    assert "system_wait" in system_tools
-    assert system_tools <= _registered_names(["DOCKER_MCP_SERVER_DISABLE=System,scout"])
+def test_system_and_containers_cannot_be_disabled_and_the_catalog_says_they_were_ignored():
+    assert {"system", "containers"} == ALWAYS_ON_DOMAINS
+    always_on = {r.name for r in _tool_registry.values() if r.domain in ALWAYS_ON_DOMAINS}
+    assert {"system_wait", "container_run", "container_logs"} <= always_on
+    assert always_on <= _registered_names(["DOCKER_MCP_SERVER_DISABLE=System,Containers,scout"])
     catalog = json.loads(
         _in_child(
             "from docker_mcp.server import tool_catalog; print(json.dumps(tool_catalog()))",
-            ["DOCKER_MCP_SERVER_DISABLE=System,scout"],
+            ["DOCKER_MCP_SERVER_DISABLE=System,Containers,scout"],
         )
     )
-    assert catalog["ignored_disabled_domains"] == ["system"]
+    assert catalog["ignored_disabled_domains"] == ["containers", "system"]
     # The effective switch no longer lists it, and it is not mistaken for a typo.
     assert catalog["switches"]["DOCKER_MCP_SERVER_DISABLE"] == ["scout"]
     assert catalog["unknown_disabled_domains"] == []
@@ -761,16 +762,11 @@ def test_system_wait_advertises_nothing_of_a_disabled_kind():
     assert {"pattern", "regex", "replicas", "services"} <= set(advertised["params"])
 
 
-def test_system_wait_is_unregistered_but_catalogued_when_every_kind_is_disabled():
-    env = ["DOCKER_MCP_SERVER_DISABLE=containers,services,nodes,stack,compose,registry"]
-    assert _wait_schema(env) is None
-    rows = json.loads(
-        _in_child(
-            "from docker_mcp.server import tool_catalog; print(json.dumps(tool_catalog()['tools']))",
-            env,
-        )
-    )
-    assert {"name": "system_wait", "domain": "system", "category": "read_only", "registered": False} in rows
+def test_system_wait_keeps_the_container_kind_whatever_else_is_disabled():
+    # `containers` cannot be disabled, so the wait always has the kind a compose or stack container needs.
+    props = _wait_schema(["DOCKER_MCP_SERVER_DISABLE=containers,services,nodes,stack,compose,registry"])
+    assert props is not None
+    assert props["kind"].get("const", props["kind"].get("enum")) in ("container", ["container"])
 
 
 def _names_by_category(*categories: ToolCategory) -> set[str]:
@@ -2066,8 +2062,13 @@ def test_disable_switch_warnings_agree_in_number_and_cap_what_they_quote(monkeyp
 def test_disable_switch_warnings_name_an_always_on_domain_and_the_alternative(monkeypatch):
     assert _warnings(monkeypatch, set(), ignored=frozenset({"system"})) == [
         "DOCKER_MCP_SERVER_DISABLE names 'system', which cannot be disabled and stays registered; "
-        "DOCKER_MCP_SERVER_READONLY=1 keeps the agent from logging in to a registry."
+        "DOCKER_MCP_SERVER_READONLY=1 is the switch that keeps the agent from running containers or logging in "
+        "to a registry."
     ]
+    [both] = _warnings(monkeypatch, set(), ignored=frozenset({"system", "containers"}))
+    assert both.startswith(
+        "DOCKER_MCP_SERVER_DISABLE names 'containers', 'system', which cannot be disabled and stay registered;"
+    )
 
 
 def test_instructions_point_the_agent_at_a_misconfigured_switch_first(monkeypatch):

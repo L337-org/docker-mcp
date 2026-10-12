@@ -197,16 +197,6 @@ def test_container_stats_resource_returns_json_summary():
     assert payload == summary
 
 
-def test_container_resources_refused_when_containers_domain_disabled(monkeypatch):
-    monkeypatch.setattr("docker_mcp.server.DISABLED_DOMAINS", frozenset({"containers"}))
-    for call in (
-        lambda: get_container_logs_resource("web"),
-        lambda: get_container_stats_resource("web"),
-    ):
-        with pytest.raises(CapabilityError, match="disabled via DOCKER_MCP_SERVER_DISABLE"):
-            call()
-
-
 # ---------- slice 5: host-qualified container resource URIs ----------
 
 

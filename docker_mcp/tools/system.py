@@ -621,12 +621,11 @@ _WAIT_KINDS: dict[str, tuple[str, tuple[str, ...]]] = {
     "compose": ("compose", ("running", "healthy", "exited")),
     "registry_tag": ("registry", ("present",)),
 }
+# Never empty: `containers` cannot be disabled (ALWAYS_ON_DOMAINS), so the container kind is always here.
 _WAIT_ENABLED = tuple(kind for kind, (domain, _) in _WAIT_KINDS.items() if not is_domain_disabled(domain))
-# With nothing enabled the tool is not registered, but its annotations still need a valid Literal.
-_WAIT_ADVERTISED = _WAIT_ENABLED or tuple(_WAIT_KINDS)
-WaitKind = Literal[_WAIT_ADVERTISED]  # pyright: ignore[reportInvalidTypeForm]
+WaitKind = Literal[_WAIT_ENABLED]  # pyright: ignore[reportInvalidTypeForm]
 WaitUntil = Literal[  # pyright: ignore[reportInvalidTypeForm]
-    tuple(dict.fromkeys(until for kind in _WAIT_ADVERTISED for until in _WAIT_KINDS[kind][1]))
+    tuple(dict.fromkeys(until for kind in _WAIT_ENABLED for until in _WAIT_KINDS[kind][1]))
 ]
 # The registry is polled over HTTPS and may rate-limit; everything else is a local daemon read.
 _WAIT_DEFAULT_POLL = {"registry_tag": 5.0}
@@ -721,9 +720,7 @@ def _fit_to_enabled_kinds[F: Callable[..., Any]](func: F) -> F:
         Callable: the same function, its `__doc__` and `__signature__` fitted to the enabled kinds
     """
     disabled = [kind for kind in _WAIT_KINDS if kind not in _WAIT_ENABLED]
-    # Nothing to fit with every kind enabled, and nothing to advertise with none: the tool is then not
-    # registered at all, and there is no enabled kind to build a summary from.
-    if not disabled or not _WAIT_ENABLED:
+    if not disabled:
         return func
     dropped = {param for kind in disabled for param in _WAIT_KIND_PARAMS.get(kind, ())}
     kept, skipping, item_indent, in_args = [], False, 0, False
@@ -757,7 +754,7 @@ def _fit_to_enabled_kinds[F: Callable[..., Any]](func: F) -> F:
     return func
 
 
-@tool(enabled=bool(_WAIT_ENABLED))
+@tool()
 @_fit_to_enabled_kinds
 def system_wait(  # noqa: DOC101,DOC103,DOC501,DOC503
     kind: WaitKind,  # pyright: ignore[reportInvalidTypeForm] - built from the enabled kinds at import
