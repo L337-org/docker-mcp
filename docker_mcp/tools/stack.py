@@ -322,9 +322,8 @@ def _wait_stack(
     stamps, through the Engine API. "converged" is met when every service in the stack has its
     desired number of running tasks on its current spec and no rolling update still in progress; it
     returns promptly with `met: false` when no service carries the label, or when an update has paused
-    on a failure. "removed"
-    is met when no service carries the label and none of its tasks is still starting or running. A
-    service removed while it is being read is treated as gone.
+    on a failure. "removed" is met when no service carries the label and none of its tasks is still
+    starting or running. A service removed while it is being read is treated as gone.
 
     Args:
         name: the stack name
@@ -390,8 +389,8 @@ def _wait_stack(
         if until == "converged":
             # No service at all is not "converging": nothing was deployed under that name. A rolling update
             # keeps the old tasks running until each is replaced, so a count of running tasks is met partway
-            # through a redeploy, and `UpdateStatus` can still be unset just after the deploy returns (seen in
-            # CI). So count only tasks on the current spec, and also wait out an update swarm has recorded.
+            # through a redeploy, and `UpdateStatus` can still be unset just after the deploy returns. So
+            # count only tasks on the current spec, and also wait out an update swarm has recorded.
             if not rows or any(r["update_state"] in _UPDATE_STUCK for r in rows):
                 verdict = False
             elif all(

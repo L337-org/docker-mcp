@@ -344,13 +344,20 @@ def test_stack_wait_converged_counts_only_tasks_on_the_current_spec():
     web = _service("shop_web")
     result, _, sleep = _stack_wait(
         "converged",
-        [[web], [web]],
-        summaries={"id-shop_web": [_summary(2, 2), _summary(2, 2)]},
-        service_tasks={"id-shop_web": [_running(_OLD_SPEC, _OLD_SPEC), _running(_CURRENT_SPEC, _CURRENT_SPEC)]},
+        [[web], [web], [web]],
+        summaries={"id-shop_web": [_summary(2, 2), _summary(2, 2), _summary(2, 2)]},
+        service_tasks={
+            "id-shop_web": [
+                _running(_OLD_SPEC, _OLD_SPEC),
+                # On the current spec but not started yet: counting it would make this poll converge.
+                _running(_CURRENT_SPEC) + [{"Status": {"State": "starting"}, "Spec": _CURRENT_SPEC}],
+                _running(_CURRENT_SPEC, _CURRENT_SPEC),
+            ]
+        },
     )
     assert result["met"] is True
     assert result["services"][0]["current_tasks"] == 2
-    assert sleep.call_count == 1
+    assert sleep.call_count == 2
 
 
 def test_runs_current_spec_ignores_the_runtime_key_tasks_do_not_carry():
