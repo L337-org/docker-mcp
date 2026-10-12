@@ -28,16 +28,16 @@ When the high-level SDK has no method for an operation (e.g. service rollback, o
 
 ## SDK audit exclusions (deliberate non-candidates)
 
-A recurring cloud routine audits the docker-py surface for coverage gaps, for low-level
-`client.api.*` calls a high-level method could replace, and for CLI shell-outs a first-party Python
-API (docker-py, or any Python package Docker later publishes covering this server's functionality)
-could now replace. CLI-to-API candidates are reported for a human decision and never implemented by
-the routine, because leaving the CLI also leaves the SSH remote-exec fallback and file staging
-described in [cli-shell-out.md](cli-shell-out.md). A migration declined on the merits belongs in
-this list like any other. The decisions below were made once, on the
-merits, and are **not** to be re-proposed - a periodic audit has no memory of last time, so without
-this list it re-files the same rejected candidates forever. Removing an entry is a real decision;
-say why. **Anything deliberately not wrapped, or wrapped in an unobvious way, belongs here.**
+An SDK audit covers coverage gaps in docker-py, low-level `client.api.*` calls a high-level method
+could replace, and CLI shell-outs a first-party Python API (docker-py, or any Python package Docker
+publishes covering this server's functionality) could now replace. A CLI-to-API candidate is
+reported for a human decision and never implemented by the audit, because leaving the CLI also
+leaves the SSH remote-exec fallback and file staging described in
+[cli-shell-out.md](cli-shell-out.md), which changes what a caller gets. A migration declined on the
+merits belongs in this list like any other. The decisions below were made once, on the merits, and
+are **not** to be re-proposed - a periodic audit has no memory of last time, so without this list it
+re-files the same rejected candidates forever. Removing an entry is a real decision; say why.
+**Anything deliberately not wrapped, or wrapped in an unobvious way, belongs here.**
 
 - **`Container.attach` / `attach_socket` / `resize`** - real methods, deliberately unwrapped: they
   open an interactive bidirectional stream/TTY, which does not fit a request/response tool call.

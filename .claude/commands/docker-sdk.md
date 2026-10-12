@@ -48,7 +48,7 @@ The project structure maps SDK domains to tool files one-to-one:
 
 Read each `docker_mcp/tools/*.py` file and list every `@mcp.tool` decorated function and the `docker` module methods it calls.
 
-The table covers the SDK-backed modules only. The CLI-backed modules shell out to `docker` through `docker_mcp/tools/_cli.py:run_docker`; find them by grepping `docker_mcp/tools/*.py` for `run_docker` rather than from a list, and record the CLI command each tool runs. For each one, check whether docker-py now covers the operation. The rendered docs fetched in Step 1 do not cover every public module (there is no page for `docker.context`), so read the docker-py source at the release being checked for these. Read [architecture/cli-shell-out.md](../../architecture/cli-shell-out.md) before judging a candidate: moving a tool off the CLI also moves it off the SSH remote-exec fallback and file staging.
+The CLI-backed modules shell out to `docker` through `docker_mcp/tools/_cli.py:run_docker`; find them by grepping `docker_mcp/tools/*.py` for `run_docker` rather than from a list (skipping `_cli.py` and `_ssh_proxy.py`, which are the machinery itself), and record the CLI command each tool runs. For each one, check whether a first-party Python API now covers the operation: docker-py, or any other Python package Docker publishes (look in the `docker` GitHub organisation and on PyPI for one covering the features those tools shell out for). Enumerate docker-py's public modules from the source at the release being checked, not from the rendered docs fetched in Step 1, and where the rendered docs have no page for a module, read its source. Read [architecture/cli-shell-out.md](../../architecture/cli-shell-out.md) before judging a candidate: moving a tool off the CLI also moves it off the SSH remote-exec fallback and file staging.
 
 ### Step 3 - Produce a gap analysis
 
@@ -65,8 +65,8 @@ Compare the SDK surface area from Step 1 against the MCP tool inventory from Ste
 - <`docker` module method>() - <one-line description> → should go in docker_mcp/tools/<file>.py
 ...
 
-### CLI Shell-outs With an SDK Equivalent
-- <MCP tool name> (docker_mcp/tools/<file>.py) runs `docker <command>` → could use <`docker` module method>(); changes for callers: <remote-exec fallback, staging, credentials, context>
+### CLI Shell-outs With a First-party Python API Equivalent
+- <MCP tool name> (docker_mcp/tools/<file>.py) runs `docker <command>` → could use <package and method>(), verified at <source location>; changes for callers: <remote-exec fallback, staging, credentials, context>
 ...
 
 ### Verification Notes
