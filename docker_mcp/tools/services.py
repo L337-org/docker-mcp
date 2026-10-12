@@ -105,15 +105,16 @@ def _read_service_task_summary(id_or_name: str, host: str | None = None) -> dict
     attrs = service.attrs
     mode = (attrs.get("Spec", {}) or {}).get("Mode", {}) or {}
     tasks = service.tasks(filters={"desired-state": "running"})
-    running = sum(1 for t in tasks if (t.get("Status") or {}).get("State") == "running")
-    # `Replicas` is optional in the daemon's own schema (no documented default), so a Replicated
-    # service could in principle omit it - fall back to the observed task count in that case too,
-    # the same fallback already used for every non-Replicated mode.
-    desired = mode.get("Replicated", {}).get("Replicas") if "Replicated" in mode else None
     if "Global" in mode:
         desired, running = _global_node_counts(service, client)
-    elif desired is None:
-        desired = len(tasks)
+    else:
+        running = sum(1 for t in tasks if (t.get("Status") or {}).get("State") == "running")
+        # `Replicas` is optional in the daemon's own schema (no documented default), so a Replicated
+        # service could in principle omit it - fall back to the observed task count in that case too,
+        # the same fallback already used for every other mode.
+        desired = mode.get("Replicated", {}).get("Replicas") if "Replicated" in mode else None
+        if desired is None:
+            desired = len(tasks)
     failed_tasks = [
         {
             "id": t.get("ID"),
@@ -143,8 +144,8 @@ def _awaiting_global_tasks(summary: dict) -> bool:
     orchestrator creates them, so "every node runs one" would be met before anything ran. The
     orchestrator creates every eligible node's task at once, so docker/cli's own `--detach=false` waits
     for the first (cli/command/service/progress/progress.go, `globalProgressUpdater`); the waits do the
-    same. A global service whose
-    constraints match no node therefore waits to its timeout, as the CLI does.
+    same. A global service whose constraints match no node therefore waits to its timeout, as the CLI
+    does.
 
     Args:
         summary: a `_read_service_task_summary` result
