@@ -144,6 +144,22 @@ def test_buildx_build_expands_a_leading_tilde_in_secret_src_and_build_contexts()
     assert contexts == [f"deps={home}/vendor", "base=docker-image://alpine:3"]
 
 
+def test_buildx_build_expands_a_leading_tilde_in_context_and_file():
+    # The same no-shell argument as for secrets: `~/app` would otherwise reach buildx literally.
+    home = str(pathlib.Path.home())
+    with patch("docker_mcp.tools.buildx.run_docker", return_value=_ok()) as run:
+        buildx_build(context="~/app", file="~/app/Dockerfile.prod")
+    args = run.call_args.args[0]
+    assert args[-1] == f"{home}/app"
+    assert args[args.index("--file") + 1] == f"{home}/app/Dockerfile.prod"
+
+
+def test_buildx_build_leaves_a_url_context_alone():
+    with patch("docker_mcp.tools.buildx.run_docker", return_value=_ok()) as run:
+        buildx_build(context="https://github.com/acme/app.git#main")
+    assert run.call_args.args[0][-1] == "https://github.com/acme/app.git#main"
+
+
 def test_buildx_build_expands_nothing_but_a_leading_tilde():
     # Globs and variables pass through untouched, and so does a `~user` with no such user.
     with patch("docker_mcp.tools.buildx.run_docker", return_value=_ok()) as run:
@@ -713,6 +729,20 @@ def test_buildx_build_stages_the_context_and_points_the_build_at_it(tmp_path):
     assert argv[-1] == f"{session.root}/context1"  # the context positional points at the staged copy
     # Deliberately no remote working directory: see the in-context Dockerfile test below.
     assert session.calls[0]["cwd"] is None
+
+
+def test_buildx_build_stages_a_tilde_context_on_the_remote_path(tmp_path, monkeypatch):
+    # Expanded before staging decides what is local, so `~/ctx` is found and copied, not passed literally.
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / "ctx").mkdir()
+    (tmp_path / "ctx" / "Dockerfile").write_text("FROM alpine\n", encoding="utf-8")
+    session = _FakeSession()
+    with contextlib.ExitStack() as stack:
+        for patcher in _remote_build(session):
+            stack.enter_context(patcher)
+        buildx_build("~/ctx", host="prod")
+    assert session.contexts == [(str(tmp_path / "ctx"), None)]
+    assert _argv(session)[-1] == f"{session.root}/context1"
 
 
 def test_buildx_build_passes_a_url_context_through_untouched(tmp_path):

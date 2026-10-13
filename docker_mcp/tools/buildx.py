@@ -370,12 +370,13 @@ def buildx_build(  # noqa: DOC101,DOC103,DOC501,DOC503
     Does not raise on a non-zero CLI exit - inspect `returncode`/`stderr`.
 
     Args:
-        context: Build context: a filesystem path or Git/HTTP URL (verbatim; no `~`/glob expansion; `-` is refused).
+        context: Build context: a filesystem path or Git/HTTP URL (a leading `~` is expanded; `-` is refused).
             Copied to the target host when it names a local directory and there is no local plugin.
         tags: Image references to apply (`-t`, repeatable)
         platforms: Target platforms, e.g. ["linux/amd64", "linux/arm64"]
-        file: Dockerfile path. A relative path resolves against this server's working directory (buildx's own rule), NOT
-            against `context` - pass e.g. "ctx/Dockerfile" for a Dockerfile inside the context directory "ctx".
+        file: Dockerfile path; a leading `~` is expanded. A relative path resolves against this server's working
+            directory (buildx's own rule), NOT against `context` - pass e.g. "ctx/Dockerfile" for a Dockerfile inside
+            the context directory "ctx".
         build_args: Build-time variables (each becomes `--build-arg KEY=VALUE`)
         build_contexts: Additional named build contexts (e.g. {"deps": "./vendor"}); a leading `~` is expanded
         labels: Labels to set on the resulting image (each becomes `--label KEY=VALUE`)
@@ -405,6 +406,9 @@ def buildx_build(  # noqa: DOC101,DOC103,DOC501,DOC503
             "on the MCP server's own stdin. Use a filesystem path or an HTTP/Git URL instead, "
             "or pre-stage the context on disk."
         )
+    # Expanded once, here, so the argv and the remote path's staging both see the same local paths.
+    context = _expand_home(context)
+    file = _expand_home(file) if file is not None else None
     if push and load:
         raise ToolInputError(
             "buildx_build: `push` and `load` are mutually exclusive; --load only works for "
