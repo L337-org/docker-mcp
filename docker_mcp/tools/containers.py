@@ -1085,6 +1085,21 @@ def _wait_container(
         raise ToolInputError("`pattern` is required when until='log-match'.")
     container = _get_client(host).containers.get(id_or_name)
     start = time.monotonic()
+    if until not in ("healthy", "log-match") and math.ceil(timeout_seconds) == 0:
+        # A zero timeout means check once, as for every other kind. The daemon's wait cannot express it:
+        # requests refuses a zero timeout with a builtin ValueError. A next exit has not happened yet, and
+        # a container just fetched has not been removed, so only "not-running" can already be met.
+        state = container.attrs.get("State") or {}
+        if until == "not-running" and not state.get("Running"):
+            return _wait_result(
+                id_or_name,
+                until,
+                met=True,
+                start=start,
+                status_code=state.get("ExitCode"),
+                error=state.get("Error") or None,
+            )
+        return _wait_result(id_or_name, until, met=False, start=start, timed_out=True)
     if until not in ("healthy", "log-match"):
         try:
             # The daemon wait takes whole seconds; round up so a small fractional timeout still

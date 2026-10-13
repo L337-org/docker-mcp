@@ -719,6 +719,26 @@ def test_wait_container_returns_timed_out_instead_of_raising():
     assert result["status_code"] is None
 
 
+@pytest.mark.parametrize(
+    ("until", "running", "expected"),
+    [
+        ("not-running", False, (True, False, 3)),
+        ("not-running", True, (False, True, None)),
+        ("next-exit", False, (False, True, None)),
+        ("removed", False, (False, True, None)),
+    ],
+)
+def test_wait_container_with_a_zero_timeout_checks_once_without_the_daemon_wait(until, running, expected):
+    # requests refuses a zero timeout with a builtin ValueError, so the daemon's wait must not be called.
+    container = MagicMock()
+    container.attrs = {"State": {"Running": running, "ExitCode": 3, "Error": ""}}
+    with _patch() as mock_client:
+        mock_client.return_value.containers.get.return_value = container
+        result = wait_container("web", until=until, timeout_seconds=0)
+    container.wait.assert_not_called()
+    assert (result["met"], result["timed_out"], result["status_code"]) == expected
+
+
 def test_wait_container_surfaces_daemon_error_message():
     container = MagicMock()
     container.wait.return_value = {"StatusCode": 137, "Error": {"Message": "oom"}}

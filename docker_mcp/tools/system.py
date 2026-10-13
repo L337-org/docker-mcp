@@ -802,9 +802,9 @@ def system_wait(  # noqa: DOC101,DOC103,DOC501,DOC503
     `kind`: `target` - `until` values:
     - container: id or name - not-running (exit code in `detail.status_code`), next-exit, removed,
       healthy (no HEALTHCHECK: not met), log-match (finds `pattern` in recent logs)
-    - service: id or name - running (all desired tasks, or `replicas`), update-converged
-    - node: id or hostname - ready, down, disconnected, unknown
-    - stack: stack name - converged (every service's tasks running, updates finished), removed
+    - service: swarm manager only; id or name - running (all desired tasks, or `replicas`), update-converged
+    - node: swarm manager only; id or hostname - ready, down, disconnected, unknown
+    - stack: swarm manager only; stack name - converged (every service's tasks running, updates finished), removed
     - compose: project name from `compose_list` - running, healthy (no HEALTHCHECK: running is enough;
       a job others wait on may have exited 0), exited (exit codes in `detail`); `services` narrows it
     - registry_tag: "repository:tag" - present (polls the registry over HTTPS every 5 s by default; no

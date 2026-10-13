@@ -774,9 +774,14 @@ def test_system_wait_advertises_nothing_of_a_disabled_kind():
     )
     advertised = json.loads(_in_child(code, ["DOCKER_MCP_SERVER_DISABLE=registry,stack"]))
     description = advertised["description"]
-    for gone in ("registry_tag", "- stack:", "username", "password", "limit", "a tag lands", "REGISTRY"):
+    for gone in ("registry_tag", "username", "password", "limit", "REGISTRY"):
         assert gone not in description, gone
-    assert description.startswith("Wait until a container exits or is healthy")
+    # Checked by kind, not by a literal line: a kind's line can be reworded, and must still go with its kind.
+    lines = description.splitlines()
+    assert not [line for line in lines if re.match(r"\s*- (stack|registry_tag)\b", line)]
+    summary = lines[0]
+    assert summary.startswith("Wait until a container exits or is healthy")
+    assert "stack" not in summary and "registry" not in summary
     assert not {"username", "password", "limit"} & set(advertised["params"])
     assert {"pattern", "regex", "replicas", "services"} <= set(advertised["params"])
 
