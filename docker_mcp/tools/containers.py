@@ -12,6 +12,8 @@ import time
 from collections.abc import Iterable
 from typing import Any, Literal, TypedDict, cast
 
+import docker.errors
+import docker.models.containers
 import requests.exceptions
 
 from docker_mcp.exceptions import ToolInputError
@@ -39,6 +41,32 @@ class RestartPolicy(TypedDict, total=False):
 
     Name: Literal["no", "always", "on-failure", "unless-stopped"]
     MaximumRetryCount: int  # only meaningful with Name="on-failure"
+
+
+def _reread(container: docker.models.containers.Container) -> dict:
+    """Re-read a container after acting on it, allowing for one that `auto_remove` has already deleted.
+
+    Docker deletes an `auto_remove` container as soon as it stops, so a re-read straight after starting,
+    stopping or signalling one can find it gone although the action worked. Reporting `NotFound` then
+    would tell the agent the action failed and invite it to try again.
+
+    Args:
+        container: the docker-py Container acted on, as fetched before the action
+
+    Returns:
+        dict: the inspect payload after the action; for an `auto_remove` container already gone, the one
+            fetched before it, with `removed_on_exit: true`
+
+    Raises:
+        docker.errors.NotFound: the container is gone and was not `auto_remove`, so something else removed it
+    """
+    try:
+        container.reload()
+    except docker.errors.NotFound:
+        if not (container.attrs.get("HostConfig") or {}).get("AutoRemove"):
+            raise
+        return {**container.attrs, "removed_on_exit": True}
+    return container.attrs
 
 
 @tool()
@@ -98,7 +126,8 @@ def container_run(  # noqa: DOC101,DOC103,DOC501,DOC503
             `docs_lookup(section="containers")` for the full accepted set)
 
     Returns:
-        dict: The started container's full inspect payload
+        dict: The started container's full inspect payload; an `auto_remove` container already gone returns
+            the payload from before the start, with `removed_on_exit: true`
     """
     # Always detached: a blocking run waits for the image to finish, with no bound, and an image that
     # never exits would hang the call for good. `system_wait` is how a caller waits, with a timeout.
@@ -149,8 +178,7 @@ def container_run(  # noqa: DOC101,DOC103,DOC501,DOC503
     container = _get_client(host).containers.run(image, **kwargs)
     # docker-py's run returns the object it fetched before starting it, so its attrs still say "created";
     # re-read it, as container_start does, so the payload describes the started container.
-    container.reload()
-    return container.attrs
+    return _reread(container)
 
 
 @tool()
@@ -303,12 +331,12 @@ def container_start(id_or_name: str, host: str | None = None) -> dict:  # noqa: 
         id_or_name: Container id (full or short) or name
 
     Returns:
-        dict: The container's full inspect payload after starting
+        dict: The container's full inspect payload after starting; for an `auto_remove` container already
+            gone, the one from before, with `removed_on_exit: true`
     """
     container = _get_client(host).containers.get(id_or_name)
     container.start()
-    container.reload()
-    return container.attrs
+    return _reread(container)
 
 
 @tool()
@@ -330,13 +358,13 @@ def container_stop(  # noqa: DOC101,DOC103
         stop_timeout_seconds: Seconds between the stop signal and SIGKILL
 
     Returns:
-        dict: The container's full inspect payload after the stop (exit code under State.ExitCode)
+        dict: The container's full inspect payload after the stop (exit code under State.ExitCode); for an
+            `auto_remove` container, which the stop deletes, the one from before, with `removed_on_exit: true`
     """
     container = _get_client(host).containers.get(id_or_name)
     guard_not_self(container, host=host)
     container.stop(timeout=stop_timeout_seconds)
-    container.reload()
-    return container.attrs
+    return _reread(container)
 
 
 @tool()
@@ -357,13 +385,13 @@ def container_restart(  # noqa: DOC101,DOC103
         stop_timeout_seconds: Seconds between the stop signal and SIGKILL
 
     Returns:
-        dict: The container's full inspect payload after the restart
+        dict: The container's full inspect payload after the restart; for an `auto_remove` container already
+            gone, the one from before, with `removed_on_exit: true`
     """
     container = _get_client(host).containers.get(id_or_name)
     guard_not_self(container, host=host)
     container.restart(timeout=stop_timeout_seconds)
-    container.reload()
-    return container.attrs
+    return _reread(container)
 
 
 @tool()
@@ -381,13 +409,13 @@ def container_kill(id_or_name: str, signal: str | None = None, host: str | None 
         signal: Signal name or number as a string (e.g. "SIGHUP", "9"); default SIGKILL
 
     Returns:
-        dict: The container's full inspect payload after the signal
+        dict: The container's full inspect payload after the signal; for an `auto_remove` container already
+            gone, the one from before, with `removed_on_exit: true`
     """
     container = _get_client(host).containers.get(id_or_name)
     guard_not_self(container, host=host)
     container.kill(signal=signal)
-    container.reload()
-    return container.attrs
+    return _reread(container)
 
 
 @tool()
@@ -761,8 +789,8 @@ def container_exec(  # noqa: DOC101,DOC103,DOC501,DOC503
     Waits for the command, bounded by `timeout_seconds` (default 120). A command still running then is
     reported with `timed_out: true` and whatever output arrived. Output past `max_bytes` (default 32 MiB)
     is cut off with `truncated: true`, and the call returns at once rather than waiting for the command.
-    Either way `exit_code` is null and the command keeps running in the container, because the Engine has
-    no way to stop an exec: `container_top` shows it, and another `container_exec` can kill it. For a
+    A command still running then has a null `exit_code` and keeps running in the container, because the
+    Engine has no way to stop an exec: `container_top` shows it, and another `container_exec` can kill it. For a
     long-running or background job, start a container with `container_run` and wait with `system_wait`.
 
     Security: when any element of `cmd` is agent-controlled, use an exec-form argv list that does not

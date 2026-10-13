@@ -558,11 +558,11 @@ def compose_run(  # noqa: DOC101,DOC103
     Run a one-off command against a compose service.
 
     Always detached (`-d`) and `-T` (no TTY under MCP): it returns once the container starts, with the
-    container's id as `stdout`. For its result, `system_wait(kind="container", target=<that id>,
-    until="not-running")` gives the exit code, `container_logs` the output, and `container_remove` the
-    cleanup; the container is kept until then, because removing it on exit would delete its logs. Unlike
-    `compose_exec`, this starts a NEW container for the service rather than running inside the existing
-    one.
+    container's id as `stdout`, newline-terminated (strip it). For its result,
+    `system_wait(kind="container", target=<that id>, until="not-running")` gives the exit code,
+    `container_logs` the output, and `container_remove` the cleanup; the container is kept until then,
+    because removing it on exit would delete its logs. Unlike `compose_exec`, this starts a NEW
+    container for the service rather than running inside the existing one.
     Does not raise on a non-zero CLI exit (a missing compose plugin or a timeout still raises) - inspect
     `returncode`/`stderr` in the result.
 

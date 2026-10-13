@@ -28,7 +28,12 @@ from docker_mcp.tools._cli import (
     safe_positional,
     should_remote_exec,
 )
-from docker_mcp.tools.services import _awaiting_global_tasks, _read_service_task_summary
+from docker_mcp.tools.services import (
+    _UPDATE_DONE,
+    _UPDATE_STUCK,
+    _awaiting_global_tasks,
+    _read_service_task_summary,
+)
 from docker_mcp.tools.system import _get_client
 
 # deploy resolves image digests against the registry and submits the service specs; the rollout itself
@@ -332,10 +337,6 @@ _STACK_LABEL = "com.docker.stack.namespace"
 _ACTIVE_TASK_STATES = frozenset(
     {"new", "allocated", "pending", "assigned", "accepted", "preparing", "ready", "starting", "running"}
 )
-# `UpdateStatus.State` values after which a rolling update is over, and those where it stopped on a failure
-# and will not move again without someone acting (moby `api/types/swarm` UpdateState).
-_UPDATE_DONE = frozenset({"completed", "rollback_completed"})
-_UPDATE_STUCK = frozenset({"paused", "rollback_paused"})
 
 
 def _runs_current_spec(task: dict, template: dict) -> bool:

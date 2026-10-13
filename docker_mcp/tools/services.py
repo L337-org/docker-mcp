@@ -25,6 +25,10 @@ from docker_mcp.tools.system import _get_client
 # resources.py, and by the service and stack waits behind system_wait ---
 
 _FAILING_TASK_STATES = frozenset({"failed", "rejected"})
+# `UpdateStatus.State` values after which a rolling update is over, and those where it stopped on a failure
+# and will not move again without someone acting (moby `api/types/swarm` UpdateState).
+_UPDATE_DONE = frozenset({"completed", "rollback_completed"})
+_UPDATE_STUCK = frozenset({"paused", "rollback_paused"})
 # Desired states up to and including "running", the ones swarm still means a task to reach (docker/cli's
 # `numberedStates` in cli/command/service/progress/progress.go). A replacement waiting out its restart
 # delay is desired "ready", so this keeps its node counted between a rejection and the retry.
@@ -592,7 +596,7 @@ def _wait_service(
     `service-tasks://{id_or_name}` until running tasks reach the desired count, or every returned task
     runs for a global service once it has any. "update-converged" polls `UpdateStatus.State` until it
     is `completed` or `rollback_completed`, and returns promptly with `met: false` for a service never
-    updated.
+    updated or an update paused on a failure, which will not move again without someone acting.
 
     Args:
         id_or_name: the service to wait on
@@ -635,7 +639,9 @@ def _wait_service(
             if update_state is None:
                 # No UpdateStatus at all: nothing to converge to, don't poll to the timeout.
                 return _service_wait_result(id_or_name, until, met=False, start=start, **common)
-            if update_state in ("completed", "rollback_completed"):
+            if update_state in _UPDATE_STUCK:
+                return _service_wait_result(id_or_name, until, met=False, start=start, **common)
+            if update_state in _UPDATE_DONE:
                 return _service_wait_result(id_or_name, until, met=True, start=start, **common)
         remaining = deadline - time.monotonic()
         if remaining <= 0:

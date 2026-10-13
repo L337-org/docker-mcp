@@ -66,6 +66,67 @@ def test_run_container_detached():
     container.reload.assert_called_once_with()
 
 
+def test_container_run_reports_a_container_auto_removed_before_it_was_reread():
+    # It ran and exited before the re-read; raising NotFound would tell the agent it failed.
+    import docker.errors
+
+    container = MagicMock()
+    container.attrs = {"Id": "abc", "State": {"Status": "created"}, "HostConfig": {"AutoRemove": True}}
+    container.reload.side_effect = docker.errors.NotFound("No such container: abc")
+    with _patch() as mock_client:
+        mock_client.return_value.containers.run.return_value = container
+        result = container_run("alpine", command="true", auto_remove=True)
+    assert result == {**container.attrs, "removed_on_exit": True}
+
+
+def test_container_run_still_raises_for_a_container_removed_by_something_else():
+    import docker.errors
+
+    container = MagicMock()
+    container.attrs = {"Id": "abc", "HostConfig": {"AutoRemove": False}}
+    container.reload.side_effect = docker.errors.NotFound("No such container: abc")
+    with _patch() as mock_client, pytest.raises(docker.errors.NotFound):
+        mock_client.return_value.containers.run.return_value = container
+        container_run("alpine", command="true")
+
+
+_ACTIONS = [
+    pytest.param(lambda: container_start("abc"), id="start"),
+    pytest.param(lambda: container_stop("abc"), id="stop"),
+    pytest.param(lambda: container_restart("abc"), id="restart"),
+    pytest.param(lambda: container_kill("abc"), id="kill"),
+]
+
+
+@pytest.mark.parametrize("act", _ACTIONS)
+def test_an_auto_remove_container_gone_after_the_action_is_reported_not_raised(act):
+    # Stopping an auto_remove container deletes it, so the re-read found nothing although the stop worked.
+    import docker.errors
+
+    container = MagicMock()
+    container.attrs = {"Id": "abc", "HostConfig": {"AutoRemove": True}}
+    container.reload.side_effect = docker.errors.NotFound("No such container: abc")
+    with _patch() as mock_client, patch("docker_mcp.tools.containers.guard_not_self"):
+        mock_client.return_value.containers.get.return_value = container
+        assert act() == {**container.attrs, "removed_on_exit": True}
+
+
+@pytest.mark.parametrize("act", _ACTIONS)
+def test_a_container_removed_by_something_else_after_the_action_still_raises(act):
+    import docker.errors
+
+    container = MagicMock()
+    container.attrs = {"Id": "abc", "HostConfig": {"AutoRemove": False}}
+    container.reload.side_effect = docker.errors.NotFound("No such container: abc")
+    with (
+        _patch() as mock_client,
+        patch("docker_mcp.tools.containers.guard_not_self"),
+        pytest.raises(docker.errors.NotFound),
+    ):
+        mock_client.return_value.containers.get.return_value = container
+        act()
+
+
 @pytest.mark.parametrize("key", ["detach", "remove"])
 def test_container_run_refuses_the_blocking_options_through_extra_kwargs(key):
     # Forwarded after the defaults, either would bring the unbounded blocking run back.

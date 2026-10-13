@@ -8,6 +8,7 @@ configured hosts are reachable from here.
 
 import inspect
 import ipaddress
+import math
 import os
 import re
 import socket
@@ -644,6 +645,9 @@ WaitUntil = Literal[  # pyright: ignore[reportInvalidTypeForm]
 ]
 # The registry is polled over HTTPS and may rate-limit; everything else is a local daemon read.
 _WAIT_DEFAULT_POLL = {"registry_tag": 5.0}
+# A socket timeout ends up in a `timeval`, whose seconds are a 32-bit `long` on Windows (Winsock), so this is
+# the largest wait every platform can pass to the daemon: about 68 years.
+_MAX_WAIT_SECONDS = 2**31 - 1
 # Parameters only one kind uses: they leave the schema with their kind, so nothing disabled is advertised.
 _WAIT_KIND_PARAMS: dict[str, tuple[str, ...]] = {
     "container": ("pattern", "regex"),
@@ -787,7 +791,7 @@ def system_wait(  # noqa: DOC101,DOC103,DOC501,DOC503
     host: str | None = None,
 ) -> dict:
     """
-    Wait until a container/compose project exits or is healthy, a service/stack converges, a node is ready, a tag lands.
+    Wait until a container/compose project exits or is healthy, a service/stack converges, a node/registry tag is ready.
 
     The one wait tool: action tools return once their work is started, and this waits for the result. For
     a status read without waiting use `container_inspect`, `service_ps` or `compose_ps`; to follow changes
@@ -833,6 +837,14 @@ def system_wait(  # noqa: DOC101,DOC103,DOC501,DOC503
     )
     if until == "log-match" and not pattern:
         raise ToolInputError("system_wait(until='log-match') needs `pattern`")
+    # There is no ceiling on how long a caller may wait, but the container stop conditions hand the timeout
+    # to a socket, and a NaN deadline never passes. _MAX_WAIT_SECONDS is the most every supported
+    # platform's socket timeout can hold; past it the stop conditions fail with a builtin OverflowError.
+    for label, value in (("timeout_seconds", timeout_seconds), ("poll_interval", poll_interval)):
+        if value is not None and not (math.isfinite(value) and value <= _MAX_WAIT_SECONDS):
+            raise ToolInputError(
+                f"system_wait {label} must be a finite number of seconds, at most {_MAX_WAIT_SECONDS}; got {value!r}."
+            )
     interval = poll_interval if poll_interval is not None else _WAIT_DEFAULT_POLL.get(kind, 2.0)
     if kind == "container":
         from docker_mcp.tools.containers import _wait_container
