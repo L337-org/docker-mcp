@@ -80,8 +80,7 @@ def context_create(
 
     Registers a named endpoint for the CLI; switch with `context_use`, enumerate with
     `context_list`. It does not retarget this server's docker-py client (pinned at startup).
-    Does not raise on a non-zero CLI exit - inspect `returncode`/`stderr`. A comma in `docker_host` or a
-    TLS path is refused.
+    Does not raise on a non-zero CLI exit - inspect `returncode`/`stderr`.
 
     Args:
         name: Name for the new context (must not already exist)

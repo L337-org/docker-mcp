@@ -376,8 +376,7 @@ def buildx_build(  # noqa: DOC101,DOC103,DOC501,DOC503
         attest: Custom attestation specs (repeatable)
         secret: Secret specs (e.g. ["id=npmrc,src=/home/user/.npmrc"] or ["id=npmrc,env=NPM_TOKEN"]). `~` in `src=` is
             NOT expanded (by this tool or the CLI) - use an absolute path.
-        ssh: SSH agent socket/key specs (e.g. ["default"], using $SSH_AUTH_SOCK). Refused when the build has to run on a
-            remote host: the socket read would be that host's.
+        ssh: SSH agent socket/key specs (e.g. ["default"], using $SSH_AUTH_SOCK)
 
     Returns:
         dict: {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}

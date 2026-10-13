@@ -477,9 +477,8 @@ afterthought: at this server's size it is the dominant cost of connecting to it 
 `tests/test_surface_budget.py` holds the ceilings: per tool, per component, and in total.
 
 **What is measured is the wire form, not the docstring.** A tool costs its name, its description
-and its whole input schema, and the schema is usually the larger half - `buildx_build` is 5,091
-bytes on the wire against 3,398 of description. A docstring-only budget would go green on a
-change that added twenty parameters.
+and its whole input schema, so a docstring-only budget would go green on a change that added
+twenty parameters. `tests/test_surface_budget.py`'s header gives the command that measures both.
 
 **Bytes, not tokens.** Tokens are what a model pays, but they need a tokenizer pinned to a model
 that changes underneath us, so the figure moves without the surface moving. That is why
