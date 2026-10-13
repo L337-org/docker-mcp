@@ -227,7 +227,15 @@ def test_image_import_refuses_a_tag_that_would_replace_the_one_in_repository(rep
 
 @pytest.mark.parametrize(
     ("repository", "tag"),
-    [("myorg/rootfs:v1", "v1"), ("localhost:5000/rootfs", "v2"), ("myorg/rootfs", "v2"), ("myorg/rootfs:v1", None)],
+    [
+        ("myorg/rootfs:v1", "v1"),
+        ("localhost:5000/rootfs", "v2"),
+        ("myorg/rootfs", "v2"),
+        ("myorg/rootfs:v1", None),
+        # A digest is not a tag: these reach the daemon, which refuses a digested reference itself.
+        ("myorg/rootfs@sha256:" + "a" * 64, "v1"),
+        ("myorg/rootfs:v1@sha256:" + "a" * 64, "v1"),
+    ],
 )
 def test_image_import_passes_a_tag_that_agrees_with_repository(repository, tag):
     # A matching pair, a registry port, a bare repository and no tag at all are all unambiguous.

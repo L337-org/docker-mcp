@@ -171,8 +171,8 @@ def image_registry_data(  # noqa: DOC101,DOC103
     """
     Get registry data for an image without pulling it, via the daemon's distribution endpoint.
 
-    Uses the daemon (and its cached credentials) to resolve the remote descriptor and platform
-    list. For direct registry access without a daemon use `registry_manifest`.
+    Uses the daemon, with the credentials this server's docker client has cached, to resolve the remote
+    descriptor and platform list. For direct registry access without a daemon use `registry_manifest`.
 
     Security: `auth_config` carries registry credentials, which many MCP clients log verbatim. Prefer
     `docker login` on the host so the `docker` module reuses credentials cached in
@@ -471,7 +471,8 @@ def image_import(  # noqa: DOC101,DOC103,DOC501,DOC503
     # The Engine applies `tag` over a tag already in `repository`, so "myorg/rootfs:v1" with tag "v2"
     # silently becomes ":v2". Only the last path segment can carry the tag: a colon before the last
     # "/" is a registry port ("localhost:5000/rootfs").
-    _, _, last_segment = (repository or "").rpartition("/")
+    # A digest ("@sha256:...") is not a tag; the daemon refuses a digested reference on its own.
+    _, _, last_segment = (repository or "").partition("@")[0].rpartition("/")
     repository_tag = last_segment.partition(":")[2] if ":" in last_segment else None
     if tag is not None and repository_tag is not None and repository_tag != tag:
         raise ToolInputError(

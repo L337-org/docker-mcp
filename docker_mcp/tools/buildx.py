@@ -18,6 +18,7 @@ instances and their history.
 # tokens - and it refuses the flags whose effect would land on the wrong machine (see
 # `_refuse_flags_that_resolve_on_the_wrong_host`).
 
+import os
 from pathlib import Path
 
 from docker_mcp.exceptions import CapabilityError, ToolInputError
@@ -124,15 +125,17 @@ def _expand_home(value: str) -> str:
     """Expand a leading `~` in a path the caller would expect a shell to have expanded.
 
     The CLI receives its argv without a shell, so `~/.npmrc` would otherwise reach buildx literally and
-    name nothing. Only `~` is expanded, as everywhere else in this server: never a glob or a variable.
+    name nothing. Only `~` is expanded, never a glob or a variable. `os.path.expanduser` rather than
+    pathlib's, which raises a bare RuntimeError for an unknown `~user`: this leaves such a value as
+    typed, and buildx then reports the missing path in its stderr.
 
     Args:
         value: a path, or any other spec value (returned unchanged unless it starts with `~`)
 
     Returns:
-        str: the value with a leading `~` or `~user` expanded on this host
+        str: the value with a leading `~` or `~user` expanded on this host, or unchanged if it cannot be
     """
-    return str(Path(value).expanduser()) if value.startswith("~") else value
+    return os.path.expanduser(value) if value.startswith("~") else value
 
 
 def _replace_spec_component(spec: str, key: str, new_value: str) -> str:
