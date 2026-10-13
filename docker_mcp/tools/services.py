@@ -366,7 +366,7 @@ def service_logs(  # noqa: DOC101,DOC103,DOC501,DOC503
         id_or_name: The service whose logs to read; give this or `task`, not both
         task: One task's id, an unambiguous id prefix, or its full `<service>.<slot>.<taskid>` name; give this or
             `id_or_name`, not both
-        details: Show extra details
+        details: Include the extra attributes given to the log driver (`--details`)
         since: Show logs since this Unix timestamp
         tail: Number of lines from the end, or the literal "all" for everything
         max_bytes: Abort with ToolInputError if the buffered logs exceed this many bytes (default 32 MiB)

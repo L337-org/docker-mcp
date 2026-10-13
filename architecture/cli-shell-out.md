@@ -18,7 +18,7 @@ Any tool that wraps a `docker` CLI feature (Compose, Stack, Buildx, Scout, Conte
 
 Multi-platform notes for new shell-out tools:
 
-- **Never** pass `shell=True`, never construct paths by string concatenation, never expand `~` or globs yourself (use `Path.expanduser()` / `Path.glob()`).
+- **Never** pass `shell=True`, never construct paths by string concatenation, and never expand a glob or a variable. The CLI receives its argv without a shell, so a `~` reaches it literally: expand a leading `~` only where the tool documents it (`buildx_build`'s `context`, `file`, `build_contexts` and secret `src=`), and only with `os.path.expanduser`, since pathlib's `expanduser()` raises a bare `RuntimeError` for an unknown `~user` where `os.path` leaves the value for the CLI to report.
 - Always pass an explicit `timeout=` to `run_docker`; pick a generous ceiling for long-running ops (build/pull at 1800s) and a short one for queries.
 - Don't hardcode binary paths - Docker Desktop on Mac, Windows, and Linux all install `docker` differently; `shutil.which` is the only safe lookup.
 

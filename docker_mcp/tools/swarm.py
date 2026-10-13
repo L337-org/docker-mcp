@@ -41,12 +41,12 @@ def swarm_init(  # noqa: DOC101,DOC103
         force_new_cluster: Force a new single-node cluster from this node's current state (disaster recovery when a
             majority of managers is lost)
         default_addr_pool: IP address pools for swarm overlay networks
-        subnet_size: Subnet size for the IP pool
-        data_path_addr: Address to use for data path traffic
-        data_path_port: Port number for data path traffic
+        subnet_size: Prefix length of each network carved from the default address pool, e.g. 24
+        data_path_addr: Address or interface for data-path (VXLAN) traffic, e.g. "192.168.1.1" or "eth0"
+        data_path_port: UDP port for data-path traffic, 1024-49151 (the daemon's default is 4789)
         labels: Labels to set on the swarm
         autolock_managers: Require the unlock key after every manager restart
-        log_driver: Default log driver configuration
+        log_driver: Default log driver for tasks, as {"Name": "json-file", "Options": {...}}
 
     Returns:
         str: The node id of the newly created swarm manager
@@ -93,7 +93,7 @@ def swarm_join(  # noqa: DOC101,DOC103
         join_token: The worker or manager join token (from `swarm_join_tokens`) - determines the role this node joins as
         listen_addr: Listen address for inter-manager communication
         advertise_addr: Externally reachable address advertised to other nodes
-        data_path_addr: Address to use for data path traffic
+        data_path_addr: Address or interface for data-path (VXLAN) traffic, e.g. "192.168.1.1" or "eth0"
 
     Returns:
         bool: True after the engine joins the swarm

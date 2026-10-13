@@ -102,8 +102,7 @@ def stack_deploy(  # noqa: DOC101,DOC103,DOC501,DOC503
     stack in place. Returns once the service specs are submitted, never waiting for the rollout: wait
     for it with `system_wait(kind="stack", target=name, until="converged")`, or see its state without
     waiting with `stack_services` / `stack_ps`. The swarm analogue of `compose_up`.
-    Does not raise on a non-zero CLI exit (a missing `docker` binary or a timeout still raises) - inspect
-    `returncode`/`stderr` in the result.
+    Does not raise on a non-zero CLI exit - inspect `returncode`/`stderr`.
 
     Args:
         name: Name of the stack to create or update
@@ -113,7 +112,6 @@ def stack_deploy(  # noqa: DOC101,DOC103,DOC501,DOC503
         resolve_image: Image-digest resolution; omit for the CLI default ("always")
         cwd: Working directory for resolving relative Compose paths (defaults to the server's cwd; copied to the target
             host if no local docker CLI)
-        timeout_seconds: Subprocess timeout (default 1800s)
 
     Returns:
         dict: {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}

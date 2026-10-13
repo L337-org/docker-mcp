@@ -39,7 +39,6 @@ def network_create(  # noqa: DOC101,DOC103
         ipam: IPAM configuration as a dict (engine shape: {"Driver", "Config": [{"Subnet", "Gateway", ...}]})
         internal: Restrict external access
         labels: Labels to set on the network
-        enable_ipv6: Enable IPv6 networking
         attachable: Allow standalone containers to attach (swarm overlay networks)
         scope: Network scope; the driver picks a sensible default when omitted
         ingress: Make this an ingress network for swarm routing-mesh
@@ -118,14 +117,15 @@ def network_list(  # noqa: DOC101,DOC103
     List networks.
 
     Valid filter keys: `driver` (driver name), `label` (key or key=value), `type`
-    ("custom" or "builtin"). `names`/`ids` are a separate shorthand for filtering by exact
-    name/id, applied in addition to `filters`. Set `greedy` to fetch each network's attrs
+    ("custom" or "builtin"). `names`/`ids` are a separate shorthand for filtering by name/id,
+    applied in addition to `filters`. Set `greedy` to fetch each network's attrs
     individually (adds the connected-containers detail that `network_inspect` returns, at
     the cost of one extra daemon call per network) - leave it False for a fast summary list.
 
     Args:
-        names: Filter by exact network names
-        ids: Filter by exact network ids
+        names: Network names, each an unanchored regular expression, so `web` also matches `webapp`;
+            use `^web$` for one name
+        ids: Network ids, matched the same way, so an id prefix finds its network
         filters: Additional server-side filters; see description for valid keys
         greedy: Fetch extended per-network details (including connected containers)
         managed_only: Only return networks created by this MCP server (filters on the docker-mcp-server.managed label);

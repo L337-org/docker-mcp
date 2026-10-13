@@ -510,11 +510,10 @@ def system_login(  # noqa: DOC101,DOC103
     `image_pull` / `image_push` reach private repositories; `system_logout` clears them.
 
     Args:
-        username: Registry username
         password: Registry password or token
         registry: URL to the registry (defaults to Docker Hub)
         reauth: Force re-authentication even if valid credentials exist
-        dockercfg_path: Path to a custom dockercfg file
+        dockercfg_path: A dockercfg file on the server host to use instead of `~/.docker/config.json`
 
     Returns:
         dict: The login response: {"Status"} always; "IdentityToken" only when the registry issues one

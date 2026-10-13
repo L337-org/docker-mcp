@@ -136,7 +136,10 @@ Any tool wrapping a `docker` CLI feature (Compose, Stack, Buildx, Scout, Context
 `docker_mcp/tools/_cli.py:run_docker` — never call `subprocess.run` directly from a tool module. That
 helper is the single place holding binary resolution, `shell=False`, UTF-8 decoding, the output byte
 cap, Windows console suppression and the environment allow-list. Always pass an explicit `timeout=`.
-Never pass `shell=True`, never build paths by string concatenation, never expand `~` or globs yourself.
+Never pass `shell=True`, never build paths by string concatenation, and never expand a glob or a
+variable. Expand only a leading `~`, only where the tool documents it (`buildx_build`'s path
+parameters), and only with `os.path.expanduser`: pathlib's `expanduser()` raises a bare
+`RuntimeError` for an unknown `~user`, where `os.path` leaves the value for the CLI to report.
 
 **Read [architecture/cli-shell-out.md](architecture/cli-shell-out.md) before touching any of it**, and
 before adding a CLI-backed tool. It covers the SSH remote-exec fallback (which changes *which host* a
@@ -477,9 +480,8 @@ afterthought: at this server's size it is the dominant cost of connecting to it 
 `tests/test_surface_budget.py` holds the ceilings: per tool, per component, and in total.
 
 **What is measured is the wire form, not the docstring.** A tool costs its name, its description
-and its whole input schema, and the schema is usually the larger half - `buildx_build` is 5,091
-bytes on the wire against 3,398 of description. A docstring-only budget would go green on a
-change that added twenty parameters.
+and its whole input schema, so a docstring-only budget would go green on a change that added
+twenty parameters. `tests/test_surface_budget.py`'s header gives the command that measures both.
 
 **Bytes, not tokens.** Tokens are what a model pays, but they need a tokenizer pinned to a model
 that changes underneath us, so the figure moves without the surface moving. That is why

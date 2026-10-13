@@ -74,7 +74,6 @@ def node_remove(id_or_name: str, force: bool = False, host: str | None = None) -
     swarm first, so its tasks reschedule cleanly. Removing an active/reachable node requires `force=True`.
 
     Args:
-        id_or_name: The node id or name to remove
         force: Force removal of an active/reachable node
 
     Returns:

@@ -99,6 +99,8 @@ legacy docstrings are cleaned opportunistically, not churned):
    resource - the entry earns nothing and is better deleted than padded. The tool's
    `# noqa: DOC101,DOC103` already permits an undocumented parameter, and a tool whose only
    documented parameter goes this way loses its `Args:` section entirely.
+   `tests/test_naming.py::test_no_args_entry_only_echoes_its_parameter_name` flags an entry that only
+   echoes its name; a deliberate exception goes in `_ECHO_EXCEPTIONS` there, with the reason.
 4. **`Returns:` names the shape, not just the type.** There is no output schema, so this line is
    all an agent gets. For computed or partial returns, name the load-bearing keys (`{"Titles",
    "Processes"}`; `{"LayersSize", "Images", "Containers", "Volumes", "BuildCache"}`). For a full

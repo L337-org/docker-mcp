@@ -122,7 +122,6 @@ def volume_remove(name: str, force: bool = False, host: str | None = None) -> bo
     volumes with no container references at all, use `volume_prune` instead.
 
     Args:
-        name: Volume name to remove
         force: Remove even if a container still references the volume
 
     Returns:

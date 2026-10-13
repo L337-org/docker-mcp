@@ -137,8 +137,7 @@ def scout_cves(  # noqa: DOC101,DOC103
     `docker login` on the host that runs the CLI - this server's host, or the target `ssh://` host
     itself when no local scout plugin is installed. Start with `scout_quickview` for a
     per-severity summary; `scout_sbom` inventories packages without vulnerability matching.
-    Does not raise on a non-zero CLI exit (a missing scout plugin or a timeout still raises) - inspect
-    `raw.stderr`.
+    Does not raise on a non-zero CLI exit - inspect `raw.stderr`.
 
     Args:
         image: Image reference (a tag or a digest)
@@ -177,8 +176,7 @@ def scout_quickview(image: str, platform: str | None = None, host: str | None = 
     suggestions with `scout_recommendations`.
     Output is plain text only: `docker scout quickview` has no output-format option, so `result`
     is always the rendered text rather than a parsed document.
-    Does not raise on a non-zero CLI exit (a missing scout plugin or a timeout still raises) - inspect
-    `raw.stderr`.
+    Does not raise on a non-zero CLI exit - inspect `raw.stderr`.
 
     Args:
         platform: Platform of the image to analyze, e.g. "linux/amd64"
@@ -212,14 +210,13 @@ def scout_recommendations(  # noqa: DOC101,DOC103
     fix is a newer base image.
     Output is plain text only: `docker scout recommendations` has no output-format option, so
     `result` is always the rendered text rather than a parsed document.
-    Does not raise on a non-zero CLI exit (a missing scout plugin or a timeout still raises) - inspect
-    `raw.stderr`.
+    Does not raise on a non-zero CLI exit - inspect `raw.stderr`.
 
     Args:
         only_refresh: Only show "refresh" recommendations (same major/minor)
         only_update: Only show "update" recommendations (newer minor/major)
         tag: Restrict to suggestions matching this tag pattern
-        platform: Platform of the image to analyze
+        platform: Which platform of a multi-platform image to analyse, e.g. "linux/arm64"
 
     Returns:
         dict: {"result": <rendered text>, "raw": <CliResult dict>}
@@ -256,10 +253,8 @@ def scout_compare(  # noqa: DOC101,DOC103,DOC501,DOC503
     Exactly one of `to`, `to_env`, or `to_latest=True` must be supplied to identify the comparison
     target. Use it after a rebuild to check the new image against the old (`scout_cves` scans a
     single image).
-    Does not raise on a non-zero CLI exit (a missing scout plugin or a timeout still raises) - inspect
-    `raw.stderr`. Raises ToolInputError if `to` names a local directory/archive while the call has to run
-    on a remote `ssh://` host (no local scout plugin): the file is not staged, so it would resolve
-    against that host's filesystem instead.
+    Does not raise on a non-zero CLI exit - inspect `raw.stderr`. When the call has to run on a remote
+    `ssh://` host, a local directory or archive in `to` is refused.
 
     Args:
         image: The new / candidate image reference
@@ -270,7 +265,7 @@ def scout_compare(  # noqa: DOC101,DOC103,DOC501,DOC503
         only_severity: Filter to these severities (omit for all)
         ignore_unchanged: Exclude unchanged packages from the diff
         format: Output format; only "json" (the default) is parsed into `result`
-        platform: Platform of the image to analyze
+        platform: Which platform of a multi-platform image to analyse, e.g. "linux/arm64"
 
     Returns:
         dict: {"format": <format>, "result": <parsed-json-or-raw-text>, "raw": <CliResult dict>}
@@ -310,13 +305,12 @@ def scout_sbom(  # noqa: DOC101,DOC103
     captured stdout is subject to MAX_CLI_OUTPUT_BYTES and may be truncated for big images. If
     that's a concern, run `docker scout sbom -o file.json ...` on the host and load the file
     separately.
-    Does not raise on a non-zero CLI exit (a missing scout plugin or a timeout still raises) - inspect
-    `raw.stderr`.
+    Does not raise on a non-zero CLI exit - inspect `raw.stderr`.
 
     Args:
         format: "spdx" (default, SPDX JSON), "cyclonedx" (CycloneDX JSON), "json" (Scout's native JSON), or "list"
             (plain-text package list)
-        platform: Platform of the image to analyze
+        platform: Which platform of a multi-platform image to analyse, e.g. "linux/arm64"
 
     Returns:
         dict: {"format", "result", "raw": <CliResult dict>}. `result` is a parsed dict when `format` is

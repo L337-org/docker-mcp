@@ -103,6 +103,83 @@ def _tool_functions():
             yield name, func
 
 
+# An `Args:` entry must say what the schema cannot (architecture/tool-descriptions.md rule 3): the schema
+# already gives each parameter's name, type, default and enum. This is a heuristic for an entry that only
+# echoes its name - short, with at most two words beyond the name and common filler - so a hit is a
+# prompt to delete the line or give it meaning, and a deliberate exception is listed with its reason.
+_ECHO_FILLER = frozenset(
+    "the a an to of for in on as or and by be is it its this with use set name id container image network "
+    "volume service node optional default none value string str whether if true false label target".split()
+)
+_ECHO_EXCEPTIONS = {
+    ("buildx_create", "platforms"): "what the builder advertises, not what it builds",
+    ("buildx_remove", "keep_state"): "names the BuildKit state volume it keeps",
+    ("compose_config", "services_only"): "maps to `--services`",
+    ("compose_cp", "all_containers"): "maps to `--all`, every container of the service",
+    ("compose_port", "protocol"): "a plain string: gives the accepted values",
+    ("container_archive_get", "path"): "inside the container, not on the server host",
+    ("container_archive_get_to_file", "path"): "inside the container, not on the server host",
+    ("container_commit", "tag"): "the daemon's default, which the schema cannot show",
+    ("image_history", "id_or_name"): "accepts a tag or digest",
+    ("image_inspect", "id_or_name"): "accepts a tag or digest",
+    ("image_registry_data", "repository"): "a full reference, not a repository name",
+    ("image_tag", "id_or_name"): "the source, not the new reference",
+    ("image_tag", "tag"): "the daemon's default, which the schema cannot show",
+    ("network_connect", "id_or_name"): "which of two ids is the network",
+    ("network_connect", "container"): "which of two ids is the container",
+    ("network_connect", "links"): "deprecated",
+    ("network_disconnect", "container"): "which of two ids is the container",
+    ("registry_image_config", "reference"): "a tag or a digest",
+    ("registry_manifest", "reference"): "a tag or a digest",
+    ("system_login", "password"): "a token is accepted",
+    ("volume_create", "driver"): "the daemon's default, which the schema cannot show",
+}
+
+
+def _echoes_its_name(param: str, desc: str) -> bool:
+    """Whether an `Args:` description says little beyond its parameter's name.
+
+    Args:
+        param: the parameter name
+        desc: its one-line description
+
+    Returns:
+        bool: True for a short description with at most two words beyond the name and common filler
+    """
+    words = set(re.findall(r"[a-z]+", desc.lower())) - _ECHO_FILLER - set(param.split("_"))
+    return len(desc) < 60 and len(words) <= 2
+
+
+def test_no_args_entry_only_echoes_its_parameter_name():
+    canonical = tuple(_CANONICAL_PARAM_PREFIXES.values())
+    echoes = [
+        f"{name}.{param}: {desc}"
+        for name, func in _tool_functions()
+        for param, desc in _documented_params(func)
+        if _echoes_its_name(param, desc) and not desc.startswith(canonical) and (name, param) not in _ECHO_EXCEPTIONS
+    ]
+    assert not echoes, (
+        "these Args entries repeat the parameter name the schema already shows - delete each, or say what "
+        "the schema cannot (format, accepted values, units, interactions):\n  " + "\n  ".join(echoes)
+    )
+
+
+def test_every_echo_exception_still_names_an_entry_the_check_would_flag():
+    # An exception for a line since removed, or reworded so it no longer echoes, would quietly let a later
+    # regression of that line through. Each must still be documented and still be flagged.
+    documented = {(name, param): desc for name, func in _tool_functions() for param, desc in _documented_params(func)}
+    stale = sorted(
+        key for key in _ECHO_EXCEPTIONS if key not in documented or not _echoes_its_name(key[1], documented[key])
+    )
+    assert not stale, f"these exceptions no longer match an echoing entry; remove them: {stale}"
+
+
+def test_the_echo_check_flags_an_echo_and_passes_a_line_with_meaning():
+    assert _echoes_its_name("tty", "Allocate a pseudo-TTY")
+    assert _echoes_its_name("hostname", "Hostname for the container")
+    assert not _echoes_its_name("link", "Remove the legacy link named `id_or_name`, not the container")
+
+
 def test_no_tool_uses_a_banned_parameter_spelling():
     offenders = [
         f"{name}({param})"

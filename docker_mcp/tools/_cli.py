@@ -671,8 +671,9 @@ def _local_target(value: str, *, base: Path) -> Path | None:
     """The local path a declared value names, if it exists on this machine.
 
     Shared by the decision to stage at all and by the rewriting that follows, so the two cannot
-    disagree about what counts as a local input. No `~` expansion, matching the docker CLI, which
-    receives argv tokens verbatim.
+    disagree about what counts as a local input. This helper does no `~` expansion, matching the docker
+    CLI, which receives argv tokens verbatim; a tool that documents expanding `~` (`buildx_build`) does it
+    before calling here.
 
     Args:
         value: a value from `path_values`
