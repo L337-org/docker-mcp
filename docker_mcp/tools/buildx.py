@@ -120,6 +120,21 @@ def _spec_component(spec: str, key: str) -> str | None:
     return None
 
 
+def _expand_home(value: str) -> str:
+    """Expand a leading `~` in a path the caller would expect a shell to have expanded.
+
+    The CLI receives its argv without a shell, so `~/.npmrc` would otherwise reach buildx literally and
+    name nothing. Only `~` is expanded, as everywhere else in this server: never a glob or a variable.
+
+    Args:
+        value: a path, or any other spec value (returned unchanged unless it starts with `~`)
+
+    Returns:
+        str: the value with a leading `~` or `~user` expanded on this host
+    """
+    return str(Path(value).expanduser()) if value.startswith("~") else value
+
+
 def _replace_spec_component(spec: str, key: str, new_value: str) -> str:
     """Rewrite one `key=` component of a buildx spec, leaving the rest of it untouched.
 
@@ -359,7 +374,7 @@ def buildx_build(  # noqa: DOC101,DOC103,DOC501,DOC503
         file: Dockerfile path. A relative path resolves against this server's working directory (buildx's own rule), NOT
             against `context` - pass e.g. "ctx/Dockerfile" for a Dockerfile inside the context directory "ctx".
         build_args: Build-time variables (each becomes `--build-arg KEY=VALUE`)
-        build_contexts: Additional named build contexts (e.g. {"deps": "./vendor"})
+        build_contexts: Additional named build contexts (e.g. {"deps": "./vendor"}); a leading `~` is expanded
         labels: Labels to set on the resulting image (each becomes `--label KEY=VALUE`)
         annotations: OCI manifest annotations (passed verbatim, repeatable)
         target: Target build stage to stop at
@@ -374,8 +389,7 @@ def buildx_build(  # noqa: DOC101,DOC103,DOC501,DOC503
         sbom: Shorthand for `--attest=type=sbom`; pass "true" or a config string
         provenance: Shorthand for `--attest=type=provenance`; pass "true", "false", or a config string
         attest: Custom attestation specs (repeatable)
-        secret: Secret specs (e.g. ["id=npmrc,src=/home/user/.npmrc"] or ["id=npmrc,env=NPM_TOKEN"]). `~` in `src=` is
-            NOT expanded (by this tool or the CLI) - use an absolute path.
+        secret: Secret specs (e.g. ["id=npmrc,src=~/.npmrc"] or ["id=npmrc,env=NPM_TOKEN"]); `~` in `src=` is expanded
         ssh: SSH agent socket/key specs (e.g. ["default"], using $SSH_AUTH_SOCK)
 
     Returns:
@@ -407,7 +421,7 @@ def buildx_build(  # noqa: DOC101,DOC103,DOC501,DOC503
     for key, value in (build_args or {}).items():
         args.extend(["--build-arg", f"{key}={value}"])
     for key, value in (build_contexts or {}).items():
-        args.extend(["--build-context", f"{key}={value}"])
+        args.extend(["--build-context", f"{key}={_expand_home(value)}"])
     for key, value in (labels or {}).items():
         args.extend(["--label", f"{key}={value}"])
     for annotation in annotations or []:
@@ -439,6 +453,9 @@ def buildx_build(  # noqa: DOC101,DOC103,DOC501,DOC503
     for spec in attest or []:
         args.extend(["--attest", spec])
     for spec in secret or []:
+        source = _spec_component(spec, "src")
+        if source is not None and source.startswith("~"):
+            spec = _replace_spec_component(spec, "src", _expand_home(source))
         args.extend(["--secret", spec])
     for spec in ssh or []:
         args.extend(["--ssh", spec])

@@ -126,6 +126,33 @@ def test_image_prune():
         assert image_prune() == {"SpaceReclaimed": 200}
 
 
+@pytest.mark.parametrize(
+    "dockerfile",
+    ["/etc/passwd", "../secrets/Dockerfile", "sub/../../Dockerfile", "{ctx}/../Dockerfile"],
+)
+def test_image_build_refuses_a_dockerfile_outside_the_context(tmp_path, dockerfile):
+    # docker-py would read it from the server host and send it to the daemon.
+    context = tmp_path / "ctx"
+    context.mkdir()
+    with _patch() as mock_client, pytest.raises(ToolInputError, match="outside the build context"):
+        image_build(path=str(context), dockerfile=dockerfile.format(ctx=context))
+    mock_client.return_value.images.build.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "dockerfile", ["Dockerfile", "docker/Dockerfile.prod", "sub/../Dockerfile", "{ctx}/Dockerfile"]
+)
+def test_image_build_passes_a_dockerfile_inside_the_context(tmp_path, dockerfile):
+    context = tmp_path / "ctx"
+    context.mkdir()
+    image = MagicMock()
+    image.attrs = {"Id": "img1"}
+    with _patch() as mock_client:
+        mock_client.return_value.images.build.return_value = (image, iter([]))
+        image_build(path=str(context), dockerfile=dockerfile.format(ctx=context))
+    assert mock_client.return_value.images.build.call_args.kwargs["dockerfile"] == dockerfile.format(ctx=context)
+
+
 def test_image_prune_leaves_the_build_cache_alone_by_default():
     with _patch() as mock_client:
         mock_client.return_value.images.prune.return_value = {"SpaceReclaimed": 200}
@@ -188,6 +215,27 @@ def test_image_import_from_data_forwards_repository_tag_and_changes():
     api.import_image_from_data.assert_called_once_with(
         b"rootfs", repository="myorg/rootfs", tag="v1", changes=["CMD /bin/sh"]
     )
+
+
+@pytest.mark.parametrize("repository", ["myorg/rootfs:v1", "localhost:5000/rootfs:v1"])
+def test_image_import_refuses_a_tag_that_would_replace_the_one_in_repository(repository):
+    # The Engine applies `tag` over a tag already in `repository`, silently.
+    with _patch() as mock_client, pytest.raises(ToolInputError, match="already carries the tag 'v1'"):
+        image_import(data=b"rootfs", repository=repository, tag="v2")
+    mock_client.return_value.api.import_image_from_data.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("repository", "tag"),
+    [("myorg/rootfs:v1", "v1"), ("localhost:5000/rootfs", "v2"), ("myorg/rootfs", "v2"), ("myorg/rootfs:v1", None)],
+)
+def test_image_import_passes_a_tag_that_agrees_with_repository(repository, tag):
+    # A matching pair, a registry port, a bare repository and no tag at all are all unambiguous.
+    with _patch() as mock_client:
+        api = mock_client.return_value.api
+        api.import_image_from_data.return_value = ""
+        image_import(data=b"rootfs", repository=repository, tag=tag)
+    api.import_image_from_data.assert_called_once()
 
 
 def test_image_import_omits_unset_optionals_so_the_sdk_defaults_apply():
@@ -292,15 +340,15 @@ def test_image_import_allows_a_repository_without_a_tag():
     api.import_image_from_data.assert_called_once_with(b"rootfs", repository="myorg/rootfs")
 
 
-def test_image_import_forwards_repository_and_tag_separately_without_reconciling_them():
-    # `tag` overrides a tag already in `repository` -- the daemon rebuilds the reference from the
-    # repository's domain+path and applies `tag` (reference.WithTag), so both are forwarded as given
-    # rather than parsed here. Pins that we do not silently rewrite either value.
+def test_image_import_forwards_repository_and_tag_as_given():
+    # The daemon rebuilds the reference from the repository's domain+path and applies `tag`
+    # (reference.WithTag); a conflicting pair is refused before this point, and an agreeing one is
+    # forwarded exactly as given rather than rewritten here.
     with _patch() as mock_client:
         api = mock_client.return_value.api
         api.import_image_from_data.return_value = ""
-        image_import(data=b"rootfs", repository="myorg/rootfs:v1", tag="v2")
-    api.import_image_from_data.assert_called_once_with(b"rootfs", repository="myorg/rootfs:v1", tag="v2")
+        image_import(data=b"rootfs", repository="myorg/rootfs:v1", tag="v1")
+    api.import_image_from_data.assert_called_once_with(b"rootfs", repository="myorg/rootfs:v1", tag="v1")
 
 
 def test_image_save():

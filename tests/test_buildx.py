@@ -3,6 +3,8 @@ import pathlib
 from typing import Any
 from unittest.mock import patch
 
+from pathlib import Path
+
 import pytest
 
 from docker_mcp.exceptions import CapabilityError, RemoteFailureError, ToolInputError
@@ -126,6 +128,34 @@ def test_buildx_build_secret_and_ssh():
     args = run.call_args.args[0]
     assert args[args.index("--secret") + 1] == "id=npmrc,src=/home/user/.npmrc"
     assert args[args.index("--ssh") + 1] == "default"
+
+
+def test_buildx_build_expands_a_leading_tilde_in_secret_src_and_build_contexts():
+    # The CLI gets its argv without a shell, so a literal `~` would name nothing.
+    home = str(Path.home())
+    with patch("docker_mcp.tools.buildx.run_docker", return_value=_ok()) as run:
+        buildx_build(
+            context=".",
+            secret=["id=npmrc,src=~/.npmrc", "id=token,env=NPM_TOKEN"],
+            build_contexts={"deps": "~/vendor", "base": "docker-image://alpine:3"},
+        )
+    args = run.call_args.args[0]
+    secrets = [args[i + 1] for i, a in enumerate(args) if a == "--secret"]
+    contexts = [args[i + 1] for i, a in enumerate(args) if a == "--build-context"]
+    assert secrets == [f"id=npmrc,src={home}/.npmrc", "id=token,env=NPM_TOKEN"]
+    assert contexts == [f"deps={home}/vendor", "base=docker-image://alpine:3"]
+
+
+def test_buildx_build_expands_nothing_but_a_leading_tilde():
+    # Globs and variables are passed through untouched, as everywhere else in this server.
+    with patch("docker_mcp.tools.buildx.run_docker", return_value=_ok()) as run:
+        buildx_build(context=".", secret=["id=a,src=$HOME/a", "id=b,src=/tmp/*.txt", "id=c,src=/x/~/y"])
+    args = run.call_args.args[0]
+    assert [args[i + 1] for i, a in enumerate(args) if a == "--secret"] == [
+        "id=a,src=$HOME/a",
+        "id=b,src=/tmp/*.txt",
+        "id=c,src=/x/~/y",
+    ]
 
 
 def test_buildx_build_returns_returncode_dict():

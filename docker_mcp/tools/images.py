@@ -5,6 +5,7 @@ Producing them, moving them between daemon and registry, and inspecting what is 
 
 # library of mcp tools relating to image management
 
+import os
 from typing import cast
 
 from docker.errors import DockerException
@@ -22,8 +23,29 @@ from docker_mcp.tools._utils import (
 from docker_mcp.tools.system import _get_client
 
 
+def _dockerfile_outside_context(dockerfile: str, path: str) -> bool:
+    """Whether docker-py would read `dockerfile` from the host rather than from the build context.
+
+    Mirrors docker-py 7.2.0's `process_dockerfile` (docker/api/build.py) test, so the refusal fires
+    exactly when that path would read a host file into the build: a relative name is joined to `path`,
+    and the result is outside when it sits on another drive or its path relative to `path` climbs out
+    with `..`.
+
+    Args:
+        dockerfile: the `dockerfile` argument as given
+        path: the build context directory
+
+    Returns:
+        bool: True when the Dockerfile is outside the context
+    """
+    absolute = dockerfile if os.path.isabs(dockerfile) else os.path.join(path, dockerfile)
+    if os.path.splitdrive(path)[0] != os.path.splitdrive(absolute)[0]:
+        return True
+    return os.path.relpath(absolute, path).startswith("..")
+
+
 @tool()
-def image_build(  # noqa: DOC101,DOC103
+def image_build(  # noqa: DOC101,DOC103,DOC501,DOC503
     path: str | None = None,
     tag: str | None = None,
     quiet: bool = False,
@@ -58,15 +80,7 @@ def image_build(  # noqa: DOC101,DOC103
     Use this for simple single-platform builds from a local context. For multi-platform
     builds, BuildKit cache export/import, or advanced build features prefer `buildx_build`.
     `path` must be a directory accessible on the host running this server (it is the build
-    context sent to the daemon). `dockerfile` is normally relative to `path`; omit to use the
-    default `Dockerfile`.
-
-    `dockerfile` is not confined to the context, despite the usual relative form: docker-py detects
-    an absolute path, or a relative one escaping via `..`, reads that file from the **server host's**
-    filesystem and injects its contents into the build. So it can read any file the server user can,
-    like the other host-filesystem parameters (`dest_path`, `from_file`), and unlike them it is easy
-    to mistake for a context-relative name. `buildx_build`'s `--file` resolves differently again
-    (against the CLI's working directory) - see its docstring.
+    context sent to the daemon). `dockerfile` must be inside `path`; one outside it is refused.
 
     Args:
         path: Build context directory path on the server host
@@ -76,8 +90,7 @@ def image_build(  # noqa: DOC101,DOC103
         rm: Remove intermediate containers on success
         pull: Always pull a newer version of each FROM base image before building
         forcerm: Remove intermediate containers even on build failure
-        dockerfile: Dockerfile filename relative to path (default: "Dockerfile"); an absolute path or one containing
-            ".." reads that file from the server host instead of the context
+        dockerfile: Dockerfile path inside `path`, relative to it or absolute (default: "Dockerfile")
         buildargs: Build-time variables passed as `--build-arg`; dict of str to str
         container_limits: Resource limits for the build container, e.g. {"memory": 134217728}
         shmsize: Size of /dev/shm in bytes for build steps that need shared memory
@@ -95,6 +108,11 @@ def image_build(  # noqa: DOC101,DOC103
     Returns:
         dict: The built image's full inspect payload (as `docker inspect`)
     """
+    if dockerfile and path and _dockerfile_outside_context(dockerfile, path):
+        raise ToolInputError(
+            f"image_build: dockerfile {dockerfile!r} is outside the build context {path!r}; docker-py would read it "
+            "from the server host and send it to the daemon. Copy it into the context, or name one inside it."
+        )
     kwargs: dict = {
         "quiet": quiet,
         "nocache": nocache,
@@ -410,8 +428,7 @@ def image_import(  # noqa: DOC101,DOC103,DOC501,DOC503
         repository: Repository name to give the new image, e.g. "myorg/rootfs"; may include a tag (`myorg/rootfs:v1`),
             and defaults to `:latest` when it does not. Omit to import untagged, addressable only by the id in the
             returned progress
-        tag: Tag to apply, e.g. "v1". **Overrides** a tag already in `repository` rather than being ignored, so passing
-            `repository="myorg/rootfs:v1"` with `tag="v2"` yields `:v2`. Needs `repository`
+        tag: Tag to apply, e.g. "v1". Needs `repository`, and must match any tag already in it
         from_file: Path to a rootfs tarball on the server host (`~` expanded), read by the server's user
         data: Rootfs tarball contents in band (base64-encoded by MCP, so prefer `from_file` for anything but small
             archives)
@@ -450,6 +467,16 @@ def image_import(  # noqa: DOC101,DOC103,DOC501,DOC503
     if tag is not None and repository is None:
         raise ToolInputError(
             "`tag` needs a `repository` to attach to; pass `repository`, or omit `tag` to import untagged."
+        )
+    # The Engine applies `tag` over a tag already in `repository`, so "myorg/rootfs:v1" with tag "v2"
+    # silently becomes ":v2". Only the last path segment can carry the tag: a colon before the last
+    # "/" is a registry port ("localhost:5000/rootfs").
+    _, _, last_segment = (repository or "").rpartition("/")
+    repository_tag = last_segment.partition(":")[2] if ":" in last_segment else None
+    if tag is not None and repository_tag is not None and repository_tag != tag:
+        raise ToolInputError(
+            f"`repository` {repository!r} already carries the tag {repository_tag!r}, and `tag` {tag!r} would "
+            "silently replace it; drop one of them."
         )
 
     # The high-level ImageCollection has no import; these four are the documented low-level calls.
