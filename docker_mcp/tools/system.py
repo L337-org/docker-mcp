@@ -645,6 +645,9 @@ WaitUntil = Literal[  # pyright: ignore[reportInvalidTypeForm]
 ]
 # The registry is polled over HTTPS and may rate-limit; everything else is a local daemon read.
 _WAIT_DEFAULT_POLL = {"registry_tag": 5.0}
+# A socket timeout ends up in a `timeval`, whose seconds are a 32-bit `long` on Windows (Winsock), so this is
+# the largest wait every platform can pass to the daemon: about 68 years.
+_MAX_WAIT_SECONDS = 2**31 - 1
 # Parameters only one kind uses: they leave the schema with their kind, so nothing disabled is advertised.
 _WAIT_KIND_PARAMS: dict[str, tuple[str, ...]] = {
     "container": ("pattern", "regex"),
@@ -834,14 +837,13 @@ def system_wait(  # noqa: DOC101,DOC103,DOC501,DOC503
     )
     if until == "log-match" and not pattern:
         raise ToolInputError("system_wait(until='log-match') needs `pattern`")
-    # There is no ceiling on how long a caller may wait, but a socket timeout cannot hold NaN, infinity or
-    # anything past threading.TIMEOUT_MAX (about 292 years): the container stop conditions would fail with a
-    # builtin OverflowError, and a NaN deadline never passes, so the poll would never end.
+    # There is no ceiling on how long a caller may wait, but the container stop conditions hand the timeout
+    # to a socket, and a NaN deadline never passes. _MAX_WAIT_SECONDS is the most every supported
+    # platform's socket timeout can hold; past it the stop conditions fail with a builtin OverflowError.
     for label, value in (("timeout_seconds", timeout_seconds), ("poll_interval", poll_interval)):
-        if value is not None and not (math.isfinite(value) and value <= threading.TIMEOUT_MAX):
+        if value is not None and not (math.isfinite(value) and value <= _MAX_WAIT_SECONDS):
             raise ToolInputError(
-                f"system_wait {label} must be a finite number of seconds, at most {threading.TIMEOUT_MAX:.0f}; "
-                f"got {value!r}."
+                f"system_wait {label} must be a finite number of seconds, at most {_MAX_WAIT_SECONDS}; got {value!r}."
             )
     interval = poll_interval if poll_interval is not None else _WAIT_DEFAULT_POLL.get(kind, 2.0)
     if kind == "container":

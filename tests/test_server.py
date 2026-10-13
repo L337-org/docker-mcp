@@ -553,6 +553,24 @@ def test_query_catalog_keyword_ranks_tools_matching_more_words_first():
     assert ranks[0] == 2
 
 
+@pytest.mark.parametrize(
+    "phrase",
+    [
+        "wait for image tag in registry",
+        "wait until tag pushed",
+        "wait for tag to appear",
+        "wait until healthy",
+        "wait for stack to converge",
+        "block until container exits",
+        "wait for node ready",
+        "wait for compose project healthy",
+    ],
+)
+def test_plain_words_for_waiting_find_system_wait_first(phrase):
+    # system_wait's summary is worded for this ranking; a rewording that loses one of these words drops it.
+    assert query_catalog(keyword=phrase)["tools"][0]["name"] == "system_wait"
+
+
 def test_query_catalog_keyword_trims_common_endings():
     # "failing" finds a summary that only says "fail..."; "tasks" finds one that says "task".
     assert query_catalog(keyword="tasks")["matched"] == query_catalog(keyword="task")["matched"] > 0

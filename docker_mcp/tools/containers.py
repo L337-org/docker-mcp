@@ -155,7 +155,9 @@ def container_run(  # noqa: DOC101,DOC103,DOC501,DOC503
         container.reload()
     except docker.errors.NotFound:
         # With auto_remove, a command that exits at once can be removed before the re-read. It did run, so
-        # reporting a failure would invite running it again.
+        # reporting a failure would invite running it again. Without auto_remove, something else removed it.
+        if not kwargs.get("auto_remove"):
+            raise
         return {**container.attrs, "removed_on_exit": True}
     return container.attrs
 

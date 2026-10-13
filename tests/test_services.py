@@ -515,8 +515,7 @@ def test_wait_service_update_converged_polls_through_updating():
 
 @pytest.mark.parametrize("state", ["paused", "rollback_paused"])
 def test_wait_service_update_converged_gives_up_at_once_on_a_paused_update(state):
-    # A paused update stays paused until someone acts, so polling to the timeout only delays the answer;
-    # the stack wait already answers the same situation this way.
+    # A paused update stays paused until someone acts, so polling to the timeout only delays the answer.
     svc = _task_service({"Replicated": {"Replicas": 1}}, [], update_status={"State": state})
     with _patch() as mock_client, patch("docker_mcp.tools.services.time.sleep") as sleep:
         mock_client.return_value.services.get.return_value = svc

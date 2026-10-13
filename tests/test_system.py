@@ -885,7 +885,7 @@ def test_system_wait_registry_tag_needs_a_tag_not_a_digest(target):
         ({"kind": "container", "until": "log-match"}, "needs `pattern`"),
         ({"kind": "container", "until": "not-running", "timeout_seconds": float("nan")}, "timeout_seconds must be"),
         ({"kind": "container", "until": "not-running", "timeout_seconds": float("inf")}, "timeout_seconds must be"),
-        ({"kind": "service", "until": "running", "timeout_seconds": 1e10}, "timeout_seconds must be"),
+        ({"kind": "service", "until": "running", "timeout_seconds": 2**31}, "timeout_seconds must be"),
         ({"kind": "stack", "until": "converged", "poll_interval": float("nan")}, "poll_interval must be"),
     ],
 )
@@ -912,14 +912,12 @@ def test_system_wait_refuses_what_does_not_belong_to_the_kind_before_waiting(cal
 
 def test_system_wait_has_no_ceiling_short_of_what_a_socket_can_hold():
     # The owner chose no upper limit on the wait; only values a socket timeout cannot represent are refused.
-    import threading
-
     reading = {"met": True, "timed_out": False, "waited_seconds": 0.0}
     with patch("docker_mcp.tools.containers._wait_container", return_value=reading) as helper:
         system_module.system_wait(
-            kind="container", target="web", until="not-running", timeout_seconds=threading.TIMEOUT_MAX
+            kind="container", target="web", until="not-running", timeout_seconds=system_module._MAX_WAIT_SECONDS
         )
-    assert helper.call_args.args[2] == threading.TIMEOUT_MAX
+    assert helper.call_args.args[2] == system_module._MAX_WAIT_SECONDS
 
 
 def test_system_wait_refuses_a_kind_whose_domain_is_disabled(monkeypatch):

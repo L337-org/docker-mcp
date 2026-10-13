@@ -79,6 +79,16 @@ def test_container_run_reports_a_container_auto_removed_before_it_was_reread():
     assert result == {"Id": "abc", "State": {"Status": "created"}, "removed_on_exit": True}
 
 
+def test_container_run_still_raises_for_a_container_removed_by_something_else():
+    import docker.errors
+
+    container = MagicMock()
+    container.reload.side_effect = docker.errors.NotFound("No such container: abc")
+    with _patch() as mock_client, pytest.raises(docker.errors.NotFound):
+        mock_client.return_value.containers.run.return_value = container
+        container_run("alpine", command="true")
+
+
 @pytest.mark.parametrize("key", ["detach", "remove"])
 def test_container_run_refuses_the_blocking_options_through_extra_kwargs(key):
     # Forwarded after the defaults, either would bring the unbounded blocking run back.
