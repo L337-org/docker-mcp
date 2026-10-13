@@ -347,17 +347,13 @@ def buildx_build(  # noqa: DOC101,DOC103,DOC501,DOC503
     `--progress=plain` so output is captured rather than redrawn on a TTY.
     With no local buildx plugin and an `ssh://` target, the build runs on that host: a local `context`
     directory is copied there honouring `.dockerignore`, as are `file`, `build_contexts` and `secret`
-    paths. Raises ToolInputError in that case for `output`/`cache_to` with a filesystem `dest=`,
-    `cache_from` with a local `src=`, or any `ssh=` - each would resolve on the remote machine, losing
-    the output or silently changing the build.
-    Does not raise on a non-zero CLI exit (a missing buildx plugin or a timeout still raises) - inspect
-    `returncode`/`stderr` in the result.
+    paths; options that would resolve on that host instead (a filesystem `dest=`, a local cache `src=`,
+    `ssh=`) are refused.
+    Does not raise on a non-zero CLI exit - inspect `returncode`/`stderr`.
 
     Args:
-        context: Build context: a filesystem path or Git/HTTP URL (verbatim; no `~`/glob expansion). The `-`
-            stdin-tarball form is NOT supported (stdin isn't forwarded - it'd block on the server's own stdin); serve a
-            pre-packed tarball over HTTP instead. Copied to the target host when it names a local directory and there is
-            no local plugin.
+        context: Build context: a filesystem path or Git/HTTP URL (verbatim; no `~`/glob expansion; `-` is refused).
+            Copied to the target host when it names a local directory and there is no local plugin.
         tags: Image references to apply (`-t`, repeatable)
         platforms: Target platforms, e.g. ["linux/amd64", "linux/arm64"]
         file: Dockerfile path. A relative path resolves against this server's working directory (buildx's own rule), NOT
@@ -369,8 +365,7 @@ def buildx_build(  # noqa: DOC101,DOC103,DOC501,DOC503
         target: Target build stage to stop at
         push: Push the result to the registry (mutually exclusive with `load`)
         load: Load the result into the local image store (single-platform builds only)
-        output: Custom `--output` specs (e.g. ["type=tar,dest=out.tar"]). A filesystem `dest=` is refused when the build
-            has to run on a remote host; `dest=-` (stdout) is fine.
+        output: Custom `--output` specs (e.g. ["type=tar,dest=out.tar"]); `dest=-` is stdout
         no_cache: Do not use cache when building
         no_cache_filter: Stage names to exclude from caching
         pull: Always attempt to pull a newer version of each base image
@@ -564,8 +559,7 @@ def buildx_bake(  # noqa: DOC101,DOC103
 
     Use it for multi-target builds declared in `docker-bake.hcl`/compose files; for a single
     Dockerfile target use `buildx_build`.
-    Does not raise on a non-zero CLI exit (a missing buildx plugin or a timeout still raises) - inspect
-    `returncode`/`stderr` in the result.
+    Does not raise on a non-zero CLI exit - inspect `returncode`/`stderr`.
 
     Args:
         targets: Bake targets to build (default: the `default` group)
@@ -628,8 +622,7 @@ def buildx_imagetools_inspect(  # noqa: DOC101,DOC103,DOC501,DOC503
     single-platform manifests and multi-platform manifest lists / OCI indexes. Uses the docker
     CLI's credential store; `registry_manifest` answers the same question over direct HTTPS
     with no daemon or plugin.
-    Does not raise on a non-zero CLI exit (a missing buildx plugin or a timeout still raises) - inspect
-    `returncode`/`stderr` in the result.
+    Does not raise on a non-zero CLI exit - inspect `returncode`/`stderr`.
 
     Args:
         image: Image reference, e.g. "alpine:3.19" or "ghcr.io/org/repo@sha256:..."
@@ -676,8 +669,7 @@ def buildx_imagetools_create(  # noqa: DOC101,DOC103,DOC501,DOC503
     Replaces `docker manifest create` + `docker manifest push` - builds the index and pushes it in
     one operation. Source tags must already be pushed; this only stitches them together. Verify
     the result with `buildx_imagetools_inspect`.
-    Does not raise on a non-zero CLI exit (a missing buildx plugin or a timeout still raises) - inspect
-    `returncode`/`stderr` in the result.
+    Does not raise on a non-zero CLI exit - inspect `returncode`/`stderr`.
 
     Args:
         target: Tag for the new manifest list (`-t`)
@@ -811,8 +803,7 @@ def buildx_inspect(  # noqa: DOC101,DOC103
 
     Human-readable detail (driver, status, supported platforms) for one builder; `buildx_list`
     returns machine-parsed JSON for all builders.
-    Does not raise on a non-zero CLI exit (a missing buildx plugin or a timeout still raises) - inspect
-    `returncode`/`stderr` in the result.
+    Does not raise on a non-zero CLI exit - inspect `returncode`/`stderr`.
 
     Args:
         name: Builder name (defaults to the active builder)
@@ -874,8 +865,8 @@ def buildx_prune(  # noqa: DOC101,DOC103,DOC501,DOC503
     removes, so run both to reclaim everything a build leaves behind. With no buildx plugin here and
     a host not reached over ssh://, this prunes the daemon's default build cache through the Engine
     API instead: `builder` and the three space limits cannot be sent that way, so passing any of them
-    there raises rather than pruning without the limit. Does not raise on a non-zero CLI exit (a
-    timeout still raises) - inspect `returncode`/`stderr` in the result.
+    there raises rather than pruning without the limit. Does not raise on a non-zero CLI exit - inspect
+    `returncode`/`stderr`.
 
     Args:
         all: Include internal/frontend images
@@ -980,8 +971,7 @@ def buildx_create(  # noqa: DOC101,DOC103
     require a `docker-container` (or `kubernetes`/`remote`) builder. Pass `use=True` to make it
     the default for later `buildx_build` calls (else switch with `buildx_use`); `bootstrap=True`
     starts the builder now rather than on first build.
-    Does not raise on a non-zero CLI exit (a missing buildx plugin or a timeout still raises) - inspect
-    `returncode`/`stderr` in the result.
+    Does not raise on a non-zero CLI exit - inspect `returncode`/`stderr`.
 
     Args:
         name: Name for the new builder (defaults to a generated name)
@@ -1040,8 +1030,7 @@ def buildx_use(  # noqa: DOC101,DOC103
     persists across all Docker contexts. Use `buildx_list` to see available builders and their
     current status. To avoid switching the global default, pass a specific builder name
     directly via `buildx_build`'s `builder` parameter instead.
-    Does not raise on a non-zero CLI exit (a missing buildx plugin or a timeout still raises) - inspect
-    `returncode`/`stderr` in the result.
+    Does not raise on a non-zero CLI exit - inspect `returncode`/`stderr`.
 
     Args:
         name: Builder name to activate (from `buildx_list`)
@@ -1074,8 +1063,7 @@ def buildx_remove(  # noqa: DOC101,DOC103,DOC501,DOC503
 
     Deletes a builder made by `buildx_create`, including its build cache unless keep_state=True;
     use `buildx_prune` to reclaim cache while keeping the builder.
-    Does not raise on a non-zero CLI exit (a missing buildx plugin or a timeout still raises) - inspect
-    `returncode`/`stderr` in the result.
+    Does not raise on a non-zero CLI exit - inspect `returncode`/`stderr`.
 
     Args:
         name: Builder name to remove (mutually exclusive with `all_inactive`)

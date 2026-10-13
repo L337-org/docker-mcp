@@ -142,8 +142,7 @@ def compose_up(  # noqa: DOC101,DOC103
     Always runs detached (`-d`), so it returns once the containers are started. To wait for them, call
     `system_wait(kind="compose", target=<project name>, until="healthy")` (or `until="running"`);
     `compose_ps` shows their state without waiting.
-    Does not raise on a non-zero CLI exit (a missing compose plugin or a timeout still raises) - inspect
-    `returncode`/`stderr` in the result.
+    Does not raise on a non-zero CLI exit - inspect `returncode`/`stderr`.
 
     Args:
         project_dir: Dir with the compose file (default: server cwd, copied to the target host if no local plugin; paths
@@ -185,8 +184,7 @@ def compose_down(  # noqa: DOC101,DOC103
 
     Inverse of `compose_up`. Images are kept; named volumes go only with volumes=True
     (destructive). Use `compose_stop` to stop without removing anything.
-    Does not raise on a non-zero CLI exit (a missing compose plugin or a timeout still raises) - inspect
-    `returncode`/`stderr` in the result.
+    Does not raise on a non-zero CLI exit - inspect `returncode`/`stderr`.
 
     Args:
         project_dir: Dir with the compose file (default: server cwd; copied to the target host if no local plugin)
@@ -219,8 +217,7 @@ def compose_ps(  # noqa: DOC101,DOC103
 
     Container-level view of one project (state, health, publishers); `compose_list` enumerates
     projects, and `container_list` covers non-compose containers.
-    Does not raise on a non-zero CLI exit (a missing compose plugin or a timeout still raises): `services`
-    comes back empty - inspect `raw.stderr`.
+    Does not raise on a non-zero CLI exit: `services` comes back empty - inspect `raw.stderr`.
 
     Args:
         project_dir: Dir with the compose file (default: server cwd; copied to the target host if no local plugin)
@@ -270,8 +267,7 @@ def compose_logs(  # noqa: DOC101,DOC103
 
     Bounded and non-following by design, so it always returns promptly. For one container's logs
     use `container_logs`; for a swarm service use `service_logs`. Log text arrives on `stdout`.
-    Does not raise on a non-zero CLI exit (a missing compose plugin or a timeout still raises) - inspect
-    `returncode`/`stderr` in the result.
+    Does not raise on a non-zero CLI exit - inspect `returncode`/`stderr`.
 
     Args:
         project_dir: Dir with the compose file (default: server cwd; copied to the target host if no local plugin)
@@ -312,8 +308,7 @@ def compose_config(  # noqa: DOC101,DOC103
     Render the canonical compose configuration after merges, profiles, and variable substitution.
 
     Use it to validate compose files and see exactly what the CLI will run before `compose_up`.
-    Does not raise on a non-zero CLI exit (a missing compose plugin or a timeout still raises): on a failed
-    render `config` may be None - inspect `raw.stderr`.
+    Does not raise on a non-zero CLI exit: on a failed render `config` may be None - inspect `raw.stderr`.
 
     Args:
         project_dir: Dir with the compose file (default: server cwd; copied to the target host if no local plugin)
@@ -359,8 +354,7 @@ def compose_build(  # noqa: DOC101,DOC103
 
     Builds the images declared by the project's `build:` sections without starting anything -
     `compose_up(build=True)` builds and starts in one step.
-    Does not raise on a non-zero CLI exit (a missing compose plugin or a timeout still raises) - inspect
-    `returncode`/`stderr` in the result.
+    Does not raise on a non-zero CLI exit - inspect `returncode`/`stderr`.
 
     Args:
         project_dir: Dir with the compose file (default: server cwd; copied to the target host if no local plugin)
@@ -400,8 +394,7 @@ def compose_pull(  # noqa: DOC101,DOC103
     registry-authenticated pulls ensure the daemon is logged in first with `system_login`.
     `compose_up --pull always` does the same as part of startup; use this tool when you
     want to separate the pull step.
-    Does not raise on a non-zero CLI exit (a missing compose plugin or a timeout still raises) - inspect
-    `returncode`/`stderr` in the result.
+    Does not raise on a non-zero CLI exit - inspect `returncode`/`stderr`.
 
     Args:
         project_dir: Dir with the compose file (default: server cwd; copied to the target host if no local plugin)
@@ -438,8 +431,7 @@ def compose_restart(  # noqa: DOC101,DOC103
     in-memory state). If the compose file has changed (new image, environment, volumes,
     ports) use `compose_up` instead - it recreates affected containers to apply the diff.
     `stop_timeout_seconds` controls the SIGTERM grace period before Docker sends SIGKILL.
-    Does not raise on a non-zero CLI exit (a missing compose plugin or a timeout still raises) - inspect
-    `returncode`/`stderr` in the result.
+    Does not raise on a non-zero CLI exit - inspect `returncode`/`stderr`.
 
     Args:
         project_dir: Dir with the compose file (default: server cwd; copied to the target host if no local plugin)
@@ -472,8 +464,7 @@ def compose_stop(  # noqa: DOC101,DOC103
     Stop services in a compose project without removing their containers.
 
     Unlike `compose_down`, containers/networks/volumes survive - use `compose_start` to bring them back.
-    Does not raise on a non-zero CLI exit (a missing compose plugin or a timeout still raises) - inspect
-    `returncode`/`stderr` in the result.
+    Does not raise on a non-zero CLI exit - inspect `returncode`/`stderr`.
 
     Args:
         project_dir: Dir with the compose file (default: server cwd; copied to the target host if no local plugin)
@@ -506,8 +497,7 @@ def compose_start(  # noqa: DOC101,DOC103
 
     Counterpart to `compose_stop`: starts existing containers without recreating them. Use
     `compose_up` to (re)create containers from the compose file.
-    Does not raise on a non-zero CLI exit (a missing compose plugin or a timeout still raises) - inspect
-    `returncode`/`stderr` in the result.
+    Does not raise on a non-zero CLI exit - inspect `returncode`/`stderr`.
 
     Args:
         project_dir: Dir with the compose file (default: server cwd; copied to the target host if no local plugin)
@@ -547,8 +537,7 @@ def compose_run(  # noqa: DOC101,DOC103
     `container_logs` the output, and `container_remove` the cleanup; the container is kept until then,
     because removing it on exit would delete its logs. Unlike `compose_exec`, this starts a NEW
     container for the service rather than running inside the existing one.
-    Does not raise on a non-zero CLI exit (a missing compose plugin or a timeout still raises) - inspect
-    `returncode`/`stderr` in the result.
+    Does not raise on a non-zero CLI exit - inspect `returncode`/`stderr`.
 
     Args:
         service: Service name from the compose file
@@ -601,8 +590,7 @@ def compose_exec(  # noqa: DOC101,DOC103
 
     Always passes `-T` (no TTY). Pass an exec-form argv (e.g. `["python", "-V"]`); a
     `["sh", "-c", "..."]` form interprets shell metacharacters in untrusted substrings.
-    Does not raise on a non-zero CLI exit (a missing compose plugin or a timeout still raises) - inspect
-    `returncode`/`stderr` in the result.
+    Does not raise on a non-zero CLI exit - inspect `returncode`/`stderr`.
 
     Args:
         service: Service name from the compose file
@@ -885,8 +873,7 @@ def compose_top(  # noqa: DOC101,DOC103
 
     Output is the `ps`-style process table per service (not JSON); read it from `stdout`. The
     per-container equivalent is `container_top`.
-    Does not raise on a non-zero CLI exit (a missing compose plugin or a timeout still raises) - inspect
-    `returncode`/`stderr` in the result.
+    Does not raise on a non-zero CLI exit - inspect `returncode`/`stderr`.
 
     Args:
         services: Restrict to these services (default: all)
@@ -1046,16 +1033,14 @@ def compose_cp(  # noqa: DOC101,DOC103
     MCP server, read/written as the server's user (same host exposure as the file-path archive
     tools - see SECURITY.md). Copying to stdout (`dest="-"`) is unsupported; use
     `container_archive_get`.
-    Does not raise on a non-zero CLI exit (a missing compose plugin or a timeout still raises) - inspect
-    `returncode`/`stderr` in the result. With no local compose plugin and an `ssh://` target, runs the real
-    `docker compose cp` on that host instead and relays whichever side of the copy is local over the same SSH
-    connection - every parameter above behaves the same either way, since the actual copy always runs through
-    the real CLI. The one difference: a container->host copy is refused if the local destination already
-    exists, since only this host (not the remote one) knows that. `unix://`/`tcp://`+TLS hosts with no local
-    plugin are not covered by this fallback (no shell to run the CLI on) and still raise `CapabilityError` -
-    use `container_archive_put` (host to container) or `container_archive_get_to_file` (container to host)
-    there instead; both talk to the daemon directly and need no local CLI (`compose_ps` gives you the
-    container name).
+    Does not raise on a non-zero CLI exit - inspect `returncode`/`stderr`. With no local compose plugin and an
+    `ssh://` target, runs the real `docker compose cp` on that host instead and relays whichever side of the copy is
+    local over the same SSH connection - every parameter above behaves the same either way, since the actual copy
+    always runs through the real CLI. The one difference: a container->host copy is refused if the local destination
+    already exists, since only this host (not the remote one) knows that. `unix://`/`tcp://`+TLS hosts with no local
+    plugin are not covered by this fallback (no shell to run the CLI on) and still raise `CapabilityError` - use
+    `container_archive_put` (host to container) or `container_archive_get_to_file` (container to host) there
+    instead; both talk to the daemon directly and need no local CLI (`compose_ps` gives you the container name).
 
     Args:
         source: `SERVICE:SRC_PATH` or a host path
@@ -1107,8 +1092,7 @@ def compose_kill(  # noqa: DOC101,DOC103
 
     Immediate, with no grace period - prefer `compose_stop` for a clean shutdown (stop signal,
     then kill after a timeout).
-    Does not raise on a non-zero CLI exit (a missing compose plugin or a timeout still raises) - inspect
-    `returncode`/`stderr` in the result.
+    Does not raise on a non-zero CLI exit - inspect `returncode`/`stderr`.
 
     Args:
         services: Restrict to these services (default: all)
@@ -1144,8 +1128,7 @@ def compose_pause(  # noqa: DOC101,DOC103
     Paused containers stop consuming CPU but keep memory, network endpoints, and state; resume
     with `compose_unpause`. To actually stop containers (each one's configured stop signal,
     freeing resources) use `compose_stop`; to stop and delete them use `compose_down`.
-    Does not raise on a non-zero CLI exit (a missing compose plugin or a timeout still raises) - inspect
-    `returncode`/`stderr` in the result.
+    Does not raise on a non-zero CLI exit - inspect `returncode`/`stderr`.
 
     Args:
         services: Restrict to these services (default: all)
@@ -1174,8 +1157,7 @@ def compose_unpause(  # noqa: DOC101,DOC103
 
     Reverse of `compose_pause`: processes continue from where they were frozen (no restart).
     `compose_start` is the counterpart for stopped containers.
-    Does not raise on a non-zero CLI exit (a missing compose plugin or a timeout still raises) - inspect
-    `returncode`/`stderr` in the result.
+    Does not raise on a non-zero CLI exit - inspect `returncode`/`stderr`.
 
     Args:
         services: Restrict to these services (default: all)

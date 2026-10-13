@@ -80,10 +80,8 @@ def context_create(
 
     Registers a named endpoint for the CLI; switch with `context_use`, enumerate with
     `context_list`. It does not retarget this server's docker-py client (pinned at startup).
-    Does not raise on a non-zero CLI exit (a missing `docker` binary or a timeout still raises) - inspect
-    `returncode`/`stderr` in the result. It does raise ToolInputError before running anything if `docker_host`
-    or a TLS path contains a comma, which would inject extra keys (including `skip-tls-verify`) into the
-    endpoint spec.
+    Does not raise on a non-zero CLI exit - inspect `returncode`/`stderr`. A comma in `docker_host` or a
+    TLS path is refused.
 
     Args:
         name: Name for the new context (must not already exist)
@@ -125,8 +123,7 @@ def context_use(name: str) -> dict:  # noqa: DOC101,DOC103
     endpoint they connected to at startup. To retarget those, restart the server with a different
     DOCKER_HOST / DOCKER_CONTEXT. Create contexts with `context_create`; list them with
     `context_list`.
-    Does not raise on a non-zero CLI exit (a missing `docker` binary or a timeout still raises) - inspect
-    `returncode`/`stderr` in the result.
+    Does not raise on a non-zero CLI exit - inspect `returncode`/`stderr`.
 
     Returns:
         dict: {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
@@ -141,8 +138,7 @@ def context_remove(name: str, force: bool = False) -> dict:  # noqa: DOC101,DOC1
 
     Deletes only the CLI's connection metadata - the daemon it pointed at is untouched. The
     current context needs force=True (or `context_use` another first).
-    Does not raise on a non-zero CLI exit (a missing `docker` binary or a timeout still raises) - inspect
-    `returncode`/`stderr` in the result.
+    Does not raise on a non-zero CLI exit - inspect `returncode`/`stderr`.
 
     Args:
         force: Force removal even if the context is the current one

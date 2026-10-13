@@ -519,8 +519,8 @@ def container_logs(  # noqa: DOC101,DOC103
     container exits, whichever comes first - so the agent can watch live output without blocking
     forever. `limit_lines`/`timeout_seconds` apply only in follow mode; `until` only in snapshot mode.
 
-    Snapshot mode is capped at 32 MiB and raises ToolInputError past it, so a noisy container can't
-    exhaust the server's memory; `service_logs` caps the same way and lets the caller raise it.
+    Snapshot mode is capped at 32 MiB, so a noisy container can't exhaust the server's memory;
+    `service_logs` caps the same way and lets the caller raise it.
     Prefer an integer `tail`, or `since`, over `tail="all"` on a long-running container: "all" is
     safe but will abort on the cap rather than returning a partial answer, and a large result can
     still exceed the agent's context.
@@ -538,8 +538,7 @@ def container_logs(  # noqa: DOC101,DOC103
         timeout_seconds: Follow mode: max wall-clock seconds before returning what was collected
 
     Returns:
-        str: Decoded log output (up to `limit_lines` lines in follow mode). Raises ToolInputError in snapshot mode if
-            the logs exceed 32 MiB.
+        str: Decoded log output (up to `limit_lines` lines in follow mode)
     """
     container = _get_client(host).containers.get(id_or_name)
     if not follow:

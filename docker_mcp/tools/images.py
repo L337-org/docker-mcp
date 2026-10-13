@@ -401,27 +401,22 @@ def image_import(  # noqa: DOC101,DOC103,DOC501,DOC503
     came from somewhere else: a `container_export` archive, a distro base tarball, a VM image dump.
     The result has an empty config - no `CMD`/`ENTRYPOINT`/`ENV` - unless you supply `changes`, so an
     imported image is usually not runnable until you set at least a command. Pass exactly one source
-    (`from_file`, `data`, `from_url` or `from_image`); ToolInputError otherwise. `from_url` and
-    `from_image` are fetched by the *daemon*, `from_file`/`data` are read here and uploaded; a
-    `from_file` path that is not a readable file raises rather than being retried as a URL. Unlike
+    (`from_file`, `data`, `from_url` or `from_image`). `from_url` and `from_image` are fetched by the
+    *daemon*, `from_file`/`data` are read here and uploaded. Unlike
     the other image-creating tools this stamps no provenance labels: the Engine's import call accepts
     no labels field, and `changes` does not cover `LABEL`.
 
     Args:
         repository: Repository name to give the new image, e.g. "myorg/rootfs"; may include a tag (`myorg/rootfs:v1`),
             and defaults to `:latest` when it does not. Omit to import untagged, addressable only by the id in the
-            returned progress (omit it entirely -- a blank string is a ToolInputError, not a shorthand for untagged). A
-            digest reference is refused by the daemon. Required if `tag` is given
+            returned progress
         tag: Tag to apply, e.g. "v1". **Overrides** a tag already in `repository` rather than being ignored, so passing
-            `repository="myorg/rootfs:v1"` with `tag="v2"` yields `:v2`. Requires `repository` (ToolInputError without
-            it - the daemon would otherwise silently drop the tag and import untagged). Blank is also a ToolInputError,
-            not a shorthand for the default: the daemon would substitute `latest` without saying so
-        from_file: Path to a rootfs tarball on the server host (`~` expanded), read by the server's user; refused if it
-            is not an existing regular file; exactly one source
+            `repository="myorg/rootfs:v1"` with `tag="v2"` yields `:v2`. Needs `repository`
+        from_file: Path to a rootfs tarball on the server host (`~` expanded), read by the server's user
         data: Rootfs tarball contents in band (base64-encoded by MCP, so prefer `from_file` for anything but small
-            archives); exactly one source
-        from_url: URL the daemon fetches the tarball from; exactly one source
-        from_image: Name of an existing image to import from, like a Dockerfile `FROM`; exactly one source
+            archives)
+        from_url: URL the daemon fetches the tarball from
+        from_image: Name of an existing image to import from, like a Dockerfile `FROM`
         changes: Dockerfile instructions applied to the new image, e.g. ['CMD ["/bin/sh"]']; only CMD, ENTRYPOINT, ENV,
             EXPOSE, ONBUILD, USER, VOLUME and WORKDIR are supported. Parsed as real Dockerfile syntax, so shell form is
             wrapped exactly as a Dockerfile would wrap it (`CMD /bin/sh` is stored as `["/bin/sh","-c","/bin/sh"]`) -
