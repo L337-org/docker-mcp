@@ -191,7 +191,7 @@ the task matches; do not improvise the sequence.
 ## Coverage
 
 **[MCP_VS_SKILLS.md](https://github.com/L337-org/docker-mcp/blob/main/MCP_VS_SKILLS.md)** maps this
-skill against the `docker-mcp-server` MCP surface (159 tools, 30 prompts, the resource endpoints),
+skill against the `docker-mcp-server` MCP surface (its tools, prompts and resource endpoints),
 compares the two on token cost and capability, and records the handful of things the CLI genuinely
 cannot do. Consult it when the question is "is X covered?" or "should I be using the server
 instead?" - not during normal work.

@@ -624,41 +624,35 @@ def registry_tags(  # noqa: DOC501,DOC503
     return {"name": repo, "registry": registry, "tags": tags, "truncated": truncated}
 
 
-@tool()
-def registry_tag_wait(  # noqa: DOC501,DOC503
+def _wait_registry_tag(
     repository: str,
     tag: str,
+    timeout_seconds: float,
+    poll_interval: float,
     username: str | None = None,
     password: str | None = None,
     limit: int = 1000,
-    timeout_seconds: float = 600.0,
-    poll_interval: float = 5.0,
 ) -> dict:
-    """
-    Block until a specific tag appears in a repository (e.g. waiting for a CI push to land).
+    """Wait for a tag to appear in a repository; `system_wait(kind="registry_tag")` calls this.
 
-    Never raises on timeout - the result always carries `met` and `timed_out`. Polls `registry_tags`
-    every `poll_interval`s and checks whether `tag` is in its result. Works against Docker Hub too
-    (`registry_tags`' own scope covers it), so there is no separate Hub variant. Unlike every other
-    wait tool, this has no `host` argument - registry tools talk HTTPS directly to the registry, not
-    a Docker daemon.
-
-    Caveat: `registry_tags` paginates up to 50 pages (or `limit` tags, whichever comes first); if
-    `tag` would only appear beyond that window it is never found, even once it exists. Raise `limit`
-    if you expect a very large tag list.
+    Never raises on timeout. Polls `registry_tags`, so it reaches Docker Hub and any OCI registry over
+    HTTPS with no daemon involved. `registry_tags` reads at most 50 pages or `limit` tags, so a tag that
+    would only appear beyond that window is never found.
 
     Args:
-        repository: Image/repository ref, e.g. "alpine", "ghcr.io/org/repo"; any `:tag`/`@digest` is stripped
-        tag: The exact tag name to wait for
-        username: Registry username (overrides DOCKER_MCP_SERVER_REGISTRY_USERNAME)
-        password: Registry password/token (overrides DOCKER_MCP_SERVER_REGISTRY_PASSWORD)
-        limit: Max tags to scan per poll (default 1000, >= 1); forwarded to `registry_tags`
-        timeout_seconds: Max seconds to wait before returning with timed_out=true
-        poll_interval: Seconds between re-checks (default 5, > 0); capped by the time left so a large value can't push
-            the total wait past the timeout
+        repository: the repository, e.g. "alpine" or "ghcr.io/org/repo"
+        tag: the exact tag to wait for
+        timeout_seconds: seconds to wait before returning with timed_out=true
+        poll_interval: seconds between re-checks, capped by the time left
+        username: registry username, overriding DOCKER_MCP_SERVER_REGISTRY_USERNAME
+        password: registry password or token, overriding DOCKER_MCP_SERVER_REGISTRY_PASSWORD
+        limit: the most tags to read per poll, forwarded to `registry_tags`
 
     Returns:
         dict: {"repository", "tag", "met", "timed_out", "waited_seconds"}
+
+    Raises:
+        ToolInputError: a negative timeout or a non-positive poll interval
     """
     if timeout_seconds < 0:
         raise ToolInputError(f"timeout_seconds must be >= 0, got {timeout_seconds}.")

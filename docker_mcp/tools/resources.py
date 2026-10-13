@@ -230,21 +230,8 @@ def get_hosts_resource() -> str:
 
 
 # Container observability resources. These mirror the container_logs / container_stats tools but as
-# read-only @mcp.resource endpoints a client can attach as context. Gated on the `containers` domain.
-_CONTAINERS_DOMAIN = "containers"
-
-
-def _require_containers_domain() -> None:
-    """Refuse a container resource read when the `containers` domain is disabled via DOCKER_MCP_SERVER_DISABLE.
-
-    Raises:
-        CapabilityError: the ``containers`` domain is disabled.
-    """
-    if is_domain_disabled(_CONTAINERS_DOMAIN):
-        raise CapabilityError(
-            "Container observability resources are unavailable because the 'containers' domain is "
-            "disabled via DOCKER_MCP_SERVER_DISABLE."
-        )
+# read-only @mcp.resource endpoints a client can attach as context. Not gated: `containers` is one of
+# ALWAYS_ON_DOMAINS, so DOCKER_MCP_SERVER_DISABLE cannot drop them.
 
 
 def get_container_logs_resource(id_or_name: str) -> str:
@@ -259,7 +246,6 @@ def get_container_logs_resource(id_or_name: str) -> str:
     Returns:
         str: The decoded recent log tail
     """
-    _require_containers_domain()
     return _read_log_tail(id_or_name)
 
 
@@ -273,7 +259,6 @@ def get_host_container_logs_resource(host: str, id_or_name: str) -> str:
     Returns:
         str: The decoded recent log tail
     """
-    _require_containers_domain()
     return _read_log_tail(id_or_name, host=host)
 
 
@@ -290,7 +275,6 @@ def get_container_stats_resource(id_or_name: str) -> str:
         str: JSON {container, cpu_percent, mem_used_mb, mem_limit_mb, mem_percent,
             net_rx_mb, net_tx_mb, blk_read_mb, blk_write_mb}
     """
-    _require_containers_domain()
     return json.dumps(_read_stats_summary(id_or_name), indent=2)
 
 
@@ -304,7 +288,6 @@ def get_host_container_stats_resource(host: str, id_or_name: str) -> str:
     Returns:
         str: JSON usage summary (same shape as docker-stats://{id_or_name})
     """
-    _require_containers_domain()
     return json.dumps(_read_stats_summary(id_or_name, host=host), indent=2)
 
 
@@ -484,9 +467,10 @@ def tool_list(
 
     Returns:
         dict: {"matched": int, "tools": [{"name", "domain", "category", "summary"}], "domains": {domain: count},
-            "no_domain": int, "hidden_by_configuration": {domain: count}, "switches", "filters"}, with `tools` best
-            match first. Every `domains` key is a value `domain` accepts; `no_domain` counts the domain-less tools,
-            whose rows carry `domain: null` and which no `domain` value selects. `filters.keyword_terms` lists the
-            words actually searched for.
+            "no_domain": int, "hidden_by_configuration": {domain: count}, "configuration_warnings": [sentence],
+            "switches", "filters"}, with `tools` best match first. Every `domains` key is a value `domain` accepts;
+            `no_domain` counts the domain-less tools, whose rows carry `domain: null` and which no `domain` value
+            selects. `configuration_warnings` explains a DOCKER_MCP_SERVER_DISABLE mistake, empty when the switch
+            is sound. `filters.keyword_terms` lists the words actually searched for.
     """
     return query_catalog(domain=domain, category=category, keyword=keyword)

@@ -22,6 +22,7 @@ from typing import Any, NoReturn, cast
 
 import docker.errors
 import httpx
+import paramiko
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ResourceError, ToolError
 from mcp.types import ToolAnnotations
@@ -58,6 +59,7 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "system_info": ToolCategory.READ_ONLY,
     "system_df": ToolCategory.READ_ONLY,
     "system_events": ToolCategory.READ_ONLY,
+    "system_wait": ToolCategory.READ_ONLY,
     "host_list": ToolCategory.READ_ONLY,
     "system_login": ToolCategory.MUTATING,
     "system_logout": ToolCategory.MUTATING,
@@ -84,7 +86,6 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "container_diff": ToolCategory.READ_ONLY,
     "container_rename": ToolCategory.MUTATING,
     "container_update": ToolCategory.MUTATING,
-    "container_wait": ToolCategory.READ_ONLY,
     "container_export": ToolCategory.MUTATING,  # can write a file on the server host (dest_path)
     "container_archive_get": ToolCategory.READ_ONLY,
     "container_archive_get_to_file": ToolCategory.MUTATING,  # writes a file on the server host
@@ -133,7 +134,6 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "node_list": ToolCategory.READ_ONLY,
     "node_update": ToolCategory.MUTATING,
     "node_remove": ToolCategory.DESTRUCTIVE,
-    "node_wait": ToolCategory.READ_ONLY,
     # services
     "service_create": ToolCategory.MUTATING,
     "service_inspect": ToolCategory.READ_ONLY,
@@ -144,7 +144,6 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "service_logs": ToolCategory.READ_ONLY,
     "service_scale": ToolCategory.MUTATING,
     "service_rollback": ToolCategory.MUTATING,
-    "service_wait": ToolCategory.READ_ONLY,
     # swarm
     "swarm_init": ToolCategory.MUTATING,
     "swarm_join": ToolCategory.MUTATING,
@@ -179,13 +178,12 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "compose_list": ToolCategory.READ_ONLY,
     "compose_images": ToolCategory.READ_ONLY,
     "compose_port": ToolCategory.READ_ONLY,
-    "compose_wait": ToolCategory.READ_ONLY,
     "compose_top": ToolCategory.READ_ONLY,
     "compose_cp": ToolCategory.MUTATING,
     "compose_kill": ToolCategory.DESTRUCTIVE,
     "compose_pause": ToolCategory.MUTATING,
     "compose_unpause": ToolCategory.MUTATING,
-    # stack (Compose-on-Swarm, CLI)
+    # stack (Compose-on-Swarm; deploy via the CLI, the rest via docker-py)
     "stack_deploy": ToolCategory.MUTATING,
     "stack_list": ToolCategory.READ_ONLY,
     "stack_ps": ToolCategory.READ_ONLY,
@@ -219,7 +217,6 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "scout_sbom": ToolCategory.READ_ONLY,
     # registry (HTTPS, no daemon)
     "registry_tags": ToolCategory.READ_ONLY,
-    "registry_tag_wait": ToolCategory.READ_ONLY,
     "registry_manifest": ToolCategory.READ_ONLY,
     "registry_image_config": ToolCategory.READ_ONLY,
     "hub_tags": ToolCategory.READ_ONLY,
@@ -270,7 +267,20 @@ def _parse_domains(value: str | None) -> frozenset[str]:
 # user who never touches swarm can drop the whole swarm/services/nodes/configs/secrets surface from the
 # tool list the client has to reason about. This filters *registration*, not classification - disabled
 # tools still appear in the tool-catalog resource so the choice is auditable.
-DISABLED_DOMAINS = _parse_domains(read_env("DOCKER_MCP_SERVER_DISABLE"))
+#
+# `system` and `containers` cannot be disabled. `system` holds what an agent needs to orient itself and
+# recover, and the one wait tool every other domain's waits go through. `containers` is what a Docker
+# server is for, and the compose, stack and service tools hand back containers that only its tools can
+# wait on, read or remove. Disabling it never stopped the agent running code either: compose, stack,
+# service_create and image_build all do. The switch that does stop that, and registry logins, is
+# DOCKER_MCP_SERVER_READONLY. Naming either is not silently accepted: disable_switch_warnings() reports it
+# wherever that function's warnings go.
+ALWAYS_ON_DOMAINS: frozenset[str] = frozenset({"system", "containers"})
+_REQUESTED_DISABLED_DOMAINS = _parse_domains(read_env("DOCKER_MCP_SERVER_DISABLE"))
+# What the switch asked for and was refused; disable_switch_warnings() and the catalog report it.
+IGNORED_DISABLED_DOMAINS: frozenset[str] = _REQUESTED_DISABLED_DOMAINS & ALWAYS_ON_DOMAINS
+# The effective set every gate reads, so an always-on domain needs no special case anywhere else.
+DISABLED_DOMAINS = _REQUESTED_DISABLED_DOMAINS - ALWAYS_ON_DOMAINS
 
 
 @dataclass(frozen=True)
@@ -515,10 +525,12 @@ def query_catalog(
             names; a tool matching any word is returned, tools matching more words first
 
     Returns:
-        dict: {"matched", "tools", "domains", "no_domain", "hidden_by_configuration", "switches", "filters"}. `domains`
-            and `hidden_by_configuration` are keyed by real domain names only; `no_domain` counts the always-registered
-            domain-less tools, whose rows carry `domain: None` and which no `domain=` value selects. `filters` echoes
-            the arguments, plus `keyword_terms`: the words the keyword was actually searched for.
+        dict: {"matched", "tools", "domains", "no_domain", "hidden_by_configuration", "configuration_warnings",
+            "switches", "filters"}. `domains` and `hidden_by_configuration` are keyed by real domain names only;
+            `no_domain` counts the always-registered domain-less tools, whose rows carry `domain: None` and which
+            no `domain=` value selects. `configuration_warnings` is a list of sentences about a
+            DOCKER_MCP_SERVER_DISABLE mistake, empty when the switch is sound. `filters` echoes the arguments, plus
+            `keyword_terms`: the words the keyword was actually searched for.
     """
     # Any word may match, ranked by how many do: an agent's words for a job rarely all appear in the
     # summary of the tool that does it, so requiring every word would miss more than it filters out.
@@ -578,6 +590,8 @@ def query_catalog(
         "domains": dict(sorted(counts.items())),
         "no_domain": no_domain,
         "hidden_by_configuration": dict(sorted(hidden.items())),
+        # What the disable switch asked for and did not get; empty when it is fine.
+        "configuration_warnings": disable_switch_warnings(),
         "switches": {
             "DOCKER_MCP_SERVER_READONLY": READONLY,
             "DOCKER_MCP_SERVER_NO_DESTRUCTIVE": NO_DESTRUCTIVE,
@@ -621,7 +635,9 @@ def tool_catalog() -> dict[str, Any]:
             "DOCKER_MCP_SERVER_DISABLE": sorted(DISABLED_DOMAINS),
         },
         # Disabled domains that match no known tool - usually a typo in DOCKER_MCP_SERVER_DISABLE.
-        "unknown_disabled_domains": sorted(DISABLED_DOMAINS - set(domains)),
+        "unknown_disabled_domains": _unknown_disabled_domains(),
+        # Domains DOCKER_MCP_SERVER_DISABLE named but cannot drop (see ALWAYS_ON_DOMAINS).
+        "ignored_disabled_domains": sorted(IGNORED_DISABLED_DOMAINS),
         "domains": domain_summary,
         "tools": [
             {"name": r.name, "domain": r.domain, "category": r.category.value, "registered": r.registered}
@@ -653,7 +669,7 @@ _DOMAIN_BLURBS: dict[str, str] = {
     "networks": "connect/disconnect",
     "volumes": "create/remove",
     "compose": "Compose v2; CLI-backed",
-    "stack": "Compose on Swarm; CLI-backed",
+    "stack": "Compose on Swarm; deploy CLI-backed",
     "swarm": "init/join/leave/unlock; manager node only",
     "services": "Swarm services and tasks: ps/logs of one task or all in the swarm; manager node only",
     "nodes": "Swarm nodes; manager node only",
@@ -664,7 +680,7 @@ _DOMAIN_BLURBS: dict[str, str] = {
     "context": "docker CLI contexts; CLI-backed",
     "registry": "tags/manifests over HTTPS; no daemon needed",
     "plugins": "install (dry run shows privileges), upgrade",
-    "system": "info, df (disk usage), events, login, host_list",
+    "system": "wait (healthy/exited/converged), info, df (disk usage), events, login, host_list",
 }
 
 # CLI- and swarm-tied caveats are only worth emitting when the relevant domains actually registered.
@@ -679,6 +695,70 @@ _REMOTE_EXEC_DOMAINS = ("compose", "stack", "buildx", "scout")
 # ordered by what is worst to lose - how to find a tool first, the domain words next, the caveats last -
 # and `tests/test_server.py` holds its longest rendering under this limit.
 INSTRUCTIONS_CHAR_LIMIT = 2048
+
+
+# A bound on what the operator's DOCKER_MCP_SERVER_DISABLE value can add to text every session reads.
+_WARNING_NAMES_SHOWN = 3
+_WARNING_NAME_CHARS = 24
+
+
+def _quote_names(names: list[str]) -> str:
+    """Quote operator-supplied names for a warning, keeping their length bounded.
+
+    Args:
+        names: the names, sorted
+
+    Returns:
+        str: up to `_WARNING_NAMES_SHOWN` names, each quoted and cut to `_WARNING_NAME_CHARS`, then a count
+            of the rest
+    """
+    shown = [repr(n if len(n) <= _WARNING_NAME_CHARS else n[:_WARNING_NAME_CHARS] + "...") for n in names]
+    more = len(shown) - _WARNING_NAMES_SHOWN
+    return ", ".join(shown[:_WARNING_NAMES_SHOWN]) + (f" and {more} more" if more > 0 else "")
+
+
+def _unknown_disabled_domains() -> list[str]:
+    """The names DOCKER_MCP_SERVER_DISABLE gives that no tool's domain matches - usually a typo.
+
+    Unregistered records count as known, so a domain whose tools a read-only switch dropped is not
+    mistaken for a typo. Read after every tool module has registered.
+
+    Returns:
+        list: the unknown names, sorted
+    """
+    return sorted(DISABLED_DOMAINS - {record.domain for record in _tool_registry.values() if record.domain})
+
+
+def disable_switch_warnings() -> list[str]:
+    """What DOCKER_MCP_SERVER_DISABLE asked for and did not get, worded for the operator who set it.
+
+    Read after every tool module has registered, since "unknown" means no registered tool has that
+    domain. Both cases leave the server running with a different surface from the one asked for, and
+    the operator may not be watching stderr, so the same text also reaches the agent through the server
+    instructions and `tool_list`.
+
+    Returns:
+        list: one sentence per kind of problem, each starting "DOCKER_MCP_SERVER_DISABLE names"; empty when
+            the switch is fine
+    """
+    unknown = _unknown_disabled_domains()
+    warnings = []
+    if unknown:
+        warnings.append(
+            f"DOCKER_MCP_SERVER_DISABLE names {_quote_names(unknown)}, which "
+            f"{'matches' if len(unknown) == 1 else 'match'} no domain, so nothing was disabled for "
+            f"{'it' if len(unknown) == 1 else 'them'} (a typo?); the README and `tool_list` list the domains."
+        )
+    ignored = sorted(IGNORED_DISABLED_DOMAINS)
+    if ignored:
+        # One alternative serves every always-on domain: what anyone disabling one could want is to keep
+        # the agent from changing things (running containers, logging in to a registry), which READONLY does.
+        warnings.append(
+            f"DOCKER_MCP_SERVER_DISABLE names {_quote_names(ignored)}, which cannot be disabled and "
+            f"{'stays' if len(ignored) == 1 else 'stay'} registered; DOCKER_MCP_SERVER_READONLY=1 is the "
+            "switch that keeps the agent from running containers or logging in to a registry."
+        )
+    return warnings
 
 
 def build_instructions(registered_domains: set[str] | None = None) -> str:
@@ -704,6 +784,15 @@ def build_instructions(registered_domains: set[str] | None = None) -> str:
     lines = [
         "docker-mcp-server: Docker through docker-py and the docker CLI.",
         "",
+    ]
+    # Ahead of everything, so a client that cuts the text short still shows it: the operator asked for a
+    # surface they did not get, and the agent is often the only party who will see that this session.
+    # A fixed pointer, not the warnings themselves: the operator's own names would make the length
+    # unbounded, and the longest rendering, this line included, has to stay under INSTRUCTIONS_CHAR_LIMIT
+    # (held by tests/test_server.py). `tool_list` carries the full text in `configuration_warnings`.
+    if disable_switch_warnings():
+        lines += ["DOCKER_MCP_SERVER_DISABLE misconfigured: see `tool_list`, tell the user.", ""]
+    lines += [
         # First because it is the one thing an agent cannot work out for itself: what to do when its
         # client's own search misses. Name each tool by the occasion that should trigger it, not by why
         # it exists: "if your client can't read resources" tells every client that can to skip it.
@@ -741,7 +830,7 @@ def build_instructions(registered_domains: set[str] | None = None) -> str:
             caveat = (
                 "CLI-backed domains (marked above) use the docker CLI. With the CLI or a required plugin "
                 "missing locally, a host reached over `ssh://` runs the call itself, with local files "
-                f"copied over; a usable local CLI always wins. Applies to {', '.join(fallback_present)}"
+                f"copied; a usable local CLI always wins. Applies to {', '.join(fallback_present)}"
             )
             caveat += f"; no fallback for {', '.join(no_fallback)}, which raises instead." if no_fallback else "."
             caveats.append(caveat)
@@ -1185,6 +1274,10 @@ _LIBRARY_FAILURES: tuple[tuple[type[BaseException], type[DockerMcpError]], ...] 
     # for the same reason as above: the leaf is the one you happen to think of while reading the
     # code that raises it.
     (subprocess.SubprocessError, RemoteFailureError),
+    # paramiko's failures on an ssh:// host: an unknown host key, refused authentication, a dropped
+    # channel. docker-py lets them through unwrapped, so without this entry an agent saw only
+    # `Error executing tool` for a host key it could have been told to verify.
+    (paramiko.SSHException, RemoteFailureError),
 )
 
 _LIBRARY_FAILURE_TYPES: tuple[type[BaseException], ...] = tuple(exc for exc, _ in _LIBRARY_FAILURES)

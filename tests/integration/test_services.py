@@ -10,9 +10,14 @@ from docker_mcp.tools.services import (
     service_create,
     service_remove,
     service_scale,
-    service_wait,
 )
 from docker_mcp.tools.resources import get_service_tasks_resource
+from docker_mcp.tools.system import system_wait
+
+
+def _wait_running(service):
+    return system_wait(kind="service", target=service, until="running", timeout_seconds=30, poll_interval=1.0)
+
 
 pytestmark = pytest.mark.usefixtures("skip_if_no_swarm")
 
@@ -35,23 +40,23 @@ def running_service():
             pass
 
 
-def test_service_wait_running_converges_real(running_service):
-    result = service_wait(running_service, until="running", timeout_seconds=30, poll_interval=1.0)
+def test_system_wait_service_running_converges_real(running_service):
+    result = _wait_running(running_service)
     assert result["met"] is True
-    assert result["running_tasks"] == 2
-    assert result["desired_tasks"] == 2
+    assert result["detail"]["running_tasks"] == 2
+    assert result["detail"]["desired_tasks"] == 2
     assert result["timed_out"] is False
 
 
-def test_service_wait_running_converges_after_scale_real(running_service):
-    service_wait(running_service, until="running", timeout_seconds=30, poll_interval=1.0)
+def test_system_wait_service_running_converges_after_scale_real(running_service):
+    _wait_running(running_service)
     service_scale(running_service, 3)
-    result = service_wait(running_service, until="running", timeout_seconds=30, poll_interval=1.0)
+    result = _wait_running(running_service)
     assert result["met"] is True
-    assert result["running_tasks"] == 3
+    assert result["detail"]["running_tasks"] == 3
 
 
 def test_service_resource_reflects_running_service(running_service):
-    service_wait(running_service, until="running", timeout_seconds=30, poll_interval=1.0)
+    _wait_running(running_service)
     summary = json.loads(get_service_tasks_resource(running_service))
     assert summary["running_tasks"] == 2

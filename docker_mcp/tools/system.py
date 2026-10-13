@@ -6,20 +6,26 @@ configured hosts are reachable from here.
 
 # library of mcp tools relating to the system domain: daemon info/auth and client connection control
 
+import inspect
 import ipaddress
+import math
 import os
+import re
+import socket
 import sys
 import threading
 import urllib.parse
 from pathlib import Path
-from typing import Any
+from collections.abc import Callable
+from typing import Any, Literal
 
 import docker
 import requests.exceptions
+from docker.utils import parse_repository_tag
 from docker.errors import DockerException
 from docker.models.containers import Container
 
-from docker_mcp.exceptions import RemoteFailureError, ToolRefusalError
+from docker_mcp.exceptions import RemoteFailureError, ToolInputError, ToolRefusalError
 from docker_mcp._env import scrub_unresolved_env
 from docker_mcp._hosts import (
     Host,
@@ -30,7 +36,7 @@ from docker_mcp._hosts import (
     resolve as _resolve_host,
     resolve_auto,
 )
-from docker_mcp.server import tool
+from docker_mcp.server import disable_switch_warnings, is_domain_disabled, tool
 from docker_mcp.tools._ssh_proxy import _CONNECT_TIMEOUT_CAP_SECONDS, connect_socket_with_family_fallback, parse_ssh_url
 from docker_mcp.tools._utils import classify_host_kernel, close_stream_quietly, env_flag, in_container
 
@@ -205,15 +211,18 @@ def _ensure_reachable_family(url: str) -> str:
     connection per client build; `_get_client`'s pool means that happens once per host, not per call.
 
     A URL that isn't `ssh://`, has no hostname, or is already a literal address (no family ambiguity
-    to resolve) is returned unchanged, as is one where every resolved address fails to connect - in
-    that last case the normal (paramiko-native) connection attempt still runs and produces its own
-    error, rather than this helper raising first.
+    to resolve) is returned unchanged, as is one whose first resolved address answers - paramiko would
+    connect there itself, and keeping the hostname keeps its known_hosts lookup by name - and one where
+    every resolved address fails to connect, where the normal (paramiko-native) connection attempt
+    still runs and produces its own error, rather than this helper raising first. Only a fallback past
+    a failed address splices in a literal, and then known_hosts needs an entry for that address.
 
     Args:
         url: a DOCKER_HOST/host URL; only `ssh://` URLs are affected
 
     Returns:
-        str: `url` unchanged, or with its hostname replaced by the literal address that answered
+        str: `url` unchanged, or with its hostname replaced by the literal address that answered after
+            an earlier one failed
     """
     if not is_ssh_url(url):
         return url
@@ -236,6 +245,17 @@ def _ensure_reachable_family(url: str) -> str:
         peer_host = sock.getpeername()[0]
     finally:
         sock.close()
+    # paramiko checks the host key against whatever name the URL carries, so splicing in an address makes
+    # it look up `[address]:port` in known_hosts, where many entries are only by name. Splice only when an
+    # earlier address failed - the case this exists for - and leave the hostname when the first answered.
+    try:
+        first = socket.getaddrinfo(hostname, port, socket.AF_UNSPEC, socket.SOCK_STREAM)[0][4][0]
+    except OSError:
+        # The name resolved a moment ago for the probe; if it fails now, splice as before rather than
+        # hand paramiko a name it may not resolve either.
+        first = None
+    if peer_host == first:
+        return url
     literal = f"[{peer_host}]" if ":" in peer_host else peer_host
     userinfo = f"{parsed.username}@" if parsed.username else ""
     return urllib.parse.urlunparse(parsed._replace(netloc=f"{userinfo}{literal}:{port}"))
@@ -603,6 +623,268 @@ def system_events(  # noqa: DOC101,DOC103
     return collected
 
 
+# --- system_wait: one wait for everything worth waiting for ---------------------------------------
+#
+# Each kind is answered by a helper in the module of the domain it belongs to, imported when called:
+# those modules import `_get_client` from here, so importing them at the top would be circular. A kind
+# is offered only while its domain is enabled, so `kind` and `until` are built from the enabled set at
+# import: a disabled domain's waits are never advertised, rather than advertised and refused (SU.8.1).
+_WAIT_KINDS: dict[str, tuple[str, tuple[str, ...]]] = {
+    "container": ("containers", ("not-running", "next-exit", "removed", "healthy", "log-match")),
+    "service": ("services", ("running", "update-converged")),
+    "node": ("nodes", ("ready", "down", "disconnected", "unknown")),
+    "stack": ("stack", ("converged", "removed")),
+    "compose": ("compose", ("running", "healthy", "exited")),
+    "registry_tag": ("registry", ("present",)),
+}
+# Never empty: `containers` cannot be disabled (ALWAYS_ON_DOMAINS), so the container kind is always here.
+_WAIT_ENABLED = tuple(kind for kind, (domain, _) in _WAIT_KINDS.items() if not is_domain_disabled(domain))
+WaitKind = Literal[_WAIT_ENABLED]  # pyright: ignore[reportInvalidTypeForm]
+WaitUntil = Literal[  # pyright: ignore[reportInvalidTypeForm]
+    tuple(dict.fromkeys(until for kind in _WAIT_ENABLED for until in _WAIT_KINDS[kind][1]))
+]
+# The registry is polled over HTTPS and may rate-limit; everything else is a local daemon read.
+_WAIT_DEFAULT_POLL = {"registry_tag": 5.0}
+# A socket timeout ends up in a `timeval`, whose seconds are a 32-bit `long` on Windows (Winsock), so this is
+# the largest wait every platform can pass to the daemon: about 68 years.
+_MAX_WAIT_SECONDS = 2**31 - 1
+# Parameters only one kind uses: they leave the schema with their kind, so nothing disabled is advertised.
+_WAIT_KIND_PARAMS: dict[str, tuple[str, ...]] = {
+    "container": ("pattern", "regex"),
+    "service": ("replicas",),
+    "compose": ("services",),
+    "registry_tag": ("username", "password", "limit"),
+}
+# The summary when some kind is disabled; with every kind enabled the hand-written first line stands,
+# because it is tuned for what `tool_list` matches within one source line.
+_WAIT_SUMMARY_CLAUSES = {
+    "container": "a container exits or is healthy",
+    "service": "a service converges",
+    "node": "a node is ready",
+    "stack": "a stack converges or is removed",
+    "compose": "a compose project is up or done",
+    "registry_tag": "a tag lands in a registry",
+}
+# What each kind's helper names its target, so the result can carry it once as `target`.
+_WAIT_TARGET_KEYS = frozenset({"container", "service", "node", "stack", "project", "repository", "tag"})
+
+
+def _wait_registry_target(target: str) -> tuple[str, str]:
+    """Split a registry_tag wait's target into repository and tag.
+
+    Args:
+        target: "repository:tag", e.g. "ghcr.io/org/app:1.2" or "localhost:5000/app:dev"
+
+    Returns:
+        tuple: the repository and the tag
+
+    Raises:
+        ToolInputError: the target names a digest or no tag
+    """
+    repository, tag = parse_repository_tag(target)
+    if "@" in target or not tag:
+        raise ToolInputError(
+            f"system_wait(kind='registry_tag') needs target as 'repository:tag', got {target!r}: "
+            "a digest is already immutable, so there is nothing to wait for, and with no tag there is "
+            "nothing to look for"
+        )
+    return repository, tag
+
+
+def _wait_check_options(kind: str, until: str, given: dict[str, bool]) -> None:
+    """Refuse an `until` or a kind-specific option that does not belong to `kind`.
+
+    Args:
+        kind: the kind asked for
+        until: the condition asked for
+        given: which kind-specific options the caller set, by name
+
+    Raises:
+        ToolInputError: `kind` is not enabled, `until` is not one of its conditions, or an option
+            given belongs to another kind or condition
+    """
+    if kind not in _WAIT_ENABLED:
+        raise ToolInputError(f"system_wait cannot wait on kind={kind!r} here; enabled kinds: {list(_WAIT_ENABLED)}")
+    untils = _WAIT_KINDS[kind][1]
+    if until not in untils:
+        raise ToolInputError(f"system_wait(kind={kind!r}) waits until one of {list(untils)}, not {until!r}")
+    belongs = {
+        "pattern": kind == "container" and until == "log-match",
+        "regex": kind == "container" and until == "log-match",
+        "replicas": kind == "service" and until == "running",
+        "services": kind == "compose",
+        "username": kind == "registry_tag",
+        "password": kind == "registry_tag",
+        "limit": kind == "registry_tag",
+        # registry_tag talks HTTPS to the registry; no daemon is involved, so a host would mean nothing.
+        "host": kind != "registry_tag",
+    }
+    stray = [option for option, set_ in given.items() if set_ and not belongs[option]]
+    if stray:
+        raise ToolInputError(f"system_wait(kind={kind!r}, until={until!r}) does not take {stray}")
+
+
+def _fit_to_enabled_kinds[F: Callable[..., Any]](func: F) -> F:
+    """Take a disabled kind out of the wait tool's description and schema, so neither offers it.
+
+    Drops the kind's bullet, the `Args:` entries and parameters only it uses, and rebuilds the summary
+    from the enabled kinds. Applied beneath `@tool` so it runs first: the registered description and
+    schema are the trimmed ones, while the source keeps every line for the linters that read it. With
+    every kind enabled it changes nothing.
+
+    Args:
+        func: the wait tool
+
+    Returns:
+        Callable: the same function, its `__doc__` and `__signature__` fitted to the enabled kinds
+    """
+    disabled = [kind for kind in _WAIT_KINDS if kind not in _WAIT_ENABLED]
+    if not disabled:
+        return func
+    dropped = {param for kind in disabled for param in _WAIT_KIND_PARAMS.get(kind, ())}
+    kept, skipping, item_indent, in_args = [], False, 0, False
+    for line in (func.__doc__ or "").splitlines(keepends=True):
+        stripped = line.strip()
+        indent = len(line) - len(line.lstrip())
+        if stripped.endswith(":") and " " not in stripped:
+            in_args = stripped == "Args:"
+        bullet = re.match(r"^(\s*)- (\w+):", line)
+        entry = re.match(r"^(\s*)(\w+): ", line) if in_args else None
+        if bullet:
+            item_indent = len(bullet.group(1))
+            skipping = bullet.group(2) in disabled
+        elif entry and entry.group(2) in func.__code__.co_varnames:
+            item_indent = len(entry.group(1))
+            skipping = entry.group(2) in dropped
+        elif not stripped or indent <= item_indent:
+            # A continuation is indented past its item. Measured relative to the item, because the compiler
+            # dedents docstrings (Python 3.13+), so absolute columns differ by context.
+            skipping = False
+        if not skipping:
+            kept.append(line)
+    clauses = [_WAIT_SUMMARY_CLAUSES[kind] for kind in _WAIT_ENABLED]
+    summary = clauses[0] if len(clauses) == 1 else ", ".join(clauses[:-1]) + " or " + clauses[-1]
+    body = "".join(kept).lstrip("\n").split("\n", 1)[1]
+    func.__doc__ = f"Wait until {summary}.\n{body}"
+    signature = inspect.signature(func)
+    func.__signature__ = signature.replace(  # pyright: ignore[reportFunctionMemberAccess]
+        parameters=[param for name, param in signature.parameters.items() if name not in dropped]
+    )
+    return func
+
+
+@tool()
+@_fit_to_enabled_kinds
+def system_wait(  # noqa: DOC101,DOC103,DOC501,DOC503
+    kind: WaitKind,  # pyright: ignore[reportInvalidTypeForm] - built from the enabled kinds at import
+    target: str,
+    until: WaitUntil,  # pyright: ignore[reportInvalidTypeForm]
+    timeout_seconds: float = 600.0,
+    poll_interval: float | None = None,
+    replicas: int | None = None,
+    pattern: str | None = None,
+    regex: bool = False,
+    services: list[str] | None = None,
+    username: str | None = None,
+    password: str | None = None,
+    limit: int = 1000,
+    host: str | None = None,
+) -> dict:
+    """
+    Wait until a container/compose project exits or is healthy, a service/stack converges, a node/registry tag is ready.
+
+    The one wait tool: action tools return once their work is started, and this waits for the result. For
+    a status read without waiting use `container_inspect`, `service_ps` or `compose_ps`; to follow changes
+    as they happen, `system_events`. Never raises on timeout. `met: false` without `timed_out` means the
+    condition can no longer be met (the target stopped, has nothing to wait for, or is gone): `detail`
+    says why.
+
+    `kind`: `target` - `until` values:
+    - container: id or name - not-running (exit code in `detail.status_code`), next-exit, removed,
+      healthy (no HEALTHCHECK: not met), log-match (finds `pattern` in recent logs)
+    - service: swarm manager only; id or name - running (all desired tasks, or `replicas`), update-converged
+    - node: swarm manager only; id or hostname - ready, down, disconnected, unknown
+    - stack: swarm manager only; stack name - converged (every service's tasks running, updates finished), removed
+    - compose: project name from `compose_list` - running, healthy (no HEALTHCHECK: running is enough;
+      a job others wait on may have exited 0), exited (exit codes in `detail`); `services` narrows it
+    - registry_tag: "repository:tag" - present (polls the registry over HTTPS every 5 s by default; no
+      daemon, no `host`)
+
+    Args:
+        poll_interval: Seconds between checks (default 2, unless the kind says otherwise), capped by the time left
+        pattern: log-match: a plain substring, or with `regex=True` a regular expression (trusted patterns
+            only: a hostile one run over attacker-influenced logs can exhaust CPU)
+        username: registry_tag: overrides DOCKER_MCP_SERVER_REGISTRY_USERNAME
+        password: registry_tag: overrides DOCKER_MCP_SERVER_REGISTRY_PASSWORD
+        limit: registry_tag: most tags read per poll; a tag beyond it is never found
+
+    Returns:
+        dict: {"kind", "target", "until", "met", "timed_out", "waited_seconds", "detail"}
+    """
+    _wait_check_options(
+        kind,
+        until,
+        {
+            "pattern": pattern is not None,
+            "regex": regex,
+            "replicas": replicas is not None,
+            "services": bool(services),
+            "username": username is not None,
+            "password": password is not None,
+            "limit": limit != 1000,
+            "host": host is not None,
+        },
+    )
+    if until == "log-match" and not pattern:
+        raise ToolInputError("system_wait(until='log-match') needs `pattern`")
+    # There is no ceiling on how long a caller may wait, but the container stop conditions hand the timeout
+    # to a socket, and a NaN deadline never passes. _MAX_WAIT_SECONDS is the most every supported
+    # platform's socket timeout can hold; past it the stop conditions fail with a builtin OverflowError.
+    for label, value in (("timeout_seconds", timeout_seconds), ("poll_interval", poll_interval)):
+        if value is not None and not (math.isfinite(value) and value <= _MAX_WAIT_SECONDS):
+            raise ToolInputError(
+                f"system_wait {label} must be a finite number of seconds, at most {_MAX_WAIT_SECONDS}; got {value!r}."
+            )
+    interval = poll_interval if poll_interval is not None else _WAIT_DEFAULT_POLL.get(kind, 2.0)
+    if kind == "container":
+        from docker_mcp.tools.containers import _wait_container
+
+        result = _wait_container(target, until, timeout_seconds, interval, pattern=pattern, regex=regex, host=host)
+    elif kind == "service":
+        from docker_mcp.tools.services import _wait_service
+
+        result = _wait_service(target, until, timeout_seconds, interval, replicas=replicas, host=host)
+    elif kind == "node":
+        from docker_mcp.tools.nodes import _wait_node
+
+        result = _wait_node(target, until, timeout_seconds, interval, host=host)
+    elif kind == "stack":
+        from docker_mcp.tools.stack import _wait_stack
+
+        result = _wait_stack(target, until, timeout_seconds, interval, host=host)
+    elif kind == "compose":
+        from docker_mcp.tools.compose import _wait_compose
+
+        result = _wait_compose(target, until, timeout_seconds, interval, services=services, host=host)
+    else:  # "registry_tag"
+        from docker_mcp.tools.registry import _wait_registry_tag
+
+        repository, tag = _wait_registry_target(target)
+        result = _wait_registry_tag(
+            repository, tag, timeout_seconds, interval, username=username, password=password, limit=limit
+        )
+    shared = {"until", "met", "timed_out", "waited_seconds"}
+    return {
+        "kind": kind,
+        "target": target,
+        "until": until,
+        "met": result["met"],
+        "timed_out": result["timed_out"],
+        "waited_seconds": result["waited_seconds"],
+        "detail": {k: v for k, v in result.items() if k not in shared and k not in _WAIT_TARGET_KEYS},
+    }
+
+
 @tool()
 def system_close(host: str | None = None) -> bool:  # noqa: DOC101,DOC103
     """
@@ -779,6 +1061,9 @@ def startup_preflight() -> None:
     one-line confirmation plus a roster of the other configured hosts. Never raises.
     """
     global _self_container_id, _self_host_label
+    # Before the ping, so it is shown even when the daemon cannot be reached.
+    for warning in disable_switch_warnings():
+        print(f"docker-mcp-server: WARNING: {warning}", file=sys.stderr, flush=True)
     scrub_unresolved_env()
     default = _default_host()
     try:

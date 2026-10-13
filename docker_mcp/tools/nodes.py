@@ -3,7 +3,6 @@
 # library of mcp tools relating to swarm node management
 
 import time
-from typing import Literal
 
 from docker_mcp.exceptions import ToolInputError
 from docker_mcp.server import tool
@@ -95,7 +94,7 @@ def _node_wait_result(
     state: str | None = None,
     availability: str | None = None,
 ) -> dict:
-    """Build the unified node_wait result snapshot - the same shape for every `until` mode.
+    """Build the unified node wait result snapshot - the same shape for every `until` mode.
 
     Args:
         id_or_name: the object waited on
@@ -120,33 +119,30 @@ def _node_wait_result(
     }
 
 
-@tool()
-def node_wait(  # noqa: DOC101,DOC103,DOC501,DOC503
+def _wait_node(
     id_or_name: str,
-    until: Literal["ready", "down", "disconnected", "unknown"] = "ready",
-    timeout_seconds: float = 300.0,
-    poll_interval: float = 2.0,
+    until: str,
+    timeout_seconds: float,
+    poll_interval: float,
     host: str | None = None,
 ) -> dict:
-    """
-    Block until a swarm node's Status.State reaches a target value.
+    """Wait for a swarm node's `Status.State`; `system_wait(kind="node")` is the tool that calls this.
 
-    Never raises on timeout - the result always carries `met` and `timed_out`. Polls
-    `Status.State` (one of "unknown"/"down"/"ready"/"disconnected") every `poll_interval`s.
-    Common uses: `until="ready"` after a newly joined node, or `until="down"` while draining a
-    node before removal. Does not track task placement - for "has this drained node's workload
-    fully moved off", inspect the relevant services' tasks directly; no single cheap call spans
-    every service in the swarm, so that check isn't built into this tool. `service_wait` covers
-    service convergence; `node_list` shows every node's state at once.
+    Never raises on timeout. Does not track where tasks run: whether a drained node's work has moved
+    off is a question for the services' tasks.
 
     Args:
-        until: Target Status.State to wait for: "ready" (default), "down", "disconnected", "unknown"
-        timeout_seconds: Max seconds to wait before returning with timed_out=true
-        poll_interval: Seconds between re-inspections (default 2, > 0); capped by the time left so a large value can't
-            push the total wait past the timeout
+        id_or_name: the node to wait on
+        until: the `Status.State` to wait for: "ready", "down", "disconnected" or "unknown"
+        timeout_seconds: seconds to wait before returning with timed_out=true
+        poll_interval: seconds between re-inspections, capped by the time left
+        host: the host label to target, or None for the default
 
     Returns:
         dict: {"node", "until", "met", "timed_out", "state", "availability", "waited_seconds"}
+
+    Raises:
+        ToolInputError: a negative timeout or a non-positive poll interval
     """
     if timeout_seconds < 0:
         raise ToolInputError(f"timeout_seconds must be >= 0, got {timeout_seconds}.")

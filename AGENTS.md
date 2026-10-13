@@ -187,6 +187,14 @@ discovery layers. Four cleanup rounds have chased the same failure.
   `timeout_seconds`. `tests/test_naming.py` enforces all of this (approved prefixes, banned short forms and
   1.x spellings, canonical shared-param descriptions) — a violating tool fails CI.
 - New Docker functionality goes in the matching `docker_mcp/tools/<domain>.py` file, not in a new file.
+- **Waiting is one tool, `system_wait`.** A new thing to wait for is a new `kind` or `until` in `_WAIT_KINDS`
+  (`system.py`) with its helper in the owning domain's module, never a new `*_wait` tool and never a blocking
+  option on an action tool: action tools return once their work is started. `kind`/`until` are built from the
+  enabled domains at import, so a disabled domain's waits are not offered. Its `target` parameter is a
+  deliberate exception to the identifier spellings above, because one argument names a container, service,
+  node, stack, compose project or `repository:tag`. `system` and `containers` cannot be disabled
+  (`ALWAYS_ON_DOMAINS` in `server.py`); naming either in `DOCKER_MCP_SERVER_DISABLE` is reported as ignored,
+  not silently dropped.
 - Every new `docker_mcp/tools/` file must be imported in `docker_mcp/tools/__init__.py` (private `_*.py` helpers excluded).
 - Every new `docker_mcp/tools/<module>.py` must have a matching `tests/test_<module>.py`.
 - Tool functions are decorated with `@tool()` (imported from `docker_mcp.server`) and must have a `TOOL_CATEGORIES` entry in `docker_mcp/server.py`.

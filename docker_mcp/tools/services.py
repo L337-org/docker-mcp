@@ -5,6 +5,9 @@
 import time
 from typing import Literal, cast
 
+import docker
+import docker.models.services
+
 from docker_mcp.exceptions import CapabilityError, RemoteFailureError, ToolInputError
 from docker_mcp.server import tool
 from docker_mcp.tools._labels import managed_filter, with_provenance
@@ -19,9 +22,47 @@ from docker_mcp.tools.system import _get_client
 
 
 # --- shared read helpers, also used by the service-logs:// / service-tasks:// resources in
-# resources.py, and by service_wait's "running" mode ---
+# resources.py, and by the service and stack waits behind system_wait ---
 
 _FAILING_TASK_STATES = frozenset({"failed", "rejected"})
+# `UpdateStatus.State` values after which a rolling update is over, and those where it stopped on a failure
+# and will not move again without someone acting (moby `api/types/swarm` UpdateState).
+_UPDATE_DONE = frozenset({"completed", "rollback_completed"})
+_UPDATE_STUCK = frozenset({"paused", "rollback_paused"})
+# Desired states up to and including "running", the ones swarm still means a task to reach (docker/cli's
+# `numberedStates` in cli/command/service/progress/progress.go). A replacement waiting out its restart
+# delay is desired "ready", so this keeps its node counted between a rejection and the retry.
+_LIVE_DESIRED_STATES = frozenset(
+    {"new", "allocated", "pending", "assigned", "accepted", "preparing", "ready", "starting", "running"}
+)
+
+
+def _global_node_counts(service: docker.models.services.Service, client: docker.DockerClient) -> tuple[int, int]:
+    """How many nodes a global service wants a task on, and on how many one is running.
+
+    Counted by node rather than by task, as docker/cli's `globalProgressUpdater` does: a node whose task
+    was rejected keeps a replacement swarm still means to run, so it stays wanted rather than dropping out
+    of both counts until the retry. A drained node's tasks are shut down and stop counting; a task on a
+    node that is down is not counted as running.
+
+    Args:
+        service: the docker-py Service model
+        client: the docker-py client it came from
+
+    Returns:
+        tuple: (nodes wanted, nodes running)
+    """
+    tasks = service.tasks()
+    down = {node.id for node in client.nodes.list() if (node.attrs.get("Status") or {}).get("State") == "down"}
+    wanted = {t.get("NodeID") for t in tasks if t.get("NodeID") and t.get("DesiredState") in _LIVE_DESIRED_STATES}
+    running = {
+        t.get("NodeID")
+        for t in tasks
+        if t.get("DesiredState") == "running"
+        and (t.get("Status") or {}).get("State") == "running"
+        and t.get("NodeID") not in down
+    }
+    return len(wanted), len(running)
 
 
 def _read_service_log_tail(id_or_name: str, tail: int = 200, host: str | None = None) -> str:
@@ -52,9 +93,10 @@ def _read_service_task_summary(id_or_name: str, host: str | None = None) -> dict
     """Return a computed task/rollout status summary for a swarm service.
 
     Reproduces what the `audit_swarm_health` prompt already does by hand: counts tasks whose
-    *desired* state is "running" by their actual `Status.State`, compares the count against the
-    service's desired replica count (Replicated mode) or the total returned tasks (Global mode -
-    one task per eligible node, no fixed target), and surfaces any failing tasks' id/node/error.
+    *desired* state is "running" by their actual `Status.State` and compares the count against the
+    service's desired replica count (Replicated mode). A Global service has no fixed target, so it is
+    counted by node instead: the nodes swarm still means to run a task on, against those running one.
+    Surfaces any failing tasks' id/node/error.
     Also includes `UpdateStatus.State` from the same service read, so this one summary doubles as
     a rollout-progress view.
 
@@ -65,17 +107,21 @@ def _read_service_task_summary(id_or_name: str, host: str | None = None) -> dict
     Returns:
         dict: the task and rollout status summary
     """
-    service = _get_client(host).services.get(id_or_name)
+    client = _get_client(host)
+    service = client.services.get(id_or_name)
     attrs = service.attrs
     mode = (attrs.get("Spec", {}) or {}).get("Mode", {}) or {}
     tasks = service.tasks(filters={"desired-state": "running"})
-    running = sum(1 for t in tasks if (t.get("Status") or {}).get("State") == "running")
-    # `Replicas` is optional in the daemon's own schema (no documented default), so a Replicated
-    # service could in principle omit it - fall back to the observed task count in that case too,
-    # the same fallback already used for every non-Replicated mode.
-    desired = mode.get("Replicated", {}).get("Replicas") if "Replicated" in mode else None
-    if desired is None:
-        desired = len(tasks)
+    if "Global" in mode:
+        desired, running = _global_node_counts(service, client)
+    else:
+        running = sum(1 for t in tasks if (t.get("Status") or {}).get("State") == "running")
+        # `Replicas` is optional in the daemon's own schema (no documented default), so a Replicated
+        # service could in principle omit it - fall back to the observed task count in that case too,
+        # the same fallback already used for every other mode.
+        desired = mode.get("Replicated", {}).get("Replicas") if "Replicated" in mode else None
+        if desired is None:
+            desired = len(tasks)
     failed_tasks = [
         {
             "id": t.get("ID"),
@@ -96,6 +142,25 @@ def _read_service_task_summary(id_or_name: str, host: str | None = None) -> dict
         "failed_tasks": failed_tasks,
         "update_state": update_status.get("State"),
     }
+
+
+def _awaiting_global_tasks(summary: dict) -> bool:
+    """Whether a global service has no tasks yet, so its desired count says nothing about its nodes.
+
+    A global service's desired count is the nodes it has a live task on, which is zero until the
+    orchestrator creates them, so "every node runs one" would be met before anything ran. The
+    orchestrator creates every eligible node's task at once, so docker/cli's own `--detach=false` waits
+    for the first (cli/command/service/progress/progress.go, `globalProgressUpdater`); the waits do the
+    same. A global service whose constraints match no node therefore waits to its timeout, as the CLI
+    does.
+
+    Args:
+        summary: a `_read_service_task_summary` result
+
+    Returns:
+        bool: True for a global service with no task to count yet
+    """
+    return summary["mode"] == "global" and summary["desired_tasks"] == 0
 
 
 @tool()
@@ -488,7 +553,7 @@ def _service_wait_result(
     failed_tasks: list | None = None,
     update_state: str | None = None,
 ) -> dict:
-    """Build the unified service_wait result snapshot - the same shape for every `until` mode.
+    """Build the unified service wait result snapshot - the same shape for every `until` mode.
 
     Args:
         id_or_name: the object waited on
@@ -517,38 +582,36 @@ def _service_wait_result(
     }
 
 
-@tool()
-def service_wait(  # noqa: DOC101,DOC103,DOC501,DOC503
+def _wait_service(
     id_or_name: str,
-    until: Literal["running", "update-converged"] = "running",
+    until: str,
+    timeout_seconds: float,
+    poll_interval: float,
     replicas: int | None = None,
-    timeout_seconds: float = 600.0,
-    poll_interval: float = 2.0,
     host: str | None = None,
 ) -> dict:
-    """
-    Block until a swarm service's tasks converge, or a rolling update finishes.
+    """Wait for a swarm service to converge; `system_wait(kind="service")` is the tool that calls this.
 
-    One contract for both modes: never raises on timeout - the result always carries `met` and
-    `timed_out`. "running" polls task state via the same task-counting logic as
-    `service-tasks://{id_or_name}` (not the unconfirmed daemon `ServiceStatus` field) until running
-    tasks reach the desired count (Replicated mode) or every returned task is running (Global mode,
-    which has no fixed target). "update-converged" polls `UpdateStatus.State` until it reaches a
-    terminal value (`completed` or `rollback_completed`); if the service has never been updated (no
-    `UpdateStatus` at all), returns promptly with `met=false` - there's nothing to converge to, same
-    as `container_wait`'s no-healthcheck case.
+    Never raises on timeout. "running" polls task state with the same counting as
+    `service-tasks://{id_or_name}` until running tasks reach the desired count, or every returned task
+    runs for a global service once it has any. "update-converged" polls `UpdateStatus.State` until it
+    is `completed` or `rollback_completed`, and returns promptly with `met: false` for a service never
+    updated or an update paused on a failure, which will not move again without someone acting.
 
     Args:
-        until: Condition to wait for: "running" (default) or "update-converged"
-        replicas: "running" mode only: override the desired replica count (e.g. right after a same-turn `service_scale`
-            call, before polling reflects the new target)
-        timeout_seconds: Max seconds to wait before returning with timed_out=true
-        poll_interval: Seconds between re-checks (default 2, > 0); capped by the time left so a large value can't push
-            the total wait past the timeout
+        id_or_name: the service to wait on
+        until: "running" or "update-converged"
+        timeout_seconds: seconds to wait before returning with timed_out=true
+        poll_interval: seconds between re-checks, capped by the time left
+        replicas: "running" only: the desired count to wait for, overriding the service's own
+        host: the host label to target, or None for the default
 
     Returns:
-        dict: {"service", "until", "met", "timed_out", "running_tasks", "desired_tasks", "failed_tasks", "update_state",
-            "waited_seconds"}
+        dict: {"service", "until", "met", "timed_out", "running_tasks", "desired_tasks", "failed_tasks",
+            "update_state", "waited_seconds"}
+
+    Raises:
+        ToolInputError: a negative timeout or replica count, or a non-positive poll interval
     """
     if timeout_seconds < 0:
         raise ToolInputError(f"timeout_seconds must be >= 0, got {timeout_seconds}.")
@@ -568,14 +631,17 @@ def service_wait(  # noqa: DOC101,DOC103,DOC501,DOC503
             "update_state": summary["update_state"],
         }
         if until == "running":
-            if summary["running_tasks"] >= desired:
+            awaiting = replicas is None and _awaiting_global_tasks(summary)
+            if summary["running_tasks"] >= desired and not awaiting:
                 return _service_wait_result(id_or_name, until, met=True, start=start, **common)
         else:  # "update-converged"
             update_state = summary["update_state"]
             if update_state is None:
                 # No UpdateStatus at all: nothing to converge to, don't poll to the timeout.
                 return _service_wait_result(id_or_name, until, met=False, start=start, **common)
-            if update_state in ("completed", "rollback_completed"):
+            if update_state in _UPDATE_STUCK:
+                return _service_wait_result(id_or_name, until, met=False, start=start, **common)
+            if update_state in _UPDATE_DONE:
                 return _service_wait_result(id_or_name, until, met=True, start=start, **common)
         remaining = deadline - time.monotonic()
         if remaining <= 0:

@@ -10,6 +10,7 @@ from unittest.mock import MagicMock
 
 import docker.errors
 import httpx
+import paramiko
 import pytest
 
 import docker_mcp  # noqa: F401 — imported for its side effect of registering every tool
@@ -17,6 +18,7 @@ import docker_mcp._hosts as _hosts
 from docker_mcp._hosts import parse_registry
 from docker_mcp.exceptions import HostGuardError
 from docker_mcp.server import (
+    ALWAYS_ON_DOMAINS,
     TOOL_CATEGORIES,
     TRANSLATES_FAILURES,
     _NO_DOMAIN_TOOLS,
@@ -551,6 +553,24 @@ def test_query_catalog_keyword_ranks_tools_matching_more_words_first():
     assert ranks[0] == 2
 
 
+@pytest.mark.parametrize(
+    "phrase",
+    [
+        "wait for image tag in registry",
+        "wait until tag pushed",
+        "wait for tag to appear",
+        "wait until healthy",
+        "wait for stack to converge",
+        "block until container exits",
+        "wait for node ready",
+        "wait for compose project healthy",
+    ],
+)
+def test_plain_words_for_waiting_find_system_wait_first(phrase):
+    # system_wait's summary is worded for this ranking; a rewording that loses one of these words drops it.
+    assert query_catalog(keyword=phrase)["tools"][0]["name"] == "system_wait"
+
+
 def test_query_catalog_keyword_trims_common_endings():
     # "failing" finds a summary that only says "fail..."; "tasks" finds one that says "task".
     assert query_catalog(keyword="tasks")["matched"] == query_catalog(keyword="task")["matched"] > 0
@@ -692,7 +712,85 @@ def test_tool_list_survives_every_domain_being_disabled():
     every_domain = ",".join(sorted({r.domain for r in _tool_registry.values() if r.domain}))
     names = _registered_names([f"DOCKER_MCP_SERVER_DISABLE={every_domain}"])
     assert "tool_list" in names
-    assert names == set(_NO_DOMAIN_TOOLS)
+    # The always-on domains cannot be disabled, so their tools stay too, system_wait included: its
+    # container kind belongs to one of them.
+    always_on = {r.name for r in _tool_registry.values() if r.domain in ALWAYS_ON_DOMAINS}
+    assert names == set(_NO_DOMAIN_TOOLS) | always_on
+
+
+def _in_child(code: str, env_vars: list[str]) -> str:
+    """Run `code` after importing the package, in a child process under the given env switches."""
+    result = subprocess.run(  # noqa: S603 — fixed argv, sys.executable, no shell; trusted test input
+        [sys.executable, "-c", "import json, docker_mcp\n" + code],
+        capture_output=True,
+        text=True,
+        env=_env_with(env_vars),
+        check=True,
+    )
+    return result.stdout
+
+
+def test_system_and_containers_cannot_be_disabled_and_the_catalog_says_they_were_ignored():
+    assert {"system", "containers"} == ALWAYS_ON_DOMAINS
+    always_on = {r.name for r in _tool_registry.values() if r.domain in ALWAYS_ON_DOMAINS}
+    assert {"system_wait", "container_run", "container_logs"} <= always_on
+    assert always_on <= _registered_names(["DOCKER_MCP_SERVER_DISABLE=System,Containers,scout"])
+    catalog = json.loads(
+        _in_child(
+            "from docker_mcp.server import tool_catalog; print(json.dumps(tool_catalog()))",
+            ["DOCKER_MCP_SERVER_DISABLE=System,Containers,scout"],
+        )
+    )
+    assert catalog["ignored_disabled_domains"] == ["containers", "system"]
+    # The effective switch no longer lists it, and it is not mistaken for a typo.
+    assert catalog["switches"]["DOCKER_MCP_SERVER_DISABLE"] == ["scout"]
+    assert catalog["unknown_disabled_domains"] == []
+
+
+def _wait_schema(env_vars: list[str]) -> dict | None:
+    code = (
+        "import asyncio; from docker_mcp.server import mcp\n"
+        "t = {t.name: t for t in asyncio.run(mcp.list_tools())}.get('system_wait')\n"
+        "print(json.dumps(t.input_schema['properties'] if t else None))"
+    )
+    return json.loads(_in_child(code, env_vars))
+
+
+def test_system_wait_offers_only_the_kinds_whose_domain_is_enabled():
+    props = _wait_schema(["DOCKER_MCP_SERVER_DISABLE=stack,registry,nodes"])
+    assert props is not None
+    assert props["kind"]["enum"] == ["container", "service", "compose"]
+    # Conditions that only a disabled kind has are not offered either.
+    for gone in ("converged", "present", "ready", "disconnected"):
+        assert gone not in props["until"]["enum"]
+    assert {"healthy", "log-match", "update-converged", "exited", "removed"} <= set(props["until"]["enum"])
+
+
+def test_system_wait_advertises_nothing_of_a_disabled_kind():
+    code = (
+        "import asyncio; from docker_mcp.server import mcp\n"
+        "t = {t.name: t for t in asyncio.run(mcp.list_tools())}['system_wait']\n"
+        "print(json.dumps({'description': t.description, 'params': list(t.input_schema['properties'])}))"
+    )
+    advertised = json.loads(_in_child(code, ["DOCKER_MCP_SERVER_DISABLE=registry,stack"]))
+    description = advertised["description"]
+    for gone in ("registry_tag", "username", "password", "limit", "REGISTRY"):
+        assert gone not in description, gone
+    # Checked by kind, not by a literal line: a kind's line can be reworded, and must still go with its kind.
+    lines = description.splitlines()
+    assert not [line for line in lines if re.match(r"\s*- (stack|registry_tag)\b", line)]
+    summary = lines[0]
+    assert summary.startswith("Wait until a container exits or is healthy")
+    assert "stack" not in summary and "registry" not in summary
+    assert not {"username", "password", "limit"} & set(advertised["params"])
+    assert {"pattern", "regex", "replicas", "services"} <= set(advertised["params"])
+
+
+def test_system_wait_keeps_the_container_kind_whatever_else_is_disabled():
+    # `containers` cannot be disabled, so the wait always has the kind a compose or stack container needs.
+    props = _wait_schema(["DOCKER_MCP_SERVER_DISABLE=containers,services,nodes,stack,compose,registry"])
+    assert props is not None
+    assert props["kind"].get("const", props["kind"].get("enum")) in ("container", ["container"])
 
 
 def _names_by_category(*categories: ToolCategory) -> set[str]:
@@ -877,10 +975,13 @@ def test_instructions_fit_claude_codes_cut_off_at_their_longest_end_to_end():
     text = _live_instructions(
         [
             "DOCKER_MCP_SERVER_HOSTS=local=unix:///var/run/docker.sock, "
-            "staging=ssh://deploy@staging.example.org(ro), production=ssh://deploy@production.example.org(nd)"
+            "staging=ssh://deploy@staging.example.org(ro), production=ssh://deploy@production.example.org(nd)",
+            # A misconfigured switch adds its pointer line; the operator's names must not lengthen it.
+            "DOCKER_MCP_SERVER_DISABLE=system," + ",".join(f"unknown-{i}-{'x' * 40}" for i in range(5)),
         ]
     ).rstrip("\n")
     assert "Multiple hosts are configured" in text, "the longest rendering must include the host caveat"
+    assert "DOCKER_MCP_SERVER_DISABLE misconfigured" in text, "the longest rendering must include the warning"
     units = len(text.encode("utf-16-le")) // 2
     assert units <= INSTRUCTIONS_CHAR_LIMIT, f"instructions are {units} UTF-16 units, over {INSTRUCTIONS_CHAR_LIMIT}"
 
@@ -1508,7 +1609,7 @@ def test_cli_tool_threads_host_to_run_docker(monkeypatch):
     # non-ssh transport makes that answer False regardless of whether this machine has a docker binary.
     _set_multi_host(monkeypatch, spec="local=auto, prod=tcp://prod:2376")
     monkeypatch.setattr(stack, "run_docker", fake_run_docker)
-    stack.stack_list(host="prod")
+    stack.stack_deploy("web", compose_files=["c.yml"], host="prod")
     assert captured.get("host") == "prod"
 
 
@@ -1761,8 +1862,19 @@ def test_the_library_failure_table_orders_narrow_before_broad():
             httpx.HTTPStatusError("404", request=httpx.Request("GET", "https://x"), response=httpx.Response(404)),
             "RemoteFailureError",
         ),
+        # An unknown host key on an ssh:// host: actionable text the client must see.
+        (paramiko.SSHException("Server '[2001:db8::1]:22' not found in known_hosts"), "RemoteFailureError"),
     ],
-    ids=["NotFound", "APIError", "TimeoutExpired", "InvalidURL", "ConnectError", "ConnectTimeout", "HTTPStatusError"],
+    ids=[
+        "NotFound",
+        "APIError",
+        "TimeoutExpired",
+        "InvalidURL",
+        "ConnectError",
+        "ConnectTimeout",
+        "HTTPStatusError",
+        "SSHException",
+    ],
 )
 def test_a_library_failure_is_classified_by_the_table(exception, expected):
     from docker_mcp.server import _as_project_failure
@@ -1937,3 +2049,75 @@ def test_the_docstring_exemption_names_the_decorators_in_use() -> None:
             f"ignore-decorators names {path!r}, which does not exist - ruff would match nothing "
             f"and every advertised docstring would fall under the convention"
         )
+
+
+# ---------- DOCKER_MCP_SERVER_DISABLE misconfiguration warnings ----------
+
+
+def _warnings(monkeypatch, disabled, ignored=frozenset()):
+    import docker_mcp.server as server
+
+    monkeypatch.setattr(server, "DISABLED_DOMAINS", frozenset(disabled))
+    monkeypatch.setattr(server, "IGNORED_DISABLED_DOMAINS", frozenset(ignored))
+    return server.disable_switch_warnings()
+
+
+def test_disable_switch_warnings_are_empty_for_a_sound_switch(monkeypatch):
+    assert _warnings(monkeypatch, {"scout", "swarm"}) == []
+
+
+def test_disable_switch_warnings_name_an_unknown_domain(monkeypatch):
+    assert _warnings(monkeypatch, {"swram", "scout"}) == [
+        "DOCKER_MCP_SERVER_DISABLE names 'swram', which matches no domain, so nothing was disabled for it "
+        "(a typo?); the README and `tool_list` list the domains."
+    ]
+
+
+def test_the_catalog_and_the_warnings_agree_on_what_is_unknown(monkeypatch):
+    # One derivation feeds both, so a name the catalog calls unknown is one the warning names, and no other.
+    import docker_mcp.server as server
+
+    monkeypatch.setattr(server, "DISABLED_DOMAINS", frozenset({"swram", "scout", "plugns"}))
+    assert server.tool_catalog()["unknown_disabled_domains"] == ["plugns", "swram"]
+    [warning] = server.disable_switch_warnings()
+    assert warning.startswith("DOCKER_MCP_SERVER_DISABLE names 'plugns', 'swram', which match no domain")
+
+
+def test_disable_switch_warnings_agree_in_number_and_cap_what_they_quote(monkeypatch):
+    names = {"aa", "bb", "cc", "dd", "e" * 30}
+    [warning] = _warnings(monkeypatch, names)
+    # Sorted, at most three shown, each cut to 24 characters, and the rest counted.
+    assert warning.startswith("DOCKER_MCP_SERVER_DISABLE names 'aa', 'bb', 'cc' and 2 more, which match no domain")
+    assert "nothing was disabled for them" in warning
+    assert _warnings(monkeypatch, {"e" * 30})[0].startswith(f"DOCKER_MCP_SERVER_DISABLE names '{'e' * 24}...'")
+    # Exactly the limit is shown whole.
+    assert _warnings(monkeypatch, {"f" * 24})[0].startswith(f"DOCKER_MCP_SERVER_DISABLE names '{'f' * 24}', which")
+
+
+def test_disable_switch_warnings_name_an_always_on_domain_and_the_alternative(monkeypatch):
+    assert _warnings(monkeypatch, set(), ignored=frozenset({"system"})) == [
+        "DOCKER_MCP_SERVER_DISABLE names 'system', which cannot be disabled and stays registered; "
+        "DOCKER_MCP_SERVER_READONLY=1 is the switch that keeps the agent from running containers or logging in "
+        "to a registry."
+    ]
+    [both] = _warnings(monkeypatch, set(), ignored=frozenset({"system", "containers"}))
+    assert both.startswith(
+        "DOCKER_MCP_SERVER_DISABLE names 'containers', 'system', which cannot be disabled and stay registered;"
+    )
+
+
+def test_instructions_point_the_agent_at_a_misconfigured_switch_first(monkeypatch):
+    monkeypatch.setattr("docker_mcp.server.disable_switch_warnings", lambda: ["anything"])
+    lines = build_instructions().splitlines()
+    assert lines[2] == "DOCKER_MCP_SERVER_DISABLE misconfigured: see `tool_list`, tell the user."
+    monkeypatch.setattr("docker_mcp.server.disable_switch_warnings", lambda: [])
+    assert "misconfigured" not in build_instructions()
+
+
+def test_tool_list_carries_the_disable_switch_warnings_end_to_end():
+    catalog = _catalog_in_child(["DOCKER_MCP_SERVER_DISABLE=swram,system"])
+    assert [w.split(",", 1)[0] for w in catalog["configuration_warnings"]] == [
+        "DOCKER_MCP_SERVER_DISABLE names 'swram'",
+        "DOCKER_MCP_SERVER_DISABLE names 'system'",
+    ]
+    assert _catalog_in_child([])["configuration_warnings"] == []
