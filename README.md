@@ -418,7 +418,7 @@ Where it stops is not coverage but **enforcement**. The skill's safety rules are
 
 The distinction matters most where it is easiest to overlook: a rule in a prompt can be skipped under pressure, or talked around by a prompt injection sitting in a container log the agent just read. A tool that was never registered cannot be called at all. So prefer the server for anything pointed at production, or wherever you need a guarantee rather than an instruction - and prefer the skill when the stakes are low and the simplicity is worth more.
 
-**[MCP_VS_SKILLS.md](https://github.com/L337-org/docker-mcp/blob/main/MCP_VS_SKILLS.md)** is the full, honest comparison: measured token cost for both - the skill is far cheaper on an eager-loading client (~140 tokens idle against the server's ~48,500 at full surface, or ~19,200 trimmed to the domains you actually use), while the server is ~2-3x cheaper *per task* on a lazy-loading one - plus what each genuinely does better and a tool-by-tool coverage map of all 159 tools, 31 prompts and the resources.
+**[MCP_VS_SKILLS.md](https://github.com/L337-org/docker-mcp/blob/main/MCP_VS_SKILLS.md)** is the full, honest comparison: measured token cost for both - the skill is far cheaper on an eager-loading client, especially at idle, while the server is cheaper *per task* on a lazy-loading one - plus what each genuinely does better and a tool-by-tool coverage map of every tool, prompt and resource.
 
 To install, download the archive from a [release](https://github.com/L337-org/docker-mcp/releases) and extract it into your skills directory. It is rooted at `l337-docker/`, so it lands correctly as-is:
 
