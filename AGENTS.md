@@ -136,7 +136,10 @@ Any tool wrapping a `docker` CLI feature (Compose, Stack, Buildx, Scout, Context
 `docker_mcp/tools/_cli.py:run_docker` — never call `subprocess.run` directly from a tool module. That
 helper is the single place holding binary resolution, `shell=False`, UTF-8 decoding, the output byte
 cap, Windows console suppression and the environment allow-list. Always pass an explicit `timeout=`.
-Never pass `shell=True`, never build paths by string concatenation, never expand `~` or globs yourself.
+Never pass `shell=True`, never build paths by string concatenation, and never expand a glob or a
+variable. Expand only a leading `~`, only where the tool documents it (`buildx_build`'s path
+parameters), and only with `os.path.expanduser`: pathlib's `expanduser()` raises a bare
+`RuntimeError` for an unknown `~user`, where `os.path` leaves the value for the CLI to report.
 
 **Read [architecture/cli-shell-out.md](architecture/cli-shell-out.md) before touching any of it**, and
 before adding a CLI-backed tool. It covers the SSH remote-exec fallback (which changes *which host* a

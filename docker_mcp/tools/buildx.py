@@ -406,7 +406,8 @@ def buildx_build(  # noqa: DOC101,DOC103,DOC501,DOC503
             "on the MCP server's own stdin. Use a filesystem path or an HTTP/Git URL instead, "
             "or pre-stage the context on disk."
         )
-    # Expanded once, here, so the argv and the remote path's staging both see the same local paths.
+    # Expanded once, here, so the argv and the remote path's staging both see the same local paths, and
+    # after the `-` refusal above, so that check sees the context exactly as given.
     context = _expand_home(context)
     file = _expand_home(file) if file is not None else None
     if push and load:
