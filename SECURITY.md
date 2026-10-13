@@ -28,8 +28,8 @@ registry HTTPS access. There is no per-tool authorization layer - the
 daemon (and, for CLI-backed tools, whichever host runs the CLI) is the
 trust boundary. That is normally the host running this server; when the
 docker CLI - or the plugin a call needs - is missing locally and the daemon
-is reached over `ssh://`, Compose / Stack / Buildx / Scout commands run on
-the *target* host as the SSH user, and the files they read are copied into a
+is reached over `ssh://`, Compose / Buildx / Scout commands and `stack_deploy` run
+on the *target* host as the SSH user, and the files they read are copied into a
 `0700` temp directory there first - including a `buildx_build` `--secret src=`
 file. That directory is removed when the call returns, but the teardown is
 best-effort: a dropped SSH connection leaves nothing able to run it, so a

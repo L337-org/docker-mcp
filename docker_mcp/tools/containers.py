@@ -12,6 +12,7 @@ import time
 from collections.abc import Iterable
 from typing import Any, Literal, TypedDict, cast
 
+import docker.errors
 import requests.exceptions
 
 from docker_mcp.exceptions import ToolInputError
@@ -98,7 +99,8 @@ def container_run(  # noqa: DOC101,DOC103,DOC501,DOC503
             `docs_lookup(section="containers")` for the full accepted set)
 
     Returns:
-        dict: The started container's full inspect payload
+        dict: The started container's full inspect payload. With `auto_remove`, a container already gone
+            by the time it is re-read returns the payload from before the start, with `removed_on_exit: true`
     """
     # Always detached: a blocking run waits for the image to finish, with no bound, and an image that
     # never exits would hang the call for good. `system_wait` is how a caller waits, with a timeout.
@@ -149,7 +151,12 @@ def container_run(  # noqa: DOC101,DOC103,DOC501,DOC503
     container = _get_client(host).containers.run(image, **kwargs)
     # docker-py's run returns the object it fetched before starting it, so its attrs still say "created";
     # re-read it, as container_start does, so the payload describes the started container.
-    container.reload()
+    try:
+        container.reload()
+    except docker.errors.NotFound:
+        # With auto_remove, a command that exits at once can be removed before the re-read. It did run, so
+        # reporting a failure would invite running it again.
+        return {**container.attrs, "removed_on_exit": True}
     return container.attrs
 
 
@@ -761,8 +768,8 @@ def container_exec(  # noqa: DOC101,DOC103,DOC501,DOC503
     Waits for the command, bounded by `timeout_seconds` (default 120). A command still running then is
     reported with `timed_out: true` and whatever output arrived. Output past `max_bytes` (default 32 MiB)
     is cut off with `truncated: true`, and the call returns at once rather than waiting for the command.
-    Either way `exit_code` is null and the command keeps running in the container, because the Engine has
-    no way to stop an exec: `container_top` shows it, and another `container_exec` can kill it. For a
+    A command still running then has a null `exit_code` and keeps running in the container, because the
+    Engine has no way to stop an exec: `container_top` shows it, and another `container_exec` can kill it. For a
     long-running or background job, start a container with `container_run` and wait with `system_wait`.
 
     Security: when any element of `cmd` is agent-controlled, use an exec-form argv list that does not

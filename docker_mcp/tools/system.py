@@ -8,6 +8,7 @@ configured hosts are reachable from here.
 
 import inspect
 import ipaddress
+import math
 import os
 import re
 import socket
@@ -787,7 +788,7 @@ def system_wait(  # noqa: DOC101,DOC103,DOC501,DOC503
     host: str | None = None,
 ) -> dict:
     """
-    Wait until a container/compose project exits or is healthy, a service/stack converges, a node is ready, a tag lands.
+    Wait until a container/compose project exits or is healthy, a service/stack converges, a node/registry tag is ready.
 
     The one wait tool: action tools return once their work is started, and this waits for the result. For
     a status read without waiting use `container_inspect`, `service_ps` or `compose_ps`; to follow changes
@@ -833,6 +834,15 @@ def system_wait(  # noqa: DOC101,DOC103,DOC501,DOC503
     )
     if until == "log-match" and not pattern:
         raise ToolInputError("system_wait(until='log-match') needs `pattern`")
+    # There is no ceiling on how long a caller may wait, but a socket timeout cannot hold NaN, infinity or
+    # anything past threading.TIMEOUT_MAX (about 292 years): the container stop conditions would fail with a
+    # builtin OverflowError, and a NaN deadline never passes, so the poll would never end.
+    for label, value in (("timeout_seconds", timeout_seconds), ("poll_interval", poll_interval)):
+        if value is not None and not (math.isfinite(value) and value <= threading.TIMEOUT_MAX):
+            raise ToolInputError(
+                f"system_wait {label} must be a finite number of seconds, at most {threading.TIMEOUT_MAX:.0f}; "
+                f"got {value!r}."
+            )
     interval = poll_interval if poll_interval is not None else _WAIT_DEFAULT_POLL.get(kind, 2.0)
     if kind == "container":
         from docker_mcp.tools.containers import _wait_container

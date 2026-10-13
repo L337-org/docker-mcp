@@ -415,6 +415,15 @@ def test_wait_service_running_with_no_global_task_times_out_unmet():
     assert (result["met"], result["timed_out"]) == (False, True)
 
 
+def test_wait_service_running_replicas_overrides_the_hold_on_a_global_service():
+    # The caller named the count, so a global service with no tasks yet is judged against it, not held.
+    with _patch() as mock_client, patch("docker_mcp.tools.services.time.sleep") as sleep:
+        mock_client.return_value.services.get.return_value = _task_service({"Global": {}}, [])
+        result = wait_service("agent", until="running", replicas=0, timeout_seconds=5)
+    assert (result["met"], result["desired_tasks"]) == (True, 0)
+    sleep.assert_not_called()
+
+
 def test_wait_service_running_a_replicated_service_scaled_to_zero_is_met():
     with _patch() as mock_client, patch("docker_mcp.tools.services.time.sleep") as sleep:
         mock_client.return_value.services.get.return_value = _task_service({"Replicated": {"Replicas": 0}}, [])
@@ -502,6 +511,18 @@ def test_wait_service_update_converged_polls_through_updating():
     assert result["met"] is True
     assert result["update_state"] == "completed"
     sleep.assert_called_once()
+
+
+@pytest.mark.parametrize("state", ["paused", "rollback_paused"])
+def test_wait_service_update_converged_gives_up_at_once_on_a_paused_update(state):
+    # A paused update stays paused until someone acts, so polling to the timeout only delays the answer;
+    # the stack wait already answers the same situation this way.
+    svc = _task_service({"Replicated": {"Replicas": 1}}, [], update_status={"State": state})
+    with _patch() as mock_client, patch("docker_mcp.tools.services.time.sleep") as sleep:
+        mock_client.return_value.services.get.return_value = svc
+        result = wait_service("web", until="update-converged", timeout_seconds=1)
+    assert (result["met"], result["timed_out"], result["update_state"]) == (False, False, state)
+    sleep.assert_not_called()
 
 
 def test_wait_service_update_converged_rollback_completed_is_terminal():

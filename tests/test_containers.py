@@ -66,6 +66,19 @@ def test_run_container_detached():
     container.reload.assert_called_once_with()
 
 
+def test_container_run_reports_a_container_auto_removed_before_it_was_reread():
+    # It ran and exited before the re-read; raising NotFound would tell the agent it failed.
+    import docker.errors
+
+    container = MagicMock()
+    container.attrs = {"Id": "abc", "State": {"Status": "created"}}
+    container.reload.side_effect = docker.errors.NotFound("No such container: abc")
+    with _patch() as mock_client:
+        mock_client.return_value.containers.run.return_value = container
+        result = container_run("alpine", command="true", auto_remove=True)
+    assert result == {"Id": "abc", "State": {"Status": "created"}, "removed_on_exit": True}
+
+
 @pytest.mark.parametrize("key", ["detach", "remove"])
 def test_container_run_refuses_the_blocking_options_through_extra_kwargs(key):
     # Forwarded after the defaults, either would bring the unbounded blocking run back.
