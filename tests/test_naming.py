@@ -129,8 +129,6 @@ _ECHO_EXCEPTIONS = {
     ("network_connect", "container"): "which of two ids is the container",
     ("network_connect", "links"): "deprecated",
     ("network_disconnect", "container"): "which of two ids is the container",
-    ("network_list", "names"): "exact match, unlike the Engine's prefix filters",
-    ("network_list", "ids"): "exact match, unlike the Engine's prefix filters",
     ("registry_image_config", "reference"): "a tag or a digest",
     ("registry_manifest", "reference"): "a tag or a digest",
     ("system_login", "password"): "a token is accepted",
@@ -166,10 +164,14 @@ def test_no_args_entry_only_echoes_its_parameter_name():
     )
 
 
-def test_every_echo_exception_is_still_a_documented_parameter():
-    # An exception for a line since reworded or removed would quietly widen what the check lets through.
-    documented = {(name, param) for name, func in _tool_functions() for param, _ in _documented_params(func)}
-    assert not set(_ECHO_EXCEPTIONS) - documented, sorted(set(_ECHO_EXCEPTIONS) - documented)
+def test_every_echo_exception_still_names_an_entry_the_check_would_flag():
+    # An exception for a line since removed, or reworded so it no longer echoes, would quietly let a later
+    # regression of that line through. Each must still be documented and still be flagged.
+    documented = {(name, param): desc for name, func in _tool_functions() for param, desc in _documented_params(func)}
+    stale = sorted(
+        key for key in _ECHO_EXCEPTIONS if key not in documented or not _echoes_its_name(key[1], documented[key])
+    )
+    assert not stale, f"these exceptions no longer match an echoing entry; remove them: {stale}"
 
 
 def test_the_echo_check_flags_an_echo_and_passes_a_line_with_meaning():

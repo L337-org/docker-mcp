@@ -114,6 +114,7 @@ def container_run(  # noqa: DOC101,DOC103,DOC501,DOC503
             code: leave it off when either is wanted, and call `container_remove` afterwards
         privileged: Give extended privileges to the container
         mem_limit: Memory limit: bytes as an int, or a units string ("100000b", "1000k", "128m", "1g")
+        cpu_count: Usable CPUs, on a Windows daemon only
         extra_kwargs: Additional keyword arguments forwarded to ContainerCollection.run (call
             `docs_lookup(section="containers")` for the full accepted set)
 
