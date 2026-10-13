@@ -31,7 +31,7 @@ We have no commercial interest in either. Both are MIT-licensed and free.
 | | MCP server | `l337-docker` skill |
 |---|---|---|
 | **Agent needs shell access** | **No** - calls typed tools; can run with no Bash tool at all | **Yes** - it is Bash all the way down |
-| **Needs a local `docker` binary** | No for SDK-backed domains (talks to the socket/TCP/SSH). Compose/buildx/scout and `stack_deploy` need the CLI, or an `ssh://` host to run it on | **Yes**, always |
+| **Needs a local `docker` binary** | No for SDK-backed domains (talks to the socket/TCP/SSH). Compose/buildx/scout and `stack_deploy` need the CLI, or an `ssh://` host to run it on; the `context_*` tools always need a local one | **Yes**, always |
 | **Other prerequisites** | Python ≥3.14 + uv, or a container runtime | None |
 | **Works with** | Any MCP client: Claude Code, Claude Desktop, Cursor, Zed, Continue, ... | Claude Code, claude.ai and GitHub Copilot; **no other MCP client loads them** |
 | **Ships executable code** | Yes - a Python package you run | **No** - markdown only |
