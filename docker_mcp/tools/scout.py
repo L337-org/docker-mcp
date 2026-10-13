@@ -219,7 +219,7 @@ def scout_recommendations(  # noqa: DOC101,DOC103
         only_refresh: Only show "refresh" recommendations (same major/minor)
         only_update: Only show "update" recommendations (newer minor/major)
         tag: Restrict to suggestions matching this tag pattern
-        platform: Platform of the image to analyze
+        platform: Which platform of a multi-platform image to analyse, e.g. "linux/arm64"
 
     Returns:
         dict: {"result": <rendered text>, "raw": <CliResult dict>}
@@ -270,7 +270,7 @@ def scout_compare(  # noqa: DOC101,DOC103,DOC501,DOC503
         only_severity: Filter to these severities (omit for all)
         ignore_unchanged: Exclude unchanged packages from the diff
         format: Output format; only "json" (the default) is parsed into `result`
-        platform: Platform of the image to analyze
+        platform: Which platform of a multi-platform image to analyse, e.g. "linux/arm64"
 
     Returns:
         dict: {"format": <format>, "result": <parsed-json-or-raw-text>, "raw": <CliResult dict>}
@@ -316,7 +316,7 @@ def scout_sbom(  # noqa: DOC101,DOC103
     Args:
         format: "spdx" (default, SPDX JSON), "cyclonedx" (CycloneDX JSON), "json" (Scout's native JSON), or "list"
             (plain-text package list)
-        platform: Platform of the image to analyze
+        platform: Which platform of a multi-platform image to analyse, e.g. "linux/arm64"
 
     Returns:
         dict: {"format", "result", "raw": <CliResult dict>}. `result` is a parsed dict when `format` is

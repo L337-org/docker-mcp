@@ -138,7 +138,6 @@ def plugin_enable(name: str, timeout_seconds: int = 0, host: str | None = None) 
     0 means wait indefinitely.
 
     Args:
-        name: The plugin name to enable
         timeout_seconds: Seconds to wait for the plugin to become healthy (0 = no timeout)
 
     Returns:
@@ -187,7 +186,6 @@ def plugin_upgrade(  # noqa: DOC101,DOC103,DOC501,DOC503
     plugin persist across the upgrade.
 
     Args:
-        name: The plugin name to upgrade
         remote: Reference to upgrade to, e.g. "vieux/sshfs:next" (default: same as name)
         dry_run: Return the privileges the upgrade would grant and change nothing
 

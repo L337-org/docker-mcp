@@ -103,25 +103,17 @@ def container_run(  # noqa: DOC101,DOC103,DOC501,DOC503
     are stamped with provenance labels.
 
     Args:
-        command: The command to run in the container
-        name: Name to assign to the container
         environment: Environment variables, as `{"KEY": "value"}` or a list of "KEY=value" strings
         ports: Port mappings, e.g. {'2222/tcp': 3333}
         volumes: Volumes to mount, as `{"/host/path": {"bind": "/in/container", "mode": "rw"}}`
             or a list of "host:container:mode" strings
-        network: Name of the network to attach
-        hostname: Hostname for the container
         user: Username or UID to run as
-        working_dir: Working directory inside the container
-        entrypoint: Entrypoint to override the image default
         restart_policy: Restart policy, e.g. {'Name': 'on-failure', 'MaximumRetryCount': 3}
         labels: Labels to set on the container
         auto_remove: Have the daemon delete the container when it exits, which also deletes its logs and exit
             code: leave it off when either is wanted, and call `container_remove` afterwards
         privileged: Give extended privileges to the container
-        tty: Allocate a pseudo-TTY
         mem_limit: Memory limit: bytes as an int, or a units string ("100000b", "1000k", "128m", "1g")
-        cpu_count: Number of CPUs
         extra_kwargs: Additional keyword arguments forwarded to ContainerCollection.run (call
             `docs_lookup(section="containers")` for the full accepted set)
 
@@ -223,9 +215,6 @@ def container_inspect(id_or_name: str, host: str | None = None) -> dict:  # noqa
     containers use `container_list` instead (same payload per container by default; abridged
     with sparse=True). For just logs or stats use `container_logs` / `container_stats`.
 
-    Args:
-        id_or_name: Container id (full or short) or name
-
     Returns:
         dict: Full container inspect attrs (equivalent to `docker inspect`)
     """
@@ -326,9 +315,6 @@ def container_start(id_or_name: str, host: str | None = None) -> dict:  # noqa: 
     To create and start a new container in one step use `container_run` instead. Calling on
     an already-running container has no effect (the daemon returns 304 and no error is
     raised). To stop then start a running container use `container_restart`.
-
-    Args:
-        id_or_name: Container id (full or short) or name
 
     Returns:
         dict: The container's full inspect payload after starting; for an `auto_remove` container already
@@ -469,7 +455,7 @@ def container_remove(  # noqa: DOC101,DOC103
 
     Args:
         volumes: Also remove anonymous volumes (the CLI's `--volumes`); named volumes persist
-        link: Remove the specified link
+        link: Remove the legacy link named `id_or_name`, not the container
         force: Kill a running container before removing it (default False: running is an error)
 
     Returns:
@@ -799,9 +785,7 @@ def container_exec(  # noqa: DOC101,DOC103,DOC501,DOC503
 
     Args:
         cmd: Command to execute (prefer exec-form argv, no shell, when any element is agent-controlled)
-        tty: Allocate a pseudo-TTY
         privileged: Run with extended privileges
-        user: User to run the command as
         environment: Environment variables, as `{"KEY": "value"}` or a list of "KEY=value" strings
         workdir: Working directory inside the container
         demux: Return stdout and stderr separately
@@ -906,11 +890,9 @@ def container_commit(  # noqa: DOC101,DOC103
     snapshot, e.g. `["CMD [\"python\", \"app.py\"]", "ENV FOO=bar"]`.
 
     Args:
-        id_or_name: Container id or name to snapshot
         repository: Repository name for the new image, e.g. "myorg/myimage"
         tag: Tag for the new image (default: "latest")
         message: Commit message stored in the image metadata
-        author: Author string stored in the image metadata
         pause: Pause the container during commit for consistency
         changes: Dockerfile instructions (CMD, ENV, EXPOSE, etc.) to apply to the image
         conf: Additional image configuration overrides as a dict
@@ -983,7 +965,6 @@ def container_update(id_or_name: str, updates: dict, host: str | None = None) ->
     `container_run`).
 
     Args:
-        id_or_name: Container id or name to update
         updates: Resource fields to update; see description for valid keys
 
     Returns:

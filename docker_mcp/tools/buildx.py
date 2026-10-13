@@ -375,8 +375,7 @@ def buildx_build(  # noqa: DOC101,DOC103,DOC501,DOC503
         no_cache_filter: Stage names to exclude from caching
         pull: Always attempt to pull a newer version of each base image
         cache_from: Cache import specs, e.g. ["type=registry,ref=user/img:cache"]
-        cache_to: Cache export specs
-        builder: Override the active builder
+        cache_to: Cache export specs, e.g. ["type=registry,ref=user/img:cache,mode=max"]
         sbom: Shorthand for `--attest=type=sbom`; pass "true" or a config string
         provenance: Shorthand for `--attest=type=provenance`; pass "true", "false", or a config string
         attest: Custom attestation specs (repeatable)
@@ -384,7 +383,6 @@ def buildx_build(  # noqa: DOC101,DOC103,DOC501,DOC503
             NOT expanded (by this tool or the CLI) - use an absolute path.
         ssh: SSH agent socket/key specs (e.g. ["default"], using $SSH_AUTH_SOCK). Refused when the build has to run on a
             remote host: the socket read would be that host's.
-        timeout_seconds: Subprocess timeout (default 1800s)
 
     Returns:
         dict: {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
@@ -573,14 +571,11 @@ def buildx_bake(  # noqa: DOC101,DOC103
         targets: Bake targets to build (default: the `default` group)
         files: Bake file paths (`-f`, repeatable)
         set_overrides: Per-target overrides, e.g. ["app.platform=linux/amd64"]
-        push: Push results to the registry
         load: Load results into the local image store
         no_cache: Do not use cache when building
         pull: Always pull a newer base image
-        builder: Override the active builder
         cwd: Working directory containing the bake file (defaults to the server's cwd; copied to the target host if no
             local plugin)
-        timeout_seconds: Subprocess timeout (default 1800s)
 
     Returns:
         dict: {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
@@ -640,7 +635,6 @@ def buildx_imagetools_inspect(  # noqa: DOC101,DOC103,DOC501,DOC503
         image: Image reference, e.g. "alpine:3.19" or "ghcr.io/org/repo@sha256:..."
         raw: Return the raw manifest bytes (a JSON document) instead of the human-rendered tree
         format: Go template format string (mutually exclusive with `raw`)
-        builder: Override the active builder
 
     Returns:
         dict: {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}. With `raw=True` or
@@ -694,8 +688,6 @@ def buildx_imagetools_create(  # noqa: DOC101,DOC103,DOC501,DOC503
         platforms: Filter source platforms when combining
         descriptor_files: Files to read source descriptors from, instead of refs (copied to the target host if no local
             plugin)
-        builder: Override the active builder
-        timeout_seconds: Subprocess timeout (default 600s)
 
     Returns:
         dict: {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
@@ -851,9 +843,6 @@ def buildx_du(builder: str | None = None, host: str | None = None) -> list:  # n
     driver keeps its own cache, which only this tool reports.
     Raises RemoteFailureError if the CLI call fails.
 
-    Args:
-        builder: Override the active builder
-
     Returns:
         list: One dict per cache record (parsed from `--format '{{json .}}'`)
     """
@@ -894,8 +883,6 @@ def buildx_prune(  # noqa: DOC101,DOC103,DOC501,DOC503
         reserved_space: Amount of disk to always keep (e.g. "10GB")
         max_used_space: Maximum disk space the cache may use (e.g. "20GB")
         min_free_space: Target amount of free disk after pruning (e.g. "5GB")
-        builder: Override the active builder
-        timeout_seconds: Subprocess timeout (default 600s)
 
     Returns:
         dict: {"returncode": int, "stdout": str, "stderr": str, "truncated": bool} through the CLI; through the Engine

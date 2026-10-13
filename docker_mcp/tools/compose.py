@@ -149,12 +149,10 @@ def compose_up(  # noqa: DOC101,DOC103
         project_dir: Dir with the compose file (default: server cwd, copied to the target host if no local plugin; paths
             verbatim, no shell expansion)
         files: Explicit compose file paths (repeatable, `-f`)
-        project_name: Compose project name override
         services: Specific services to bring up (default: all)
         build: Build images before starting
         pull: Pull strategy; omit to use each service's own `pull_policy`
         remove_orphans: Remove containers for services not in the compose file
-        timeout_seconds: Subprocess timeout (default 600s)
 
     Returns:
         dict: {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
@@ -193,10 +191,8 @@ def compose_down(  # noqa: DOC101,DOC103
     Args:
         project_dir: Dir with the compose file (default: server cwd; copied to the target host if no local plugin)
         files: Explicit compose file paths (repeatable, `-f`)
-        project_name: Compose project name override
         volumes: Also remove named volumes declared by the project (destructive)
         remove_orphans: Remove containers not declared in the compose file
-        timeout_seconds: Subprocess timeout (default 300s)
 
     Returns:
         dict: {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
@@ -229,7 +225,6 @@ def compose_ps(  # noqa: DOC101,DOC103
     Args:
         project_dir: Dir with the compose file (default: server cwd; copied to the target host if no local plugin)
         files: Explicit compose file paths (repeatable, `-f`)
-        project_name: Compose project name override
         services: Restrict output to these services
         all: Include stopped containers as well
 
@@ -281,7 +276,6 @@ def compose_logs(  # noqa: DOC101,DOC103
     Args:
         project_dir: Dir with the compose file (default: server cwd; copied to the target host if no local plugin)
         files: Explicit compose file paths (repeatable, `-f`)
-        project_name: Compose project name override
         services: Restrict to these services (default: all)
         tail: Lines per container, or the literal "all" (still capped at MAX_CLI_OUTPUT_BYTES)
         since: Show logs since this timestamp/duration (e.g. "10m", "2024-01-01T00:00:00")
@@ -324,7 +318,6 @@ def compose_config(  # noqa: DOC101,DOC103
     Args:
         project_dir: Dir with the compose file (default: server cwd; copied to the target host if no local plugin)
         files: Explicit compose file paths (repeatable, `-f`)
-        project_name: Compose project name override
         profiles: Profiles to activate before rendering
         services_only: List service names only (`--services`)
         format: Render as YAML (default) or JSON
@@ -372,11 +365,9 @@ def compose_build(  # noqa: DOC101,DOC103
     Args:
         project_dir: Dir with the compose file (default: server cwd; copied to the target host if no local plugin)
         files: Explicit compose file paths (repeatable, `-f`)
-        project_name: Compose project name override
         services: Specific services to build (default: all)
         pull: Always attempt to pull a newer base image
         no_cache: Do not use cache when building
-        timeout_seconds: Subprocess timeout (default 1800s)
 
     Returns:
         dict: {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
@@ -415,7 +406,6 @@ def compose_pull(  # noqa: DOC101,DOC103
     Args:
         project_dir: Dir with the compose file (default: server cwd; copied to the target host if no local plugin)
         files: Explicit compose file paths (repeatable, `-f`; overrides auto-discovery)
-        project_name: Override the compose project name
         services: Pull only these services; omit to pull all
         ignore_pull_failures: Continue if an individual image pull fails
         timeout_seconds: Subprocess timeout (default 1800s for large image pulls)
@@ -454,10 +444,8 @@ def compose_restart(  # noqa: DOC101,DOC103
     Args:
         project_dir: Dir with the compose file (default: server cwd; copied to the target host if no local plugin)
         files: Explicit compose file paths (repeatable, `-f`)
-        project_name: Override the compose project name
         services: Restart only these services; omit to restart all
         stop_timeout_seconds: Seconds to wait for graceful stop before SIGKILL
-        timeout_seconds: Subprocess timeout (default 300s)
 
     Returns:
         dict: {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
@@ -490,10 +478,8 @@ def compose_stop(  # noqa: DOC101,DOC103
     Args:
         project_dir: Dir with the compose file (default: server cwd; copied to the target host if no local plugin)
         files: Explicit compose file paths (repeatable, `-f`)
-        project_name: Compose project name override
         services: Specific services to stop (default: all)
         stop_timeout_seconds: Grace period before SIGKILL (passed as `--timeout`)
-        timeout_seconds: Subprocess timeout (default 300s)
 
     Returns:
         dict: {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
@@ -526,9 +512,7 @@ def compose_start(  # noqa: DOC101,DOC103
     Args:
         project_dir: Dir with the compose file (default: server cwd; copied to the target host if no local plugin)
         files: Explicit compose file paths (repeatable, `-f`)
-        project_name: Compose project name override
         services: Specific services to start (default: all)
-        timeout_seconds: Subprocess timeout (default 600s)
 
     Returns:
         dict: {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
@@ -571,13 +555,10 @@ def compose_run(  # noqa: DOC101,DOC103
         command: Command + args to run (exec-form; no shell unless you invoke one)
         project_dir: Dir with the compose file (default: server cwd; copied to the target host if no local plugin)
         files: Explicit compose file paths (repeatable, `-f`)
-        project_name: Compose project name override
         no_deps: Don't start linked services
         workdir: Working directory inside the container
         user: User to run as inside the container (uid or name)
         env: Environment variables to set inside the container
-        name: Container name
-        timeout_seconds: Subprocess timeout (default 600s)
 
     Returns:
         dict: {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
@@ -628,12 +609,10 @@ def compose_exec(  # noqa: DOC101,DOC103
         command: Argv to execute inside the container
         project_dir: Dir with the compose file (default: server cwd; copied to the target host if no local plugin)
         files: Explicit compose file paths (repeatable, `-f`)
-        project_name: Compose project name override
         index: Container index when the service has multiple replicas
         workdir: Working directory inside the container
         user: User to run as inside the container (uid or name)
         env: Environment variables to set for the exec session
-        timeout_seconds: Subprocess timeout (default 60s)
 
     Returns:
         dict: {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
@@ -671,7 +650,6 @@ def compose_images(  # noqa: DOC101,DOC103
     Args:
         project_dir: Dir with the compose file (default: server cwd; copied to the target host if no local plugin)
         files: Explicit compose file paths (repeatable, `-f`)
-        project_name: Compose project name override
         services: Restrict to these services (default: all)
 
     Returns:
@@ -719,7 +697,6 @@ def compose_port(  # noqa: DOC101,DOC103
         index: Container index when the service has multiple replicas
         project_dir: Dir with the compose file (default: server cwd; copied to the target host if no local plugin)
         files: Explicit compose file paths (repeatable, `-f`)
-        project_name: Compose project name override
 
     Returns:
         dict: {"service", "private_port", "protocol", "published": "host:port"|None, "host": str|None, "port": int|None,
@@ -915,7 +892,6 @@ def compose_top(  # noqa: DOC101,DOC103
         services: Restrict to these services (default: all)
         project_dir: Dir with the compose file (default: server cwd; copied to the target host if no local plugin)
         files: Explicit compose file paths (repeatable, `-f`)
-        project_name: Compose project name override
 
     Returns:
         dict: {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
@@ -1088,8 +1064,6 @@ def compose_cp(  # noqa: DOC101,DOC103
         all_containers: Copy to/from all containers of the service (`--all`)
         project_dir: Dir with the compose file (default: server cwd; copied to the target host if no local plugin)
         files: Explicit compose file paths (repeatable, `-f`)
-        project_name: Compose project name override
-        timeout_seconds: Subprocess timeout (default 300s)
 
     Returns:
         dict: {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
@@ -1142,7 +1116,6 @@ def compose_kill(  # noqa: DOC101,DOC103
         remove_orphans: Also remove containers for services not in the compose file
         project_dir: Dir with the compose file (default: server cwd; copied to the target host if no local plugin)
         files: Explicit compose file paths (repeatable, `-f`)
-        project_name: Compose project name override
 
     Returns:
         dict: {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
@@ -1178,7 +1151,6 @@ def compose_pause(  # noqa: DOC101,DOC103
         services: Restrict to these services (default: all)
         project_dir: Dir with the compose file (default: server cwd; copied to the target host if no local plugin)
         files: Explicit compose file paths (repeatable, `-f`)
-        project_name: Compose project name override
 
     Returns:
         dict: {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
@@ -1209,7 +1181,6 @@ def compose_unpause(  # noqa: DOC101,DOC103
         services: Restrict to these services (default: all)
         project_dir: Dir with the compose file (default: server cwd; copied to the target host if no local plugin)
         files: Explicit compose file paths (repeatable, `-f`)
-        project_name: Compose project name override
 
     Returns:
         dict: {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}

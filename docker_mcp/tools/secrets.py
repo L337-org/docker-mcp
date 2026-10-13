@@ -84,9 +84,6 @@ def secret_remove(id_or_name: str, host: str | None = None) -> bool:  # noqa: DO
     services that mount the secret before removing it (service filters do not support
     filtering by secret reference).
 
-    Args:
-        id_or_name: The secret id or name to remove
-
     Returns:
         bool: True after removal
     """

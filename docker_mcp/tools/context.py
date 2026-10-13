@@ -117,7 +117,7 @@ def context_create(
 
 
 @tool()
-def context_use(name: str) -> dict:
+def context_use(name: str) -> dict:  # noqa: DOC101,DOC103
     """
     Set the active Docker context for the CLI on the host running this MCP server.
 
@@ -128,9 +128,6 @@ def context_use(name: str) -> dict:
     Does not raise on a non-zero CLI exit (a missing `docker` binary or a timeout still raises) - inspect
     `returncode`/`stderr` in the result.
 
-    Args:
-        name: Existing context name to set as default
-
     Returns:
         dict: {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
     """
@@ -138,7 +135,7 @@ def context_use(name: str) -> dict:
 
 
 @tool()
-def context_remove(name: str, force: bool = False) -> dict:
+def context_remove(name: str, force: bool = False) -> dict:  # noqa: DOC101,DOC103
     """
     Remove a Docker CLI context.
 
@@ -148,7 +145,6 @@ def context_remove(name: str, force: bool = False) -> dict:
     `returncode`/`stderr` in the result.
 
     Args:
-        name: Context name to remove
         force: Force removal even if the context is the current one
 
     Returns:

@@ -162,7 +162,7 @@ def image_registry_data(  # noqa: DOC101,DOC103
 
     Args:
         repository: Image reference
-        auth_config: Registry authentication config
+        auth_config: Registry credentials as {"username", "password"}, overriding any the daemon has cached
 
     Returns:
         dict: The registry data document {"Descriptor", "Platforms"} - the OCI descriptor and
@@ -248,7 +248,7 @@ def image_push(  # noqa: DOC101,DOC103
     `~/.docker/config.json`, and leave `auth_config` unset.
 
     Args:
-        auth_config: Registry authentication config
+        auth_config: Registry credentials as {"username", "password"}, overriding any the daemon has cached
 
     Returns:
         str: Push output as a string

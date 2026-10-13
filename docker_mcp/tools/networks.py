@@ -39,7 +39,6 @@ def network_create(  # noqa: DOC101,DOC103
         ipam: IPAM configuration as a dict (engine shape: {"Driver", "Config": [{"Subnet", "Gateway", ...}]})
         internal: Restrict external access
         labels: Labels to set on the network
-        enable_ipv6: Enable IPv6 networking
         attachable: Allow standalone containers to attach (swarm overlay networks)
         scope: Network scope; the driver picks a sensible default when omitted
         ingress: Make this an ingress network for swarm routing-mesh

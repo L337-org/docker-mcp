@@ -113,7 +113,6 @@ def stack_deploy(  # noqa: DOC101,DOC103,DOC501,DOC503
         resolve_image: Image-digest resolution; omit for the CLI default ("always")
         cwd: Working directory for resolving relative Compose paths (defaults to the server's cwd; copied to the target
             host if no local docker CLI)
-        timeout_seconds: Subprocess timeout (default 1800s)
 
     Returns:
         dict: {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
