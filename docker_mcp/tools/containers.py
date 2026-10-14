@@ -127,8 +127,9 @@ def container_run(  # noqa: DOC101,DOC103,DOC501,DOC503
     Returns:
         dict: Without `wait_seconds`, the started container's full inspect payload; an `auto_remove` container
             already gone returns the payload from before the start, with `removed_on_exit: true`. With it,
-            {"id", "name", "exit_code", "output", "timed_out", "truncated", "removed"}: output is stdout and stderr
-            combined, cut at 32 MiB with truncated=true; exit_code is null when timed_out is true
+            {"id", "name", "exit_code", "stdout", "stderr", "timed_out", "truncated", "removed"}: each stream is cut
+            at 32 MiB, with truncated=true if either was (with tty=True everything is in stdout); exit_code is null
+            when timed_out is true
     """
     # Checked before anything runs, so a bad bound never leaves a started container behind.
     if wait_seconds is not None and not (math.isfinite(wait_seconds) and wait_seconds > 0):
@@ -206,10 +207,13 @@ def _run_to_completion(container: Any, wait_seconds: float, remove_after: bool, 
         host: the host label to target, or None for the default
 
     Returns:
-        dict: {"id", "name", "exit_code", "output", "timed_out", "truncated", "removed"}
+        dict: {"id", "name", "exit_code", "stdout", "stderr", "timed_out", "truncated", "removed"}
     """
     waited = _wait_container(container.id, "not-running", wait_seconds, poll_interval=1.0, host=host)
-    output, truncated = _read_capped_output(container)
+    # One read per stream: Docker logs the two through separate pipes, so a combined read can return lines
+    # from different streams out of order and gives no way to tell which stream a line came from.
+    stdout, stdout_cut = _read_capped_output(container, stdout=True, stderr=False)
+    stderr, stderr_cut = _read_capped_output(container, stdout=False, stderr=True)
     removed = False
     if remove_after and not waited["timed_out"]:
         # v=True matches `docker run --rm`, which also removes the container's anonymous volumes.
@@ -219,14 +223,15 @@ def _run_to_completion(container: Any, wait_seconds: float, remove_after: bool, 
         "id": container.id,
         "name": container.name,
         "exit_code": None if waited["timed_out"] else waited["status_code"],
-        "output": output,
+        "stdout": stdout,
+        "stderr": stderr,
         "timed_out": waited["timed_out"],
-        "truncated": truncated,
+        "truncated": stdout_cut or stderr_cut,
         "removed": removed,
     }
 
 
-def _read_capped_output(container: Any) -> tuple[str, bool]:
+def _read_capped_output(container: Any, *, stdout: bool, stderr: bool) -> tuple[str, bool]:
     """Read a container's logs so far, keeping at most MAX_PAYLOAD_BYTES and saying whether it cut them.
 
     Unlike `_read_bounded_container_logs`, which refuses an over-cap read, this keeps the first part: a
@@ -235,11 +240,13 @@ def _read_capped_output(container: Any) -> tuple[str, bool]:
 
     Args:
         container: the container to read from
+        stdout: include the container's stdout
+        stderr: include the container's stderr
 
     Returns:
         tuple[str, bool]: the decoded output, and whether it was cut at the cap
     """
-    stream = container.logs(stdout=True, stderr=True, stream=True, follow=False)
+    stream = container.logs(stdout=stdout, stderr=stderr, stream=True, follow=False)
     kept = bytearray()
     truncated = False
     try:
@@ -853,9 +860,10 @@ def container_exec(  # noqa: DOC101,DOC103,DOC501,DOC503
     Run a command inside a running container and return its output (for a compose service, prefer `compose_exec`).
 
     Waits for the command, bounded by `timeout_seconds` (default 120). A command still running then is
-    reported with `timed_out: true` and whatever output arrived. Output past `max_bytes` (default 32 MiB)
-    is cut off with `truncated: true`, and the call returns at once rather than waiting for the command.
-    A command still running then has a null `exit_code` and keeps running in the container, because the
+    reported with `timed_out: true` and whatever output arrived. Each stream past `max_bytes` (default
+    32 MiB) is cut off with `truncated: true`; once every stream being kept is cut, the call returns at once
+    rather than waiting for the command. A command still running then has a null `exit_code` and keeps
+    running in the container, because the
     Engine has no way to stop an exec: `container_top` shows it, and another `container_exec` can kill it. For a
     long-running or background job, start a container with `container_run` and wait with `system_wait`.
 
@@ -868,13 +876,13 @@ def container_exec(  # noqa: DOC101,DOC103,DOC501,DOC503
         privileged: Run with extended privileges
         environment: Environment variables, as `{"KEY": "value"}` or a list of "KEY=value" strings
         workdir: Working directory inside the container
-        demux: Return stdout and stderr separately
+        demux: Return `stdout` and `stderr` as separate keys instead of one combined `output`
         timeout_seconds: Wall-clock seconds to wait for the command before returning with timed_out=true
-        max_bytes: Most bytes of output to keep, stdout and stderr together
+        max_bytes: Most bytes to keep of each stream (stdout and stderr each, with `demux`)
 
     Returns:
-        dict: {"exit_code", "output", "timed_out", "truncated", "exec_id"}; output is combined stdout+stderr, or a
-            [stdout, stderr] pair with demux=True; exit_code is null when the command had not finished
+        dict: {"exit_code", "output", "timed_out", "truncated", "exec_id"}, with "stdout" and "stderr" in place of
+            "output" when demux=True; exit_code is null when the command had not finished
     """
     # Thread.join rejects NaN and anything past threading.TIMEOUT_MAX, and it runs only once the command has
     # started, so a bound it would refuse is refused here instead, before anything runs.
@@ -906,20 +914,26 @@ def container_exec(  # noqa: DOC101,DOC103,DOC501,DOC503
     buffers = (bytearray(), bytearray())
     lock = threading.Lock()
     state: dict[str, Any] = {"truncated": False, "error": None}
+    # Each stream is capped on its own, so a command that floods stdout cannot crowd out the stderr that says
+    # why it failed. Without demux everything arrives as one stream in the first buffer.
+    cut = [False, not demux]
 
     def read() -> None:
         try:
             for chunk in stream:
-                parts = zip(buffers, chunk, strict=True) if demux else ((buffers[0], chunk),)
+                parts = enumerate(chunk) if demux else ((0, chunk),)
                 with lock:
-                    for buffer, data in parts:
-                        if not data:
+                    for index, data in parts:
+                        if not data or cut[index]:
                             continue
-                        room = max_bytes - len(buffers[0]) - len(buffers[1])
-                        buffer += data[: max(room, 0)]
+                        room = max_bytes - len(buffers[index])
+                        buffers[index].extend(data[:room])
                         if len(data) > room:
                             state["truncated"] = True
-                            return
+                            cut[index] = True
+                    # Nothing more would be kept, so stop rather than wait for the command to finish.
+                    if all(cut):
+                        return
         except Exception as exc:  # noqa: BLE001 - handed to the caller below, unless the close caused it
             state["error"] = exc
 
@@ -940,7 +954,7 @@ def container_exec(  # noqa: DOC101,DOC103,DOC501,DOC503
     exit_code = None if timed_out else client.api.exec_inspect(exec_id).get("ExitCode")
     return {
         "exit_code": exit_code,
-        "output": [out, err] if demux else out,
+        **({"stdout": out, "stderr": err} if demux else {"output": out}),
         "timed_out": timed_out,
         "truncated": state["truncated"],
         "exec_id": exec_id,

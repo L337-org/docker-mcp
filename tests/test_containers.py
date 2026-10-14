@@ -136,12 +136,12 @@ def test_container_run_refuses_the_blocking_options_through_extra_kwargs(key):
     mock_client.return_value.containers.run.assert_not_called()
 
 
-def _one_shot_container(logs=(b"hello\n",), wait=None, wait_error=None):
+def _one_shot_container(logs=(b"hello\n",), errors=(), wait=None, wait_error=None):
     container = MagicMock()
     container.id = "abc123"
     container.name = "job"
     container.attrs = {"Id": "abc123", "State": {"Running": True}}
-    container.logs.return_value = iter(logs)
+    container.logs.side_effect = lambda stdout, stderr, **_: iter(logs if stdout else errors)
     if wait_error is not None:
         container.wait.side_effect = wait_error
     else:
@@ -158,13 +158,14 @@ def _run_one_shot(container, **kwargs):
 
 
 def test_container_run_wait_returns_exit_code_and_output_in_one_call():
-    container = _one_shot_container(logs=(b"hello\n", b"done\n"), wait={"StatusCode": 3})
+    container = _one_shot_container(logs=(b"hello\n", b"done\n"), errors=(b"warn\n",), wait={"StatusCode": 3})
     result, run_kwargs = _run_one_shot(container, wait_seconds=30)
     assert result == {
         "id": "abc123",
         "name": "job",
         "exit_code": 3,
-        "output": "hello\ndone\n",
+        "stdout": "hello\ndone\n",
+        "stderr": "warn\n",
         "timed_out": False,
         "truncated": False,
         "removed": False,
@@ -178,15 +179,15 @@ def test_container_run_wait_returns_exit_code_and_output_in_one_call():
 def test_container_run_wait_with_auto_remove_removes_only_after_reading_the_output():
     container = _one_shot_container()
     order = []
-    container.logs.side_effect = lambda **_: order.append("logs") or iter([b"hello\n"])
+    container.logs.side_effect = lambda stdout, **_: order.append("logs") or iter([b"hello\n" if stdout else b""])
     container.remove.side_effect = lambda **_: order.append("remove")
     result, run_kwargs = _run_one_shot(container, wait_seconds=30, auto_remove=True)
     # The daemon's auto-remove would delete the logs and exit code at exit, racing the read.
     assert "auto_remove" not in run_kwargs
-    assert order == ["logs", "remove"]
+    assert order == ["logs", "logs", "remove"]
     container.remove.assert_called_once_with(v=True)
     assert result["removed"] is True
-    assert result["output"] == "hello\n"
+    assert result["stdout"] == "hello\n"
 
 
 def test_container_run_wait_takes_auto_remove_from_extra_kwargs_too():
@@ -201,7 +202,7 @@ def test_container_run_wait_timeout_leaves_the_container_running_and_says_so():
     result, _ = _run_one_shot(container, wait_seconds=5, auto_remove=True)
     assert result["timed_out"] is True
     assert result["exit_code"] is None
-    assert result["output"] == "partial\n"
+    assert result["stdout"] == "partial\n"
     # Removing a container that is still running would kill the job the caller is waiting on.
     assert result["removed"] is False
     container.remove.assert_not_called()
@@ -211,14 +212,23 @@ def test_container_run_wait_cuts_output_at_the_cap_and_says_so():
     container = _one_shot_container(logs=(b"a" * (MAX_PAYLOAD_BYTES - 1), b"bc", b"never read"))
     result, _ = _run_one_shot(container, wait_seconds=30)
     assert result["truncated"] is True
-    assert result["output"] == "a" * (MAX_PAYLOAD_BYTES - 1) + "b"
+    assert result["stdout"] == "a" * (MAX_PAYLOAD_BYTES - 1) + "b"
+
+
+def test_container_run_wait_caps_each_stream_on_its_own():
+    # A flood on stdout must not crowd out the stderr that says why the command failed.
+    container = _one_shot_container(logs=(b"a" * (MAX_PAYLOAD_BYTES + 10),), errors=(b"fatal: disk full\n",))
+    result, _ = _run_one_shot(container, wait_seconds=30)
+    assert len(result["stdout"]) == MAX_PAYLOAD_BYTES
+    assert result["stderr"] == "fatal: disk full\n"
+    assert result["truncated"] is True
 
 
 def test_container_run_wait_output_exactly_at_the_cap_is_not_truncated():
     container = _one_shot_container(logs=(b"a" * MAX_PAYLOAD_BYTES,))
     result, _ = _run_one_shot(container, wait_seconds=30)
     assert result["truncated"] is False
-    assert len(result["output"]) == MAX_PAYLOAD_BYTES
+    assert len(result["stdout"]) == MAX_PAYLOAD_BYTES
 
 
 @pytest.mark.parametrize("wait_seconds", [0, -1, float("nan"), float("inf")])
@@ -656,7 +666,8 @@ def test_container_exec_returns_the_output_and_exit_code():
 
 def test_container_exec_demux_returns_stdout_and_stderr_apart():
     result, _ = _exec(_ExecStream([(b"out\n", None), (None, b"err\n")]), demux=True)
-    assert result["output"] == ["out\n", "err\n"]
+    assert (result["stdout"], result["stderr"]) == ("out\n", "err\n")
+    assert "output" not in result
 
 
 def test_container_exec_cuts_output_at_max_bytes_and_says_so():
@@ -684,10 +695,35 @@ def test_container_exec_cap_boundary(chunks, output, truncated):
     assert (result["output"], result["truncated"]) == (output, truncated)
 
 
-def test_container_exec_caps_stdout_and_stderr_together():
-    result, _ = _exec(_ExecStream([(b"12345", None), (None, b"6789")]), demux=True, max_bytes=7)
-    assert result["output"] == ["12345", "67"]
-    assert result["truncated"] is True
+def test_container_exec_caps_stdout_and_stderr_each_on_their_own():
+    # A flood on stdout must not crowd out the stderr that says why the command failed.
+    result, _ = _exec(_ExecStream([(b"123456789", None), (None, b"fatal")]), demux=True, max_bytes=7)
+    assert (result["stdout"], result["stderr"], result["truncated"]) == ("1234567", "fatal", True)
+
+
+def test_container_exec_demux_keeps_reading_stderr_after_stdout_is_cut():
+    # With only stdout cut, the read carries on for stderr until the command ends.
+    stream = _ExecStream([(b"123456789", None), (b"more", None), (None, b"err")])
+    result, _ = _exec(stream, demux=True, max_bytes=4)
+    assert (result["stdout"], result["stderr"], result["truncated"], result["timed_out"]) == (
+        "1234",
+        "err",
+        True,
+        False,
+    )
+
+
+def test_container_exec_demux_returns_at_once_when_both_streams_are_cut():
+    stream = _ExecStream([(b"123456", None), (None, b"abcdef")], block=True)
+    started = time.monotonic()
+    result, _ = _exec(stream, inspect={"ExitCode": None}, demux=True, max_bytes=4, timeout_seconds=5)
+    assert time.monotonic() - started < 2
+    assert (result["stdout"], result["stderr"], result["truncated"], result["timed_out"]) == (
+        "1234",
+        "abcd",
+        True,
+        False,
+    )
 
 
 def test_container_exec_returns_at_its_timeout_with_what_arrived():

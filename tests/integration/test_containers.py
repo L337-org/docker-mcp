@@ -141,7 +141,7 @@ def test_a_one_shot_container_run_with_wait_seconds_needs_one_call():
     )
     try:
         assert (result["exit_code"], result["timed_out"], result["truncated"]) == (3, False, False)
-        assert sorted(result["output"].split()) == ["err", "out"]
+        assert (result["stdout"], result["stderr"]) == ("out\n", "err\n")
         assert result["removed"] is True
         assert not container_list(all=True, filters={"name": name})
     finally:
@@ -156,7 +156,7 @@ def test_a_one_shot_container_run_that_outlives_wait_seconds_is_left_running():
             "alpine:3", command=["sh", "-c", "echo started; sleep 300"], name=name, wait_seconds=2, auto_remove=True
         )
         assert (result["timed_out"], result["exit_code"], result["removed"]) == (True, None, False)
-        assert result["output"].strip() == "started"
+        assert result["stdout"].strip() == "started"
         assert container_list(filters={"name": name})[0]["State"]["Status"] == "running"
     finally:
         container_remove(name, force=True)
@@ -183,7 +183,7 @@ def test_container_exec_returns_output_and_exit_code(exec_target):
 
 def test_container_exec_demux_separates_stdout_and_stderr(exec_target):
     result = container_exec(exec_target, ["sh", "-c", "echo out; echo err >&2"], demux=True)
-    assert result["output"] == ["out\n", "err\n"]
+    assert (result["stdout"], result["stderr"]) == ("out\n", "err\n")
 
 
 def test_container_exec_returns_at_its_timeout_while_the_command_runs_on(exec_target):
