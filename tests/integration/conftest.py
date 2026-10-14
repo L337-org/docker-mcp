@@ -41,6 +41,7 @@ _ENVIRONMENTAL_SIGNALS = (
     "authentication required",
     "denied: requested access",
     "not logged in",
+    "log in with your docker id",  # docker scout without `docker login`
     "toomanyrequests",
     "rate limit",
     "429 too many requests",

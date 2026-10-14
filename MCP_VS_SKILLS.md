@@ -667,7 +667,7 @@ they are a fair sample of what "parse the CLI's output" costs in practice:
   accepted, so a wait that checks it straight after `update -d` cannot mistake the old tasks for a
   finished rollout.
 - Scout without `docker login` exits 1 asking the user to log in, even for a public image, rather
-  than returning thin results.
+  than returning thin results; `sbom` is the one subcommand that works anonymously.
 - `docker image rm -f` by id still refuses an image a **running** container uses ("cannot be
   forced"); by tag it only untags. `docker container prune` also takes containers that were
   created but never started.

@@ -2,9 +2,9 @@
 
 A CLI plugin. Confirm it exists first: `docker scout version`.
 
-**Scout needs `docker login`.** Without it, every subcommand exits 1 and prints "Log in with your
-Docker ID or email address to use docker scout" (Scout 1.25.0), even for a public image. Report
-that as "not logged in", never as a scan result. Check `~/.docker/config.json` for an auth entry
+**Scout needs `docker login`.** Without it, `cves`, `quickview`, `compare` and `recommendations`
+exit 1 and print "Log in with your Docker ID or email address to use docker scout" (Scout 1.25.0),
+even for a public image; only `sbom` works. Report that as "not logged in", never as a scan result. Check `~/.docker/config.json` for an auth entry
 first, and if the user has none, ask them to log in rather than trying to work around it.
 
 Scout analyses images from the local store or straight from a registry (`docker scout cves
