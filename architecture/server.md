@@ -107,9 +107,9 @@ Each file maps to one Docker SDK domain (or, for CLI-only and registry-only feat
 
 ### Waiting
 
-`system_wait` is the one wait tool, and action tools return once their work is started (AGENTS.md). Both rules
-came from the same defect: docker-py's blocking `run` waits for the container with no timeout, so an image that
-never exits hung the call for good.
+`system_wait` is the one wait tool, and action tools return once their work is started (AGENTS.md), so that no
+call can hang: docker-py's blocking `run` waits for the container with no timeout, and an image that never exits
+would hold the call for good.
 
 There are two exceptions, `container_exec` and `container_run(timeout_seconds=...)`, and they exist for one use
 case: running something quick and getting the answer straight back. Spread over separate calls, that is too heavy
