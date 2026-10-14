@@ -23,7 +23,7 @@ docker network create appnet
 docker network create --driver bridge --subnet 172.28.0.0/16 --gateway 172.28.0.1 appnet
 docker network create --internal backend                  # no outbound route
 docker network create --driver overlay --attachable appnet   # swarm overlay plain containers can join too
-docker network create --label l337-docker-skill.managed=true appnet
+docker network create --label l337-docker-skill.managed=true --label l337-docker-skill.created="$(date -u +%FT%TZ)" appnet
 
 docker network connect appnet <container>
 docker network connect --alias db appnet <container>      # extra DNS name on this network
@@ -72,7 +72,7 @@ Volumes are addressed by **name only** - there is no separate id, and no short-i
 
 ```bash
 docker volume create appdata
-docker volume create --label l337-docker-skill.managed=true appdata
+docker volume create --label l337-docker-skill.managed=true --label l337-docker-skill.created="$(date -u +%FT%TZ)" appdata
 docker volume create --driver local \
   --opt type=nfs --opt o=addr=10.0.0.1,rw --opt device=:/export/data nfsdata
 ```

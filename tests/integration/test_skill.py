@@ -322,13 +322,32 @@ def test_wait_node_takes_the_target_state_and_an_optional_availability():
 # --------------------------------------------------------------------------------------------
 
 
+def _hub_rate_limit_report() -> str:
+    """Docker Hub's rate-limit headers for this address, read with a HEAD, which Docker says costs no pull."""
+    probe = _run_shell(
+        "t=$(curl -s 'https://auth.docker.io/token?service=registry.docker.io"
+        "&scope=repository:ratelimitpreview/test:pull'"
+        ' | jq -r .token); curl -sI -H "Authorization: Bearer $t"'
+        " https://registry-1.docker.io/v2/ratelimitpreview/test/manifests/latest",
+        timeout=60,
+    )
+    return probe.stdout + probe.stderr
+
+
+def _skip_if_hub_is_the_cause(output: str) -> None:
+    """Skip, naming the cause, when a Hub recipe failed because Hub refused or could not be reached."""
+    if "FAIL: no token" in output:
+        pytest.skip(f"Docker Hub's token service is unreachable from here: {output.strip()}")
+    headers = _hub_rate_limit_report()
+    fail_unless_environmental(returncode=1, stdout=output, stderr=headers, what="image_config against Docker Hub")
+
+
 def test_image_config_follows_an_index_and_fails_cleanly_on_a_missing_tag():
     """A tag naming an index needs one more hop; a missing tag must stop with FAIL, not an empty digest."""
     snippet = _extract_shell_function(_REGISTRY_MD, "image_config")
     found = _run_shell(f"{snippet}\nimage_config library/alpine 3.20", timeout=120)
-    if "FAIL: no token" in found.stdout:
-        pytest.skip(f"Docker Hub's token service is unreachable from here: {found.stdout.strip()}")
-    assert found.returncode == 0, found.stdout + found.stderr
+    if found.returncode != 0:
+        _skip_if_hub_is_the_cause(found.stdout + found.stderr)
     assert '"cmd"' in found.stdout
     missing = _run_shell(f"{snippet}\nimage_config library/alpine no-such-tag-l337", timeout=120)
     assert missing.returncode == 1

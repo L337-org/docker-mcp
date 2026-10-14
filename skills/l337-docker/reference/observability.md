@@ -44,9 +44,12 @@ imminent OOM kill and worth acting on from a single sample.
   Collapsing "timed out" into either of the others is the failure that produces false success
   reports. The loops below print `OK`, `FAIL` or `NOT MET`, or `TIMEOUT`, and return 0 only on `OK`
   (`wait_service` adds a fourth, `ROLLED BACK`).
-- **Keep the timeout under the host's limit on one shell command** (often 120 s). A loop the host
-  kills never prints `TIMEOUT`, so a timeout becomes indistinguishable from a hang. For a longer
-  wait, run the loop several times.
+- **Keep the timeout under the host's limit on one shell command.** A loop the host kills never
+  prints `TIMEOUT`, so a timeout becomes indistinguishable from a hang. The loops default to 110 s,
+  chosen to sit under a common two-minute limit; for a longer wait, run the loop several times.
+- **Point a loop at a daemon with `DOCKER_CONTEXT=<name>`** before the call -
+  `DOCKER_CONTEXT=prod wait_service web` - since the loops call `docker` without `--context`. It
+  applies to that call only, in bash and zsh. `DOCKER_HOST`, if set, overrides it.
 - **Poll every 2-5s**, not every 0.1s. Each poll is a daemon round trip.
 - Prefer `docker events` (below) over polling when you are waiting for a discrete event.
 - **Define a loop in the same command that calls it.** Each is a shell function; where the shell
@@ -152,7 +155,7 @@ the command detached and wait with this loop, which has a timeout:
 
 ```bash
 wait_service() {
-  local svc="$1" tmo="${2:-110}" elapsed=0 mode desired upd tasks running
+  local svc="$1" tmo="${2:-110}" elapsed=0 mode desired upd tmpl ids running
   while [ "$elapsed" -lt "$tmo" ]; do
     mode=$(docker service inspect "$svc" --format '{{if .Spec.Mode.Global}}global{{else}}replicated{{end}}' \
            2>/dev/null) || { echo "FAIL: no such service $svc"; return 1; }
@@ -161,12 +164,19 @@ wait_service() {
     case "$upd" in
       paused|rollback_paused) echo "FAIL: update $upd after ${elapsed}s"; break ;;
     esac
-    tasks=$(docker service ps "$svc" --filter desired-state=running --format json | jq -s 'length')
-    running=$(docker service ps "$svc" --filter desired-state=running --format json \
-              | jq -s '[.[] | select(.CurrentState | startswith("Running"))] | length')
+    # Count only running tasks made from the current spec, so the old tasks of an update count for nothing.
+    # `service inspect` fills in a StopGracePeriod the task's own spec does not carry; drop it to compare.
+    tmpl=$(docker service inspect "$svc" --format '{{json .Spec.TaskTemplate}}')
+    ids=$(docker service ps "$svc" --filter desired-state=running --no-trunc -q)
+    running=0
+    [ -n "$ids" ] && running=$(printf '%s\n' "$ids" | xargs docker inspect --type task | jq --argjson t "$tmpl" '
+      [.[] | select(.Status.State == "running") | .Spec as $s
+       | ($t | if ($s.ContainerSpec | has("StopGracePeriod")) then . else del(.ContainerSpec.StopGracePeriod) end) as $u
+       | select(all($s | keys[]; $u[.] == $s[.]))] | length')
     case "$upd" in
-      ""|completed|rollback_completed)
-        if { [ "$mode" = global ] && [ "$running" -gt 0 ] && [ "$running" -eq "$tasks" ]; } ||
+      updating|rollback_started) ;;
+      *)
+        if { [ "$mode" = global ] && [ "$running" -gt 0 ] && [ "$running" -eq "$(printf '%s\n' "$ids" | grep -c .)" ]; } ||
            { [ "$mode" = replicated ] && [ "$running" -eq "$desired" ]; }; then
           [ "$upd" = rollback_completed ] && {
             echo "ROLLED BACK: $running running on the previous spec after ${elapsed}s"; return 2; }
@@ -182,9 +192,11 @@ wait_service() {
 }
 ```
 
-- A rolling update is not converged until `UpdateStatus.State` leaves `updating`: the old tasks
-  are still running and would otherwise be counted. The daemon sets `updating` as soon as the
-  update is accepted, so checking straight after `update -d` is safe.
+- Only running tasks made from the service's current spec are counted, by comparing each task's
+  spec with the service's task template (as swarm itself decides what to replace). Right after
+  `update -d` the old tasks are still running and `UpdateStatus` is briefly empty - swarm resets
+  it and sets `updating` a moment later - so counting every running task would report a rollout
+  that has not started as finished.
 - `rollback_completed` means the service is back on its previous spec, and the loop returns 2
   with `ROLLED BACK`. After `docker service rollback` that is the result asked for. After a deploy
   it means the deploy failed and was reverted, however many replicas are running: report it so.

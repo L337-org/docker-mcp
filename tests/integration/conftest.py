@@ -45,6 +45,9 @@ _ENVIRONMENTAL_SIGNALS = (
     "toomanyrequests",
     "rate limit",
     "429 too many requests",
+    "http/2 429",  # Docker Hub's status line, as `curl -sI` prints it
+    "http/1.1 429",
+    "ratelimit-remaining: 0;",  # Docker Hub's pull budget is spent for this address
 )
 
 

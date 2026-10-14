@@ -269,8 +269,8 @@ def _shell_functions(skill_files: list[Path]) -> list[tuple[str, str]]:
 def test_every_shell_function_parses_under_bash_and_zsh(skill_files, shell_bin):
     """The loops run under whatever shell the host has, commonly zsh on macOS, so each must parse in both.
 
-    The daemon-backed tests execute them under bash, and only `wait_healthy` under zsh; this catches a
-    syntax error in the rest without a daemon.
+    The daemon-backed tests execute them mostly under bash; this catches a zsh syntax error in any of them
+    without a daemon.
     """
     if shutil.which(shell_bin) is None:
         pytest.skip(f"{shell_bin} not installed on this runner")

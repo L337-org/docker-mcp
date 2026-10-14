@@ -66,7 +66,7 @@ their own, so a container that never exits or a service that never converges han
   Pass `-d`, then use `wait_service` (`reference/observability.md`), which has a timeout. The
   loops there are shell functions: define one in the same command that calls it.
 - `docker compose up --wait` needs `--wait-timeout`.
-- Keep each wait's timeout under the host's own limit on a shell command (often 120 s). If the host
+- Keep each wait's timeout under the host's own limit on a shell command. If the host
   kills the loop first, it never prints `TIMEOUT`, and a timeout cannot be told from a hang.
 
 **3. Confirm destructive operations, naming the exact target.** Before any `rm`, `prune`,
@@ -166,8 +166,8 @@ Stamp every resource you create so it can be found and torn down later without g
 
 Applies to `run`, `create`, `network create`, `volume create`, `service create`, `config create`,
 `secret create`. On `service create`, `--label` marks only the service: add `--container-label
-l337-docker-skill.managed=true` too, or its task containers carry no label. It does **not** apply to `image build` - a label changes the resulting image
-digest, so builds are deliberately unstamped.
+l337-docker-skill.managed=true` too, or its task containers carry no label. It does **not** apply to
+`image build` - a label changes the resulting image digest, so builds are deliberately unstamped.
 
 Then `docker ps -a --filter label=l337-docker-skill.managed=true` scopes any later inventory or
 cleanup to your own footprint. `workflows/maintenance.md` uses this.

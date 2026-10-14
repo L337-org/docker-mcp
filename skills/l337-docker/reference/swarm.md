@@ -180,7 +180,7 @@ docker node update --availability active <node>
 docker node update --label-add zone=eu-west-1 <node>
 docker node update --label-rm zone <node>
 docker node update --role manager <node>                  # promote (also: docker node promote)
-docker node rm <node>                                     # must be down first
+docker node rm <node>                                     # refused while the node is ready
 docker node rm --force <node>
 ```
 
@@ -190,8 +190,8 @@ service under-replicated rather than failing loudly.
 
 `docker node update` changes only the fields named; the rest of the node's spec is kept.
 
-`docker node rm` refuses any node that is not `down` ("is not down and can't be removed"), drained
-or not. On a still-reachable node it needs `--force`, and that leaves the node believing it
+`docker node rm` refuses a node whose state is `ready` ("is not down and can't be removed"), drained
+or not, and a manager until it is demoted. On a still-reachable node it needs `--force`, and that leaves the node believing it
 is still in the swarm; run `docker swarm leave` on the node itself as well.
 
 ## Stacks (Compose on Swarm)

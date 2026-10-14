@@ -45,7 +45,7 @@ url="https://$REGISTRY/v2/$REPO/tags/list?n=1000" pages=0
 while [ -n "$url" ] && [ "$pages" -lt 50 ]; do
   hdr=$(mktemp)
   curl -sf -D "$hdr" -H "Authorization: Bearer $TOKEN" "$url" | jq -er '.tags[]' \
-    || { echo "FAIL: $url" >&2; rm -f "$hdr"; break; }
+    || { echo "FAIL: $url - the list below is incomplete" >&2; rm -f "$hdr"; url=""; break; }
   next=$(grep -i '^link:' "$hdr" | sed -E 's#.*<(https?://[^/]*)?(/v2/[^>]*)>.*#\2#' | tr -d '\r')
   rm -f "$hdr"; pages=$((pages + 1))
   url=${next:+https://$REGISTRY$next}
