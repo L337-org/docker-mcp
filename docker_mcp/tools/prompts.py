@@ -571,8 +571,9 @@ def audit_image_cves(image: str) -> str:
         f"package patch.\n"
         f"4. For each remaining CVE, report the package, installed version, fixed version, and CVE ID. "
         f"Recommend the smallest patch that addresses the high-priority findings.\n"
-        f"Note: Scout's most useful data requires `docker login` on the host running this MCP server. If the "
-        f"output looks sparse, ask the user whether the host is authenticated."
+        f"Note: `scout_quickview` and `scout_cves` need `docker login` on the host that runs the CLI, even "
+        f'for a public image. Without it the call returns a non-zero exit with "Log in with your Docker ID" '
+        f"in `raw`: report that the host is not logged in, not a result for the image."
     )
 
 

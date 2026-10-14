@@ -27,6 +27,9 @@ cd ./stack && docker compose up -d                        # cwd-based (project n
 - Multiple `-f` flags merge in order, later overriding earlier - the override-file pattern.
 - Relative paths inside the file resolve against the first file's directory unless
   `--project-directory` says otherwise.
+- **Services with `profiles:` start only when a profile names them**: `docker compose --profile
+  debug up -d` (or `COMPOSE_PROFILES=debug`). Without it they are skipped silently - `up` reports
+  success and the service simply does not exist. `docker compose config --profiles` lists them.
 
 Always state which project you are acting on. `docker compose ls -a --format json` lists every
 project the daemon knows about, with its config file paths.
@@ -55,8 +58,7 @@ file.
 
 ```bash
 docker compose up -d                                      # detached
-docker compose up -d --wait                               # block until healthy/running
-docker compose up -d --wait --wait-timeout 120
+docker compose up -d --wait --wait-timeout 110           # block until healthy/running, bounded
 docker compose up -d --build                              # rebuild images first
 docker compose up -d --force-recreate
 docker compose up -d --remove-orphans                     # drop containers for removed services
@@ -67,13 +69,14 @@ docker compose up -d --dry-run                            # show what would happ
 **`--wait` is the flag that makes `up` truthful.** Without it, `up -d` returns as soon as
 containers are *created*, which is not the same as the application working; with it, Compose
 blocks until every service with a healthcheck is healthy and fails non-zero if one does not get
-there. Use it whenever you intend to report success.
+there. Use it whenever you intend to report success, and always with `--wait-timeout`: without
+one it waits indefinitely for a service that never gets healthy.
 
 `--dry-run` is genuinely useful before a risky change - it prints the actions without performing
 them.
 
 ```bash
-docker compose down                                       # stop + remove containers and networks
+docker compose down                                       # stop + remove containers and networks (confirm)
 docker compose down --remove-orphans
 docker compose down --rmi local                           # also remove images built here
 docker compose down -v                                    # ALSO REMOVE NAMED VOLUMES
@@ -137,7 +140,8 @@ docker compose run --rm --no-deps <service> <cmd>         # without starting dep
 
 `exec` needs the service running and shares its state. `run` starts a fresh container from the
 same config - right for migrations and one-off jobs, and it starts `depends_on` services unless
-you pass `--no-deps`. Always `--rm` on `run`, or you accumulate stopped containers.
+you pass `--no-deps`. Always `--rm` on `run`, or you accumulate stopped containers. Like `docker
+run`, it blocks until the command exits, with no timeout - bound anything that might not end.
 
 Do not pass `-it`; there is no TTY. Add `-T` if a command misbehaves over the non-TTY path.
 
@@ -158,7 +162,7 @@ rather than half-way through the rollout.
 ```bash
 docker compose cp <service>:/etc/app.conf ./app.conf
 docker compose cp ./app.conf <service>:/etc/app.conf
-docker compose cp --all <service>:/logs ./logs           # every replica
+docker compose cp --all <service>:/logs ./logs           # include `compose run` containers too
 docker compose cp --index 2 <service>:/logs ./logs
 ```
 

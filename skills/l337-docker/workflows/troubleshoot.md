@@ -160,9 +160,10 @@ Read-only. Requires a manager (`reference/swarm.md`).
 3. **For each under-replicated service**, drop the `desired-state` filter to see the failure
    history, and use `--no-trunc` - the `Error` column is truncated by default and is the answer:
    ```bash
-   docker service ps <svc> --no-trunc --format json | jq -rs '.[] | [.Name,.CurrentState,.Error] | @tsv'
+   docker service ps <svc> --no-trunc --format json | jq -rs '.[] | [.ID,.Name,.CurrentState,.Error] | @tsv'
    ```
-   Look for tasks stuck in `rejected`/`failed`, or cycling `shutdown` -> `starting`.
+   Look for tasks stuck in `rejected`/`failed`, or cycling `shutdown` -> `starting`. One task's logs:
+   `docker service logs --tail 200 --timestamps <task-id>`.
 4. **Check for a stalled rollout:**
    `docker service inspect <svc> --format '{{json .UpdateStatus}}' | jq` - `state: paused` will
    not resume on its own.

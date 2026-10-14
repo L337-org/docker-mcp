@@ -360,7 +360,7 @@ def get_service_tasks_resource(id_or_name: str) -> str:
         id_or_name: The service id or name (from the service index)
 
     Returns:
-        str: JSON {service, mode, running_tasks, desired_tasks, failed_tasks, update_state}
+        str: JSON {service, mode, running_tasks, current_tasks, desired_tasks, failed_tasks, update_state}
     """
     _require_services_domain()
     return json.dumps(_read_service_task_summary(id_or_name), indent=2)

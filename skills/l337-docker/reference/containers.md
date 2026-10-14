@@ -7,6 +7,7 @@ docker ps                                              # running only
 docker ps -a --format json | jq -s '.'                 # everything, parseable (NDJSON -> array)
 docker ps -a --filter status=exited --filter label=app=web
 docker ps -a --format json | jq -rs '.[] | [.Names,.State,.Status,.Image] | @tsv'
+docker ps -n 5 --format json | jq -s '.'                # the five most recently created, any state
 ```
 
 Filters worth knowing: `status=` (created/restarting/running/removing/paused/exited/dead),
@@ -21,10 +22,9 @@ docker inspect <c> --format '{{json .NetworkSettings.Networks}}' | jq 'keys'
 docker inspect <c> --format '{{range .Mounts}}{{.Type}} {{.Source}} -> {{.Destination}} {{.RW}}{{"\n"}}{{end}}'
 ```
 
-**Health is three-valued, and the third value is not a failure.** `.State.Health` is absent
-entirely when the image declares no `HEALTHCHECK`. Absent ≠ unhealthy - treat
-`.State.Status == "running"` as success in that case. Only `.State.Health.Status == "unhealthy"`
-is a real failure.
+**Health is three-valued.** `.State.Health` is absent entirely when the image declares no
+`HEALTHCHECK`. Absent is neither healthy nor unhealthy: the container may be fine, but nothing has
+checked, so "healthy" cannot be reported. Only `.State.Health.Status == "unhealthy"` is a failure.
 
 ## Creating and running
 
@@ -59,15 +59,18 @@ Run a one-shot and capture output:
 docker run --rm alpine:3.20 sh -c 'echo hi'
 ```
 
+This blocks until the command exits, with no timeout: bound anything that might not end (SKILL.md
+rule 2), or run it with `-d` and wait as in `reference/observability.md`.
+
 ## Lifecycle
 
 | Intent | Command | Signal / effect |
 |---|---|---|
-| Graceful stop | `docker stop [-t 30] <c>` | SIGTERM, then SIGKILL after the timeout (default 10s) |
+| Graceful stop | `docker stop [-t 30] <c>` | the image's `STOPSIGNAL` (SIGTERM unless set), then SIGKILL after the timeout (default 10s) |
 | Immediate stop | `docker kill <c>` | SIGKILL now, no grace period - data loss risk |
 | Custom signal | `docker kill -s HUP <c>` | e.g. reload config without stopping |
 | Restart | `docker restart [-t 30] <c>` | stop (graceful) then start |
-| Freeze / thaw | `docker pause <c>` / `docker unpause <c>` | SIGSTOP; keeps memory, releases CPU |
+| Freeze / thaw | `docker pause <c>` / `docker unpause <c>` | freezes every process (cgroup freezer, no signal); keeps memory, releases CPU |
 | Remove | `docker rm <c>` | must be stopped first, unless `-f` |
 | Remove + anon volumes | `docker rm -v <c>` | also drops volumes with no name - **data loss** |
 | Rename | `docker rename <old> <new>` | frees the old name; nothing else changes |
@@ -93,7 +96,9 @@ useful part is at the end anyway.
 
 - Logs survive the container stopping - a crash-looping or exited container still has them. This
   is usually the single most informative read during triage.
-- `-f`/`--follow` never returns. Only use it with a bounded wait; see `reference/observability.md`.
+- `-f`/`--follow` never returns, even with a future `--until` on a quiet container. To follow for
+  a while use `follow_logs`, and to wait for a particular line use `wait_log`; both are in
+  `reference/observability.md`.
 - stdout and stderr are interleaved; `2>&1` before a pipe to catch both.
 - This only works for the `json-file` and `local` log drivers. Under `journald`, `syslog` or a
   remote driver, `docker logs` returns an error or nothing - check
@@ -141,6 +146,10 @@ when piping stdin in.
 The container must be running. `docker exec` on a stopped container is an error; to inspect a
 stopped container's filesystem use `docker cp` or `docker diff` instead.
 
+`docker exec` waits for the command to finish, with no timeout. Bound one that might hang inside the
+container - `docker exec <c> timeout 30 <cmd>` where the image has `timeout` - because if the
+session gives up waiting, the command carries on running in the container.
+
 ## Copying files in and out
 
 ```bash
@@ -168,6 +177,7 @@ volume-restore bug.
 ```bash
 docker commit <c> myimage:snapshot                        # container -> image (writable layer)
 docker commit -m "msg" -a "name" <c> myimage:snapshot
+docker commit -c 'CMD ["/app/run"]' <c> myimage:snapshot     # also change the config (Dockerfile syntax)
 docker export <c> -o container.tar                        # flat filesystem tar, no layers/history
 ```
 
@@ -202,9 +212,15 @@ event-driven waiting.
 
 ```bash
 docker container prune --filter label=l337-docker-skill.managed=true    # scoped
+docker container prune --filter until=24h                          # created more than a day ago
 docker container prune                                             # every stopped container
 ```
 
-Prune only touches **stopped** containers. A running container that should go needs an explicit
-`stop` + `rm`. Always run `docker ps -a --filter status=exited` first and show the user the list
-and count before pruning.
+Prune takes every container that is not running or paused: `exited`, `created` (never started)
+and `dead`. A running container that should go needs an explicit `stop` + `rm`. Always list the
+candidates first, with the same filters, and show the user the list and count:
+
+```bash
+docker ps -a --filter status=exited --filter status=created --filter status=dead \
+  --format '{{.Names}}\t{{.Status}}'
+```

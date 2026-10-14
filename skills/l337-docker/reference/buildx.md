@@ -13,8 +13,9 @@ docker buildx ls
 docker buildx ls --format json | jq -s '.'
 docker buildx inspect                                     # current builder
 docker buildx inspect --bootstrap <name>                  # start it and report
-docker buildx use <name>
-docker buildx create --name multi --driver docker-container --use --bootstrap
+docker buildx build --builder <name> ...                  # one build on another builder - preferred
+docker buildx use <name>                                  # MODAL - changes the default builder
+docker buildx create --name multi --driver docker-container --bootstrap
 docker buildx create --name multi --driver docker-container --platform linux/amd64,linux/arm64
 docker buildx rm <name>
 ```
@@ -29,6 +30,11 @@ Drivers: `docker` (built into the daemon, no multi-platform, images land in the 
 `docker-container` (BuildKit in a container - the usual choice), `kubernetes`, `remote`, `cloud`.
 
 `--bootstrap` starts the builder immediately rather than on first build, so failures surface now.
+
+**`docker buildx use` is modal and persistent**, like `docker context use`: it rewrites the
+default builder for every later `buildx` command by any process on this machine, until changed
+back. For one build elsewhere, pass `--builder <name>` instead (every `buildx` subcommand takes
+it), and reserve `use`, and `create --use`, for when the user asks to change their default.
 
 ## Building
 
@@ -50,6 +56,19 @@ build the single platform you need locally instead.
 
 Without `--load` or `--push` the result is **discarded** - the build runs, the cache warms, and
 nothing is kept. That surprises people who expect `docker build` semantics.
+
+A build can run for many minutes and print thousands of lines. Send the log to a file and the
+result to a metadata file, then read the tail and the digest rather than the stream:
+
+```bash
+docker buildx build --progress=plain --metadata-file build.json -t ghcr.io/org/app:v1 --push . \
+  > build.log 2>&1; echo "exit=$?"
+tail -n 40 build.log
+jq -r '."containerimage.digest"' build.json
+```
+
+If the build may outlast the host's limit on one shell command, start it in the background
+(`... > build.log 2>&1 &`) and poll the log, rather than letting the host kill it mid-build.
 
 Cache:
 
@@ -132,7 +151,7 @@ imagetools instead:
 docker buildx du
 docker buildx du --verbose
 docker buildx prune                                       # dangling cache
-docker buildx prune -a --force                            # everything
+docker buildx prune -a                                    # also internal/frontend images
 docker buildx prune --filter 'until=168h'
 docker buildx prune --reserved-space 10GB
 ```
@@ -145,11 +164,15 @@ absent (see `reference/images.md`).
 ## Build history
 
 ```bash
-docker buildx history ls
-docker buildx history inspect <ref>
+docker buildx history ls --format json | jq -rs '.[] | [.ref,.name,.status] | @tsv'
+docker buildx history inspect <id>
 docker buildx history logs <ref>
 docker buildx history rm <ref>
 ```
+
+`history ls` reports each `ref` as `<builder>/<node>/<id>`, but `inspect`, `logs` and `rm` find a
+record only by the bare `<id>`, the last component; the qualified form fails with "no record
+found". Pass `--builder <builder>` too when the record is not on the current builder.
 
 Recorded builds, with timing per step - the way to answer "why did that build take nine minutes"
 after the fact. Availability depends on the driver and buildx version; `ls` returning nothing

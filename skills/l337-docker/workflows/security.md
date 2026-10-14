@@ -61,7 +61,8 @@ https://docs.docker.com/build/building/best-practices/ - then read the file and 
 **Correctness and efficiency**
 
 5. **Missing `HEALTHCHECK`** on a long-running service image - without it, orchestrators cannot
-   tell started from working, and every "wait until healthy" degrades to "wait until running".
+   tell started from working, and every "wait until healthy" can only report "running, health
+   not verified".
 6. **Cache-inefficient layer order** - `COPY . .` before installing dependencies means every
    source edit busts the dependency layer. Copy the manifest (`package.json`, `requirements.txt`,
    `go.mod`), install, *then* copy the source.
@@ -75,8 +76,8 @@ replacement. Propose the diff; do not edit the file.
 
 ## Audit an image's CVEs
 
-Requires Scout (`reference/scout.md`), and Scout requires `docker login` - sparse output is more
-often an auth problem than a clean image.
+Requires Scout (`reference/scout.md`), and Scout requires `docker login`: without it Scout exits 1
+asking the user to log in, which is not a scan result.
 
 1. **Quickview** for counts by severity. If everything is zero and the user wants reassurance,
    stop: `docker scout quickview <image>`.

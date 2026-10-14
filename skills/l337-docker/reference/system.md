@@ -97,6 +97,7 @@ docker context inspect <name>
 docker context create prod --docker host=ssh://ops@prod.example.com --description "prod"
 docker context create tls-prod --docker "host=tcp://10.0.0.5:2376,ca=~/.docker/ca.pem,cert=~/.docker/cert.pem,key=~/.docker/key.pem"
 docker context create staging --from prod
+docker context create lab-insecure --docker "host=tcp://10.0.0.9:2376,skip-tls-verify=true"   # see TLS below
 docker context rm <name>
 ```
 
@@ -143,7 +144,16 @@ docker -H tcp://10.0.0.5:2376 --tlsverify \
 
 `2376` is TLS, `2375` is **plaintext and unauthenticated** - anyone who can reach that port has
 root on the host. If you find a daemon on 2375, flag it as a serious finding rather than using it
-quietly. Never disable verification to make a connection work.
+quietly.
+
+Verification stays on unless the user asks to turn it off for one named daemon. Then, and only for
+that daemon, a context can skip it: `skip-tls-verify=true` in its `--docker` endpoint. Say what
+that means before creating it: anyone on the network path can pose as that daemon with a
+certificate of their own, read everything sent to it - commands, environment variables, secret
+and config contents, registry credentials passed with `--with-registry-auth` - and send back
+whatever results they like, so a deploy can report a success that never happened. Name the
+context for what it does (`lab-insecure`, not `lab`), and never turn verification off because a
+verified connection failed: report the failure.
 
 ## Plugins (managed volume/network/log drivers)
 
@@ -153,30 +163,29 @@ These are daemon plugins, not CLI plugins - a different thing from `compose`/`bu
 docker plugin ls
 docker plugin ls --filter enabled=true
 docker plugin inspect <plugin>
-docker plugin install vieux/sshfs                         # prompts for permissions
-docker plugin install --grant-all-permissions --alias sshfs vieux/sshfs
-docker plugin install --disable vieux/sshfs               # install without enabling
-docker plugin enable <plugin>
-docker plugin disable <plugin>                            # must be unused
+docker plugin install --disable vieux/sshfs               # install without enabling - the default to use
+docker plugin install --disable --alias sshfs vieux/sshfs
 docker plugin set <plugin> DEBUG=1                        # only while disabled
+docker plugin enable <plugin>
+docker plugin enable --timeout 60 <plugin>                # a slow plugin; the default is 30s
+docker plugin disable <plugin>                            # must be unused
 docker plugin upgrade <plugin> [REMOTE]                   # must be disabled first
 docker plugin rm <plugin>
-docker plugin push <user>/<plugin>:<tag>
-docker plugin create <user>/<plugin>:<tag> ./plugin-dir   # needs config.json + rootfs/
 ```
 
 - Installing a plugin **grants it privileges on the host** (mounts, network, devices, capabilities).
-  Show the permission list and get confirmation; `--grant-all-permissions` skips exactly the prompt
-  a human should be reading.
+  Read them first (below), show them, and get confirmation. The install then prompts for the same
+  list, which there is no terminal here to answer: once the user has confirmed that list, add
+  `--grant-all-permissions`, and only then.
 - There is **no read-only `docker plugin` subcommand that prints those privileges**, and
   `docker plugin inspect` only works once the plugin is installed, which is too late. Read them
   straight out of the registry instead, before installing anything - see below.
-- Ordering is strict: `disable` -> `set`/`upgrade` -> `enable`. Doing it out of order gives errors
-  that read like the plugin is broken.
+- Install with `--disable`: a plugin enabled straight away starts with default settings before
+  `set` can change them. Ordering is strict: `disable` -> `set`/`upgrade` -> `enable`. Doing it out
+  of order gives errors that read like the plugin is broken.
+- **An upgrade can ask for new privileges.** Read the new version's list the same way, with its tag,
+  and compare it with the installed one (`docker plugin inspect <plugin>`) before upgrading.
 - `disable` fails while a volume or network still uses the plugin - find and remove those first.
-- `docker plugin push` works normally here. (The docker-py SDK's plugin push is broken upstream -
-  it POSTs to the pull URL - so on the CLI path this is one of the operations that is *easier*, not
-  harder.)
 
 ### Reading a plugin's privileges before installing it
 

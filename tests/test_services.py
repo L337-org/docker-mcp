@@ -259,6 +259,7 @@ def test_read_service_task_summary_replicated_converged():
         "service": "web",
         "mode": "replicated",
         "running_tasks": 2,
+        "current_tasks": 2,
         "desired_tasks": 2,
         "failed_tasks": [],
         "update_state": None,
@@ -483,15 +484,62 @@ def test_wait_service_surfaces_failed_tasks():
     ]
 
 
-def test_wait_service_update_converged_no_update_status_returns_promptly():
+def test_wait_service_update_converged_with_no_update_status_is_met_once_every_task_is_current():
     svc = _task_service({"Replicated": {"Replicas": 1}}, [{"ID": "t1", "Status": {"State": "running"}}])
     with _patch() as mock_client, patch("docker_mcp.tools.services.time.sleep") as sleep:
         mock_client.return_value.services.get.return_value = svc
         result = wait_service("web", until="update-converged", timeout_seconds=5)
-    assert result["met"] is False
-    assert result["timed_out"] is False
-    assert result["update_state"] is None
-    sleep.assert_not_called()  # nothing to converge to; don't poll to the timeout
+    assert (result["met"], result["timed_out"], result["update_state"]) == (True, False, None)
+    sleep.assert_not_called()
+
+
+_NEW = {"ContainerSpec": {"Image": "app:2"}}
+_OLD = {"ContainerSpec": {"Image": "app:1"}}
+
+
+def _updated_service(tasks, update_status=None):
+    """A replicated service of 2 whose template is `_NEW`, as just after `service update --image app:2`."""
+    svc = _task_service({"Replicated": {"Replicas": 2}}, tasks, update_status)
+    svc.attrs["Spec"]["TaskTemplate"] = _NEW
+    return svc
+
+
+def _running(spec, task_id="t"):
+    return {"ID": task_id, "Spec": spec, "Status": {"State": "running"}}
+
+
+@pytest.mark.parametrize("until", ["running", "update-converged"])
+def test_wait_service_does_not_count_old_tasks_straight_after_an_update(until):
+    """Swarm clears UpdateStatus on an update and sets `updating` later; meanwhile the old tasks still run."""
+    just_updated = _updated_service([_running(_OLD, "a"), _running(_OLD, "b")])
+    rolled_out = _updated_service([_running(_NEW, "c"), _running(_NEW, "d")], {"State": "completed"})
+    with _patch() as mock_client, patch("docker_mcp.tools.services.time.sleep") as sleep:
+        mock_client.return_value.services.get.side_effect = [just_updated, rolled_out]
+        result = wait_service("web", until=until, timeout_seconds=10, poll_interval=0.01)
+    assert result["met"] is True
+    sleep.assert_called_once()  # the first read, all old tasks, was not taken as converged
+
+
+def test_wait_service_running_mid_update_counts_only_the_new_tasks():
+    mid = _updated_service([_running(_NEW, "c"), _running(_OLD, "b")], {"State": "updating"})
+    with _patch() as mock_client:
+        mock_client.return_value.services.get.return_value = mid
+        result = wait_service("web", until="running", timeout_seconds=0)
+    assert (result["met"], result["timed_out"], result["running_tasks"]) == (False, True, 2)
+
+
+def test_summary_counts_a_global_services_nodes_on_the_current_spec():
+    svc = _task_service({"Global": {}}, [])
+    svc.attrs["Spec"]["TaskTemplate"] = _NEW
+    svc.tasks.return_value = [
+        {"NodeID": "n1", "DesiredState": "running", "Spec": _NEW, "Status": {"State": "running"}},
+        {"NodeID": "n2", "DesiredState": "running", "Spec": _OLD, "Status": {"State": "running"}},
+    ]
+    with _patch() as mock_client:
+        mock_client.return_value.services.get.return_value = svc
+        mock_client.return_value.nodes.list.return_value = []
+        summary = _read_service_task_summary("agent")
+    assert (summary["running_tasks"], summary["current_tasks"], summary["desired_tasks"]) == (2, 1, 2)
 
 
 def test_wait_service_update_converged_polls_through_updating():

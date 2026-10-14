@@ -16,6 +16,8 @@ the skill is updated to match. Daemon-backed behaviour lives in `tests/integrati
 """
 
 import re
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -251,6 +253,34 @@ def test_no_shell_snippet_declares_a_variable_named_status(skill_files):
         for span in _fenced_lines(path.read_text(encoding="utf-8")):
             assert not re.search(r"\blocal\b[^;]*\bstatus\b\s*=", span), f"{path.name}: {span.strip()}"
             assert not re.search(r"^\s*status=", span), f"{path.name}: {span.strip()}"
+
+
+def _shell_functions(skill_files: list[Path]) -> list[tuple[str, str]]:
+    """Every `name() {` function in a bash block, as (file name, function text)."""
+    return [
+        (path.name, block)
+        for path in skill_files
+        for block in re.findall(r"```bash\n(.*?)```", path.read_text(encoding="utf-8"), re.S)
+        if re.match(r"\s*\w+\(\) \{", block)
+    ]
+
+
+@pytest.mark.parametrize("shell_bin", ["bash", "zsh"])
+def test_every_shell_function_parses_under_bash_and_zsh(skill_files, shell_bin):
+    """The loops run under whatever shell the host has, commonly zsh on macOS, so each must parse in both.
+
+    The daemon-backed tests execute them mostly under bash; this catches a zsh syntax error in any of them
+    without a daemon.
+    """
+    if shutil.which(shell_bin) is None:
+        pytest.skip(f"{shell_bin} not installed on this runner")
+    functions = _shell_functions(skill_files)
+    assert functions, "no shell functions found in the skill"
+    for name, text in functions:
+        parsed = subprocess.run(  # noqa: S603
+            [shell_bin, "-n", "-c", text], capture_output=True, text=True, timeout=30, check=False
+        )
+        assert parsed.returncode == 0, f"{name}: {shell_bin} cannot parse:\n{text}\n{parsed.stderr}"
 
 
 def test_compose_ls_is_not_slurped_and_compose_ps_is(skill_files):
