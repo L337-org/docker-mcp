@@ -33,23 +33,23 @@ We have no commercial interest in either. Both are MIT-licensed and free.
 | **Agent needs shell access** | **No** - calls typed tools; can run with no Bash tool at all | **Yes** - it is Bash all the way down |
 | **Needs a local `docker` binary** | No for SDK-backed domains (talks to the socket/TCP/SSH). Compose/buildx/scout and `stack_deploy` need the CLI, or an `ssh://` host to run it on; the `context_*` tools always need a local one | **Yes**, always |
 | **Other prerequisites** | Python ≥3.14 + uv, or a container runtime | None |
-| **Works with** | Any MCP client: Claude Code, Claude Desktop, Cursor, Zed, Continue, ... | An agent with a shell on a machine that can reach the daemon and loads skills: Claude Code, GitHub Copilot. Claude's own apps load skills but run them in a hosted container, not on your machine |
+| **Works with** | Any MCP client: Claude Code, Claude Desktop, Cursor, Zed, Continue, ... | Claude Code and GitHub Copilot. Not Claude's own apps (claude.ai, Desktop), where skills run in a hosted sandbox that can't reach your Docker |
 | **Ships executable code** | Yes - a Python package you run | **No** - markdown only |
 | **Choosing the right operation** | 154 names anchored to the CLI's own structure, and every description names a sibling to prefer or avoid | A router table points at one domain file, which carries prose discriminators and worked examples |
 | **Getting the arguments right** | Every argument typed, 80% with an explicit default, **validated before the call runs** | The model composes a shell string; wrong flags surface only when Docker rejects them, at execution |
 | **Searching the documentation** | Names are a complete always-in-context index, and `tool_list` answers structured queries (by domain, category or parameter) with a definitive negative; full descriptions are still fetched one at a time, through whatever search the client implements | The whole corpus is files on disk: greppable with standard tools, and readable end to end |
 | **Output** | Structured JSON, typed; bounded by default arguments (log tails, list limits), with hard memory caps behind them that set a `truncated` flag | Raw text/NDJSON the model must parse; bounding is a written rule |
-| **Waiting** | Every call is time-bounded; action tools return once started, and one wait tool takes a timeout | Several commands block with no timeout of their own (`docker run`, `exec`, `service update` without `-d`); the skill's rule and loops bound them, and the host's shell timeout is the backstop |
+| **Waiting** | No action tool waits for a container or service to converge (bar `container_exec` and a timed `container_run`, each with its own timeout); one wait tool does, with a timeout | Several commands the skill uses block with no timeout of their own (`docker run`, `exec`, `service update` without `-d`); the skill's rule and loops bound them, and the host's shell timeout is the backstop |
 | **Read-only / no-destructive mode** | **Enforced** - tools are never registered | A written rule |
 | **Per-daemon write protection** | **Enforced**: mark a host `(ro)` for read-only, or `(nd)` for non-destructive, which allows writes but refuses removals, kills and prunes | Not available |
 | **Self-termination guard** | **Enforced** | A written rule |
-| **Multi-daemon** | Labels resolved and **pinned at startup** | `--context <name>` on every command, by rule; the ambient context and `DOCKER_HOST` still apply to any command that leaves it out |
+| **Multi-daemon** | Labels resolved and **pinned at startup** | `--context <name>` on every command, by rule, and `DOCKER_CONTEXT=<name>` before a wait loop; the ambient context and `DOCKER_HOST` still apply to any command that leaves it out |
 | **Runtime auditability** | `tool-catalog` resource reports exactly what is registered | None |
 | **Updates** | Version-pinned via `uvx`/image tag | Manual re-download; goes stale silently |
 | **Trim the surface to fit the job** | `DOCKER_MCP_SERVER_DISABLE` drops whole domains; read-only / no-destructive drop categories - **and the router and prompts shrink with them** | Not really - the router is one file, though you can delete reference files you'll never use |
 | **Token cost, eager client, idle** | **~46,700** at full surface; **~19,200** trimmed to a triage-shaped config. Add up to ~2,100 for a client that also loads prompts, resources and resource templates | **~140** |
 | **Token cost, lazy client, idle** | ~1,000 full; ~400 trimmed | ~140 |
-| **Token cost, typical task** | **~1,300-2,600** (lazy) | ~7,100-9,600 |
+| **Token cost, typical task** | **~1,300-2,600** (lazy) | ~7,100-9,900 |
 | **Failure mode** | Server can fail to start / resolve deps; a wrong argument is rejected before anything runs | Cannot fail to "start"; a wrong command usually errors, but some wrong values exit 0 with a plausible result (see below) |
 
 Two rows deserve emphasis because they cut in opposite directions and are easy to skim past.
@@ -68,10 +68,15 @@ frontmatter. This skill is spec-compliant as it stands, so a Copilot user can dr
 works: nothing here is Claude-specific.
 
 MCP still reaches further for this job. Cursor, Zed and Continue speak it and do not load skills.
-Claude's own apps do load skills, but run them in Anthropic's hosted code-execution container
-rather than on your machine, so the skill cannot reach your daemon through its local socket or
-your contexts; a Claude Desktop user who wants to drive their own Docker needs the server. So the honest framing is that skills are
-narrower *today* and the gap is closing, rather than that they are one vendor's format.
+Claude's own apps do load skills, but run them in Anthropic's hosted code-execution container rather
+than on your machine, so the skill cannot reach your daemon through its local socket or your
+contexts; a Claude Desktop user who wants to drive their own Docker needs the server. So the honest
+framing is that skills are narrower *today* and the gap is closing, rather than that they are one
+vendor's format.
+
+Client support changes without this repository changing, so treat this paragraph as dated: the
+Claude apps statement was checked against Anthropic's help article "Using Skills in Claude" in
+October 2026, and the others were not re-checked then.
 
 ## Guiding the model to the right call
 
@@ -85,7 +90,7 @@ It splits into two jobs that do not come out the same way.
 machinery: all 154 of its descriptions name at least one sibling tool by exact name, 2.1 on
 average, saying which to prefer and when. On a lazy client that text is fetched at the exact moment
 of choice, usually alongside the siblings it names, so the disambiguation arrives when it is
-needed. The skill answers with a router table pointing at one domain file, plus 53 explicit
+needed. The skill answers with a router table pointing at one domain file, plus 52 explicit
 "prefer this over that" passages and 470 worked command lines.
 
 What closes the gap is prior knowledge. `docker ps -a` is one of the most widely documented
@@ -103,11 +108,10 @@ so a wrong argument name or type is rejected as a validation error with nothing 
 composes a shell string, and a wrong flag is caught by Docker itself at execution, which may be
 after a side effect has already happened.
 
-This document contains its own evidence. Every item in [Verified during
-authoring](#verified-during-authoring) is an argument-level error in hand-written CLI that survived
-review and was caught only by running it: `--until now` rejected outright, `timeout` absent on
-macOS, `status` fatal as a variable name in zsh, `jq -s` applied to something that was already an
-array. A JSON Schema makes that entire class of mistake unrepresentable. Nothing in the skill can,
+Writing the skill produced its own evidence: argument-level errors in hand-written CLI that
+survived review and were caught only by running them - `--until now` rejected outright, `timeout`
+absent on macOS, `status` fatal as a variable name in zsh, `jq -s` applied to something that was
+already an array. A JSON Schema makes that entire class of mistake unrepresentable. Nothing in the skill can,
 because the CLI has no machine-readable description of its own flags.
 
 One honest qualification: only 13 of those 579 parameters carry an `enum`. The other 98% have their
@@ -276,9 +280,9 @@ narrows to something most people would not notice either way.
 
 | Task | MCP (lazy, full) | MCP (lazy, triage cfg) | MCP (eager, full) | MCP (eager, triage cfg) | Skill |
 |---|---|---|---|---|---|
-| List containers (one-off) | 1,344 | **785** | 46,687 | 19,219 | 7,351 |
-| Triage a crashed container | 2,557 | **1,998** | 46,687 | 19,219 | 9,637 |
-| Bring up a Compose project | 2,376 | n/a¹ | 46,687 | n/a¹ | 7,084 |
+| List containers (one-off) | 1,344 | **785** | 46,687 | 19,219 | 7,616 |
+| Triage a crashed container | 2,557 | **1,998** | 46,687 | 19,219 | 9,902 |
+| Bring up a Compose project | 2,376 | n/a¹ | 46,687 | n/a¹ | 7,079 |
 
 ¹ Compose is disabled in the triage config (`containers`, `images`, `networks`, `volumes`,
 `system` only), which is the point: a trimmed surface is trimmed for a purpose, and a task outside
@@ -286,11 +290,11 @@ it needs a different one.
 
 **Here the result reverses, and the MCP server wins on a lazy client.** A tool definition is small
 - median 260 tokens, range 119-1,147 - so fetching the five tools a triage needs costs ~1,600 on
-top of the ~1,000 baseline (or ~400 trimmed). The skill has to load its router (3,354) plus a
-domain reference (~1,400-4,000) plus often a workflow (~1,600-2,600), because prose cannot be
+top of the ~1,000 baseline (or ~400 trimmed). The skill has to load its router (3,349) plus a
+domain reference (~1,400-4,300) plus often a workflow (~1,600-2,600), because prose cannot be
 fetched a paragraph at a time.
 
-Note the eager+trimmed column never beats the skill on these tasks - 19,219 against 7,351-9,637 -
+Note the eager+trimmed column never beats the skill on these tasks - 19,219 against 7,616-9,902 -
 but it is the difference between "too expensive to leave installed" and "fine". If you are on an
 eager client and want the server, disabling the domains you do not use is the single highest-value
 change available.
@@ -298,8 +302,8 @@ change available.
 So the honest summary is:
 
 - **Eager-loading client** -> the skill is dramatically cheaper: ~5-7x on a real task at full
-  surface, ~2-2.6x even against a trimmed server, and ~140-340x at idle.
-- **Lazy-loading client** -> the server is cheaper in use, by ~3.0-5.5x at full surface and ~4.8-9.4x
+  surface, ~1.9-2.5x even against a trimmed server, and ~140-340x at idle.
+- **Lazy-loading client** -> the server is cheaper in use, by ~3.0-5.7x at full surface and ~5.0-9.7x
   when trimmed, and both are cheap at idle.
 - **Docker rarely comes up in your work** -> the skill, decisively; it costs ~140 tokens to have
   installed and you may never pay more.
@@ -310,7 +314,7 @@ So the honest summary is:
 - **Eager client and you want everything available** -> the skill, unless you need something only
   the server enforces.
 
-Worst case for the skill is ~39,000 tokens if a single task somehow needed every reference and
+Worst case for the skill is ~39,300 tokens if a single task somehow needed every reference and
 workflow file at once; in practice a task touches one or two.
 
 ## Where each one genuinely wins
@@ -336,8 +340,9 @@ workflow file at once; in practice a task touches one or two.
   `(ro)`/`(nd)`, self-termination protection.
 - Output is bounded by default arguments, with hard caps behind them, so a chatty container
   cannot blow the context window unless the agent asks for everything.
-- Every call is time-bounded. No action tool blocks, and the one wait tool takes a timeout, so a
-  container that never exits or a service that never converges cannot hang the session.
+- No action tool waits for a container or service to converge, and the one wait tool takes a
+  timeout, so a container that never exits or a service that never converges cannot hang the
+  session.
 - Structured, typed returns; no parsing traps (see "Structural gaps" below for the ones the skill
   documents precisely because they bite).
 - Multi-daemon targeting pinned at startup, so a stray `docker context use` cannot silently move
@@ -612,9 +617,10 @@ caps what it buffers, and streams large payloads to files. In the skill, `docker
 container will fill the context window. Mitigated by the `--tail` / `--no-stream` / `--until`
 discipline in SKILL.md - again a convention, not a limit.
 
-**3. Waits are bounded by convention in the skill.** On the server every call has a time bound: no
-action tool blocks (bar `container_exec` and a timed `container_run`, each with its own timeout),
-and the one wait tool takes a timeout. Several CLI commands block with none: `docker run` without
+**3. Waits are bounded by convention in the skill.** On the server no action tool waits for a
+container or service to converge (bar `container_exec` and a timed `container_run`, each with its
+own timeout), and the one wait tool takes a timeout. That is not a bound on every call: a long
+`image_pull` runs for as long as data keeps arriving. Several CLI commands block with none: `docker run` without
 `-d`, `docker exec`, and `docker service create`/`update`/`scale`/`rollback` without `-d`. The
 skill's rule and its wait loops bound them, and the host's own limit on a shell command is the
 backstop, which ends the session's wait rather than reporting a timeout.
@@ -629,53 +635,8 @@ host when a plugin is missing locally. In the skill a missing `compose`/`buildx`
 hard stop - run the command on the remote host yourself, or install the plugin.
 
 **6. Structured returns.** MCP tools return typed JSON. In the skill everything is text that must be
-parsed, with the NDJSON-vs-array and stringified-sizes traps documented in SKILL.md. Those traps are
-real: see below.
+parsed, with the NDJSON-vs-array and stringified-sizes traps documented in SKILL.md.
 
 **7. Provenance labels differ.** The skill stamps `l337-docker-skill.managed=true`; the server
 stamps `docker-mcp-server.managed=true`. Separate footprints - check both before calling a daemon
 clean, and never report one as the other. The two can safely coexist on one daemon.
-
-## Verified during authoring
-
-Every claim in the skill was checked against a real daemon when written - first Docker 29.7.2 /
-API 1.55, compose v5.3.1, buildx v0.36.0, scout v1.24.0, and later changes against Docker 29.8.2,
-compose v5.5.1, buildx v0.37.2, scout v1.25.0. These are the findings that corrected a draft, and
-they are a fair sample of what "parse the CLI's output" costs in practice:
-
-- `--format json` is NDJSON (one object per line), while `inspect` returns an array; `ls`
-  stringifies and rounds sizes (`"122MB"`) where `inspect` gives bytes (`122125650`).
-- **The Compose plugin is inconsistent with itself**: `docker compose ps --format json` is NDJSON
-  but `docker compose ls --format json` is a JSON array, so `jq -s` is required for one and wrong
-  for the other.
-- `docker swarm init --help` is shadowed by the `docker-init` CLI plugin; the command itself parses
-  and runs correctly - only the help output is wrong.
-- **`docker events --until now` is rejected**; `--until 0s` and `--until <epoch>` work. A *future*
-  `--until` is a portable bounded wait, but always consumes the full window - `head -1` does not
-  make it return early.
-- `timeout(1)` is **not** on stock macOS, so `timeout ... docker events` is not portable.
-- `status` is a **read-only variable in zsh**, so `local status=...` fails outright - the wait loops
-  use `st`.
-- Volume backup/restore round trip confirmed end to end: `docker cp` works on a
-  created-but-never-started container; the archive is rooted at `data/`; extracting at `/data`
-  instead of `/` produces `/data/data/...`.
-- **`docker logs --follow --until <future>` does not end at that time on a quiet container**: it
-  returns only when a later line arrives. The skill follows in the background and stops it instead.
-- `docker service create`, `update`, `scale` and `rollback` wait for convergence by default, with
-  no timeout (`--help`: "-d, --detach  Exit immediately instead of waiting"), while `docker stack
-  deploy` returns at once. A service's `UpdateStatus` is `updating` as soon as an update is
-  accepted, so a wait that checks it straight after `update -d` cannot mistake the old tasks for a
-  finished rollout.
-- Scout without `docker login` exits 1 asking the user to log in, even for a public image, rather
-  than returning thin results; `sbom` is the one subcommand that works anonymously.
-- `docker image rm -f` by id still refuses an image a **running** container uses ("cannot be
-  forced"); by tag it only untags. `docker container prune` also takes containers that were
-  created but never started.
-- `docker buildx history ls` reports `<builder>/<node>/<id>`, but `history inspect` finds a record
-  only by the bare `<id>`.
-- The registry recipes (Hub token, tags list and its `Link` pagination, manifest media types, `unknown/unknown` attestation
-  entries, config-blob fetch, rate-limit headers, GHCR anonymous token) were each run successfully.
-
-`tests/test_skill.py` and `tests/integration/test_skill.py` keep these honest: the integration
-tests extract the skill's shell snippets from its markdown and execute them, so a documented
-snippet cannot drift from what the CLI actually does.
