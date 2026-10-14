@@ -242,7 +242,7 @@ config and restart, whereas the skill always has every recipe available at no id
 | *plus, for a client that loads them:* | | | | |
 | prompts | +1,113 (30) | +596 (16) | - | - |
 | resources | +405 (3) | +405 (3) | - | - |
-| resource templates | +569 (5) | +569 (5) | - | - |
+| resource templates | +572 (5) | +572 (5) | - | - |
 | **Ceiling - all of them** | **~48,800 tok** | **~20,800 tok** | **~1,000 tok** | **~140 tok** |
 
 "Triage config" here and below means the `DOCKER_MCP_SERVER_DISABLE` line in
