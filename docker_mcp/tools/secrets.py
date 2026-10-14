@@ -78,11 +78,8 @@ def secret_remove(id_or_name: str, host: str | None = None) -> bool:  # noqa: DO
     """
     Remove a Swarm secret; requires a swarm manager.
 
-    Removing a secret does not immediately affect running service tasks - tasks that already
-    have the secret mounted retain access until they are restarted or the service is updated.
-    Use `service_list` and inspect each service's spec via `service_inspect` to identify
-    services that mount the secret before removing it (service filters do not support
-    filtering by secret reference).
+    Fails while any service still references the secret, and the error names those services -
+    move them to another secret with `service_update`, or remove them, first.
 
     Returns:
         bool: True after removal
