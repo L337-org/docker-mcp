@@ -39,13 +39,46 @@ def test_list_nodes_with_filters():
     mock_client.return_value.nodes.list.assert_called_once_with(filters={"role": "manager"})
 
 
-def test_node_update():
+def _node_with_spec(spec):
     node = MagicMock()
-    spec = {"Availability": "drain", "Role": "worker"}
+    node.attrs = {"ID": "n1", "Version": {"Index": 7}, "Spec": spec}
+    return node
+
+
+def test_node_update_changes_only_the_fields_sent():
+    # The Engine replaces the whole spec, so draining by sending only Availability once wiped the
+    # node's role and labels. The current spec has to go back with the change laid over it.
+    node = _node_with_spec({"Availability": "active", "Role": "manager", "Labels": {"zone": "a"}})
     with _patch() as mock_client:
         mock_client.return_value.nodes.get.return_value = node
-        assert node_update("n1", spec) is True
-    node.update.assert_called_once_with(spec)
+        assert node_update("n1", {"Availability": "drain"}) is True
+    node.update.assert_called_once_with({"Availability": "drain", "Role": "manager", "Labels": {"zone": "a"}})
+
+
+def test_node_update_merges_labels_and_removes_a_null_one():
+    node = _node_with_spec({"Role": "worker", "Labels": {"zone": "a", "disk": "ssd", "old": "x"}})
+    with _patch() as mock_client:
+        mock_client.return_value.nodes.get.return_value = node
+        node_update("n1", {"Labels": {"disk": "hdd", "gpu": "yes", "old": None}})
+    node.update.assert_called_once_with({"Role": "worker", "Labels": {"zone": "a", "disk": "hdd", "gpu": "yes"}})
+
+
+def test_node_update_adds_labels_to_a_node_that_has_none():
+    node = _node_with_spec({"Role": "worker", "Availability": "active"})
+    with _patch() as mock_client:
+        mock_client.return_value.nodes.get.return_value = node
+        node_update("n1", {"Labels": {"zone": "b"}})
+    node.update.assert_called_once_with({"Role": "worker", "Availability": "active", "Labels": {"zone": "b"}})
+
+
+def test_node_update_does_not_modify_the_fetched_spec():
+    # The merge works on a copy, so a failed update leaves the node object describing the daemon's state.
+    spec = {"Role": "worker", "Labels": {"zone": "a"}}
+    node = _node_with_spec(spec)
+    with _patch() as mock_client:
+        mock_client.return_value.nodes.get.return_value = node
+        node_update("n1", {"Role": "manager", "Labels": {"zone": None}})
+    assert spec == {"Role": "worker", "Labels": {"zone": "a"}}
 
 
 def test_remove_node_resolves_name_then_uses_high_level_remove():

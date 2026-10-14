@@ -46,21 +46,35 @@ def node_list(filters: dict | None = None, host: str | None = None) -> list:  # 
 
 
 @tool()
-def node_update(id_or_name: str, spec: dict, host: str | None = None) -> bool:  # noqa: DOC101,DOC103
+def node_update(id_or_name: str, updates: dict, host: str | None = None) -> bool:  # noqa: DOC101,DOC103
     """
-    Replace a node's spec (availability, name, role, labels).
+    Change a node's availability, role, name or labels, leaving every field not named as it was.
 
-    Replacement, not a merge: `spec` becomes the node's entire spec, and omitted keys are cleared.
-    Fetch the current spec via `node_inspect` (its `Spec` key), modify it, and resubmit the whole
-    dict - e.g. sending just {"Availability": "drain"} would also wipe the node's role and labels.
+    Must run against a swarm manager. Send only what changes: {"Availability": "drain"} drains the
+    node and keeps its role and labels. Labels merge one key at a time, and a label set to null is
+    removed. Version-guarded, so a node changed by someone else since it was read fails the call
+    rather than being overwritten. `node_inspect` shows the current `Spec`; to take a node out of
+    the swarm use `node_remove`.
 
     Args:
-        spec: The complete new node spec (see description - omitted keys are cleared)
+        updates: Node spec fields to change: "Availability" ("active", "pause" or "drain"), "Role"
+            ("worker" or "manager"), "Name", and "Labels" as {"key": "value"}, or {"key": null} to remove one
 
     Returns:
         bool: True after the update
     """
     node = _get_client(host).nodes.get(id_or_name)
+    # The Engine replaces a node's whole spec on update ("Any values not provided will be removed", in
+    # docker-py's own Node.update docstring), so the current spec is resubmitted with the changes laid
+    # over it, as `docker node update` does. Node.update sends the version index from the node just
+    # fetched, which is what makes a concurrent change fail instead of being silently overwritten.
+    spec = dict(node.attrs.get("Spec") or {})
+    for key, value in updates.items():
+        if key == "Labels" and isinstance(value, dict):
+            labels = {**(spec.get("Labels") or {}), **value}
+            spec["Labels"] = {k: v for k, v in labels.items() if v is not None}
+        else:
+            spec[key] = value
     node.update(spec)
     return True
 
