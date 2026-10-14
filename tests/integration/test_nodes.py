@@ -29,5 +29,5 @@ def test_node_update_changes_a_label_and_leaves_the_rest_of_the_spec_alone():
         assert {k: v for k, v in after.items() if k != "Labels"} == {k: v for k, v in before.items() if k != "Labels"}
         assert {k: v for k, v in after["Labels"].items() if k != key} == (before.get("Labels") or {})
     finally:
-        node_update(node_id, {"Labels": {key: None}})
+        node_update(node_id, {"RemoveLabels": [key]})
     assert key not in (node_inspect(node_id)["Spec"].get("Labels") or {})

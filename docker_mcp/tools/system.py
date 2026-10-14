@@ -793,7 +793,8 @@ def system_wait(  # noqa: DOC101,DOC103,DOC501,DOC503
     """
     Wait until a container/compose project exits or is healthy, a service/stack converges, a node/registry tag is ready.
 
-    The one wait tool: action tools return once their work is started, and this waits for the result. For
+    The one wait tool: action tools return once their work is started (bar `container_run`'s one-shot
+    `wait_seconds`), and this waits for the result. For
     a status read without waiting use `container_inspect`, `service_ps` or `compose_ps`; to follow changes
     as they happen, `system_events`. Never raises on timeout. `met: false` without `timed_out` means the
     condition can no longer be met (the target stopped, has nothing to wait for, or is gone): `detail`

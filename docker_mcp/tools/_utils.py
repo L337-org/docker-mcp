@@ -423,6 +423,26 @@ def as_byte_chunks(chunks: Iterable | bytes | bytearray | str) -> Iterable[bytes
         close_stream_quietly(chunks)
 
 
+def keep_up_to(buffer: bytearray, data: bytes, max_bytes: int) -> bool:
+    """Append as much of `data` to `buffer` as keeps it within `max_bytes`, and say whether any was left out.
+
+    The truncating counterpart of `join_bounded`, for output worth returning even when too long to keep whole
+    (`container_exec`, the one-shot `container_run`), where `join_bounded` refuses an over-cap read. Filling the
+    buffer exactly is not a cut; one byte more is.
+
+    Args:
+        buffer: what has been kept so far, extended in place
+        data: the next chunk
+        max_bytes: the most `buffer` may hold
+
+    Returns:
+        bool: True when part of `data` did not fit and was dropped
+    """
+    room = max(max_bytes - len(buffer), 0)
+    buffer.extend(data[:room])
+    return len(data) > room
+
+
 def join_bounded(chunks: Iterable[bytes], max_bytes: int, what: str, remedy: str | None = None) -> bytes:
     """Concatenate bytes chunks, aborting if the running total would exceed max_bytes.
 

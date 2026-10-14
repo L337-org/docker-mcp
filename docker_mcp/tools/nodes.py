@@ -3,6 +3,9 @@
 # library of mcp tools relating to swarm node management
 
 import time
+from typing import Literal, TypedDict
+
+from pydantic import ConfigDict, with_config
 
 from docker_mcp.exceptions import ToolInputError
 from docker_mcp.server import tool
@@ -45,36 +48,65 @@ def node_list(filters: dict | None = None, host: str | None = None) -> list:  # 
     return [n.attrs for n in _get_client(host).nodes.list(**drop_none(filters=filters))]
 
 
+# Refuse unknown keys: the Engine ignores a field it does not know, so {"availability": "drain"} would otherwise
+# return success with the node still active.
+@with_config(ConfigDict(extra="forbid"))
+class NodeSpecUpdates(TypedDict, total=False):
+    """Node spec changes for `node_update`.
+
+    Attributes:
+        Availability: whether the node takes tasks.
+        Role: the node's swarm role.
+        Name: the node's spec name.
+        Labels: labels to add or change.
+        RemoveLabels: label keys to remove.
+    """
+
+    Availability: Literal["active", "pause", "drain"]
+    Role: Literal["worker", "manager"]
+    Name: str
+    Labels: dict[str, str]
+    RemoveLabels: list[str]
+
+
 @tool()
-def node_update(id_or_name: str, updates: dict, host: str | None = None) -> bool:  # noqa: DOC101,DOC103
+def node_update(  # noqa: DOC101,DOC103,DOC501,DOC503
+    id_or_name: str, updates: NodeSpecUpdates, host: str | None = None
+) -> bool:
     """
     Change a node's availability, role, name or labels, leaving every field not named as it was.
 
     Must run against a swarm manager. Send only what changes: {"Availability": "drain"} drains the
-    node and keeps its role and labels. Labels merge one key at a time, and a label set to null is
-    removed. Version-guarded, so a node changed by someone else since it was read fails the call
-    rather than being overwritten. `node_inspect` shows the current `Spec`; to take a node out of
-    the swarm use `node_remove`.
+    node and keeps its role and labels. "Labels" adds or changes the labels named and keeps the rest;
+    "RemoveLabels" removes the keys listed; a key in both is refused. Version-guarded, so a node changed
+    by someone else since it was read fails the call rather than being overwritten. `node_inspect` shows
+    the current `Spec`; to take a node out of the swarm use `node_remove`.
 
     Args:
-        updates: Node spec fields to change: "Availability" ("active", "pause" or "drain"), "Role"
-            ("worker" or "manager"), "Name", and "Labels" as {"key": "value"}, or {"key": null} to remove one
+        updates: What to change: "Availability", "Role", "Name", "Labels" as {"key": "value"}, and
+            "RemoveLabels" as ["key", ...]
 
     Returns:
         bool: True after the update
     """
+    both = sorted(set(updates.get("Labels", {})) & set(updates.get("RemoveLabels", [])))
+    if both:
+        raise ToolInputError(f"Labels and RemoveLabels both name {both}: set them or remove them, not both.")
     node = _get_client(host).nodes.get(id_or_name)
     # The Engine replaces a node's whole spec on update ("Any values not provided will be removed", in
     # docker-py's own Node.update docstring), so the current spec is resubmitted with the changes laid
     # over it, as `docker node update` does. Node.update sends the version index from the node just
     # fetched, which is what makes a concurrent change fail instead of being silently overwritten.
     spec = dict(node.attrs.get("Spec") or {})
-    for key, value in updates.items():
-        if key == "Labels" and isinstance(value, dict):
-            labels = {**(spec.get("Labels") or {}), **value}
-            spec["Labels"] = {k: v for k, v in labels.items() if v is not None}
-        else:
-            spec[key] = value
+    spec.update({key: value for key, value in updates.items() if key not in ("Labels", "RemoveLabels")})
+    if "Labels" in updates or "RemoveLabels" in updates:
+        # Removal is a list of keys, as `docker node update --label-rm` takes, rather than a null label value:
+        # a null would make the advertised schema nullable, which the schema slimming cannot drop because here
+        # it would carry meaning.
+        labels = {**(spec.get("Labels") or {}), **updates.get("Labels", {})}
+        for key in updates.get("RemoveLabels", []):
+            labels.pop(key, None)
+        spec["Labels"] = labels
     node.update(spec)
     return True
 

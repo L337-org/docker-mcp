@@ -522,3 +522,19 @@ def test_join_bounded_advice_matches_what_the_caller_can_actually_change():
     with pytest.raises(ToolInputError, match="Request fewer lines") as excinfo:
         join_bounded([b"abc"], 1, "a payload", remedy="Request fewer lines with `tail`.")
     assert "Raise max_bytes" not in str(excinfo.value)
+
+
+@pytest.mark.parametrize(
+    ("kept", "data", "expected", "cut"),
+    [
+        (b"", b"abc", b"abc", False),
+        (b"ab", b"cd", b"abcd", False),  # exactly at the limit: nothing dropped
+        (b"ab", b"cde", b"abcd", True),  # one byte over: dropped, and said so
+        (b"abcd", b"e", b"abcd", True),  # already full
+        (b"abcd", b"", b"abcd", False),
+    ],
+)
+def test_keep_up_to(kept, data, expected, cut):
+    buffer = bytearray(kept)
+    assert _utils.keep_up_to(buffer, data, 4) is cut
+    assert bytes(buffer) == expected

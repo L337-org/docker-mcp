@@ -55,11 +55,11 @@ def test_node_update_changes_only_the_fields_sent():
     node.update.assert_called_once_with({"Availability": "drain", "Role": "manager", "Labels": {"zone": "a"}})
 
 
-def test_node_update_merges_labels_and_removes_a_null_one():
+def test_node_update_merges_labels_and_removes_the_ones_listed():
     node = _node_with_spec({"Role": "worker", "Labels": {"zone": "a", "disk": "ssd", "old": "x"}})
     with _patch() as mock_client:
         mock_client.return_value.nodes.get.return_value = node
-        node_update("n1", {"Labels": {"disk": "hdd", "gpu": "yes", "old": None}})
+        node_update("n1", {"Labels": {"disk": "hdd", "gpu": "yes"}, "RemoveLabels": ["old", "not-there"]})
     node.update.assert_called_once_with({"Role": "worker", "Labels": {"zone": "a", "disk": "hdd", "gpu": "yes"}})
 
 
@@ -77,7 +77,7 @@ def test_node_update_does_not_modify_the_fetched_spec():
     node = _node_with_spec(spec)
     with _patch() as mock_client:
         mock_client.return_value.nodes.get.return_value = node
-        node_update("n1", {"Role": "manager", "Labels": {"zone": None}})
+        node_update("n1", {"Role": "manager", "RemoveLabels": ["zone"]})
     assert spec == {"Role": "worker", "Labels": {"zone": "a"}}
 
 
@@ -168,3 +168,26 @@ def test_wait_node_rejects_negative_timeout():
 def test_wait_node_rejects_nonpositive_poll_interval():
     with pytest.raises(ToolInputError, match="poll_interval"):
         wait_node("n1", poll_interval=0)
+
+
+@pytest.mark.parametrize(
+    "updates",
+    [
+        {"availability": "drain"},  # misspelt key: the Engine would ignore it and the call would claim success
+        {"Availability": "drained"},
+        {"Role": "leader"},
+        {"Labels": {"zone": None}},  # removal is RemoveLabels, so a null label value is refused
+    ],
+)
+def test_node_update_refuses_a_misspelt_key_or_value_on_the_wire(on_the_wire, updates):
+    # Through call_tool, the path a client uses, so this proves the advertised schema is enforced - not just
+    # that the TypedDict would refuse it.
+    with _patch() as mock_client, pytest.raises(Exception, match="validation error"):
+        on_the_wire("node_update", {"id_or_name": "n1", "updates": updates})
+    mock_client.assert_not_called()
+
+
+def test_node_update_refuses_a_label_both_set_and_removed():
+    with _patch() as mock_client, pytest.raises(ToolInputError, match=r"both name \['zone'\]"):
+        node_update("n1", {"Labels": {"zone": "b"}, "RemoveLabels": ["zone"]})
+    mock_client.assert_not_called()
