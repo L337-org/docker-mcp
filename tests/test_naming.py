@@ -189,6 +189,28 @@ def test_no_tool_uses_a_banned_parameter_spelling():
     assert offenders == [], f"banned parameter spellings: {offenders}"
 
 
+# Durations are `timeout_seconds`, or `stop_timeout_seconds` for Docker's stop grace. The one exception is
+# container_run's `wait_seconds`, which also switches the wait on and would read as a limit on the container's
+# run time if called `timeout_seconds` (AGENTS.md, naming convention).
+_DURATION_NAMES = frozenset({"timeout_seconds", "stop_timeout_seconds"})
+_DURATION_EXCEPTIONS = frozenset({("container_run", "wait_seconds")})
+
+
+def test_every_duration_parameter_is_timeout_seconds_unless_listed():
+    offenders = [
+        f"{name}({param})"
+        for name, func in _tool_functions()
+        for param in inspect.signature(func).parameters
+        if param.endswith("_seconds") and param not in _DURATION_NAMES and (name, param) not in _DURATION_EXCEPTIONS
+    ]
+    assert offenders == [], f"durations must be timeout_seconds, or be listed with a reason: {offenders}"
+
+
+def test_every_duration_exception_is_still_a_parameter():
+    params = {(name, param) for name, func in _tool_functions() for param in inspect.signature(func).parameters}
+    assert _DURATION_EXCEPTIONS <= params, f"stale duration exceptions: {sorted(_DURATION_EXCEPTIONS - params)}"
+
+
 # Canonical docstring lines for params shared across many tools: same param, same words.
 # Keyed by param name -> the exact `args:` line text the description must START with (a tool may
 # append a tool-specific clause after the canonical prefix). (tool, param) pairs in _PARAM_EXCEPTIONS

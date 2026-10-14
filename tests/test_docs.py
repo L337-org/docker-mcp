@@ -230,9 +230,9 @@ def test_the_instruction_file_names_a_check_that_exists():
 
 
 def test_the_pre_commit_hook_the_docs_tell_contributors_to_install_exists_and_is_committable():
-    # CONTRIBUTING.md and AGENTS.md said to run `uv run pre-commit install`, a hook that ran ruff on every
-    # commit, while the repo had no config: the root `/.*` rule in .gitignore silently kept any local copy
-    # out of every commit, so the instruction failed for everyone else.
+    # CONTRIBUTING.md and AGENTS.md tell contributors to run `uv run pre-commit install`, so the config must be
+    # committed. The root `/.*` rule in .gitignore hides every dotfile it does not re-include, so the config
+    # needs its own re-include, or a local copy never reaches a commit.
     git = shutil.which("git")
     assert git, "git is needed to check the ignore rules"
     config = _REPO_ROOT / ".pre-commit-config.yaml"

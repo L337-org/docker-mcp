@@ -2,6 +2,7 @@ import threading
 import time
 from unittest.mock import MagicMock, patch
 
+import docker.errors
 import pytest
 import requests.exceptions
 import urllib3.exceptions
@@ -151,10 +152,13 @@ def _one_shot_container(logs=(b"hello\n",), errors=(), wait=None, wait_error=Non
 
 def _run_one_shot(container, **kwargs):
     with _patch() as mock_client:
-        mock_client.return_value.containers.run.return_value = container
+        mock_client.return_value.containers.create.return_value = container
         mock_client.return_value.containers.get.return_value = container
         result = container_run("alpine", command="echo hello", **kwargs)
-    return result, mock_client.return_value.containers.run.call_args.kwargs
+    # The one-shot path creates and starts the container itself, never through docker-py's run.
+    mock_client.return_value.containers.run.assert_not_called()
+    container.start.assert_called_once_with()
+    return result, mock_client.return_value.containers.create.call_args.kwargs
 
 
 def test_container_run_wait_returns_exit_code_and_output_in_one_call():
@@ -237,6 +241,7 @@ def test_container_run_refuses_a_bad_wait_bound_before_starting_anything(wait_se
     with _patch() as mock_client, pytest.raises(ToolInputError, match="wait_seconds must be"):
         container_run("alpine", wait_seconds=wait_seconds)
     mock_client.return_value.containers.run.assert_not_called()
+    mock_client.return_value.containers.create.assert_not_called()
 
 
 @pytest.mark.parametrize(
@@ -253,6 +258,52 @@ def test_container_run_wait_refuses_auto_remove_with_a_restart_policy_before_sta
     with _patch() as mock_client, pytest.raises(ToolInputError, match="restart policy"):
         container_run("alpine", wait_seconds=30, auto_remove=True, **kwargs)  # pyright: ignore[reportArgumentType]
     mock_client.return_value.containers.run.assert_not_called()
+    mock_client.return_value.containers.create.assert_not_called()
+
+
+def _start_fails(container, **kwargs):
+    container.start.side_effect = APIError('OCI runtime create failed: exec: "no-such-binary": not found')
+    with _patch() as mock_client:
+        mock_client.return_value.containers.create.return_value = container
+        try:
+            container_run("alpine", command=["no-such-binary"], wait_seconds=30, **kwargs)
+        finally:
+            mock_client.return_value.containers.run.assert_not_called()
+
+
+def test_container_run_wait_removes_a_container_that_cannot_start_when_asked_to():
+    # docker-py's run does not clean up a failed start; the daemon's auto-remove would have, so this must.
+    container = _one_shot_container()
+    with pytest.raises(APIError, match="no-such-binary"):
+        _start_fails(container, auto_remove=True)
+    container.remove.assert_called_once_with(force=True, v=True)
+
+
+def test_container_run_wait_names_a_container_that_cannot_start_and_is_kept():
+    container = _one_shot_container()
+    with pytest.raises(RemoteFailureError, match="'job' \\(abc123\\).*could not start.*still there") as raised:
+        _start_fails(container)
+    assert isinstance(raised.value.__cause__, APIError)
+    container.remove.assert_not_called()
+
+
+def test_container_run_wait_names_the_container_when_removing_it_after_a_failed_start_fails():
+    container = _one_shot_container()
+    container.remove.side_effect = APIError("removal of container abc123 is already in progress")
+    with pytest.raises(RemoteFailureError, match="could not start.*removing it failed too.*force=True"):
+        _start_fails(container, auto_remove=True)
+
+
+def test_container_run_wait_pulls_a_missing_image_then_creates_again():
+    container = _one_shot_container()
+    with _patch() as mock_client:
+        client = mock_client.return_value
+        client.containers.create.side_effect = [docker.errors.ImageNotFound("no such image"), container]
+        client.containers.get.return_value = container
+        result = container_run("alpine:3", command="true", wait_seconds=30, extra_kwargs={"platform": "linux/arm64"})
+    client.images.pull.assert_called_once_with("alpine:3", platform="linux/arm64")
+    assert client.containers.create.call_count == 2
+    assert result["exit_code"] == 0
 
 
 @pytest.mark.parametrize("policy", [{"Name": "no"}, {"Name": ""}])

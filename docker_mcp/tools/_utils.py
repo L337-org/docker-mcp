@@ -426,9 +426,9 @@ def as_byte_chunks(chunks: Iterable | bytes | bytearray | str) -> Iterable[bytes
 def keep_up_to(buffer: bytearray, data: bytes, max_bytes: int) -> bool:
     """Append as much of `data` to `buffer` as keeps it within `max_bytes`, and say whether any was left out.
 
-    The truncating counterpart of `join_bounded`, for output worth returning even when too long to keep whole
-    (`container_exec`, the one-shot `container_run`), where `join_bounded` refuses an over-cap read. Filling the
-    buffer exactly is not a cut; one byte more is.
+    The truncating counterpart of `join_bounded`: use it for output worth returning even when too long to keep
+    whole, and `join_bounded` where an over-cap read should be refused. Filling the buffer exactly is not a
+    cut; one byte more is.
 
     Args:
         buffer: what has been kept so far, extended in place

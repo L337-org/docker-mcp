@@ -118,7 +118,7 @@ def container_run(  # noqa: DOC101,DOC103,DOC501,DOC503
         privileged: Give extended privileges to the container
         mem_limit: Memory limit: bytes as an int, or a units string ("100000b", "1000k", "128m", "1g")
         cpu_count: Usable CPUs, on a Windows daemon only
-        wait_seconds: Seconds to wait for exit before returning timed_out, at most 2147483647
+        wait_seconds: Seconds to wait for exit before returning with timed_out=true
         extra_kwargs: Additional keyword arguments forwarded to ContainerCollection.run (call
             `docs_lookup(section="containers")` for the full accepted set)
 
@@ -127,7 +127,7 @@ def container_run(  # noqa: DOC101,DOC103,DOC501,DOC503
             already gone returns the payload from before the start, with `removed_on_exit: true`. With it,
             {"id", "name", "exit_code", "stdout", "stderr", "timed_out", "truncated", "removed", "error"}: each
             stream cut at 32 MiB (truncated=true); tty=True puts all in stdout; exit_code null if timed_out;
-            error says why a stream is null or removed false (not removed if output was unreadable)
+            error says why a stream is null or why a requested removal did not happen
     """
     # Checked before anything runs, so a bad bound never leaves a started container behind. The ceiling is
     # system_wait's: past it the socket timeout the wait sets overflows.
@@ -197,12 +197,61 @@ def container_run(  # noqa: DOC101,DOC103,DOC501,DOC503
     provenance = with_provenance(kwargs.get("labels"), "container_run")
     if provenance is not None:
         kwargs["labels"] = provenance
-    container = _get_client(host).containers.run(image, **kwargs)
+    client = _get_client(host)
     if wait_seconds is None:
+        container = client.containers.run(image, **kwargs)
         # docker-py's run returns the object it fetched before starting it, so its attrs still say "created";
         # re-read it, as container_start does, so the payload describes the started container.
         return _reread(container)
-    return _run_to_completion(container, wait_seconds, remove_after, host)
+    return _run_to_completion(_start_one_shot(client, image, kwargs, remove_after), wait_seconds, remove_after, host)
+
+
+# DOC503: the bare `raise` re-raises whichever of _DAEMON_FAILURES the start raised, which pydoclint cannot name.
+def _start_one_shot(client: Any, image: str, kwargs: dict, remove_after: bool) -> Any:  # noqa: DOC503
+    """Create and start a one-shot container, removing it again if it was to be removed and cannot start.
+
+    docker-py's `run` is create-then-start and does not clean up when the start fails, which the daemon's
+    own auto-remove would have done (a missing command fails exactly there). With `wait_seconds` the daemon
+    is not given auto-remove, so this does the same three steps `run` does - create, pulling the image first
+    if it is missing, then start - and removes the container itself when the start fails.
+
+    Args:
+        client: the Docker client for the target host
+        image: the image to run
+        kwargs: the container options, as for `ContainerCollection.run`
+        remove_after: whether the caller asked for the container to be removed
+
+    Returns:
+        Any: the started container
+
+    Raises:
+        RemoteFailureError: the start failed and the container is still there; the message names it
+        docker.errors.DockerException: the start failed and the container was removed; the start's own error
+    """
+    try:
+        container = client.containers.create(image, **kwargs)
+    except docker.errors.ImageNotFound:
+        # What docker-py's run does on a missing image: pull it, then create again.
+        client.images.pull(image, platform=kwargs.get("platform"))
+        container = client.containers.create(image, **kwargs)
+    try:
+        container.start()
+    except _DAEMON_FAILURES as exc:
+        if remove_after:
+            try:
+                container.remove(force=True, v=True)
+            except _DAEMON_FAILURES as cleanup:
+                raise RemoteFailureError(
+                    f"Container {container.name!r} ({container.id[:12]}) could not start ({exc}), and removing it "
+                    f"failed too ({cleanup}). Remove it with container_remove(force=True)."
+                ) from exc
+            # Removed, as the daemon's auto-remove would have done; the start failure says what went wrong.
+            raise
+        raise RemoteFailureError(
+            f"Created container {container.name!r} ({container.id[:12]}), but it could not start ({exc}). It is "
+            "still there: remove it with container_remove."
+        ) from exc
+    return container
 
 
 # What a daemon call can fail with once the container has started. docker-py reads a log stream straight off
@@ -1255,9 +1304,9 @@ def _wait_container(
         except requests.exceptions.ConnectionError as exc:
             # The Engine sends the wait's response headers at once and the body only when the condition
             # is met, so the bound usually expires mid-body. requests reports that as its generic
-            # ConnectionError wrapping urllib3's ReadTimeoutError, not as ReadTimeout (seen on Engine
-            # 29.8.2 with requests 2.34.2). Only that cause is a timeout; any other connection failure
-            # is real and propagates.
+            # ConnectionError wrapping urllib3's ReadTimeoutError, not as ReadTimeout (requests/models.py,
+            # iter_content). Only that cause is a timeout; any other connection failure is real and
+            # propagates.
             if not (exc.args and isinstance(exc.args[0], urllib3.exceptions.ReadTimeoutError)):
                 raise
             return _wait_result(id_or_name, until, met=False, start=start, timed_out=True)

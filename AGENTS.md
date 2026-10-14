@@ -187,7 +187,8 @@ discovery layers. Four cleanup rounds have chased the same failure.
   noun-form (`container_logs`, `registry_tags`). Names never encode the backend (SDK vs CLI). Identifier
   params use one rule: `id_or_name` (daemon objects addressable by either), `name`/`names` (name-only
   resources: volumes, contexts, plugins, stacks, builders), `repository` (remote repo refs); durations are
-  `timeout_seconds`. `tests/test_naming.py` enforces all of this (approved prefixes, banned short forms and
+  `timeout_seconds`, except `container_run`'s `wait_seconds`, which also switches the wait on and would read
+  as a limit on the container's run time if called `timeout_seconds`. `tests/test_naming.py` enforces all of this (approved prefixes, banned short forms and
   1.x spellings, canonical shared-param descriptions) — a violating tool fails CI.
 - New Docker functionality goes in the matching `docker_mcp/tools/<domain>.py` file, not in a new file.
 - **Waiting is one tool, `system_wait`.** A new thing to wait for is a new `kind` or `until` in `_WAIT_KINDS`

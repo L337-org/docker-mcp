@@ -1049,10 +1049,11 @@ def buildx_use(  # noqa: DOC101,DOC103
     """
     Select the active builder for subsequent buildx operations.
 
-    The choice always persists: buildx saves it in the Docker CLI config on the host running this
-    server, so every later buildx command there uses it, including ones run outside this server,
-    until it is changed. Use `buildx_list` to see available builders and their current status. To
-    build with a builder without changing the selection, pass `builder` to `buildx_build` instead.
+    The choice always persists: buildx saves it in the Docker CLI config of the machine the command
+    runs on - this server's host, or the remote host under the `ssh://` fallback - so every later buildx
+    command there uses it, including ones run outside this server, until it is changed. Use `buildx_list`
+    to see available builders and their current status. To build with a builder without changing the
+    selection, pass `builder` to `buildx_build` instead.
     Does not raise on a non-zero CLI exit - inspect `returncode`/`stderr`.
 
     Args:

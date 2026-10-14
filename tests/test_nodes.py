@@ -46,8 +46,8 @@ def _node_with_spec(spec):
 
 
 def test_node_update_changes_only_the_fields_sent():
-    # The Engine replaces the whole spec, so draining by sending only Availability once wiped the
-    # node's role and labels. The current spec has to go back with the change laid over it.
+    # The Engine replaces the whole spec, so sending only Availability would wipe the node's role and
+    # labels. The current spec has to go back with the change laid over it.
     node = _node_with_spec({"Availability": "active", "Role": "manager", "Labels": {"zone": "a"}})
     with _patch() as mock_client:
         mock_client.return_value.nodes.get.return_value = node
@@ -180,8 +180,8 @@ def test_wait_node_rejects_nonpositive_poll_interval():
     ],
 )
 def test_node_update_refuses_a_misspelt_key_or_value_on_the_wire(on_the_wire, updates):
-    # Through call_tool, the path a client uses, so this proves the advertised schema is enforced - not just
-    # that the TypedDict would refuse it.
+    # Through call_tool, the path a client uses, so this proves the server refuses the call before any daemon
+    # call. What a client is shown is tested in test_server.
     with _patch() as mock_client, pytest.raises(Exception, match="validation error"):
         on_the_wire("node_update", {"id_or_name": "n1", "updates": updates})
     mock_client.assert_not_called()

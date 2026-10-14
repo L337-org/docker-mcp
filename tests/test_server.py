@@ -1,5 +1,6 @@
 import ast
 import inspect
+import asyncio
 import json
 import re
 import shutil
@@ -1176,6 +1177,18 @@ def test_run_container_restart_policy_schema_is_typed():
     rp = schema["$defs"]["RestartPolicy"]["properties"]
     assert set(rp) == {"Name", "MaximumRetryCount"}
     assert set(rp["Name"]["enum"]) == {"no", "always", "on-failure", "unless-stopped"}
+
+
+def test_node_update_advertises_its_closed_values_and_refuses_unknown_keys():
+    # What a client is shown, from list_tools: the enums and additionalProperties: false are what let a model
+    # get the call right first time. Validation refusing a bad call is tested separately in test_nodes.
+    tool = {t.name: t for t in asyncio.run(mcp.list_tools())}["node_update"]
+    advertised = json.loads(tool.model_dump_json(by_alias=True, exclude_none=True))["inputSchema"]
+    updates = advertised["$defs"]["NodeSpecUpdates"]
+    assert updates["additionalProperties"] is False
+    assert set(updates["properties"]) == {"Availability", "Role", "Name", "Labels", "RemoveLabels"}
+    assert set(updates["properties"]["Availability"]["enum"]) == {"active", "pause", "drain"}
+    assert set(updates["properties"]["Role"]["enum"]) == {"worker", "manager"}
 
 
 def _key_anywhere(node, target: str, *, match=lambda v: True) -> bool:

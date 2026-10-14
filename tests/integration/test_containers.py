@@ -204,8 +204,8 @@ def test_container_exec_cuts_a_large_output_at_max_bytes(exec_target):
 
 
 def test_system_wait_not_running_reports_a_timeout_instead_of_raising():
-    # The Engine sends the wait's headers at once, so the bound expires mid-body; that once surfaced as a
-    # ConnectionError rather than timed_out.
+    # The Engine sends the wait's headers at once, so the bound expires mid-body, which requests raises as a
+    # ConnectionError; that must still come back as timed_out.
     name = f"docker-mcp-it-wait-timeout-{uuid.uuid4().hex[:8]}"
     container_run("alpine:3", command=["sleep", "300"], name=name)
     try:
@@ -213,3 +213,15 @@ def test_system_wait_not_running_reports_a_timeout_instead_of_raising():
         assert (result["met"], result["timed_out"]) == (False, True)
     finally:
         container_remove(name, force=True)
+
+
+def test_a_one_shot_run_that_cannot_start_leaves_nothing_behind_with_auto_remove():
+    # A missing command fails at start, which docker-py's run does not clean up after.
+    name = f"docker-mcp-it-oneshot-nostart-{uuid.uuid4().hex[:8]}"
+    try:
+        with pytest.raises(Exception, match="no-such-binary"):
+            container_run("alpine:3", command=["no-such-binary"], name=name, wait_seconds=30, auto_remove=True)
+        assert not container_list(all=True, filters={"name": name})
+    finally:
+        if container_list(all=True, filters={"name": name}):
+            container_remove(name, force=True)

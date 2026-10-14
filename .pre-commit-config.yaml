@@ -1,6 +1,6 @@
 # Installed with `uv run pre-commit install` (CONTRIBUTING.md). Local hooks through `uv run`, not the
-# ruff-pre-commit repo, so the hook runs the ruff version uv.lock resolves for the dev group - the same
-# one CI's ruff job runs - rather than a second pin that can drift from it.
+# ruff-pre-commit repo, so the hook runs the ruff version uv.lock resolves for the dev group rather than a
+# second pin that can drift from it.
 repos:
   - repo: local
     hooks:
