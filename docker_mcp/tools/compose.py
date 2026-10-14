@@ -950,7 +950,7 @@ def _remote_compose_cp(
         source: the copy's source, container-side or local
         dest: the copy's destination, container-side or local
         index: which replica to address when the service has several
-        all_containers: whether to copy to every replica
+        all_containers: whether to include one-off containers created by `compose run`
         project_dir: the compose project directory, or None
         files: the compose files to use, or None
         project_name: the project name, or None
@@ -1046,7 +1046,7 @@ def compose_cp(  # noqa: DOC101,DOC103
         source: `SERVICE:SRC_PATH` or a host path
         dest: `SERVICE:DEST_PATH` or a host path (not "-")
         index: Container index when the service has multiple replicas
-        all_containers: Copy to/from all containers of the service (`--all`)
+        all_containers: Also include one-off containers created by `compose_run` (`--all`)
         project_dir: Dir with the compose file (default: server cwd; copied to the target host if no local plugin)
         files: Explicit compose file paths (repeatable, `-f`)
 

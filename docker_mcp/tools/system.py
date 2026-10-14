@@ -591,8 +591,9 @@ def system_events(  # noqa: DOC101,DOC103
     "Wait for the next matching event" idiom: pass `limit=1` with `filters` narrowed to what you
     care about (e.g. `{"type": "container", "event": "health_status"}`) and a generous
     `timeout_seconds`. This blocks until that one event arrives (or the timeout elapses, returning an
-    empty list) instead of re-polling a snapshot on a timer - there's no separate wait tool for this
-    since the filtering this call already does covers it.
+    empty list) instead of re-polling a snapshot on a timer. To wait for a state rather than an event
+    (a container exited or healthy, a service converged), use `system_wait`, which checks the state itself
+    and so also sees one reached before the call.
 
     Args:
         since: Show events created since this timestamp
