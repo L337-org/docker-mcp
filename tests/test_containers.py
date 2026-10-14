@@ -163,7 +163,7 @@ def _run_one_shot(container, **kwargs):
 
 def test_container_run_wait_returns_exit_code_and_output_in_one_call():
     container = _one_shot_container(logs=(b"hello\n", b"done\n"), errors=(b"warn\n",), wait={"StatusCode": 3})
-    result, run_kwargs = _run_one_shot(container, wait_seconds=30)
+    result, run_kwargs = _run_one_shot(container, timeout_seconds=30)
     assert result == {
         "id": "abc123",
         "name": "job",
@@ -186,7 +186,7 @@ def test_container_run_wait_with_auto_remove_removes_only_after_reading_the_outp
     order = []
     container.logs.side_effect = lambda stdout, **_: order.append("logs") or iter([b"hello\n" if stdout else b""])
     container.remove.side_effect = lambda **_: order.append("remove")
-    result, run_kwargs = _run_one_shot(container, wait_seconds=30, auto_remove=True)
+    result, run_kwargs = _run_one_shot(container, timeout_seconds=30, auto_remove=True)
     # The daemon's auto-remove would delete the logs and exit code at exit, racing the read.
     assert "auto_remove" not in run_kwargs
     assert order == ["logs", "logs", "remove"]
@@ -197,14 +197,14 @@ def test_container_run_wait_with_auto_remove_removes_only_after_reading_the_outp
 
 def test_container_run_wait_takes_auto_remove_from_extra_kwargs_too():
     container = _one_shot_container()
-    result, run_kwargs = _run_one_shot(container, wait_seconds=30, extra_kwargs={"auto_remove": True})
+    result, run_kwargs = _run_one_shot(container, timeout_seconds=30, extra_kwargs={"auto_remove": True})
     assert "auto_remove" not in run_kwargs
     assert result["removed"] is True
 
 
 def test_container_run_wait_timeout_leaves_the_container_running_and_says_so():
     container = _one_shot_container(logs=(b"partial\n",), wait_error=requests.exceptions.ReadTimeout())
-    result, _ = _run_one_shot(container, wait_seconds=5, auto_remove=True)
+    result, _ = _run_one_shot(container, timeout_seconds=5, auto_remove=True)
     assert result["timed_out"] is True
     assert result["exit_code"] is None
     assert result["stdout"] == "partial\n"
@@ -215,7 +215,7 @@ def test_container_run_wait_timeout_leaves_the_container_running_and_says_so():
 
 def test_container_run_wait_cuts_output_at_the_cap_and_says_so():
     container = _one_shot_container(logs=(b"a" * (MAX_PAYLOAD_BYTES - 1), b"bc", b"never read"))
-    result, _ = _run_one_shot(container, wait_seconds=30)
+    result, _ = _run_one_shot(container, timeout_seconds=30)
     assert result["truncated"] is True
     assert result["stdout"] == "a" * (MAX_PAYLOAD_BYTES - 1) + "b"
 
@@ -223,7 +223,7 @@ def test_container_run_wait_cuts_output_at_the_cap_and_says_so():
 def test_container_run_wait_caps_each_stream_on_its_own():
     # A flood on stdout must not crowd out the stderr that says why the command failed.
     container = _one_shot_container(logs=(b"a" * (MAX_PAYLOAD_BYTES + 10),), errors=(b"fatal: disk full\n",))
-    result, _ = _run_one_shot(container, wait_seconds=30)
+    result, _ = _run_one_shot(container, timeout_seconds=30)
     assert len(result["stdout"]) == MAX_PAYLOAD_BYTES
     assert result["stderr"] == "fatal: disk full\n"
     assert result["truncated"] is True
@@ -231,15 +231,15 @@ def test_container_run_wait_caps_each_stream_on_its_own():
 
 def test_container_run_wait_output_exactly_at_the_cap_is_not_truncated():
     container = _one_shot_container(logs=(b"a" * MAX_PAYLOAD_BYTES,))
-    result, _ = _run_one_shot(container, wait_seconds=30)
+    result, _ = _run_one_shot(container, timeout_seconds=30)
     assert result["truncated"] is False
     assert len(result["stdout"]) == MAX_PAYLOAD_BYTES
 
 
-@pytest.mark.parametrize("wait_seconds", [0, -1, float("nan"), float("inf"), 2**31, 1e12])
-def test_container_run_refuses_a_bad_wait_bound_before_starting_anything(wait_seconds):
-    with _patch() as mock_client, pytest.raises(ToolInputError, match="wait_seconds must be"):
-        container_run("alpine", wait_seconds=wait_seconds)
+@pytest.mark.parametrize("timeout_seconds", [0, -1, float("nan"), float("inf"), 2**31, 1e12])
+def test_container_run_refuses_a_bad_wait_bound_before_starting_anything(timeout_seconds):
+    with _patch() as mock_client, pytest.raises(ToolInputError, match="timeout_seconds must be"):
+        container_run("alpine", timeout_seconds=timeout_seconds)
     mock_client.return_value.containers.run.assert_not_called()
     mock_client.return_value.containers.create.assert_not_called()
 
@@ -254,9 +254,9 @@ def test_container_run_refuses_a_bad_wait_bound_before_starting_anything(wait_se
 )
 def test_container_run_wait_refuses_auto_remove_with_a_restart_policy_before_starting(kwargs):
     # The daemon refuses this pair itself ("can't create 'AutoRemove' container with restart policy"), but with
-    # wait_seconds auto_remove never reaches it, so the refusal has to happen here.
+    # timeout_seconds auto_remove never reaches it, so the refusal has to happen here.
     with _patch() as mock_client, pytest.raises(ToolInputError, match="restart policy"):
-        container_run("alpine", wait_seconds=30, auto_remove=True, **kwargs)  # pyright: ignore[reportArgumentType]
+        container_run("alpine", timeout_seconds=30, auto_remove=True, **kwargs)  # pyright: ignore[reportArgumentType]
     mock_client.return_value.containers.run.assert_not_called()
     mock_client.return_value.containers.create.assert_not_called()
 
@@ -266,7 +266,7 @@ def _start_fails(container, **kwargs):
     with _patch() as mock_client:
         mock_client.return_value.containers.create.return_value = container
         try:
-            container_run("alpine", command=["no-such-binary"], wait_seconds=30, **kwargs)
+            container_run("alpine", command=["no-such-binary"], timeout_seconds=30, **kwargs)
         finally:
             mock_client.return_value.containers.run.assert_not_called()
 
@@ -300,7 +300,7 @@ def test_container_run_wait_pulls_a_missing_image_then_creates_again():
         client = mock_client.return_value
         client.containers.create.side_effect = [docker.errors.ImageNotFound("no such image"), container]
         client.containers.get.return_value = container
-        result = container_run("alpine:3", command="true", wait_seconds=30, extra_kwargs={"platform": "linux/arm64"})
+        result = container_run("alpine:3", command="true", timeout_seconds=30, extra_kwargs={"platform": "linux/arm64"})
     client.images.pull.assert_called_once_with("alpine:3", platform="linux/arm64")
     assert client.containers.create.call_count == 2
     assert result["exit_code"] == 0
@@ -309,7 +309,7 @@ def test_container_run_wait_pulls_a_missing_image_then_creates_again():
 @pytest.mark.parametrize("policy", [{"Name": "no"}, {"Name": ""}])
 def test_container_run_wait_accepts_auto_remove_with_no_restart_policy(policy):
     container = _one_shot_container()
-    result, _ = _run_one_shot(container, wait_seconds=30, auto_remove=True, restart_policy=policy)
+    result, _ = _run_one_shot(container, timeout_seconds=30, auto_remove=True, restart_policy=policy)
     assert result["removed"] is True
 
 
@@ -317,7 +317,7 @@ def test_container_run_wait_keeps_the_exit_code_when_the_output_cannot_be_read()
     # The `none` log driver answers a logs read with "configured logging driver does not support reading".
     container = _one_shot_container(wait={"StatusCode": 2})
     container.logs.side_effect = APIError("configured logging driver does not support reading")
-    result, _ = _run_one_shot(container, wait_seconds=30, auto_remove=True)
+    result, _ = _run_one_shot(container, timeout_seconds=30, auto_remove=True)
     assert (result["exit_code"], result["stdout"], result["stderr"]) == (2, None, None)
     assert "reading stdout failed" in result["error"]
     assert "does not support reading" in result["error"]
@@ -336,14 +336,14 @@ def test_container_run_wait_keeps_stdout_when_only_stderr_cannot_be_read():
         return iter([b"hello\n"])
 
     container.logs.side_effect = logs
-    result, _ = _run_one_shot(container, wait_seconds=30, auto_remove=True)
+    result, _ = _run_one_shot(container, timeout_seconds=30, auto_remove=True)
     assert (result["stdout"], result["stderr"], result["removed"]) == ("hello\n", None, False)
     assert "reading stderr failed" in result["error"]
 
 
 def test_container_run_wait_reports_the_daemons_own_wait_error():
     container = _one_shot_container(wait={"StatusCode": 128, "Error": {"Message": "exec format error"}})
-    result, _ = _run_one_shot(container, wait_seconds=30)
+    result, _ = _run_one_shot(container, timeout_seconds=30)
     assert result["exit_code"] == 128
     assert result["error"] == "the daemon reported: exec format error"
 
@@ -351,7 +351,7 @@ def test_container_run_wait_reports_the_daemons_own_wait_error():
 def test_container_run_wait_keeps_the_result_when_removal_fails():
     container = _one_shot_container(errors=(b"oops\n",), wait={"StatusCode": 1})
     container.remove.side_effect = APIError("removal of container abc123 is already in progress")
-    result, _ = _run_one_shot(container, wait_seconds=30, auto_remove=True)
+    result, _ = _run_one_shot(container, timeout_seconds=30, auto_remove=True)
     assert (result["exit_code"], result["stdout"], result["stderr"]) == (1, "hello\n", "oops\n")
     assert result["removed"] is False
     assert "removing the container failed" in result["error"]
@@ -368,7 +368,7 @@ def test_container_run_wait_keeps_the_result_when_removal_fails():
 def test_container_run_wait_names_the_container_when_the_wait_itself_fails(failure):
     container = _one_shot_container(wait_error=failure)
     with pytest.raises(RemoteFailureError, match="'job' \\(abc123\\).*still there") as raised:
-        _run_one_shot(container, wait_seconds=30, auto_remove=True)
+        _run_one_shot(container, timeout_seconds=30, auto_remove=True)
     # It may still be running, which container_remove refuses without force.
     assert "container_remove(force=True)" in str(raised.value)
     assert raised.value.__cause__ is failure

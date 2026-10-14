@@ -187,14 +187,13 @@ discovery layers. Four cleanup rounds have chased the same failure.
   noun-form (`container_logs`, `registry_tags`). Names never encode the backend (SDK vs CLI). Identifier
   params use one rule: `id_or_name` (daemon objects addressable by either), `name`/`names` (name-only
   resources: volumes, contexts, plugins, stacks, builders), `repository` (remote repo refs); durations are
-  `timeout_seconds`, except `container_run`'s `wait_seconds`, which also switches the wait on and would read
-  as a limit on the container's run time if called `timeout_seconds`. `tests/test_naming.py` enforces all of this (approved prefixes, banned short forms and
+  `timeout_seconds`. `tests/test_naming.py` enforces all of this (approved prefixes, banned short forms and
   1.x spellings, canonical shared-param descriptions) — a violating tool fails CI.
 - New Docker functionality goes in the matching `docker_mcp/tools/<domain>.py` file, not in a new file.
 - **Waiting is one tool, `system_wait`.** A new thing to wait for is a new `kind` or `until` in `_WAIT_KINDS`
   (`system.py`) with its helper in the owning domain's module, never a new `*_wait` tool and never a blocking
   option on an action tool: action tools return once their work is started. The one exception is
-  `container_run(wait_seconds=...)`, the bounded one-shot run; why, and why it stays the only one, is in
+  `container_run(timeout_seconds=...)`, the bounded one-shot run; why, and why it stays the only one, is in
   [architecture/server.md](architecture/server.md#waiting). `kind`/`until` are built from the
   enabled domains at import, so a disabled domain's waits are not offered. Its `target` parameter is a
   deliberate exception to the identifier spellings above, because one argument names a container, service,

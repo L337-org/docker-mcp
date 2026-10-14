@@ -111,7 +111,7 @@ Each file maps to one Docker SDK domain (or, for CLI-only and registry-only feat
 came from the same defect: docker-py's blocking `run` waits for the container with no timeout, so an image that
 never exits hung the call for good.
 
-`container_run(wait_seconds=...)` is the single deliberate exception, agreed for the one-shot run. Without it the
+`container_run(timeout_seconds=...)` is the single deliberate exception, agreed for the one-shot run. Without it the
 most common simple task - run a command in a fresh container and read the result - took four calls
 (`container_run`, `system_wait`, `container_logs`, `container_remove`) where `docker run --rm` takes one, and a
 skipped last step left a stopped container behind. It keeps what the rule protects: it is opt-in, the caller

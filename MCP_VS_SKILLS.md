@@ -401,7 +401,7 @@ Legend: **✓** direct CLI equivalent; **≈** covered by a documented recipe (l
 | Tool | CLI |
 |---|---|
 | container_list ✓ | `docker ps -a --format json` |
-| container_run ✓ | `docker run -d`; with `wait_seconds`, a foreground `docker run [--rm]` |
+| container_run ✓ | `docker run -d`; with `timeout_seconds`, a foreground `docker run [--rm]` |
 | container_create ✓ | `docker create` |
 | container_start / stop / restart ✓ | `docker start` / `stop` / `restart` |
 | container_pause / unpause ✓ | `docker pause` / `unpause` |

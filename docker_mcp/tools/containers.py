@@ -92,14 +92,14 @@ def container_run(  # noqa: DOC101,DOC103,DOC501,DOC503
     stdin_open: bool = False,
     mem_limit: int | str | None = None,
     cpu_count: int | None = None,
-    wait_seconds: float | None = None,
+    timeout_seconds: float | None = None,
     extra_kwargs: dict | None = None,
     host: str | None = None,
 ) -> dict:
     """
     Run a container from an image (create and start in one call, like `docker run`).
 
-    Returns once the container has started. For a one-shot command set `wait_seconds` (with `auto_remove`,
+    Returns once the container has started. For a one-shot command set `timeout_seconds` (with `auto_remove`,
     like `docker run --rm`) to wait for it to exit and get its exit code and output; one still running then
     is reported `timed_out` and left, never auto-removed: remove it with `container_remove(force=True)`. For
     a long job, wait with `system_wait` instead. `container_create` prepares one without starting it;
@@ -113,17 +113,17 @@ def container_run(  # noqa: DOC101,DOC103,DOC501,DOC503
         user: Username or UID to run as
         restart_policy: Restart policy, e.g. {'Name': 'on-failure', 'MaximumRetryCount': 3}
         labels: Labels to set on the container
-        auto_remove: Delete the container on exit, logs and exit code included; with `wait_seconds`, after
+        auto_remove: Delete the container on exit, logs and exit code included; with `timeout_seconds`, after
             they are read. Not with a restart policy
         privileged: Give extended privileges to the container
         mem_limit: Memory limit: bytes as an int, or a units string ("100000b", "1000k", "128m", "1g")
         cpu_count: Usable CPUs, on a Windows daemon only
-        wait_seconds: Seconds to wait for exit before returning with timed_out=true
+        timeout_seconds: Seconds to wait for exit before returning with timed_out=true
         extra_kwargs: Additional keyword arguments forwarded to ContainerCollection.run (call
             `docs_lookup(section="containers")` for the full accepted set)
 
     Returns:
-        dict: Without `wait_seconds`, the started container's full inspect payload; an `auto_remove` container
+        dict: Without `timeout_seconds`, the started container's full inspect payload; an `auto_remove` container
             already gone returns the payload from before the start, with `removed_on_exit: true`. With it,
             {"id", "name", "exit_code", "stdout", "stderr", "timed_out", "truncated", "removed", "error"}: each
             stream cut at 32 MiB (truncated=true); tty=True puts all in stdout; exit_code null if timed_out;
@@ -131,12 +131,14 @@ def container_run(  # noqa: DOC101,DOC103,DOC501,DOC503
     """
     # Checked before anything runs, so a bad bound never leaves a started container behind. The ceiling is
     # system_wait's: past it the socket timeout the wait sets overflows.
-    if wait_seconds is not None and not (math.isfinite(wait_seconds) and 0 < wait_seconds <= _MAX_WAIT_SECONDS):
+    if timeout_seconds is not None and not (
+        math.isfinite(timeout_seconds) and 0 < timeout_seconds <= _MAX_WAIT_SECONDS
+    ):
         raise ToolInputError(
-            f"wait_seconds must be a finite number above 0 and at most {_MAX_WAIT_SECONDS}, got {wait_seconds}."
+            f"timeout_seconds must be a finite number above 0 and at most {_MAX_WAIT_SECONDS}, got {timeout_seconds}."
         )
     # Always detached: docker-py's blocking run waits for the image to finish with no bound, so an image that
-    # never exits would hang the call for good. `wait_seconds` waits through system_wait's bounded helper
+    # never exits would hang the call for good. `timeout_seconds` waits through system_wait's bounded helper
     # instead - the one blocking option an action tool has (architecture/server.md, "Waiting").
     kwargs: dict = {
         "detach": True,
@@ -170,13 +172,13 @@ def container_run(  # noqa: DOC101,DOC103,DOC501,DOC503
         blocked = sorted({"detach", "remove"} & set(extra_kwargs))
         if blocked:
             raise ToolInputError(
-                f"container_run does not take {blocked} in extra_kwargs. For a one-shot command set wait_seconds, "
+                f"container_run does not take {blocked} in extra_kwargs. For a one-shot command set timeout_seconds, "
                 "with auto_remove=True to clean up; otherwise wait with system_wait(kind='container'), read the "
                 "output with container_logs, and clean up with container_remove."
             )
         kwargs.update(extra_kwargs)
     remove_after = False
-    if wait_seconds is not None:
+    if timeout_seconds is not None:
         # The daemon's own auto-remove would delete the logs and exit code the moment the container exits,
         # racing the read below. Removal is done here instead, once both have been read.
         remove_after = bool(kwargs.pop("auto_remove", False))
@@ -198,12 +200,12 @@ def container_run(  # noqa: DOC101,DOC103,DOC501,DOC503
     if provenance is not None:
         kwargs["labels"] = provenance
     client = _get_client(host)
-    if wait_seconds is None:
+    if timeout_seconds is None:
         container = client.containers.run(image, **kwargs)
         # docker-py's run returns the object it fetched before starting it, so its attrs still say "created";
         # re-read it, as container_start does, so the payload describes the started container.
         return _reread(container)
-    return _run_to_completion(_start_one_shot(client, image, kwargs, remove_after), wait_seconds, remove_after, host)
+    return _run_to_completion(_start_one_shot(client, image, kwargs, remove_after), timeout_seconds, remove_after, host)
 
 
 # DOC503: the bare `raise` re-raises whichever of _DAEMON_FAILURES the start raised, which pydoclint cannot name.
@@ -211,7 +213,7 @@ def _start_one_shot(client: Any, image: str, kwargs: dict, remove_after: bool) -
     """Create and start a one-shot container, removing it again if it was to be removed and cannot start.
 
     docker-py's `run` is create-then-start and does not clean up when the start fails, which the daemon's
-    own auto-remove would have done (a missing command fails exactly there). With `wait_seconds` the daemon
+    own auto-remove would have done (a missing command fails exactly there). With `timeout_seconds` the daemon
     is not given auto-remove, so this does the same three steps `run` does - create, pulling the image first
     if it is missing, then start - and removes the container itself when the start fails.
 
@@ -260,7 +262,7 @@ def _start_one_shot(client: Any, image: str, kwargs: dict, remove_after: bool) -
 _DAEMON_FAILURES = (docker.errors.DockerException, OSError, urllib3.exceptions.HTTPError)
 
 
-def _run_to_completion(container: Any, wait_seconds: float, remove_after: bool, host: str | None) -> dict:
+def _run_to_completion(container: Any, timeout_seconds: float, remove_after: bool, host: str | None) -> dict:
     """Wait a bounded time for a started container to exit, then collect its output and optionally remove it.
 
     Returns rather than raises on a timeout, because the output so far is still worth having: a container
@@ -271,7 +273,7 @@ def _run_to_completion(container: Any, wait_seconds: float, remove_after: bool, 
 
     Args:
         container: the container `container_run` just started
-        wait_seconds: how long to wait for it to exit
+        timeout_seconds: how long to wait for it to exit
         remove_after: remove it, with its anonymous volumes, once its output has been read
         host: the host label to target, or None for the default
 
@@ -282,7 +284,7 @@ def _run_to_completion(container: Any, wait_seconds: float, remove_after: bool, 
         RemoteFailureError: the wait itself failed; the message names the container, which is still there
     """
     try:
-        waited = _wait_container(container.id, "not-running", wait_seconds, poll_interval=1.0, host=host)
+        waited = _wait_container(container.id, "not-running", timeout_seconds, poll_interval=1.0, host=host)
     except _DAEMON_FAILURES as exc:
         # Without this the caller would not learn the id of a container that may now be running unattended.
         raise RemoteFailureError(
