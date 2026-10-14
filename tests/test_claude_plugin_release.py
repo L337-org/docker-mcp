@@ -6,12 +6,14 @@ whether a publish may go ahead, and the checks whose failure must stop it.
 """
 
 import base64
+import io
 import importlib.util
 import json
 import re
 import shutil
 import subprocess
 import sys
+import urllib.error
 from pathlib import Path
 
 import pytest
@@ -571,3 +573,91 @@ def test_the_rehearsal_pins_the_release_jobs_uv_and_claude_code():
     assert {kind for kind, _ in release_pins} == {"uv", "claude-code"}, release_pins
     assert len({v for kind, v in release_pins if kind == "uv"}) == 1, f"the release jobs pin uv twice: {release_pins}"
     assert rehearsal_pins == release_pins
+
+
+# --------------------------------------------------------------------------------------------
+# http(): a transient failure on a read is retried; a write never is
+# --------------------------------------------------------------------------------------------
+
+
+class _Response:
+    def __init__(self, body: bytes, status: int = 200):
+        self._body, self.status = body, status
+
+    def read(self, _limit: int) -> bytes:
+        return self._body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc):
+        return False
+
+
+def _http_error(code: int) -> urllib.error.HTTPError:
+    body = io.BytesIO(b"server said no")
+    return urllib.error.HTTPError("https://api.github.com/x", code, "error", {}, body)  # type: ignore[arg-type]
+
+
+@pytest.fixture
+def urlopen(monkeypatch):
+    """Replace the network with a scripted sequence of outcomes, and record the sleeps between them."""
+    script: list = []
+    calls: list[str] = []
+    sleeps: list[float] = []
+
+    def fake(request, timeout):
+        calls.append(request.get_method())
+        outcome = script.pop(0)
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return outcome
+
+    monkeypatch.setattr(release.urllib.request, "urlopen", fake)
+    monkeypatch.setattr(release.time, "sleep", sleeps.append)
+    return script, calls, sleeps
+
+
+def test_a_get_that_meets_a_server_error_is_retried_and_succeeds(urlopen, capsys):
+    script, calls, sleeps = urlopen
+    script.extend([_http_error(500), urllib.error.URLError("connection reset"), _Response(b'{"ok": true}')])
+    assert release.http("GET", "https://api.github.com/x") == (200, {"ok": True})
+    assert calls == ["GET", "GET", "GET"]
+    assert sleeps == [release.HTTP_RETRY_DELAY, 2 * release.HTTP_RETRY_DELAY]
+    logged = capsys.readouterr().out
+    assert "HTTP 500" in logged and "retrying" in logged, "a tolerated failure must be logged"
+
+
+def test_a_get_that_keeps_failing_gives_up_with_the_last_error(urlopen):
+    script, calls, _ = urlopen
+    script.extend(_http_error(503) for _ in range(release.HTTP_GET_ATTEMPTS))
+    with pytest.raises(release.ReleaseError, match=r"HTTP 503: server said no \(attempt 3 of 3\)") as raised:
+        release.http("GET", "https://api.github.com/x")
+    assert isinstance(raised.value.__cause__, urllib.error.HTTPError)
+    assert len(calls) == release.HTTP_GET_ATTEMPTS
+
+
+def test_a_get_timeout_is_retried(urlopen):
+    script, calls, _ = urlopen
+    script.extend([TimeoutError("read timed out"), _Response(b"[]")])
+    assert release.http("GET", "https://api.github.com/x") == (200, [])
+    assert len(calls) == 2
+
+
+@pytest.mark.parametrize("code", [400, 401, 403, 422])
+def test_a_client_error_is_not_retried(urlopen, code):
+    script, calls, _ = urlopen
+    script.append(_http_error(code))
+    with pytest.raises(release.ReleaseError, match=f"HTTP {code}"):
+        release.http("GET", "https://api.github.com/x")
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("method", ["POST", "PATCH"])
+def test_a_write_is_never_retried_because_it_may_already_have_happened(urlopen, method):
+    script, calls, sleeps = urlopen
+    script.append(_http_error(502))
+    with pytest.raises(release.ReleaseError, match=r"HTTP 502: server said no \(attempt 1 of 1\)"):
+        release.http(method, "https://api.github.com/x", body={"sha": "abc"})
+    assert calls == [method]
+    assert sleeps == []

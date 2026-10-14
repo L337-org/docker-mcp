@@ -61,6 +61,12 @@ IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"}
 MAX_DOWNLOAD_BYTES = 64 * 1024 * 1024
 MAX_MCP_LINE_BYTES = 16 * 1024 * 1024
 HTTP_TIMEOUT = 60
+# GET is retried on a transient failure - a 5xx, a dropped connection or a timeout - because GitHub's
+# API returns the odd 500 under load, and one would otherwise fail a release partway through.  Writes
+# are never retried: a write that failed after reaching the server may have happened.
+HTTP_GET_ATTEMPTS = 3
+HTTP_RETRY_DELAY = 5
+HTTP_RETRYABLE_STATUSES = frozenset({500, 502, 503, 504})
 # How far back publish reads the branch's history, at one release per commit plus any reverts.
 MAX_HISTORY_COMMITS = 1000
 
@@ -138,7 +144,10 @@ def run(argv: list[str], *, timeout: int, env: dict[str, str] | None = None, cwd
 def http(
     method: str, url: str, *, token: str | None = None, body: dict | None = None, raw: bool = False
 ) -> tuple[int, object]:
-    """Make one HTTPS request with a timeout and a size cap.
+    """Make an HTTPS request with a timeout and a size cap, retrying a GET on a transient failure.
+
+    A GET that meets a 5xx, a dropped connection or a timeout is retried up to `HTTP_GET_ATTEMPTS`
+    times in all, each retry logged; other methods are tried once.
 
     Args:
         method: HTTP method
@@ -152,7 +161,42 @@ def http(
         use it to mean "does not exist"
 
     Raises:
-        ReleaseError: on any other HTTP error, with the server's message, or an oversized body
+        ReleaseError: on any other HTTP error, with the server's message, a failure that outlasted the
+            retries, or an oversized body
+    """
+    attempts = HTTP_GET_ATTEMPTS if method == "GET" else 1
+    for attempt in range(1, attempts + 1):
+        try:
+            return _http_once(method, url, token=token, body=body, raw=raw)
+        except _TransientHTTPError as exc:
+            if attempt == attempts:
+                raise ReleaseError(f"{exc} (attempt {attempt} of {attempts})") from exc.__cause__
+            delay = HTTP_RETRY_DELAY * attempt
+            log(f"{exc}; retrying in {delay}s (attempt {attempt} of {attempts})")
+            time.sleep(delay)
+    raise AssertionError("unreachable: the last attempt returns or raises")
+
+
+class _TransientHTTPError(Exception):
+    """A failure worth retrying for an idempotent request; `http` turns the last one into a ReleaseError."""
+
+
+def _http_once(method: str, url: str, *, token: str | None, body: dict | None, raw: bool) -> tuple[int, object]:
+    """Make one HTTPS request; `http` documents the contract and does the retrying.
+
+    Args:
+        method: HTTP method
+        url: absolute https URL
+        token: bearer token for the GitHub API, if any
+        body: JSON request body, if any
+        raw: return the body as bytes rather than parsed JSON
+
+    Returns:
+        tuple: (status, parsed JSON or bytes); 404 is returned rather than raised
+
+    Raises:
+        _TransientHTTPError: a 5xx, a dropped connection or a timeout, with the cause chained
+        ReleaseError: any other HTTP error, or an oversized body
     """
     data = json.dumps(body).encode() if body is not None else None
     request = urllib.request.Request(url, data=data, method=method)  # noqa: S310  (https URLs built here)
@@ -170,9 +214,14 @@ def http(
         if exc.code == 404:
             return 404, None
         detail = exc.read(64 * 1024).decode("utf-8", errors="replace")
-        raise ReleaseError(f"{method} {url} failed with HTTP {exc.code}: {detail.strip()}") from exc
+        message = f"{method} {url} failed with HTTP {exc.code}: {detail.strip()}"
+        if exc.code in HTTP_RETRYABLE_STATUSES:
+            raise _TransientHTTPError(message) from exc
+        raise ReleaseError(message) from exc
     except urllib.error.URLError as exc:
-        raise ReleaseError(f"{method} {url} failed: {exc.reason}") from exc
+        raise _TransientHTTPError(f"{method} {url} failed: {exc.reason}") from exc
+    except TimeoutError as exc:
+        raise _TransientHTTPError(f"{method} {url} timed out after {HTTP_TIMEOUT}s") from exc
     if len(content) > MAX_DOWNLOAD_BYTES:
         raise ReleaseError(f"{method} {url} returned more than {MAX_DOWNLOAD_BYTES} bytes; refusing to read it")
     if raw:
