@@ -165,14 +165,23 @@ wait_service() {
       paused|rollback_paused) echo "FAIL: update $upd after ${elapsed}s"; break ;;
     esac
     # Count only running tasks made from the current spec, so the old tasks of an update count for nothing.
-    # `service inspect` fills in a StopGracePeriod the task's own spec does not carry; drop it to compare.
+    # `service inspect` fills swarm's defaults into the template; a task's own spec lacks them, so a field
+    # the task lacks is ignored when the template holds swarm's default for it.
     tmpl=$(docker service inspect "$svc" --format '{{json .Spec.TaskTemplate}}')
     ids=$(docker service ps "$svc" --filter desired-state=running --no-trunc -q)
     running=0
     [ -n "$ids" ] && running=$(printf '%s\n' "$ids" | xargs docker inspect --type task | jq --argjson t "$tmpl" '
-      [.[] | select(.Status.State == "running") | .Spec as $s
-       | ($t | if ($s.ContainerSpec | has("StopGracePeriod")) then . else del(.ContainerSpec.StopGracePeriod) end) as $u
-       | select(all($s | keys[]; $u[.] == $s[.]))] | length')
+      def strip($s; $d): if type == "object" and ($s | type) == "object" then
+          . as $u | reduce keys[] as $k ({};
+            if ($s | has($k)) then .[$k] = ($u[$k] | strip($s[$k]; $d[$k]?))
+            elif $d != null and ($d | has($k)) and $u[$k] == $d[$k] then .
+            else .[$k] = $u[$k] end)
+        else . end;
+      {ContainerSpec: {StopGracePeriod: 10000000000, PullOptions: {}, DNSConfig: {}}, Resources: {},
+       RestartPolicy: {Condition: "any", Delay: 5000000000}, Placement: {}} as $defaults
+      | [.[] | select(.Status.State == "running") | .Spec as $s | ($t | strip($s; $defaults)) as $u
+         | select(all($s | keys[]; $u[.] == $s[.]))] | length')
+    [ -n "$running" ] || running=0
     case "$upd" in
       updating|rollback_started) ;;
       *)
@@ -193,7 +202,9 @@ wait_service() {
 ```
 
 - Only running tasks made from the service's current spec are counted, by comparing each task's
-  spec with the service's task template (as swarm itself decides what to replace). Right after
+  spec with the service's task template (as swarm itself decides what to replace). The template
+  `service inspect` prints has swarm's defaults filled in, which tasks' specs do not carry, so a
+  field a task lacks is ignored where the template holds swarm's default for it. Right after
   `update -d` the old tasks are still running and `UpdateStatus` is briefly empty - swarm resets
   it and sets `updating` a moment later - so counting every running task would report a rollout
   that has not started as finished.

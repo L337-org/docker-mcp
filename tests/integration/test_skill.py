@@ -260,15 +260,37 @@ def test_wait_service_reports_a_converged_replicated_service(cleanup):
 
 @pytest.mark.usefixtures("image", "skip_if_no_swarm")
 def test_wait_service_does_not_report_a_rolling_update_as_converged(cleanup):
-    """The old tasks are still running mid-update; counting them reported success before the rollout ended."""
+    """Straight after `update -d` the old tasks still run on the old spec, and must not count as converged.
+
+    The update adds a field the old tasks' specs lack entirely, the case a comparison that ignored
+    fields missing from the task would get wrong. A 60 s delay between tasks keeps the rollout
+    unfinished for the whole wait, whether or not `UpdateStatus` has been set yet.
+    """
     _create_service(cleanup, "sktest-roll", "--replicas", "2")
     assert _run_shell(f"{_wait_service_snippet()}\nwait_service sktest-roll 90").returncode == 0
     updated = _docker("service", "update", "-d", "--env-add", "X=1", "--update-delay", "60s", "sktest-roll")
     assert updated.returncode == 0, updated.stderr.decode(errors="replace")
     ran = _run_shell(f"{_wait_service_snippet()}\nwait_service sktest-roll 10")
     assert ran.returncode == 1, ran.stdout + ran.stderr
-    assert "update=updating" in ran.stdout
     assert "OK:" not in ran.stdout
+    assert "TIMEOUT" in ran.stdout
+
+
+@pytest.mark.usefixtures("image", "skip_if_no_swarm")
+def test_wait_service_matches_tasks_of_a_service_with_many_options_set(cleanup):
+    """`service inspect` fills swarm's defaults into the template; a task's spec lacks them.
+
+    A partial restart policy, a stop grace period at its default, limits, a constraint and a
+    healthcheck each make the two documents differ; none may stop the tasks counting as current.
+    """
+    _create_service(
+        cleanup, "sktest-opts", "--replicas", "1", "--restart-condition", "on-failure",
+        "--stop-grace-period", "10s", "--limit-memory", "64m", "--constraint", "node.role==manager",
+        "--health-cmd", "true", "--env", "A=1", "--mount", "type=tmpfs,target=/t",
+    )  # fmt: skip
+    ran = _run_shell(f"{_wait_service_snippet()}\nwait_service sktest-opts 90")
+    assert ran.returncode == 0, ran.stdout + ran.stderr
+    assert "OK: 1 running (replicated)" in ran.stdout
 
 
 @pytest.mark.usefixtures("image", "skip_if_no_swarm")

@@ -191,8 +191,9 @@ service under-replicated rather than failing loudly.
 `docker node update` changes only the fields named; the rest of the node's spec is kept.
 
 `docker node rm` refuses a node whose state is `ready` ("is not down and can't be removed"), drained
-or not, and a manager until it is demoted. On a still-reachable node it needs `--force`, and that leaves the node believing it
-is still in the swarm; run `docker swarm leave` on the node itself as well.
+or not, and a manager until it is demoted. On a still-reachable node it needs `--force`, and that
+leaves the node believing it is still in the swarm; run `docker swarm leave` on the node itself as
+well.
 
 ## Stacks (Compose on Swarm)
 
