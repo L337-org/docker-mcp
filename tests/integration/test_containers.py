@@ -130,6 +130,38 @@ def test_a_one_shot_container_run_gives_its_exit_code_and_output_afterwards():
         container_remove(name, force=True)
 
 
+def test_a_one_shot_container_run_with_wait_seconds_needs_one_call():
+    name = f"docker-mcp-it-oneshot-wait-{uuid.uuid4().hex[:8]}"
+    result = container_run(
+        "alpine:3",
+        command=["sh", "-c", "echo out; echo err >&2; exit 3"],
+        name=name,
+        wait_seconds=60,
+        auto_remove=True,
+    )
+    try:
+        assert (result["exit_code"], result["timed_out"], result["truncated"]) == (3, False, False)
+        assert sorted(result["output"].split()) == ["err", "out"]
+        assert result["removed"] is True
+        assert not container_list(all=True, filters={"name": name})
+    finally:
+        if not result.get("removed"):
+            container_remove(name, force=True)
+
+
+def test_a_one_shot_container_run_that_outlives_wait_seconds_is_left_running():
+    name = f"docker-mcp-it-oneshot-slow-{uuid.uuid4().hex[:8]}"
+    try:
+        result = container_run(
+            "alpine:3", command=["sh", "-c", "echo started; sleep 300"], name=name, wait_seconds=2, auto_remove=True
+        )
+        assert (result["timed_out"], result["exit_code"], result["removed"]) == (True, None, False)
+        assert result["output"].strip() == "started"
+        assert container_list(filters={"name": name})[0]["State"]["Status"] == "running"
+    finally:
+        container_remove(name, force=True)
+
+
 @pytest.fixture
 def exec_target():
     """A running container to exec into, removed afterwards."""

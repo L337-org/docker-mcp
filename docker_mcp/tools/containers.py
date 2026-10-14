@@ -90,17 +90,20 @@ def container_run(  # noqa: DOC101,DOC103,DOC501,DOC503
     stdin_open: bool = False,
     mem_limit: int | str | None = None,
     cpu_count: int | None = None,
+    wait_seconds: float | None = None,
     extra_kwargs: dict | None = None,
     host: str | None = None,
 ) -> dict:
     """
     Run a container from an image (create and start in one call, like `docker run`).
 
-    Returns once the container has started; it never waits for it to finish. For a one-shot command,
-    `system_wait(kind="container", until="not-running")` gives the exit code, `container_logs` the
-    output and `container_remove` the cleanup. Use `container_create` to prepare a container without
-    starting it, or `container_exec` to run a command in one that already exists. Created containers
-    are stamped with provenance labels.
+    Returns once the container has started, unless `wait_seconds` is set. For a one-shot command, set
+    `wait_seconds` (and `auto_remove=True` to clean up, like `docker run --rm`): the call waits up to that
+    long for the container to exit and returns its exit code and output. A container still running then is
+    left running and reported with `timed_out: true`; it is not removed, so stop it with `container_stop`.
+    For a long-running job, leave `wait_seconds` unset and wait with `system_wait`. Use `container_create`
+    to prepare a container without starting it, or `container_exec` to run a command in one that already
+    exists. Created containers are stamped with provenance labels.
 
     Args:
         environment: Environment variables, as `{"KEY": "value"}` or a list of "KEY=value" strings
@@ -110,18 +113,25 @@ def container_run(  # noqa: DOC101,DOC103,DOC501,DOC503
         user: Username or UID to run as
         restart_policy: Restart policy, e.g. {'Name': 'on-failure', 'MaximumRetryCount': 3}
         labels: Labels to set on the container
-        auto_remove: Have the daemon delete the container when it exits, which also deletes its logs and exit
-            code: leave it off when either is wanted, and call `container_remove` afterwards
+        auto_remove: Delete the container when it exits. Without `wait_seconds` the daemon deletes it, logs and
+            exit code included, so leave it off when either is wanted; with `wait_seconds` it is deleted after
+            they are read, and with its anonymous volumes, as `docker run --rm` does
         privileged: Give extended privileges to the container
         mem_limit: Memory limit: bytes as an int, or a units string ("100000b", "1000k", "128m", "1g")
         cpu_count: Usable CPUs, on a Windows daemon only
+        wait_seconds: Wait up to this many seconds for the container to exit and return its output
         extra_kwargs: Additional keyword arguments forwarded to ContainerCollection.run (call
             `docs_lookup(section="containers")` for the full accepted set)
 
     Returns:
-        dict: The started container's full inspect payload; an `auto_remove` container already gone returns
-            the payload from before the start, with `removed_on_exit: true`
+        dict: Without `wait_seconds`, the started container's full inspect payload; an `auto_remove` container
+            already gone returns the payload from before the start, with `removed_on_exit: true`. With it,
+            {"id", "name", "exit_code", "output", "timed_out", "truncated", "removed"}: output is stdout and stderr
+            combined, cut at 32 MiB with truncated=true; exit_code is null when timed_out is true
     """
+    # Checked before anything runs, so a bad bound never leaves a started container behind.
+    if wait_seconds is not None and not (math.isfinite(wait_seconds) and wait_seconds > 0):
+        raise ToolInputError(f"wait_seconds must be a finite number above 0, got {wait_seconds}.")
     # Always detached: a blocking run waits for the image to finish, with no bound, and an image that
     # never exits would hang the call for good. `system_wait` is how a caller waits, with a timeout.
     kwargs: dict = {
@@ -156,11 +166,16 @@ def container_run(  # noqa: DOC101,DOC103,DOC501,DOC503
         blocked = sorted({"detach", "remove"} & set(extra_kwargs))
         if blocked:
             raise ToolInputError(
-                f"container_run does not take {blocked} in extra_kwargs: it always returns once the container "
-                "starts. Wait with system_wait(kind='container'), read the output with container_logs, and clean "
-                "up with container_remove or auto_remove=True."
+                f"container_run does not take {blocked} in extra_kwargs. For a one-shot command set wait_seconds, "
+                "with auto_remove=True to clean up; otherwise wait with system_wait(kind='container'), read the "
+                "output with container_logs, and clean up with container_remove."
             )
         kwargs.update(extra_kwargs)
+    remove_after = False
+    if wait_seconds is not None:
+        # The daemon's own auto-remove would delete the logs and exit code the moment the container exits,
+        # racing the read below. Removal is done here instead, once both have been read.
+        remove_after = bool(kwargs.pop("auto_remove", False))
     # Stamped after extra_kwargs, matching container_create/service_create. Stamping before the
     # update let extra_kwargs={"labels": ...} replace the whole dict and drop the managed labels,
     # which silently hid the container from managed_only listings and prune_managed. A caller still
@@ -169,9 +184,73 @@ def container_run(  # noqa: DOC101,DOC103,DOC501,DOC503
     if provenance is not None:
         kwargs["labels"] = provenance
     container = _get_client(host).containers.run(image, **kwargs)
-    # docker-py's run returns the object it fetched before starting it, so its attrs still say "created";
-    # re-read it, as container_start does, so the payload describes the started container.
-    return _reread(container)
+    if wait_seconds is None:
+        # docker-py's run returns the object it fetched before starting it, so its attrs still say "created";
+        # re-read it, as container_start does, so the payload describes the started container.
+        return _reread(container)
+    return _run_to_completion(container, wait_seconds, remove_after, host)
+
+
+def _run_to_completion(container: Any, wait_seconds: float, remove_after: bool, host: str | None) -> dict:
+    """Wait a bounded time for a started container to exit, then collect its output and optionally remove it.
+
+    Returns rather than raises on a timeout, because the output so far is still worth having: a container
+    still running at the bound is reported with `timed_out: true` and a null exit code, and left running
+    (and not removed) for the caller to deal with.
+
+    Args:
+        container: the container `container_run` just started
+        wait_seconds: how long to wait for it to exit
+        remove_after: remove it, with its anonymous volumes, once its output has been read
+        host: the host label to target, or None for the default
+
+    Returns:
+        dict: {"id", "name", "exit_code", "output", "timed_out", "truncated", "removed"}
+    """
+    waited = _wait_container(container.id, "not-running", wait_seconds, poll_interval=1.0, host=host)
+    output, truncated = _read_capped_output(container)
+    removed = False
+    if remove_after and not waited["timed_out"]:
+        # v=True matches `docker run --rm`, which also removes the container's anonymous volumes.
+        container.remove(v=True)
+        removed = True
+    return {
+        "id": container.id,
+        "name": container.name,
+        "exit_code": None if waited["timed_out"] else waited["status_code"],
+        "output": output,
+        "timed_out": waited["timed_out"],
+        "truncated": truncated,
+        "removed": removed,
+    }
+
+
+def _read_capped_output(container: Any) -> tuple[str, bool]:
+    """Read a container's logs so far, keeping at most MAX_PAYLOAD_BYTES and saying whether it cut them.
+
+    Unlike `_read_bounded_container_logs`, which refuses an over-cap read, this keeps the first part: a
+    one-shot run has already happened, so its output is worth returning even when it is too long to keep
+    whole, as `container_exec` does.
+
+    Args:
+        container: the container to read from
+
+    Returns:
+        tuple[str, bool]: the decoded output, and whether it was cut at the cap
+    """
+    stream = container.logs(stdout=True, stderr=True, stream=True, follow=False)
+    kept = bytearray()
+    truncated = False
+    try:
+        for chunk in as_byte_chunks(stream):
+            room = MAX_PAYLOAD_BYTES - len(kept)
+            kept += chunk[:room]
+            if len(chunk) > room:
+                truncated = True
+                break
+    finally:
+        close_stream_quietly(stream)
+    return kept.decode("utf-8", errors="replace"), truncated
 
 
 @tool()
