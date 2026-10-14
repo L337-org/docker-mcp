@@ -118,6 +118,7 @@ docker service create -d --name web --replicas 3 \
   --limit-memory 512m --reserve-memory 256m \
   --secret db_password --config app_config \
   --label l337-docker-skill.managed=true --label l337-docker-skill.created="$(date -u +%FT%TZ)" \
+  --container-label l337-docker-skill.managed=true \
   nginx:1.27
 
 docker service create -d --mode global --name agent monitoring:latest   # one task per node

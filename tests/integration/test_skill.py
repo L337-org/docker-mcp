@@ -218,6 +218,23 @@ def test_follow_logs_returns_on_time_from_a_container_that_logs_nothing(cleanup)
     assert "--- followed 3s" in ran.stdout
 
 
+@pytest.mark.usefixtures("image")
+def test_follow_logs_shows_only_what_is_logged_during_the_window(cleanup):
+    """ "What does it log over the next N seconds" must not be answered with lines from before the call."""
+    result = _docker(
+        "run", "-d", "--name", "sktest-followold", "--label", _TEST_LABEL, _IMAGE,
+        "sh", "-c", "echo before-the-window; sleep 6; echo during-the-window; sleep 300",
+    )  # fmt: skip
+    assert result.returncode == 0, result.stderr.decode(errors="replace")
+    cleanup["container"].append("sktest-followold")
+    assert _run_shell("sleep 2").returncode == 0  # let the first line be logged before the window opens
+    snippet = _extract_shell_function(_OBSERVABILITY_MD, "follow_logs")
+    ran = _run_shell(f"{snippet}\nfollow_logs sktest-followold 10", timeout=40)
+    assert ran.returncode == 0, ran.stdout + ran.stderr
+    assert "during-the-window" in ran.stdout
+    assert "before-the-window" not in ran.stdout
+
+
 # --------------------------------------------------------------------------------------------
 # The documented swarm waits, against a real swarm
 # --------------------------------------------------------------------------------------------

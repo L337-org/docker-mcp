@@ -49,6 +49,8 @@ imminent OOM kill and worth acting on from a single sample.
   wait, run the loop several times.
 - **Poll every 2-5s**, not every 0.1s. Each poll is a daemon round trip.
 - Prefer `docker events` (below) over polling when you are waiting for a discrete event.
+- **Define a loop in the same command that calls it.** Each is a shell function; where the shell
+  does not keep state between commands, paste the definition and the call into one command.
 
 ### Until a container exits
 
@@ -129,7 +131,7 @@ Run the follow in the background and stop it:
 ```bash
 follow_logs() {
   local c="$1" secs="${2:-60}" pid elapsed=0
-  docker logs --follow --tail 50 "$c" 2>&1 & pid=$!
+  docker logs --follow --tail 0 "$c" 2>&1 & pid=$!
   while [ "$elapsed" -lt "$secs" ] && kill -0 "$pid" 2>/dev/null; do
     sleep 1; elapsed=$((elapsed + 1))
   done
@@ -138,7 +140,9 @@ follow_logs() {
 }
 ```
 
-It returns after `secs` seconds, or sooner if the container stops.
+It shows only what is logged during the window (`--tail 0`), so nothing printed is older than
+the call; read recent history first with `docker logs --tail 200` if that is wanted too. It
+returns after `secs` seconds, or sooner if the container stops.
 
 ### Until swarm replicas converge
 

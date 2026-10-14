@@ -6,7 +6,8 @@
    `docker pull <image>`. Pin the tag; `latest` is not a version.
 2. **Decide on supporting resources.** A dedicated user-defined network if it must talk to other
    containers by name; a named volume for anything that must survive recreation. Create them
-   stamped: `docker network create --label l337-docker-skill.managed=true appnet`.
+   stamped with both provenance labels (SKILL.md): `docker network create --label
+   l337-docker-skill.managed=true --label l337-docker-skill.created="$(date -u +%FT%TZ)" appnet`.
 3. **Check the name is free.** `docker ps -a --filter name=^<name>$` - if something already holds
    it, stop and ask. Never silently replace an existing container.
 4. **Run it**, detached, with a restart policy and explicit limits:
@@ -14,7 +15,7 @@
    docker run -d --name <name> --restart unless-stopped \
      --network appnet -p 8080:80 -v appdata:/var/lib/app \
      --memory 512m --cpus 1 \
-     --label l337-docker-skill.managed=true \
+     --label l337-docker-skill.managed=true --label l337-docker-skill.created="$(date -u +%FT%TZ)" \
      <image>
    ```
 5. **Verify it actually came up** with the `wait_healthy` loop in
