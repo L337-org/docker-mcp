@@ -913,7 +913,7 @@ def container_exec(  # noqa: DOC101,DOC103,DOC501,DOC503
     stream = cast(Iterable[Any], client.api.exec_start(exec_id, tty=tty, stream=True, demux=demux))
     buffers = (bytearray(), bytearray())
     lock = threading.Lock()
-    state: dict[str, Any] = {"truncated": False, "error": None}
+    state: dict[str, Any] = {"truncated": False, "error": None, "abandoned": False}
     # Each stream is capped on its own, so a command that floods stdout cannot crowd out the stderr that says
     # why it failed. Without demux everything arrives as one stream in the first buffer.
     cut = [False, not demux]
@@ -923,6 +923,10 @@ def container_exec(  # noqa: DOC101,DOC103,DOC501,DOC503
             for chunk in stream:
                 parts = enumerate(chunk) if demux else ((0, chunk),)
                 with lock:
+                    # The call has returned without this thread. On ssh:// the stream cannot be closed, so
+                    # without this a command still flooding the stream would keep being read and thrown away.
+                    if state["abandoned"]:
+                        return
                     for index, data in parts:
                         if not data or cut[index]:
                             continue
@@ -939,11 +943,14 @@ def container_exec(  # noqa: DOC101,DOC103,DOC501,DOC503
 
     # The read runs in a thread the call waits on for at most `timeout_seconds`, so the bound holds on every
     # transport: closing the stream ends the read on a local or TCP daemon, but docker-py cannot close an
-    # ssh:// stream, where the thread instead stays blocked until the command ends or the connection drops.
+    # ssh:// stream, where the thread instead ends at its next chunk, or stays blocked waiting for one until
+    # the command ends or the connection drops.
     reader = threading.Thread(target=read, name=f"container_exec {exec_id[:12]}", daemon=True)
     reader.start()
     reader.join(timeout_seconds)
     timed_out = reader.is_alive()
+    with lock:
+        state["abandoned"] = True
     close_stream_quietly(stream)
     if not timed_out and state["error"] is not None:
         raise state["error"]

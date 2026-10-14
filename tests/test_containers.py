@@ -726,6 +726,34 @@ def test_container_exec_demux_returns_at_once_when_both_streams_are_cut():
     )
 
 
+class _UnclosableFlood:
+    """An ssh:// exec stream: close() does nothing, and the command floods stdout without end, like `yes`."""
+
+    def __init__(self):
+        self.reads = 0
+
+    def __iter__(self):
+        while True:
+            self.reads += 1
+            time.sleep(0.001)
+            yield (b"y\n" * 64, None)
+
+    def close(self):
+        pass
+
+
+def test_container_exec_stops_reading_an_unclosable_stream_once_it_has_returned():
+    # Stdout is cut but stderr is still being kept, so the read goes on until the timeout. On ssh:// the
+    # stream cannot be closed, and the reader thread must not go on draining the flood after the call returns.
+    stream = _UnclosableFlood()
+    result, _ = _exec(stream, inspect={"ExitCode": None}, demux=True, max_bytes=16, timeout_seconds=0.2)
+    assert (result["truncated"], result["timed_out"]) == (True, True)
+    time.sleep(0.05)
+    reads_after_return = stream.reads
+    time.sleep(0.3)
+    assert stream.reads <= reads_after_return + 1
+
+
 def test_container_exec_returns_at_its_timeout_with_what_arrived():
     stream = _ExecStream([b"partial\n"], block=True)
     started = time.monotonic()
