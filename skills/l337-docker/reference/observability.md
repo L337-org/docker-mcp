@@ -16,7 +16,7 @@ One command each. These are the reads to reach for instead of improvising a `jq`
 | whole-host resource usage | `docker stats --no-stream --format '{{.Name}} {{.CPUPerc}} {{.MemPerc}}'` |
 | all services, desired vs running | `docker service ls --format json \| jq -rs '.[] \| [.Name,.Mode,.Replicas] \| @tsv'` |
 | one service's output | `docker service logs --tail 200 --timestamps <svc>` |
-| one service's tasks and failures | `docker service ps <svc> --no-trunc --format json \| jq -rs '.[] \| [.Name,.CurrentState,.Error] \| @tsv'` |
+| one service's tasks and failures | `docker service ps <svc> --no-trunc --format json \| jq -rs '.[] \| [.ID,.Name,.CurrentState,.Error] \| @tsv'` |
 | a rollout in progress | `docker service inspect <svc> --format '{{json .UpdateStatus}}' \| jq` |
 | all swarm nodes | `docker node ls --format json \| jq -rs '.[] \| [.Hostname,.Status,.Availability,.ManagerStatus] \| @tsv'` |
 | what changed recently | `docker events --since 30m --until 0s --format json \| jq -s '.'` |
@@ -40,9 +40,13 @@ imminent OOM kill and worth acting on from a single sample.
 ### Rules
 
 - **Always bound the loop** with a timeout, and make the timeout an argument.
-- **Distinguish the three outcomes**: condition met / condition definitively failed / timed out.
+- **Distinguish the three outcomes**: condition met / condition can no longer be met / timed out.
   Collapsing "timed out" into either of the others is the failure that produces false success
-  reports.
+  reports. The loops below print `OK`, `FAIL` or `NOT MET`, or `TIMEOUT`, and return 0 only on `OK`
+  (`wait_service` adds a fourth, `ROLLED BACK`).
+- **Keep the timeout under the host's limit on one shell command** (often 120 s). A loop the host
+  kills never prints `TIMEOUT`, so a timeout becomes indistinguishable from a hang. For a longer
+  wait, run the loop several times.
 - **Poll every 2-5s**, not every 0.1s. Each poll is a daemon round trip.
 - Prefer `docker events` (below) over polling when you are waiting for a discrete event.
 
@@ -65,7 +69,7 @@ There is no built-in equivalent, and this is the wait that actually matters afte
 
 ```bash
 wait_healthy() {
-  local c="$1" tmo="${2:-120}" elapsed=0 st health
+  local c="$1" tmo="${2:-110}" elapsed=0 st health
   while [ "$elapsed" -lt "$tmo" ]; do
     st=$(docker inspect "$c" --format '{{.State.Status}}' 2>/dev/null) || {
       echo "FAIL: no such container $c"; return 1; }
@@ -75,8 +79,11 @@ wait_healthy() {
       unhealthy) echo "FAIL: unhealthy after ${elapsed}s"; return 1 ;;
     esac
     case "$st" in
-      running) [ "$health" = none ] && { echo "OK: running (no healthcheck) after ${elapsed}s"; return 0; } ;;
-      exited)  echo "FAIL: exited($(docker inspect "$c" --format '{{.State.ExitCode}}')) after ${elapsed}s"; return 1 ;;
+      running) [ "$health" = none ] && {
+        echo "NOT MET: running, but the image declares no healthcheck, so health cannot be observed"
+        return 1; } ;;
+      exited|dead) echo "FAIL: $st($(docker inspect "$c" --format '{{.State.ExitCode}}')) after ${elapsed}s"
+                   return 1 ;;
     esac
     sleep 2; elapsed=$((elapsed + 2))
   done
@@ -84,62 +91,154 @@ wait_healthy() {
 }
 ```
 
-**`health=none` means the image declares no `HEALTHCHECK` - it is not a failure.** Treat
-`running` as success in that case, and say in the report that health was not actually verified,
-because it was not. Reporting "healthy" for an image with no healthcheck is a false claim.
+**`health=none` means the image declares no `HEALTHCHECK`.** The loop returns at once with
+`NOT MET` rather than `OK`, because "healthy" was never observed and cannot be. If running is all
+the user needs, say so in the report: "running; the image declares no healthcheck, so application
+health was not verified".
+
+### Until a line appears in a container's logs
+
+For "wait until the server says it is listening", where there is no healthcheck to watch:
+
+```bash
+wait_log() {
+  local c="$1" pattern="$2" tmo="${3:-110}" elapsed=0 st line
+  while [ "$elapsed" -lt "$tmo" ]; do
+    line=$(docker logs --tail 1000 "$c" 2>&1 | grep -F -- "$pattern" | tail -1)
+    [ -n "$line" ] && { echo "OK: after ${elapsed}s: $line"; return 0; }
+    st=$(docker inspect "$c" --format '{{.State.Status}}' 2>/dev/null) || {
+      echo "FAIL: no such container $c"; return 1; }
+    case "$st" in
+      exited|dead) echo "NOT MET: container $st without logging the pattern"; return 1 ;;
+    esac
+    sleep 2; elapsed=$((elapsed + 2))
+  done
+  echo "TIMEOUT: pattern not seen after ${tmo}s"; return 1
+}
+```
+
+`grep -F` matches the pattern as plain text. Use `grep -E` only for a pattern you wrote yourself:
+the logs are the container's output, and a pattern is run over all of them on every poll.
+
+### Following logs for a bounded time
+
+Following logs with `--follow` never returns on its own, and a future `--until` does not fix
+that: it ends the follow only when a later line arrives, so on a quiet container it still blocks.
+Run the follow in the background and stop it:
+
+```bash
+follow_logs() {
+  local c="$1" secs="${2:-60}" pid elapsed=0
+  docker logs --follow --tail 50 "$c" 2>&1 & pid=$!
+  while [ "$elapsed" -lt "$secs" ] && kill -0 "$pid" 2>/dev/null; do
+    sleep 1; elapsed=$((elapsed + 1))
+  done
+  kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
+  echo "--- followed ${elapsed}s"
+}
+```
+
+It returns after `secs` seconds, or sooner if the container stops.
 
 ### Until swarm replicas converge
 
-`docker service update` and `stack deploy` return **before** the rollout finishes. Never report
-success from their exit code alone.
+`docker service create`, `update`, `scale` and `rollback` block until the service converges, with
+no timeout, unless given `-d`. `docker stack deploy` returns at once by default. Either way, run
+the command detached and wait with this loop, which has a timeout:
 
 ```bash
 wait_service() {
-  local svc="$1" tmo="${2:-300}" elapsed=0 running desired upd
+  local svc="$1" tmo="${2:-110}" elapsed=0 mode desired upd tasks running
   while [ "$elapsed" -lt "$tmo" ]; do
-    running=$(docker service ps "$svc" --filter desired-state=running --format json 2>/dev/null \
-              | jq -rs '[.[] | select(.CurrentState | startswith("Running"))] | length')
-    desired=$(docker service inspect "$svc" --format '{{if .Spec.Mode.Replicated}}{{.Spec.Mode.Replicated.Replicas}}{{else}}global{{end}}')
-    upd=$(docker service inspect "$svc" --format '{{if .UpdateStatus}}{{.UpdateStatus.State}}{{end}}')
-    if [ "$upd" = "paused" ] || [ "$upd" = "rollback_started" ]; then
-      echo "FAIL: rollout $upd after ${elapsed}s"; break
-    fi
-    if [ "$desired" = "global" ] || [ "$running" = "$desired" ]; then
-      echo "OK: $running/$desired running after ${elapsed}s"; return 0
-    fi
+    mode=$(docker service inspect "$svc" --format '{{if .Spec.Mode.Global}}global{{else}}replicated{{end}}' \
+           2>/dev/null) || { echo "FAIL: no such service $svc"; return 1; }
+    desired=$(docker service inspect "$svc" --format '{{with .Spec.Mode.Replicated}}{{.Replicas}}{{end}}')
+    upd=$(docker service inspect "$svc" --format '{{with .UpdateStatus}}{{.State}}{{end}}')
+    case "$upd" in
+      paused|rollback_paused) echo "FAIL: update $upd after ${elapsed}s"; break ;;
+    esac
+    tasks=$(docker service ps "$svc" --filter desired-state=running --format json | jq -s 'length')
+    running=$(docker service ps "$svc" --filter desired-state=running --format json \
+              | jq -s '[.[] | select(.CurrentState | startswith("Running"))] | length')
+    case "$upd" in
+      ""|completed|rollback_completed)
+        if { [ "$mode" = global ] && [ "$running" -gt 0 ] && [ "$running" -eq "$tasks" ]; } ||
+           { [ "$mode" = replicated ] && [ "$running" -eq "$desired" ]; }; then
+          [ "$upd" = rollback_completed ] && {
+            echo "ROLLED BACK: $running running on the previous spec after ${elapsed}s"; return 2; }
+          echo "OK: $running running ($mode) after ${elapsed}s"; return 0
+        fi ;;
+    esac
     sleep 5; elapsed=$((elapsed + 5))
   done
-  echo "TIMEOUT/FAIL after ${elapsed}s - failing tasks:"
+  echo "TIMEOUT/FAIL after ${elapsed}s (update=${upd:-none}) - failing tasks:"
   docker service ps "$svc" --no-trunc --format json | jq -rs \
-    '.[] | select(.CurrentState | startswith("Running") | not) | [.Name,.CurrentState,.Error] | @tsv'
+    '.[] | select(.CurrentState | startswith("Running") | not) | [.ID,.Name,.CurrentState,.Error] | @tsv'
   return 1
 }
 ```
 
-Always dump the failing tasks with `--no-trunc` on failure - the `Error` column is the answer and
-is truncated by default.
+- A rolling update is not converged until `UpdateStatus.State` leaves `updating`: the old tasks
+  are still running and would otherwise be counted. The daemon sets `updating` as soon as the
+  update is accepted, so checking straight after `update -d` is safe.
+- `rollback_completed` means the service is back on its previous spec, and the loop returns 2
+  with `ROLLED BACK`. After `docker service rollback` that is the result asked for. After a deploy
+  it means the deploy failed and was reverted, however many replicas are running: report it so.
+- A global service has no replica count. It is converged when it has at least one task and every
+  task it means to run is running.
 
-### Until a node is ready
+Always dump the failing tasks with `--no-trunc` on failure - the `Error` column is the answer and
+is truncated by default. The task `ID` is what `docker service logs --tail 200 <task-id>` and
+`docker inspect --type task <task-id>` take; the `Name` (`<service>.<slot>`) is not.
+
+### Until a stack converges, or is gone
+
+A stack is converged when each of its services is: run `wait_service` over
+`docker stack services <stack> --format '{{.Name}}'`. After `docker stack rm`, which also returns
+at once, wait for the services and their tasks to go before reusing the name or its networks:
+
+```bash
+wait_stack_removed() {
+  local stack="$1" tmo="${2:-110}" elapsed=0 left
+  while [ "$elapsed" -lt "$tmo" ]; do
+    left=$(docker service ls --filter "label=com.docker.stack.namespace=$stack" -q | wc -l)
+    left=$((left + $(docker ps -aq --filter "label=com.docker.stack.namespace=$stack" | wc -l)))
+    [ "$left" -eq 0 ] && { echo "OK: stack $stack removed after ${elapsed}s"; return 0; }
+    sleep 2; elapsed=$((elapsed + 2))
+  done
+  echo "TIMEOUT: $left services or containers of $stack left after ${tmo}s"; return 1
+}
+```
+
+The container count is for this node only; on a multi-node swarm, the services going is what
+can be checked from here.
+
+### Until a node reaches a state
 
 ```bash
 wait_node() {
-  local node="$1" tmo="${2:-120}" elapsed=0 st av
+  local node="$1" want="${2:-ready}" tmo="${3:-110}" avail="${4:-}" elapsed=0 st av
   while [ "$elapsed" -lt "$tmo" ]; do
     st=$(docker node inspect "$node" --format '{{.Status.State}}' 2>/dev/null) || {
-      echo "FAIL: no such node"; return 1; }
+      echo "FAIL: no such node $node"; return 1; }
     av=$(docker node inspect "$node" --format '{{.Spec.Availability}}')
-    [ "$st" = "ready" ] && [ "$av" = "active" ] && { echo "OK: ready/active after ${elapsed}s"; return 0; }
+    [ "$st" = "$want" ] && { [ -z "$avail" ] || [ "$av" = "$avail" ]; } && {
+      echo "OK: $st/$av after ${elapsed}s"; return 0; }
     sleep 5; elapsed=$((elapsed + 5))
   done
   echo "TIMEOUT: state=$st availability=$av after ${tmo}s"; return 1
 }
 ```
 
+`want` is the node's `Status.State`: `ready`, `down`, `disconnected` or `unknown`. `avail` is
+optional: pass `active` as well to wait for a node that is both up and taking work
+(`wait_node <node> ready 110 active`), since a drained node can be `ready`.
+
 ### Until a registry tag appears
 
 ```bash
 wait_tag() {
-  local ref="$1" tmo="${2:-600}" elapsed=0
+  local ref="$1" tmo="${2:-110}" elapsed=0
   while [ "$elapsed" -lt "$tmo" ]; do
     docker buildx imagetools inspect "$ref" >/dev/null 2>&1 && \
       { echo "OK: $ref published after ${elapsed}s"; return 0; }
@@ -205,4 +304,4 @@ State what was observed, over what window, and what was not checked:
 - "3/3 replicas running, confirmed 40s after the update" - a measurement.
 - "Deployed successfully" - an assumption, unless a wait actually returned OK.
 - "Container running; the image declares no healthcheck, so application health was not verified" -
-  the honest version of the ambiguous case.
+  the honest report of a `NOT MET` from `wait_healthy`.

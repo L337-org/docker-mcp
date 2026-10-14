@@ -42,6 +42,7 @@ normal (only locally-built layers keep build metadata), not corruption.
 docker pull nginx:1.27
 docker pull --platform linux/amd64 nginx:1.27             # on an arm64 host
 docker pull nginx@sha256:abc...                           # digest pin - immutable
+docker pull --all-tags myorg/tools                        # every tag in the repository - can be huge
 docker push ghcr.io/org/app:v1.2.3
 docker push --all-tags ghcr.io/org/app
 ```
@@ -107,7 +108,7 @@ interchangeable.
 
 ```bash
 docker import rootfs.tar myorg/rootfs:v1                  # tar of a filesystem -> 1-layer image
-docker import --change 'CMD /bin/sh' rootfs.tar myorg/rootfs:v1
+docker import --change 'CMD ["/bin/sh"]' rootfs.tar myorg/rootfs:v1
 docker import https://example.com/rootfs.tar myorg/rootfs:v1
 ```
 
@@ -116,7 +117,8 @@ docker import https://example.com/rootfs.tar myorg/rootfs:v1
 - An imported image has an empty config - no `CMD`, `ENTRYPOINT` or `ENV` - so it will not run until
   you set one. `--change` accepts only `CMD`, `ENTRYPOINT`, `ENV`, `EXPOSE`, `ONBUILD`, `USER`,
   `VOLUME` and `WORKDIR`; `LABEL` is not among them, so an imported image cannot be
-  provenance-labelled at import time.
+  provenance-labelled at import time. Use the exec (JSON) form for `CMD` and `ENTRYPOINT`: the
+  shell form wraps the command in `/bin/sh -c`, which a minimal rootfs may not have.
 - The URL form is fetched by the **daemon**, not by the shell - so it resolves in the daemon's
   network namespace, which matters against a remote host.
 
@@ -124,11 +126,15 @@ docker import https://example.com/rootfs.tar myorg/rootfs:v1
 
 ```bash
 docker image rm <ref>                                     # alias: docker rmi
-docker image rm -f <ref>                                  # even if containers reference it
+docker image rm -f <tag>                                  # untag even if a container uses it
 docker image prune                                        # dangling only - usually safe
 docker image prune -a                                     # EVERY image not used by a container
 docker image prune --filter 'until=168h'
 ```
+
+`-f` does not override a **running** container: removing the image itself by id still fails
+("cannot be forced - image is being used by running container"). By tag it only untags, and the
+image stays.
 
 **`docker image rm <tag>` on an image carrying several tags only removes that tag** - the image
 survives under its other names, and reclaims nothing. `docker image inspect <ref> --format '{{json
@@ -150,7 +156,7 @@ bucket on a build machine.
 
 ```bash
 docker builder prune                                      # dangling build cache
-docker builder prune -a                                   # all build cache
+docker builder prune -a                                   # also internal/frontend images
 docker builder prune --reserved-space 10GB                # keep this much, evict the rest
 docker buildx du --verbose                                # what is actually in there
 ```

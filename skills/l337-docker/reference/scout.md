@@ -2,13 +2,17 @@
 
 A CLI plugin. Confirm it exists first: `docker scout version`.
 
-**Scout needs `docker login`.** Unauthenticated, it returns thin or empty results rather than a
-clear error - so sparse output is far more often an auth problem than a clean image. Check
-`docker system info --format '{{.Registry}}'` and `~/.docker/config.json` for an auth entry, and
-if results look empty, say "this may be unauthenticated" rather than reporting zero CVEs.
+**Scout needs `docker login`.** Without it, every subcommand exits 1 and prints "Log in with your
+Docker ID or email address to use docker scout" (Scout 1.25.0), even for a public image. Report
+that as "not logged in", never as a scan result. Check `~/.docker/config.json` for an auth entry
+first, and if the user has none, ask them to log in rather than trying to work around it.
 
 Scout analyses images from the local store or straight from a registry (`docker scout cves
 alpine:3.20` works without pulling first). It can also target a directory or an archive.
+
+For a multi-platform image it analyses the host's platform. Every subcommand takes
+`--platform linux/arm64` (for example) to analyse another: the CVEs differ per platform, so name
+the one you scanned in the report.
 
 ## Triage order
 
@@ -74,6 +78,10 @@ the context.
 docker scout compare <new-image> --to <old-image> \
   --only-severity critical,high --ignore-unchanged
 ```
+
+Instead of `--to <old-image>`, `--to-latest` compares against the latest image Scout has
+processed for that repository, and `--to-env <environment>` against the image recorded for that
+environment (`production`, say) in the organisation's Scout settings.
 
 `--ignore-unchanged` drops carried-forward findings so only the delta remains. Read it in three
 buckets and report them separately:

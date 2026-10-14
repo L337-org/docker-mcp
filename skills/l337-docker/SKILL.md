@@ -55,14 +55,30 @@ is no server truncating for you.
   context. Then report the path and size.
 - Projecting fields with `--format` beats piping a full dump through `head`.
 
-**3. Confirm destructive operations, naming the exact target.** Before any `rm`, `prune`, `down
---volumes`, `kill`, `system prune`, `swarm leave`, `stack rm`, or force-tag-overwrite: state
-precisely what will be destroyed (count and names, obtained by running the read-only equivalent
-first) and wait for the user. "Prune unused images" is not a target; "these 14 images, 7.0 GB" is.
+**Bound every wait, too.** Several commands block until something finishes and have no timeout of
+their own, so a container that never exits or a service that never converges hangs the session:
 
-Never pass `-f`/`--force` to satisfy an interactive prompt you were not asked to bypass. Treat
-`docker system prune -a` and `docker volume prune` as needing explicit sign-off every time -
-volumes hold the only copy of data often enough that this rule has no exceptions.
+- `docker run` without `-d` and `docker exec` block until the command exits. When it might not
+  end, bound the command inside the container: the program's own timeout flag, or
+  `docker exec <c> timeout 30 <cmd>` where the image has `timeout` (busybox and coreutils both do).
+  An `exec` the session gives up on keeps running inside the container.
+- `docker service create`, `update`, `scale` and `rollback` wait for convergence unless given `-d`.
+  Pass `-d`, then use `wait_service` (`reference/observability.md`), which has a timeout.
+- `docker compose up --wait` needs `--wait-timeout`.
+- Keep each wait's timeout under the host's own limit on a shell command (often 120 s). If the host
+  kills the loop first, it never prints `TIMEOUT`, and a timeout cannot be told from a hang.
+
+**3. Confirm destructive operations, naming the exact target.** Before any `rm`, `prune`,
+`compose down` (with or without `--volumes`), `kill`, `system prune`, `swarm leave`, `stack rm`, or
+force-tag-overwrite: state precisely what will be destroyed (count and names, obtained by running
+the read-only equivalent first) and wait for the user. "Prune unused images" is not a target;
+"these 14 images, 7.0 GB" is.
+
+There is no terminal here, so a command that prompts for confirmation cannot be answered. The
+user's confirmation in the conversation, of the targets you named, replaces that prompt: pass
+`-f`/`--force` only then, and only for those targets. Treat `docker system prune -a` and
+`docker volume prune` as needing explicit sign-off every time - volumes hold the only copy of data
+often enough that this rule has no exceptions.
 
 **4. Never act on the container you are running in.** If this session is itself containerised,
 stopping or removing its own container kills the session mid-operation:
@@ -72,7 +88,8 @@ test -f /.dockerenv && echo "in a container: $(cat /etc/hostname)"
 ```
 
 When that prints, cross-check the id against any container you are about to stop/kill/remove/
-restart, and refuse rather than "being careful". Also refuse a `prune` that would sweep it up.
+restart/pause, and refuse rather than "being careful". A paused session cannot unpause itself.
+Also refuse a `prune` that would sweep it up.
 
 **5. Machine-readable output only.** Never parse the human table format - column widths, `NAMES`
 truncation and locale-dependent times all break it. See "The JSON contract" below.

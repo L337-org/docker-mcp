@@ -23,6 +23,7 @@ from tests.integration.conftest import fail_unless_environmental
 
 _SKILL_DIR = Path(__file__).resolve().parent.parent.parent / "skills" / "l337-docker"
 _OBSERVABILITY_MD = _SKILL_DIR / "reference" / "observability.md"
+_REGISTRY_MD = _SKILL_DIR / "reference" / "registry.md"
 
 # Everything this module creates carries this label, so teardown can find it even after a failure
 # part-way through a test. Deliberately not the skill's own provenance label: a test must not be
@@ -78,9 +79,11 @@ def image() -> str:
 
 @pytest.fixture
 def cleanup():
-    """Remove every container and volume this test created, however the test ended."""
-    names: dict[str, list[str]] = {"container": [], "volume": []}
+    """Remove every service, container and volume this test created, however the test ended."""
+    names: dict[str, list[str]] = {"service": [], "container": [], "volume": []}
     yield names
+    for name in names["service"]:
+        _docker("service", "rm", name, timeout=60)
     for name in names["container"]:
         _docker("rm", "-f", name, timeout=60)
     for name in names["volume"]:
@@ -105,14 +108,17 @@ def _start(cleanup, name: str, *extra: str) -> None:
 
 
 @pytest.mark.usefixtures("image")
-def test_wait_healthy_reports_running_without_a_healthcheck_as_success(cleanup, wait_healthy_snippet):
-    """The ambiguous case: no HEALTHCHECK is not a failure, but it must not be reported as healthy."""
+def test_wait_healthy_reports_running_without_a_healthcheck_as_not_met(cleanup, wait_healthy_snippet):
+    """No HEALTHCHECK means health can never be observed, so the wait is not met - promptly, not by timeout.
+
+    The server's `system_wait(until="healthy")` answers the same way, and the two are kept in step.
+    """
     _start(cleanup, "sktest-nohc")
     result = _run_shell(f"{wait_healthy_snippet}\nwait_healthy sktest-nohc 20")
-    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "NOT MET" in result.stdout
     assert "no healthcheck" in result.stdout
-    # The distinction the skill insists on: it must not claim health it never observed.
-    assert "OK: healthy" not in result.stdout
+    assert "TIMEOUT" not in result.stdout
 
 
 @pytest.mark.usefixtures("image")
@@ -165,7 +171,151 @@ def test_wait_healthy_also_runs_under_zsh(cleanup, wait_healthy_snippet):
     _start(cleanup, "sktest-zsh")
     result = _run_shell(f"{wait_healthy_snippet}\nwait_healthy sktest-zsh 20", shell_bin="zsh")
     assert "read-only variable" not in result.stderr, "snippet uses a variable name reserved by zsh"
-    assert result.returncode == 0, result.stdout + result.stderr
+    assert "NOT MET" in result.stdout, result.stdout + result.stderr
+
+
+# --------------------------------------------------------------------------------------------
+# The documented wait_log loop and bounded follow
+# --------------------------------------------------------------------------------------------
+
+
+@pytest.mark.usefixtures("image")
+def test_wait_log_finds_a_line_logged_after_the_wait_starts(cleanup):
+    result = _docker(
+        "run", "-d", "--name", "sktest-log", "--label", _TEST_LABEL, _IMAGE,
+        "sh", "-c", "sleep 3; echo 'listening on :80'; sleep 300",
+    )  # fmt: skip
+    assert result.returncode == 0, result.stderr.decode(errors="replace")
+    cleanup["container"].append("sktest-log")
+    snippet = _extract_shell_function(_OBSERVABILITY_MD, "wait_log")
+    ran = _run_shell(f"{snippet}\nwait_log sktest-log 'listening on' 30")
+    assert ran.returncode == 0, ran.stdout + ran.stderr
+    assert "OK:" in ran.stdout
+    assert "listening on :80" in ran.stdout
+
+
+@pytest.mark.usefixtures("image")
+def test_wait_log_stops_when_the_container_exits_without_the_line(cleanup):
+    """A container that has exited will log nothing more, so waiting out the timeout would be wasted."""
+    result = _docker("run", "-d", "--name", "sktest-logexit", "--label", _TEST_LABEL, _IMAGE, "sh", "-c", "echo nope")
+    assert result.returncode == 0, result.stderr.decode(errors="replace")
+    cleanup["container"].append("sktest-logexit")
+    _docker("wait", "sktest-logexit", timeout=60)
+    snippet = _extract_shell_function(_OBSERVABILITY_MD, "wait_log")
+    ran = _run_shell(f"{snippet}\nwait_log sktest-logexit 'listening' 60")
+    assert ran.returncode == 1
+    assert "NOT MET" in ran.stdout
+    assert "TIMEOUT" not in ran.stdout
+
+
+@pytest.mark.usefixtures("image")
+def test_follow_logs_returns_on_time_from_a_container_that_logs_nothing(cleanup):
+    """The case a future `--until` gets wrong: on a quiet container `docker logs --follow --until` never returns."""
+    _start(cleanup, "sktest-follow")
+    snippet = _extract_shell_function(_OBSERVABILITY_MD, "follow_logs")
+    ran = _run_shell(f"{snippet}\nfollow_logs sktest-follow 3", timeout=30)
+    assert ran.returncode == 0, ran.stdout + ran.stderr
+    assert "--- followed 3s" in ran.stdout
+
+
+# --------------------------------------------------------------------------------------------
+# The documented swarm waits, against a real swarm
+# --------------------------------------------------------------------------------------------
+
+
+def _wait_service_snippet() -> str:
+    return _extract_shell_function(_OBSERVABILITY_MD, "wait_service")
+
+
+def _create_service(cleanup, name: str, *extra: str) -> None:
+    result = _docker("service", "create", "-d", "--name", name, "--label", _TEST_LABEL, *extra, _IMAGE, "sleep", "3600")
+    assert result.returncode == 0, result.stderr.decode(errors="replace")
+    cleanup["service"].append(name)
+
+
+@pytest.mark.usefixtures("image", "skip_if_no_swarm")
+def test_wait_service_reports_a_converged_replicated_service(cleanup):
+    _create_service(cleanup, "sktest-svc", "--replicas", "2")
+    ran = _run_shell(f"{_wait_service_snippet()}\nwait_service sktest-svc 90")
+    assert ran.returncode == 0, ran.stdout + ran.stderr
+    assert "OK: 2 running (replicated)" in ran.stdout
+
+
+@pytest.mark.usefixtures("image", "skip_if_no_swarm")
+def test_wait_service_does_not_report_a_rolling_update_as_converged(cleanup):
+    """The old tasks are still running mid-update; counting them reported success before the rollout ended."""
+    _create_service(cleanup, "sktest-roll", "--replicas", "2")
+    assert _run_shell(f"{_wait_service_snippet()}\nwait_service sktest-roll 90").returncode == 0
+    updated = _docker("service", "update", "-d", "--env-add", "X=1", "--update-delay", "60s", "sktest-roll")
+    assert updated.returncode == 0, updated.stderr.decode(errors="replace")
+    ran = _run_shell(f"{_wait_service_snippet()}\nwait_service sktest-roll 10")
+    assert ran.returncode == 1, ran.stdout + ran.stderr
+    assert "update=updating" in ran.stdout
+    assert "OK:" not in ran.stdout
+
+
+@pytest.mark.usefixtures("image", "skip_if_no_swarm")
+def test_wait_service_fails_promptly_on_a_paused_update(cleanup):
+    _create_service(cleanup, "sktest-pause", "--replicas", "1")
+    assert _run_shell(f"{_wait_service_snippet()}\nwait_service sktest-pause 90").returncode == 0
+    broken = _docker(
+        "service", "update", "-d", "--args", "sh -c 'exit 1'",
+        "--update-failure-action", "pause", "--update-monitor", "3s", "sktest-pause",
+    )  # fmt: skip
+    assert broken.returncode == 0, broken.stderr.decode(errors="replace")
+    ran = _run_shell(f"{_wait_service_snippet()}\nwait_service sktest-pause 100")
+    assert ran.returncode == 1, ran.stdout + ran.stderr
+    assert "FAIL: update paused" in ran.stdout
+
+
+@pytest.mark.usefixtures("image", "skip_if_no_swarm")
+def test_wait_service_reports_a_rollback_distinctly(cleanup):
+    """`rollback_completed` is neither success nor failure for a deploy, so it has its own outcome."""
+    _create_service(cleanup, "sktest-rb", "--replicas", "1")
+    assert _run_shell(f"{_wait_service_snippet()}\nwait_service sktest-rb 90").returncode == 0
+    assert _docker("service", "update", "-d", "--env-add", "X=1", "sktest-rb").returncode == 0
+    assert _run_shell(f"{_wait_service_snippet()}\nwait_service sktest-rb 90").returncode == 0
+    assert _docker("service", "rollback", "-d", "sktest-rb").returncode == 0
+    ran = _run_shell(f"{_wait_service_snippet()}\nwait_service sktest-rb 90")
+    assert ran.returncode == 2, ran.stdout + ran.stderr
+    assert "ROLLED BACK" in ran.stdout
+
+
+@pytest.mark.usefixtures("image", "skip_if_no_swarm")
+def test_wait_service_waits_for_a_global_service_to_have_a_task(cleanup):
+    _create_service(cleanup, "sktest-glob", "--mode", "global")
+    ran = _run_shell(f"{_wait_service_snippet()}\nwait_service sktest-glob 90")
+    assert ran.returncode == 0, ran.stdout + ran.stderr
+    assert "(global)" in ran.stdout
+
+
+@pytest.mark.usefixtures("skip_if_no_swarm")
+def test_wait_node_takes_the_target_state_and_an_optional_availability():
+    snippet = _extract_shell_function(_OBSERVABILITY_MD, "wait_node")
+    node = _docker("node", "inspect", "self", "--format", "{{.ID}}").stdout.decode().strip()
+    ready = _run_shell(f"{snippet}\nwait_node {node} ready 20 active")
+    assert ready.returncode == 0, ready.stdout + ready.stderr
+    down = _run_shell(f"{snippet}\nwait_node {node} down 6")
+    assert down.returncode == 1
+    assert "TIMEOUT: state=ready" in down.stdout
+
+
+# --------------------------------------------------------------------------------------------
+# The documented registry recipe, against Docker Hub
+# --------------------------------------------------------------------------------------------
+
+
+def test_image_config_follows_an_index_and_fails_cleanly_on_a_missing_tag():
+    """A tag naming an index needs one more hop; a missing tag must stop with FAIL, not an empty digest."""
+    snippet = _extract_shell_function(_REGISTRY_MD, "image_config")
+    found = _run_shell(f"{snippet}\nimage_config library/alpine 3.20", timeout=120)
+    if "FAIL: no token" in found.stdout:
+        pytest.skip(f"Docker Hub's token service is unreachable from here: {found.stdout.strip()}")
+    assert found.returncode == 0, found.stdout + found.stderr
+    assert '"cmd"' in found.stdout
+    missing = _run_shell(f"{snippet}\nimage_config library/alpine no-such-tag-l337", timeout=120)
+    assert missing.returncode == 1
+    assert "FAIL: no manifest" in missing.stdout
 
 
 # --------------------------------------------------------------------------------------------

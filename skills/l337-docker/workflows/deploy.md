@@ -18,8 +18,9 @@
      <image>
    ```
 5. **Verify it actually came up** with the `wait_healthy` loop in
-   `reference/observability.md`. If the image has no `HEALTHCHECK`, say that health was not
-   verified rather than reporting it healthy.
+   `reference/observability.md`. If the image has no `HEALTHCHECK` it returns `NOT MET`: report the
+   container as running with health not verified, never as healthy. Where the application logs a
+   readiness line, `wait_log <name> '<line>'` confirms more than "running" does.
 6. **Report** the container id, everything you created, and the published ports. If it failed,
    `docker logs --tail 100 <name>` before proposing anything.
 
@@ -113,10 +114,12 @@ When the user describes an app informally, design before touching the daemon.
    docker stack services mystack --format json | jq -rs '.[].Name'
    # then wait_service <name> for each - see reference/observability.md
    ```
+   `ROLLED BACK` from any of them means the deploy failed and swarm reverted that service.
 5. **On a stuck rollout**, the failing task's error is the answer:
    ```bash
    docker stack ps mystack --no-trunc --format json | jq -rs \
-     '.[] | select(.CurrentState | startswith("Running") | not) | [.Name,.CurrentState,.Error] | @tsv'
+     '.[] | select(.CurrentState | startswith("Running") | not) | [.ID,.Name,.CurrentState,.Error] | @tsv'
    ```
+   For one task's own output, pass its `ID` (not its name) to `docker service logs --tail 200`.
 6. **Iterate by redeploying**, never by removing first - `docker stack deploy` with the same name
    updates in place and preserves the rolling update. Report desired vs running per service.

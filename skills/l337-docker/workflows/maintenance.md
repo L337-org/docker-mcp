@@ -46,9 +46,11 @@ Finish by reporting the measured before/after delta, not an estimate.
 docker system df                                       # BEFORE snapshot
 ```
 
-1. **Stopped containers** - inspect the list first:
+1. **Stopped containers** - inspect the list first. Prune also takes containers that were created
+   but never started, and dead ones, so list all three:
    ```bash
-   docker ps -a --filter status=exited --format '{{.Names}}\t{{.Status}}'
+   docker ps -a --filter status=exited --filter status=created --filter status=dead \
+     --format '{{.Names}}\t{{.Status}}'
    docker container prune
    ```
 2. **Dangling images only** (safe; untagged leftovers of rebuilds):
@@ -60,8 +62,8 @@ docker system df                                       # BEFORE snapshot
    container, including base images you will immediately re-pull. Treat it as a separate decision.
 3. **Build cache** - usually the largest single reclaim on a build machine:
    ```bash
-   docker buildx du                     # or: docker builder prune --help for a daemon without buildx
-   docker buildx prune                  # dangling; -a for everything
+   docker buildx du                     # without buildx: the Build Cache row of docker system df
+   docker buildx prune                  # without buildx: docker builder prune
    ```
    Warn that the next build will be slower with a cold cache.
 4. **Unused networks** (low risk): `docker network prune`.
@@ -91,6 +93,8 @@ Scoped to the provenance label, so nothing else is touched.
    docker network ls --filter label=l337-docker-skill.managed=true --format '{{.Name}}'
    docker volume ls  --filter label=l337-docker-skill.managed=true --format '{{.Name}}'
    docker service ls --filter label=l337-docker-skill.managed=true --format '{{.Name}}'   # swarm only
+   docker secret ls  --filter label=l337-docker-skill.managed=true --format '{{.Name}}'   # swarm only
+   docker config ls  --filter label=l337-docker-skill.managed=true --format '{{.Name}}'   # swarm only
    ```
    If it is empty, stop and say so.
 2. **Containers.** `prune` only takes *stopped* ones; a running managed container survives it, so
@@ -101,7 +105,8 @@ Scoped to the provenance label, so nothing else is touched.
 3. **Networks:** `docker network prune --filter label=l337-docker-skill.managed=true`.
 4. **Volumes:** only on explicit request, and confirm as data loss:
    `docker volume prune --filter label=l337-docker-skill.managed=true`.
-5. **Services** have no prune - remove individually from the step-1 inventory.
+5. **Services, secrets and configs** have no prune - remove each from the step-1 inventory,
+   services first: a secret or config still used by a service cannot be removed.
 6. Re-run the inventory to confirm, and report what went.
 
 If `docker-mcp-server` also runs against this daemon, repeat with
