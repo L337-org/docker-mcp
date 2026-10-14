@@ -420,8 +420,8 @@ def image_import(  # noqa: DOC101,DOC103,DOC501,DOC503
     The result has an empty config - no `CMD`/`ENTRYPOINT`/`ENV` - unless you supply `changes`, so an
     imported image is usually not runnable until you set at least a command. Pass exactly one source
     (`from_file`, `data`, `from_url` or `from_image`). `from_url` and `from_image` are fetched by the
-    *daemon*, `from_file`/`data` are read here and uploaded. Unlike
-    the other image-creating tools this stamps no provenance labels: the Engine's import call accepts
+    *daemon*, `from_file`/`data` are read here and uploaded. Like every image-creating tool it stamps
+    no provenance labels, and here a caller cannot add one either: the Engine's import call accepts
     no labels field, and `changes` does not cover `LABEL`.
 
     Args:

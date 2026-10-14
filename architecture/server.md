@@ -105,6 +105,27 @@ Each file maps to one Docker SDK domain (or, for CLI-only and registry-only feat
 | `docker_mcp/tools/prompts.py` | `@prompt(domain=...)` workflow templates | - |
 | `docker_mcp/tools/resources.py` | `@mcp.resource()` doc endpoints | - |
 
+### Waiting
+
+`system_wait` is the one wait tool, and action tools return once their work is started (AGENTS.md), so that no
+call can hang: docker-py's blocking `run` waits for the container with no timeout, and an image that never exits
+would hold the call for good.
+
+There are two exceptions, `container_exec` and `container_run(timeout_seconds=...)`, and they exist for one use
+case: running something quick and getting the answer straight back. Spread over separate calls, that is too heavy
+for the job: a one-shot command in a fresh container took four (`container_run`, `system_wait`, `container_logs`,
+`container_remove`) where `docker run --rm` takes one, and a skipped last step left a stopped container behind.
+
+Both are kept safe the same way. The bound is checked before anything starts - `container_run`'s against the
+same `_MAX_WAIT_SECONDS` ceiling `system_wait` enforces, the most a socket timeout can carry - and running out of
+time is reported as `timed_out` rather than hanging, with the command or container left running. Neither uses
+docker-py's blocking calls: `container_run` waits through `system_wait`'s own container helper, and
+`container_exec` reads its stream in a thread it waits on for at most `timeout_seconds`. Any failure after
+`container_run` starts a container names it so it can be cleaned up.
+
+A new exception needs the same case: a quick run-and-answer that would otherwise take several calls, with the
+wait bounded in the same way.
+
 ## MCP resources
 
 `docker_mcp/tools/resources.py` exposes `@mcp.resource(uri, mime_type=...)` endpoints (not tools) for read-only data: the Docker SDK for Python documentation under the `docker-docs://` URI scheme, plus `docker-mcp://tool-catalog` (the live tool/domain/category snapshot from `server.tool_catalog()`), `docker-mcp://hosts` (the resolved host registry, mirroring `host_list`), and two families of "watch this specific thing over time" observability resources - **containers** (`docker-logs://{id_or_name}` bounded log tail, `docker-stats://{id_or_name}` computed usage summary) and **services** (`service-logs://{id_or_name}` bounded log tail, `service-tasks://{id_or_name}` computed task/rollout summary - running vs. desired task counts, failing tasks, and `UpdateStatus.State` if a rolling update is in progress). Each family is attachment-only: there is no `docker://containers`-style listing resource, because enumerating is what `container_list` / `service_list` / `node_list` are for and a second spelling of the same answer earned nothing (a test asserts no such index is registered). Nodes therefore have no resources at all, an index being the only thing they ever had - a per-node child would need an unbounded fan-out across every service's tasks with no single cheap call, unlike the other two families. **In multi-host mode both families are host-aware:** the default-host forms become empty-authority (`docker-logs:///{id}`, `service-tasks:///{id}`, ...) and host-qualified variants (`docker-logs://{host}/{id}`, `service-logs://{host}/{id}`, ...) are registered alongside, disambiguated by path-segment count; single-host keeps the bare forms unchanged. Registration is gated on `_hosts.is_multi()`. Container resources reuse the private `_read_log_tail` / `_read_stats_summary` helpers in `containers.py`; service resources reuse `_read_service_log_tail` / `_read_service_task_summary` in `services.py` (the latter also backs the service and stack waits behind `system_wait`); the service ones refuse at read time when `services` is disabled (mirroring `get_docs_section`), and the container ones need no such gate, since `containers` cannot be disabled. Each doc section maps to a domain via `_SECTION_DOMAINS` (registered with the server through `register_resource_domains`), so `DOCKER_MCP_SERVER_DISABLE` hides a disabled domain's sections from `docker-docs://contents` and makes `get_docs_section` refuse them. Resources follow the same docstring format as tools and are also star-imported via `docker_mcp/tools/__init__.py`.

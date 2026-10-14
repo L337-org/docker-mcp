@@ -2,11 +2,13 @@ import threading
 import time
 from unittest.mock import MagicMock, patch
 
+import docker.errors
 import pytest
 import requests.exceptions
+import urllib3.exceptions
 from docker.errors import APIError, DockerException
 
-from docker_mcp.exceptions import ToolInputError
+from docker_mcp.exceptions import RemoteFailureError, ToolInputError
 from docker_mcp.tools._utils import MAX_PAYLOAD_BYTES
 from docker_mcp.tools.containers import (
     _read_log_tail,
@@ -133,6 +135,244 @@ def test_container_run_refuses_the_blocking_options_through_extra_kwargs(key):
     with _patch() as mock_client, pytest.raises(ToolInputError, match=f"does not take \\['{key}'\\]"):
         container_run("alpine", extra_kwargs={key: False})
     mock_client.return_value.containers.run.assert_not_called()
+
+
+def _one_shot_container(logs=(b"hello\n",), errors=(), wait=None, wait_error=None):
+    container = MagicMock()
+    container.id = "abc123"
+    container.name = "job"
+    container.attrs = {"Id": "abc123", "State": {"Running": True}}
+    container.logs.side_effect = lambda stdout, stderr, **_: iter(logs if stdout else errors)
+    if wait_error is not None:
+        container.wait.side_effect = wait_error
+    else:
+        container.wait.return_value = wait if wait is not None else {"StatusCode": 0}
+    return container
+
+
+def _run_one_shot(container, **kwargs):
+    with _patch() as mock_client:
+        mock_client.return_value.containers.create.return_value = container
+        mock_client.return_value.containers.get.return_value = container
+        result = container_run("alpine", command="echo hello", **kwargs)
+    # The one-shot path creates and starts the container itself, never through docker-py's run.
+    mock_client.return_value.containers.run.assert_not_called()
+    container.start.assert_called_once_with()
+    return result, mock_client.return_value.containers.create.call_args.kwargs
+
+
+def test_container_run_wait_returns_exit_code_and_output_in_one_call():
+    container = _one_shot_container(logs=(b"hello\n", b"done\n"), errors=(b"warn\n",), wait={"StatusCode": 3})
+    result, run_kwargs = _run_one_shot(container, timeout_seconds=30)
+    assert result == {
+        "id": "abc123",
+        "name": "job",
+        "exit_code": 3,
+        "stdout": "hello\ndone\n",
+        "stderr": "warn\n",
+        "timed_out": False,
+        "truncated": False,
+        "removed": False,
+        "error": None,
+    }
+    # Still started detached: the wait is the bounded one, never docker-py's unbounded blocking run.
+    assert run_kwargs["detach"] is True
+    container.wait.assert_called_once_with(timeout=30, condition="not-running")
+    container.remove.assert_not_called()
+
+
+def test_container_run_wait_with_auto_remove_removes_only_after_reading_the_output():
+    container = _one_shot_container()
+    order = []
+    container.logs.side_effect = lambda stdout, **_: order.append("logs") or iter([b"hello\n" if stdout else b""])
+    container.remove.side_effect = lambda **_: order.append("remove")
+    result, run_kwargs = _run_one_shot(container, timeout_seconds=30, auto_remove=True)
+    # The daemon's auto-remove would delete the logs and exit code at exit, racing the read.
+    assert "auto_remove" not in run_kwargs
+    assert order == ["logs", "logs", "remove"]
+    container.remove.assert_called_once_with(v=True)
+    assert result["removed"] is True
+    assert result["stdout"] == "hello\n"
+
+
+def test_container_run_wait_takes_auto_remove_from_extra_kwargs_too():
+    container = _one_shot_container()
+    result, run_kwargs = _run_one_shot(container, timeout_seconds=30, extra_kwargs={"auto_remove": True})
+    assert "auto_remove" not in run_kwargs
+    assert result["removed"] is True
+
+
+def test_container_run_wait_timeout_leaves_the_container_running_and_says_so():
+    container = _one_shot_container(logs=(b"partial\n",), wait_error=requests.exceptions.ReadTimeout())
+    result, _ = _run_one_shot(container, timeout_seconds=5, auto_remove=True)
+    assert result["timed_out"] is True
+    assert result["exit_code"] is None
+    assert result["stdout"] == "partial\n"
+    # Removing a container that is still running would kill the job the caller is waiting on.
+    assert result["removed"] is False
+    container.remove.assert_not_called()
+
+
+def test_container_run_wait_cuts_output_at_the_cap_and_says_so():
+    container = _one_shot_container(logs=(b"a" * (MAX_PAYLOAD_BYTES - 1), b"bc", b"never read"))
+    result, _ = _run_one_shot(container, timeout_seconds=30)
+    assert result["truncated"] is True
+    assert result["stdout"] == "a" * (MAX_PAYLOAD_BYTES - 1) + "b"
+
+
+def test_container_run_wait_caps_each_stream_on_its_own():
+    # A flood on stdout must not crowd out the stderr that says why the command failed.
+    container = _one_shot_container(logs=(b"a" * (MAX_PAYLOAD_BYTES + 10),), errors=(b"fatal: disk full\n",))
+    result, _ = _run_one_shot(container, timeout_seconds=30)
+    assert len(result["stdout"]) == MAX_PAYLOAD_BYTES
+    assert result["stderr"] == "fatal: disk full\n"
+    assert result["truncated"] is True
+
+
+def test_container_run_wait_output_exactly_at_the_cap_is_not_truncated():
+    container = _one_shot_container(logs=(b"a" * MAX_PAYLOAD_BYTES,))
+    result, _ = _run_one_shot(container, timeout_seconds=30)
+    assert result["truncated"] is False
+    assert len(result["stdout"]) == MAX_PAYLOAD_BYTES
+
+
+@pytest.mark.parametrize("timeout_seconds", [0, -1, float("nan"), float("inf"), 2**31, 1e12])
+def test_container_run_refuses_a_bad_wait_bound_before_starting_anything(timeout_seconds):
+    with _patch() as mock_client, pytest.raises(ToolInputError, match="timeout_seconds must be"):
+        container_run("alpine", timeout_seconds=timeout_seconds)
+    mock_client.return_value.containers.run.assert_not_called()
+    mock_client.return_value.containers.create.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"restart_policy": {"Name": "on-failure", "MaximumRetryCount": 3}},
+        {"extra_kwargs": {"restart_policy": {"Name": "always"}}},
+        {"extra_kwargs": {"restart_policy": "always"}},  # not a dict: refused, not an AttributeError
+    ],
+)
+def test_container_run_wait_refuses_auto_remove_with_a_restart_policy_before_starting(kwargs):
+    # The daemon refuses this pair itself ("can't create 'AutoRemove' container with restart policy"), but with
+    # timeout_seconds auto_remove never reaches it, so the refusal has to happen here.
+    with _patch() as mock_client, pytest.raises(ToolInputError, match="restart policy"):
+        container_run("alpine", timeout_seconds=30, auto_remove=True, **kwargs)  # pyright: ignore[reportArgumentType]
+    mock_client.return_value.containers.run.assert_not_called()
+    mock_client.return_value.containers.create.assert_not_called()
+
+
+def _start_fails(container, **kwargs):
+    container.start.side_effect = APIError('OCI runtime create failed: exec: "no-such-binary": not found')
+    with _patch() as mock_client:
+        mock_client.return_value.containers.create.return_value = container
+        try:
+            container_run("alpine", command=["no-such-binary"], timeout_seconds=30, **kwargs)
+        finally:
+            mock_client.return_value.containers.run.assert_not_called()
+
+
+def test_container_run_wait_removes_a_container_that_cannot_start_when_asked_to():
+    # docker-py's run does not clean up a failed start; the daemon's auto-remove would have, so this must.
+    container = _one_shot_container()
+    with pytest.raises(APIError, match="no-such-binary"):
+        _start_fails(container, auto_remove=True)
+    container.remove.assert_called_once_with(force=True, v=True)
+
+
+def test_container_run_wait_names_a_container_that_cannot_start_and_is_kept():
+    container = _one_shot_container()
+    with pytest.raises(RemoteFailureError, match="'job' \\(abc123\\).*could not start.*still there") as raised:
+        _start_fails(container)
+    assert isinstance(raised.value.__cause__, APIError)
+    container.remove.assert_not_called()
+
+
+def test_container_run_wait_names_the_container_when_removing_it_after_a_failed_start_fails():
+    container = _one_shot_container()
+    container.remove.side_effect = APIError("removal of container abc123 is already in progress")
+    with pytest.raises(RemoteFailureError, match="could not start.*removing it failed too.*force=True"):
+        _start_fails(container, auto_remove=True)
+
+
+def test_container_run_wait_pulls_a_missing_image_then_creates_again():
+    container = _one_shot_container()
+    with _patch() as mock_client:
+        client = mock_client.return_value
+        client.containers.create.side_effect = [docker.errors.ImageNotFound("no such image"), container]
+        client.containers.get.return_value = container
+        result = container_run("alpine:3", command="true", timeout_seconds=30, extra_kwargs={"platform": "linux/arm64"})
+    client.images.pull.assert_called_once_with("alpine:3", platform="linux/arm64")
+    assert client.containers.create.call_count == 2
+    assert result["exit_code"] == 0
+
+
+@pytest.mark.parametrize("policy", [{"Name": "no"}, {"Name": ""}])
+def test_container_run_wait_accepts_auto_remove_with_no_restart_policy(policy):
+    container = _one_shot_container()
+    result, _ = _run_one_shot(container, timeout_seconds=30, auto_remove=True, restart_policy=policy)
+    assert result["removed"] is True
+
+
+def test_container_run_wait_keeps_the_exit_code_when_the_output_cannot_be_read():
+    # The `none` log driver answers a logs read with "configured logging driver does not support reading".
+    container = _one_shot_container(wait={"StatusCode": 2})
+    container.logs.side_effect = APIError("configured logging driver does not support reading")
+    result, _ = _run_one_shot(container, timeout_seconds=30, auto_remove=True)
+    assert (result["exit_code"], result["stdout"], result["stderr"]) == (2, None, None)
+    assert "reading stdout failed" in result["error"]
+    assert "does not support reading" in result["error"]
+    # Removing it would destroy output that a transient failure may yet let a later read recover.
+    assert result["removed"] is False
+    assert "not removed" in result["error"]
+    container.remove.assert_not_called()
+
+
+def test_container_run_wait_keeps_stdout_when_only_stderr_cannot_be_read():
+    container = _one_shot_container(wait={"StatusCode": 0})
+
+    def logs(stdout, stderr, **_):
+        if stderr:
+            raise urllib3.exceptions.ProtocolError("Connection broken: IncompleteRead")
+        return iter([b"hello\n"])
+
+    container.logs.side_effect = logs
+    result, _ = _run_one_shot(container, timeout_seconds=30, auto_remove=True)
+    assert (result["stdout"], result["stderr"], result["removed"]) == ("hello\n", None, False)
+    assert "reading stderr failed" in result["error"]
+
+
+def test_container_run_wait_reports_the_daemons_own_wait_error():
+    container = _one_shot_container(wait={"StatusCode": 128, "Error": {"Message": "exec format error"}})
+    result, _ = _run_one_shot(container, timeout_seconds=30)
+    assert result["exit_code"] == 128
+    assert result["error"] == "the daemon reported: exec format error"
+
+
+def test_container_run_wait_keeps_the_result_when_removal_fails():
+    container = _one_shot_container(errors=(b"oops\n",), wait={"StatusCode": 1})
+    container.remove.side_effect = APIError("removal of container abc123 is already in progress")
+    result, _ = _run_one_shot(container, timeout_seconds=30, auto_remove=True)
+    assert (result["exit_code"], result["stdout"], result["stderr"]) == (1, "hello\n", "oops\n")
+    assert result["removed"] is False
+    assert "removing the container failed" in result["error"]
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        requests.exceptions.ConnectionError("Connection aborted."),
+        ConnectionResetError(54, "Connection reset by peer"),
+        urllib3.exceptions.ProtocolError("Connection broken"),
+    ],
+)
+def test_container_run_wait_names_the_container_when_the_wait_itself_fails(failure):
+    container = _one_shot_container(wait_error=failure)
+    with pytest.raises(RemoteFailureError, match="'job' \\(abc123\\).*still there") as raised:
+        _run_one_shot(container, timeout_seconds=30, auto_remove=True)
+    # It may still be running, which container_remove refuses without force.
+    assert "container_remove(force=True)" in str(raised.value)
+    assert raised.value.__cause__ is failure
+    container.remove.assert_not_called()
 
 
 def test_container_create():
@@ -563,7 +803,8 @@ def test_container_exec_returns_the_output_and_exit_code():
 
 def test_container_exec_demux_returns_stdout_and_stderr_apart():
     result, _ = _exec(_ExecStream([(b"out\n", None), (None, b"err\n")]), demux=True)
-    assert result["output"] == ["out\n", "err\n"]
+    assert (result["stdout"], result["stderr"]) == ("out\n", "err\n")
+    assert "output" not in result
 
 
 def test_container_exec_cuts_output_at_max_bytes_and_says_so():
@@ -591,10 +832,82 @@ def test_container_exec_cap_boundary(chunks, output, truncated):
     assert (result["output"], result["truncated"]) == (output, truncated)
 
 
-def test_container_exec_caps_stdout_and_stderr_together():
-    result, _ = _exec(_ExecStream([(b"12345", None), (None, b"6789")]), demux=True, max_bytes=7)
-    assert result["output"] == ["12345", "67"]
-    assert result["truncated"] is True
+def test_container_exec_caps_stdout_and_stderr_each_on_their_own():
+    # A flood on stdout must not crowd out the stderr that says why the command failed.
+    result, _ = _exec(_ExecStream([(b"123456789", None), (None, b"fatal")]), demux=True, max_bytes=7)
+    assert (result["stdout"], result["stderr"], result["truncated"]) == ("1234567", "fatal", True)
+
+
+def test_container_exec_demux_keeps_reading_stderr_after_stdout_is_cut():
+    # With only stdout cut, the read carries on for stderr until the command ends.
+    stream = _ExecStream([(b"123456789", None), (b"more", None), (None, b"err")])
+    result, _ = _exec(stream, demux=True, max_bytes=4)
+    assert (result["stdout"], result["stderr"], result["truncated"], result["timed_out"]) == (
+        "1234",
+        "err",
+        True,
+        False,
+    )
+
+
+def test_container_exec_demux_returns_at_once_when_both_streams_are_cut():
+    stream = _ExecStream([(b"123456", None), (None, b"abcdef")], block=True)
+    started = time.monotonic()
+    result, _ = _exec(stream, inspect={"ExitCode": None}, demux=True, max_bytes=4, timeout_seconds=5)
+    assert time.monotonic() - started < 2
+    assert (result["stdout"], result["stderr"], result["truncated"], result["timed_out"]) == (
+        "1234",
+        "abcd",
+        True,
+        False,
+    )
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "chunks", "expected"),
+    [
+        # Only stdout requested: stderr never arrives, so a cut stdout is everything there is to keep.
+        ({"stderr": False}, [(b"123456", None)], ("1234", "")),
+        # A TTY merges stderr into stdout, so stderr never arrives either.
+        ({"tty": True}, [(b"123456", None)], ("1234", "")),
+        ({"stdout": False}, [(None, b"abcdef")], ("", "abcd")),
+    ],
+)
+def test_container_exec_demux_returns_at_once_when_the_only_kept_stream_is_cut(kwargs, chunks, expected):
+    stream = _ExecStream(chunks, block=True)
+    started = time.monotonic()
+    result, _ = _exec(stream, inspect={"ExitCode": None}, demux=True, max_bytes=4, timeout_seconds=5, **kwargs)
+    assert time.monotonic() - started < 2
+    assert (result["stdout"], result["stderr"]) == expected
+    assert (result["truncated"], result["timed_out"]) == (True, False)
+
+
+class _UnclosableFlood:
+    """An ssh:// exec stream: close() does nothing, and the command floods stdout without end, like `yes`."""
+
+    def __init__(self):
+        self.reads = 0
+
+    def __iter__(self):
+        while True:
+            self.reads += 1
+            time.sleep(0.001)
+            yield (b"y\n" * 64, None)
+
+    def close(self):
+        pass
+
+
+def test_container_exec_stops_reading_an_unclosable_stream_once_it_has_returned():
+    # Stdout is cut but stderr is still being kept, so the read goes on until the timeout. On ssh:// the
+    # stream cannot be closed, and the reader thread must not go on draining the flood after the call returns.
+    stream = _UnclosableFlood()
+    result, _ = _exec(stream, inspect={"ExitCode": None}, demux=True, max_bytes=16, timeout_seconds=0.2)
+    assert (result["truncated"], result["timed_out"]) == (True, True)
+    time.sleep(0.05)
+    reads_after_return = stream.reads
+    time.sleep(0.3)
+    assert stream.reads <= reads_after_return + 1
 
 
 def test_container_exec_returns_at_its_timeout_with_what_arrived():
@@ -717,6 +1030,27 @@ def test_wait_container_returns_timed_out_instead_of_raising():
     assert result["met"] is False
     assert result["timed_out"] is True
     assert result["status_code"] is None
+
+
+def test_wait_container_treats_a_mid_body_read_timeout_as_a_timeout():
+    # The Engine answers the wait with headers at once and the body only when the condition holds, so the
+    # bound expires mid-body, which requests raises exactly like this (requests/models.py, iter_content).
+    container = MagicMock()
+    container.wait.side_effect = requests.exceptions.ConnectionError(
+        urllib3.exceptions.ReadTimeoutError(MagicMock(), "/containers/web/wait", "Read timed out.")
+    )
+    with _patch() as mock_client:
+        mock_client.return_value.containers.get.return_value = container
+        result = wait_container("web")
+    assert (result["met"], result["timed_out"]) == (False, True)
+
+
+def test_wait_container_still_raises_a_real_connection_failure():
+    container = MagicMock()
+    container.wait.side_effect = requests.exceptions.ConnectionError("Connection aborted.")
+    with _patch() as mock_client, pytest.raises(requests.exceptions.ConnectionError, match="aborted"):
+        mock_client.return_value.containers.get.return_value = container
+        wait_container("web")
 
 
 @pytest.mark.parametrize(
