@@ -6,6 +6,7 @@ whether a publish may go ahead, and the checks whose failure must stop it.
 """
 
 import base64
+import http.client
 import io
 import importlib.util
 import json
@@ -581,8 +582,9 @@ def test_the_rehearsal_pins_the_release_jobs_uv_and_claude_code():
 
 
 class _Response:
-    def __init__(self, body: bytes, status: int = 200):
+    def __init__(self, body: bytes, status: int = 200, content_length: int | None = None):
         self._body, self.status = body, status
+        self.headers = {} if content_length is None else {"Content-Length": str(content_length)}
 
     def read(self, _limit: int) -> bytes:
         return self._body
@@ -637,6 +639,31 @@ def test_a_get_that_keeps_failing_gives_up_with_the_last_error(urlopen):
     assert len(calls) == release.HTTP_GET_ATTEMPTS
 
 
+@pytest.mark.parametrize(
+    "dropped",
+    [
+        http.client.RemoteDisconnected("Remote end closed connection without response"),
+        http.client.IncompleteRead(b"partial", 100),
+        ConnectionResetError(54, "Connection reset by peer"),
+    ],
+    ids=["remote-disconnected", "incomplete-read", "reset-mid-read"],
+)
+def test_a_get_whose_connection_drops_after_sending_is_retried(urlopen, dropped):
+    """urllib wraps only errors raised while sending; these arrive as themselves, not as URLError."""
+    script, calls, _ = urlopen
+    script.extend([dropped, _Response(b"{}")])
+    assert release.http("GET", "https://api.github.com/x") == (200, {})
+    assert len(calls) == 2
+
+
+def test_a_dropped_connection_that_persists_ends_as_a_release_error(urlopen):
+    script, _, _ = urlopen
+    script.extend(http.client.RemoteDisconnected("closed") for _ in range(release.HTTP_GET_ATTEMPTS))
+    with pytest.raises(release.ReleaseError, match=r"RemoteDisconnected: closed \(attempt 3 of 3\)") as raised:
+        release.http("GET", "https://api.github.com/x")
+    assert isinstance(raised.value.__cause__, http.client.RemoteDisconnected)
+
+
 def test_a_get_timeout_is_retried(urlopen):
     script, calls, _ = urlopen
     script.extend([TimeoutError("read timed out"), _Response(b"[]")])
@@ -661,3 +688,18 @@ def test_a_write_is_never_retried_because_it_may_already_have_happened(urlopen, 
         release.http(method, "https://api.github.com/x", body={"sha": "abc"})
     assert calls == [method]
     assert sleeps == []
+
+
+def test_a_body_shorter_than_its_content_length_is_retried(urlopen):
+    """A sized read returns a truncated body without raising; the declared length is what shows it."""
+    script, calls, _ = urlopen
+    script.extend([_Response(b'{"a', content_length=100), _Response(b"{}", content_length=2)])
+    assert release.http("GET", "https://api.github.com/x") == (200, {})
+    assert len(calls) == 2
+
+
+def test_a_body_that_is_not_json_is_a_release_error(urlopen):
+    script, _, _ = urlopen
+    script.append(_Response(b"<html>oops</html>"))
+    with pytest.raises(release.ReleaseError, match="not JSON"):
+        release.http("GET", "https://api.github.com/x")

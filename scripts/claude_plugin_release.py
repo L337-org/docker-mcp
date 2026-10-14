@@ -27,6 +27,7 @@ from __future__ import annotations
 import argparse
 import base64
 import hashlib
+from http.client import HTTPException
 import json
 import os
 import queue
@@ -195,8 +196,9 @@ def _http_once(method: str, url: str, *, token: str | None, body: dict | None, r
         tuple: (status, parsed JSON or bytes); 404 is returned rather than raised
 
     Raises:
-        _TransientHTTPError: a 5xx, a dropped connection or a timeout, with the cause chained
-        ReleaseError: any other HTTP error, or an oversized body
+        _TransientHTTPError: a 5xx, a dropped connection, a body shorter than its Content-Length, or a
+            timeout, with the cause chained
+        ReleaseError: any other HTTP error, an oversized body, or a body that is not JSON
     """
     data = json.dumps(body).encode() if body is not None else None
     request = urllib.request.Request(url, data=data, method=method)  # noqa: S310  (https URLs built here)
@@ -210,6 +212,7 @@ def _http_once(method: str, url: str, *, token: str | None, body: dict | None, r
         with urllib.request.urlopen(request, timeout=HTTP_TIMEOUT) as response:  # noqa: S310
             content = response.read(MAX_DOWNLOAD_BYTES + 1)
             status = response.status
+            declared = response.headers.get("Content-Length")
     except urllib.error.HTTPError as exc:
         if exc.code == 404:
             return 404, None
@@ -222,11 +225,22 @@ def _http_once(method: str, url: str, *, token: str | None, body: dict | None, r
         raise _TransientHTTPError(f"{method} {url} failed: {exc.reason}") from exc
     except TimeoutError as exc:
         raise _TransientHTTPError(f"{method} {url} timed out after {HTTP_TIMEOUT}s") from exc
+    except (ConnectionError, HTTPException) as exc:
+        # urllib wraps only errors raised while sending.  A connection the server drops before its
+        # response (RemoteDisconnected), or a body cut short (IncompleteRead, a reset mid-read),
+        # arrives unwrapped.
+        raise _TransientHTTPError(f"{method} {url} failed: {type(exc).__name__}: {exc}") from exc
     if len(content) > MAX_DOWNLOAD_BYTES:
         raise ReleaseError(f"{method} {url} returned more than {MAX_DOWNLOAD_BYTES} bytes; refusing to read it")
+    # A sized read returns what arrived when the connection closes rather than raising IncompleteRead.
+    if declared is not None and declared.isdigit() and len(content) < int(declared):
+        raise _TransientHTTPError(f"{method} {url} body cut short: {len(content)} of {declared} bytes")
     if raw:
         return status, content
-    return status, (json.loads(content) if content else None)
+    try:
+        return status, (json.loads(content) if content else None)
+    except json.JSONDecodeError as exc:
+        raise ReleaseError(f"{method} {url} returned a body that is not JSON: {exc}") from exc
 
 
 def expect_dict(value: object, what: str) -> dict:
