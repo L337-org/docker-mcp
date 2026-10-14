@@ -111,18 +111,20 @@ Each file maps to one Docker SDK domain (or, for CLI-only and registry-only feat
 came from the same defect: docker-py's blocking `run` waits for the container with no timeout, so an image that
 never exits hung the call for good.
 
-`container_run(timeout_seconds=...)` is the single deliberate exception, agreed for the one-shot run. Without it the
-most common simple task - run a command in a fresh container and read the result - took four calls
-(`container_run`, `system_wait`, `container_logs`, `container_remove`) where `docker run --rm` takes one, and a
-skipped last step left a stopped container behind. It keeps what the rule protects: it is opt-in, the caller
-chooses the bound (checked before anything starts against the same `_MAX_WAIT_SECONDS` ceiling `system_wait`
-enforces, the most a socket timeout can carry), and it waits
-through `system_wait`'s own container helper rather than docker-py's blocking run. A run that outlives the bound
-is reported as `timed_out` and left running, and any failure after the start names the container so it can be
-cleaned up.
+There are two exceptions, `container_exec` and `container_run(timeout_seconds=...)`, and they exist for one use
+case: running something quick and getting the answer straight back. Spread over separate calls, that is too heavy
+for the job: a one-shot command in a fresh container took four (`container_run`, `system_wait`, `container_logs`,
+`container_remove`) where `docker run --rm` takes one, and a skipped last step left a stopped container behind.
 
-Do not treat it as a precedent. A second blocking option needs the same case made: a common task that otherwise
-costs several calls, with the wait bounded and opt-in.
+Both are kept safe the same way. The bound is checked before anything starts - `container_run`'s against the
+same `_MAX_WAIT_SECONDS` ceiling `system_wait` enforces, the most a socket timeout can carry - and running out of
+time is reported as `timed_out` rather than hanging, with the command or container left running. Neither uses
+docker-py's blocking calls: `container_run` waits through `system_wait`'s own container helper, and
+`container_exec` reads its stream in a thread it waits on for at most `timeout_seconds`. Any failure after
+`container_run` starts a container names it so it can be cleaned up.
+
+A new exception needs the same case: a quick run-and-answer that would otherwise take several calls, with the
+wait bounded in the same way.
 
 ## MCP resources
 

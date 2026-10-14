@@ -192,8 +192,9 @@ discovery layers. Four cleanup rounds have chased the same failure.
 - New Docker functionality goes in the matching `docker_mcp/tools/<domain>.py` file, not in a new file.
 - **Waiting is one tool, `system_wait`.** A new thing to wait for is a new `kind` or `until` in `_WAIT_KINDS`
   (`system.py`) with its helper in the owning domain's module, never a new `*_wait` tool and never a blocking
-  option on an action tool: action tools return once their work is started. The one exception is
-  `container_run(timeout_seconds=...)`, the bounded one-shot run; why, and why it stays the only one, is in
+  option on an action tool: action tools return once their work is started. The exceptions are
+  `container_exec` and `container_run(timeout_seconds=...)`: both serve running something quick and getting
+  the answer straight back, which would otherwise take several calls. Both are bounded; see
   [architecture/server.md](architecture/server.md#waiting). `kind`/`until` are built from the
   enabled domains at import, so a disabled domain's waits are not offered. Its `target` parameter is a
   deliberate exception to the identifier spellings above, because one argument names a container, service,
