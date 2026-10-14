@@ -15,6 +15,7 @@ import json
 import re
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -80,7 +81,7 @@ def image() -> str:
 @pytest.fixture
 def cleanup():
     """Remove every service, container and volume this test created, however the test ended."""
-    names: dict[str, list[str]] = {"service": [], "container": [], "volume": []}
+    names: dict[str, list[str]] = {"service": [], "container": [], "volume": [], "network": []}
     yield names
     for name in names["service"]:
         _docker("service", "rm", name, timeout=60)
@@ -88,6 +89,12 @@ def cleanup():
         _docker("rm", "-f", name, timeout=60)
     for name in names["volume"]:
         _docker("volume", "rm", "-f", name, timeout=60)
+    for name in names["network"]:
+        # A service's tasks leave its overlay network a moment after the service goes.
+        for _ in range(10):
+            if _docker("network", "rm", name, timeout=60).returncode == 0:
+                break
+            time.sleep(1)
 
 
 @pytest.fixture(scope="module")
@@ -283,10 +290,14 @@ def test_wait_service_matches_tasks_of_a_service_with_many_options_set(cleanup):
     A partial restart policy, a stop grace period at its default, limits, a constraint and a
     healthcheck each make the two documents differ; none may stop the tasks counting as current.
     """
+    network = _docker("network", "create", "-d", "overlay", "--label", _TEST_LABEL, "sktest-optsnet")
+    assert network.returncode == 0, network.stderr.decode(errors="replace")
+    cleanup["network"].append("sktest-optsnet")
     _create_service(
         cleanup, "sktest-opts", "--replicas", "1", "--restart-condition", "on-failure",
         "--stop-grace-period", "10s", "--limit-memory", "64m", "--constraint", "node.role==manager",
         "--health-cmd", "true", "--env", "A=1", "--mount", "type=tmpfs,target=/t",
+        "--network", "sktest-optsnet", "--log-driver", "json-file", "--log-opt", "max-size=1m",
     )  # fmt: skip
     ran = _run_shell(f"{_wait_service_snippet()}\nwait_service sktest-opts 90")
     assert ran.returncode == 0, ran.stdout + ran.stderr

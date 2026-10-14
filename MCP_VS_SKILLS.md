@@ -49,7 +49,7 @@ We have no commercial interest in either. Both are MIT-licensed and free.
 | **Trim the surface to fit the job** | `DOCKER_MCP_SERVER_DISABLE` drops whole domains; read-only / no-destructive drop categories - **and the router and prompts shrink with them** | Not really - the router is one file, though you can delete reference files you'll never use |
 | **Token cost, eager client, idle** | **~46,700** at full surface; **~19,200** trimmed to a triage-shaped config. Add up to ~2,100 for a client that also loads prompts, resources and resource templates | **~140** |
 | **Token cost, lazy client, idle** | ~1,000 full; ~400 trimmed | ~140 |
-| **Token cost, typical task** | **~1,300-2,600** (lazy) | ~7,100-10,100 |
+| **Token cost, typical task** | **~1,300-2,600** (lazy) | ~7,100-10,200 |
 | **Failure mode** | Server can fail to start / resolve deps; a wrong argument is rejected before anything runs | Cannot fail to "start"; a wrong command usually errors, but some wrong values exit 0 with a plausible result (see below) |
 
 Two rows deserve emphasis because they cut in opposite directions and are easy to skim past.
@@ -279,8 +279,8 @@ narrows to something most people would not notice either way.
 
 | Task | MCP (lazy, full) | MCP (lazy, triage cfg) | MCP (eager, full) | MCP (eager, triage cfg) | Skill |
 |---|---|---|---|---|---|
-| List containers (one-off) | 1,344 | **785** | 46,687 | 19,219 | 7,846 |
-| Triage a crashed container | 2,557 | **1,998** | 46,687 | 19,219 | 10,132 |
+| List containers (one-off) | 1,344 | **785** | 46,687 | 19,219 | 7,937 |
+| Triage a crashed container | 2,557 | **1,998** | 46,687 | 19,219 | 10,223 |
 | Bring up a Compose project | 2,376 | n/a¹ | 46,687 | n/a¹ | 7,079 |
 
 ¹ Compose is disabled in the triage config (`containers`, `images`, `networks`, `volumes`,
@@ -290,10 +290,10 @@ it needs a different one.
 **Here the result reverses, and the MCP server wins on a lazy client.** A tool definition is small
 - median 260 tokens, range 119-1,147 - so fetching the five tools a triage needs costs ~1,600 on
 top of the ~1,000 baseline (or ~400 trimmed). The skill has to load its router (3,349) plus a
-domain reference (~1,400-4,500) plus often a workflow (~1,600-2,600), because prose cannot be
+domain reference (~1,400-4,600) plus often a workflow (~1,600-2,600), because prose cannot be
 fetched a paragraph at a time.
 
-Note the eager+trimmed column never beats the skill on these tasks - 19,219 against 7,846-10,132 -
+Note the eager+trimmed column never beats the skill on these tasks - 19,219 against 7,937-10,223 -
 but it is the difference between "too expensive to leave installed" and "fine". If you are on an
 eager client and want the server, disabling the domains you do not use is the single highest-value
 change available.
@@ -302,7 +302,7 @@ So the honest summary is:
 
 - **Eager-loading client** -> the skill is dramatically cheaper: ~4.6-6.6x on a real task at full
   surface, ~1.9-2.4x even against a trimmed server, and ~140-340x at idle.
-- **Lazy-loading client** -> the server is cheaper in use, by ~3.0-5.8x at full surface and ~5.1-10x
+- **Lazy-loading client** -> the server is cheaper in use, by ~3.0-5.9x at full surface and ~5.1-10x
   when trimmed, and both are cheap at idle.
 - **Docker rarely comes up in your work** -> the skill, decisively; it costs ~140 tokens to have
   installed and you may never pay more.
@@ -313,7 +313,7 @@ So the honest summary is:
 - **Eager client and you want everything available** -> the skill, unless you need something only
   the server enforces.
 
-Worst case for the skill is ~39,500 tokens if a single task somehow needed every reference and
+Worst case for the skill is ~39,600 tokens if a single task somehow needed every reference and
 workflow file at once; in practice a task touches one or two.
 
 ## Where each one genuinely wins

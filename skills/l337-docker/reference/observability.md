@@ -204,7 +204,11 @@ wait_service() {
 - Only running tasks made from the service's current spec are counted, by comparing each task's
   spec with the service's task template (as swarm itself decides what to replace). The template
   `service inspect` prints has swarm's defaults filled in, which tasks' specs do not carry, so a
-  field a task lacks is ignored where the template holds swarm's default for it. Right after
+  field a task lacks is ignored where the template holds swarm's default for it. The loop's
+  `$defaults` are swarmkit's, from `api/defaults/service.go`; if a Docker release adds one, a
+  healthy service times out here, which is the signal to add it. Accepted limitation: an update
+  that only sets a field to its default value (`--stop-grace-period 10s` where none was set) looks
+  like no change, so the old tasks count as current. Right after
   `update -d` the old tasks are still running and `UpdateStatus` is briefly empty - swarm resets
   it and sets `updating` a moment later - so counting every running task would report a rollout
   that has not started as finished.
