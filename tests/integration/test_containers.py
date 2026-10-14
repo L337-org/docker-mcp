@@ -201,3 +201,15 @@ def test_container_exec_cuts_a_large_output_at_max_bytes(exec_target):
     result = container_exec(exec_target, ["sh", "-c", "yes | head -c 100000"], max_bytes=1000)
     assert result["truncated"] is True
     assert len(result["output"]) == 1000
+
+
+def test_system_wait_not_running_reports_a_timeout_instead_of_raising():
+    # The Engine sends the wait's headers at once, so the bound expires mid-body; that once surfaced as a
+    # ConnectionError rather than timed_out.
+    name = f"docker-mcp-it-wait-timeout-{uuid.uuid4().hex[:8]}"
+    container_run("alpine:3", command=["sleep", "300"], name=name)
+    try:
+        result = system_wait(kind="container", target=name, until="not-running", timeout_seconds=2)
+        assert (result["met"], result["timed_out"]) == (False, True)
+    finally:
+        container_remove(name, force=True)

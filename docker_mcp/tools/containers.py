@@ -15,6 +15,7 @@ from typing import Any, Literal, TypedDict, cast
 import docker.errors
 import docker.models.containers
 import requests.exceptions
+import urllib3.exceptions
 
 from docker_mcp.exceptions import ToolInputError
 from docker_mcp.server import tool
@@ -1136,6 +1137,8 @@ def _wait_container(
 
     Raises:
         ToolInputError: a negative timeout, a non-positive poll interval, or "log-match" without a pattern
+        requests.exceptions.ConnectionError: the daemon connection failed for a reason other than the wait's
+            own read timeout
     """
     if timeout_seconds < 0:
         raise ToolInputError(f"timeout_seconds must be >= 0, got {timeout_seconds}.")
@@ -1172,6 +1175,15 @@ def _wait_container(
                 ),
             )
         except requests.exceptions.ReadTimeout:
+            return _wait_result(id_or_name, until, met=False, start=start, timed_out=True)
+        except requests.exceptions.ConnectionError as exc:
+            # The Engine sends the wait's response headers at once and the body only when the condition
+            # is met, so the bound usually expires mid-body. requests reports that as its generic
+            # ConnectionError wrapping urllib3's ReadTimeoutError, not as ReadTimeout (seen on Engine
+            # 29.8.2 with requests 2.34.2). Only that cause is a timeout; any other connection failure
+            # is real and propagates.
+            if not (exc.args and isinstance(exc.args[0], urllib3.exceptions.ReadTimeoutError)):
+                raise
             return _wait_result(id_or_name, until, met=False, start=start, timed_out=True)
         return _wait_result(
             id_or_name,

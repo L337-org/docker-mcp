@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 import requests.exceptions
+import urllib3.exceptions
 from docker.errors import APIError, DockerException
 
 from docker_mcp.exceptions import ToolInputError
@@ -809,6 +810,27 @@ def test_wait_container_returns_timed_out_instead_of_raising():
     assert result["met"] is False
     assert result["timed_out"] is True
     assert result["status_code"] is None
+
+
+def test_wait_container_treats_a_mid_body_read_timeout_as_a_timeout():
+    # The Engine answers the wait with headers at once and the body only when the condition holds, so the
+    # bound expires mid-body, which requests raises exactly like this (requests/models.py, iter_content).
+    container = MagicMock()
+    container.wait.side_effect = requests.exceptions.ConnectionError(
+        urllib3.exceptions.ReadTimeoutError(MagicMock(), "/containers/web/wait", "Read timed out.")
+    )
+    with _patch() as mock_client:
+        mock_client.return_value.containers.get.return_value = container
+        result = wait_container("web")
+    assert (result["met"], result["timed_out"]) == (False, True)
+
+
+def test_wait_container_still_raises_a_real_connection_failure():
+    container = MagicMock()
+    container.wait.side_effect = requests.exceptions.ConnectionError("Connection aborted.")
+    with _patch() as mock_client, pytest.raises(requests.exceptions.ConnectionError, match="aborted"):
+        mock_client.return_value.containers.get.return_value = container
+        wait_container("web")
 
 
 @pytest.mark.parametrize(
