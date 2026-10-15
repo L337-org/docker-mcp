@@ -36,21 +36,21 @@ jobs:
 
   action-pins:
     # Every third-party `uses:` in .github/workflows and .github/actions names a full commit SHA,
-    # and the shared workflows repository is named at its protected version tag, checked by the
+    # and the shared workflows repository is named at its major-version tag, checked by the
     # shared copy.  Its default directories are this repository's, so the local
     # file-failure-issue action is covered too.  Why the pin matters most here: publish.yaml
     # mints an OIDC token for PyPI Trusted Publishing (`id-token: write`), pushes to GHCR
-    # (`packages: write`) and uploads release assets (`contents: write`), so a repointed tag
-    # would execute inside the jobs holding this project's strongest credentials.
+    # (`packages: write`) and uploads release assets (`contents: write`), so a repointed
+    # third-party tag would execute inside the jobs holding this project's strongest credentials.
     runs-on: [ubuntu-latest]
-    name: Action pins are immutable
+    name: Action pin check
     # 5s for the whole job on the first run of the shared action here - a grep over the workflows.
     timeout-minutes: 5
     steps:
       - name: Check out source repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Every `uses:` must name a 40-hex commit SHA or a protected version tag
+      - name: Every `uses:` must name a 40-hex commit SHA, or the shared workflows' major-version tag
         uses: L337-org/github-workflows/actions/action-pins@v2
 
   fresh-resolve-import:

@@ -37,7 +37,7 @@ Read the linked file before judging a substantive change to that area.
 | code calling `docker` | [architecture/docker-sdk.md](architecture/docker-sdk.md) | an unverified method; a hand-built route that is not in the Engine API spec; a reach-in past the public SDK introduced without recorded sign-off |
 | `Dockerfile`, `manifest.json`, `server.json`, `claude-plugin/`, release workflows | [architecture/distribution.md](architecture/distribution.md) | a version-declaring file missing from the bump checklist there, `preflight`, or the version tests; a registry ownership marker no longer matching `server.json`'s `name` |
 | `skills/l337-docker/` | [architecture/agent-skill.md](architecture/agent-skill.md) | the skill described as equivalent to the server; tool-permission frontmatter added; a hand-edited figure in `MCP_VS_SKILLS.md` |
-| `.github/workflows/` | [architecture/ci.md](architecture/ci.md) | a `uses:` naming a tag or branch; a new job without `timeout-minutes` where the workflow requires one |
+| `.github/workflows/` | [architecture/ci.md](architecture/ci.md) | a third-party `uses:` naming a tag or branch (`L337-org/github-workflows` is named at its major-version tag); a new job without `timeout-minutes` where the workflow requires one |
 
 ## Project
 

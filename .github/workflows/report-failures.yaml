@@ -1,8 +1,8 @@
 name: 'Report failures'
 
-# Posts a failed run of a workflow named below, started by one of the events below, to
-# #docker-mcp through the organisation's Slack bot token, using the shared reporter at its v2 tag
-# (architecture/ci.md).  GitHub reads this trigger only from the default branch.
+# Posts a failed run of a workflow named below, started by one of the events below, to the
+# project's Slack channel through the shared reporter (architecture/ci.md).  GitHub reads this
+# trigger only from the default branch.
 on:
   workflow_run:
     workflows:

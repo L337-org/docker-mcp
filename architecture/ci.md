@@ -15,20 +15,29 @@ check could only see that a file was touched, never that the right rule reached 
 green ticks it could not justify. A rule belongs in `AGENTS.md`, or in the `architecture/` note
 that owns the detail, and which of those it is remains a judgement made at review.
 
-The `Repository hygiene` and `Action pins are immutable` jobs (`premerge.yaml`) each run a shared
-action from [L337-org/github-workflows](https://github.com/L337-org/github-workflows), named at its
-major-version tag (`v2`), rather than a copy kept in this repository. What each check covers, and
-how to run the hygiene check locally at that version, is in that repository's README; it is not
-restated here because it would drift. A change to either check lands there and reaches this
-repository when that repository moves the tag; a breaking change gets a new major tag, which this
-repository moves to in its own pull request.
+The `Repository hygiene` and `Action pin check` jobs (`premerge.yaml`) each run a shared action
+from [L337-org/github-workflows](https://github.com/L337-org/github-workflows), named at its
+major-version tag, rather than a copy kept in this repository. What each check covers, and how to
+run the hygiene check locally at that version, is in that repository's README; it is not restated
+here because it would drift. A change to either check lands there and reaches this repository
+when that repository moves the tag; a breaking change gets a new major tag, which this repository
+moves to in its own pull request.
+
+Third-party actions are pinned by full commit SHA. The shared workflows are the one exception, and
+it holds only while that tag is protected by a ruleset in that repository, so that moving it takes
+the same people as merging there. Whoever can move it reaches what the shared code runs with here:
+the review's `pull-requests: write` permission and `CLAUDE_CODE_OAUTH_TOKEN`, the
+`SLACK_BOT_TOKEN` passed to the reporter and the announcer, and the logic of the required
+`Repository hygiene` and `Action pin check` jobs. `publish.yaml`, which holds the release
+credentials, uses nothing from github-workflows.
 
 The pin check matters most here because `publish.yaml` mints an OIDC token for PyPI Trusted
 Publishing (`id-token: write`), pushes to GHCR (`packages: write`) and uploads release assets
-(`contents: write`), so a repointed tag would execute inside the jobs holding this project's
-strongest credentials. Trusted Publishing has no stored token for an attacker to steal; executing
-in that job is the whole attack. The shared action's default directories, `.github/workflows` and
-`.github/actions`, are this repository's, so the local `file-failure-issue` action is checked too.
+(`contents: write`), so a repointed third-party tag would execute inside the jobs holding this
+project's strongest credentials. Trusted Publishing has no stored token for an attacker to steal;
+executing in that job is the whole attack. The shared action's default directories,
+`.github/workflows` and `.github/actions`, are this repository's, so the local
+`file-failure-issue` action is checked too.
 
 A `Code review` workflow (`code-review.yaml`) calls the shared Claude review workflow at the same
 version tag. The header of that file says when this repository asks for a review; the shared
@@ -41,8 +50,9 @@ What the reporter posts and when is in that repository's README; it is not resta
 because it would drift.  This repository has it report runs started by `schedule`, `push`,
 `release` or `pull_request`, since a failing pull request run's page is easy to miss.  A run
 started by hand, or a review asked for by comment, is left out on purpose, because whoever
-started it is watching.  The post goes to `#docker-mcp` through the organisation's
-`SLACK_BOT_TOKEN` secret, which is also a Dependabot secret so that Dependabot's runs can post.
+started it is watching.  The post goes to the project's Slack channel, named in the workflow's
+`with:`, through the bot token in `SLACK_BOT_TOKEN`, which must also be set as a Dependabot
+secret because a run Dependabot starts sees only Dependabot secrets.
 This is in addition to the `ci-failure` issues the canary and the release file: the post says a
 run failed, the issue is the deduplicated record of a failure stream.  To add a workflow
 triggered by `schedule`, `push`, `release` or `pull_request`, give it a `name:` and add that
@@ -50,10 +60,11 @@ name to the `workflows:` list in `report-failures.yaml`, exactly as written, sin
 matches on it; the shared hygiene check enforces the list.
 
 **A pull request that needs action is posted to Slack.**  `announce-pull-requests.yaml` calls
-the shared announcer at the same version tag, which posts to `#docker-mcp` when a pull request
-is opened or reopened and is not a draft, or is marked ready for review, and nothing else about
-it.  Pull requests from forks are not posted; Dependabot's are.  What it posts and why is in
-github-workflows' README.  It runs on `pull_request`, so it is in the `workflows:` list above.
+the shared announcer at the same version tag on a pull request being opened, reopened or marked
+ready for review, and posts to the project's Slack channel through the same token, which must
+also be a Dependabot secret so that Dependabot's pull requests are announced.  What it posts and
+which pull requests it skips is in github-workflows' README.  It runs on `pull_request`, so it
+is in the `workflows:` list above.
 
 An `mcp<2` cap existed briefly: mcp 2.0.0 removed `mcp.server.fastmcp`, which `server.py` imported
 `FastMCP` from, and an uncapped 2.2.0 shipped dead on arrival at import while every CI job stayed

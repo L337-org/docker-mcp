@@ -1,7 +1,7 @@
 name: 'Announce pull requests'
 
-# Posts each pull request that needs action - opened or reopened and not a draft, or marked ready
-# for review - to #docker-mcp, through the shared announcer at its v2 tag (architecture/ci.md).
+# Posts a pull request that needs action to the project's Slack channel through the shared
+# announcer, which decides what to post (architecture/ci.md).
 on:
   pull_request:
     types: [opened, reopened, ready_for_review]

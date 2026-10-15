@@ -3,7 +3,7 @@ permissions:
   contents: read
 
 # What this caller decides.  The shared workflow decides everything else about the review, and
-# its README describes it at the commit pinned below.
+# its README describes it at the version named below.
 #
 # - Opening a pull request, and every push to one, asks for a review at the depth the shared
 #   workflow picks.  A push is reviewed deliberately: the loop that invites, a reviewing agent and
