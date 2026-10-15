@@ -15,38 +15,42 @@ check could only see that a file was touched, never that the right rule reached 
 green ticks it could not justify. A rule belongs in `AGENTS.md`, or in the `architecture/` note
 that owns the detail, and which of those it is remains a judgement made at review.
 
-The `Repository hygiene` and `Action pins are immutable` jobs (`premerge.yaml`) each run a shared
-action from [L337-org/github-workflows](https://github.com/L337-org/github-workflows), pinned by
-commit SHA, rather than a copy kept in this repository. What each check covers, and how to run the
-hygiene check locally at the pinned commit, is in that repository's README; it is not restated here
-because it would drift. A change to either check lands there and reaches this repository when the
-pin is bumped.
+The `Repository hygiene` and `Action pin check` jobs (`premerge.yaml`) each run a shared action
+from [L337-org/github-workflows](https://github.com/L337-org/github-workflows), named at its
+major-version tag, rather than a copy kept in this repository. What each check covers, and how to
+run the hygiene check locally at that version, is in that repository's README; it is not restated
+here because it would drift. A change to either check reaches this repository when that
+repository moves the tag. Every other action is pinned by full commit SHA.
 
 The pin check matters most here because `publish.yaml` mints an OIDC token for PyPI Trusted
 Publishing (`id-token: write`), pushes to GHCR (`packages: write`) and uploads release assets
-(`contents: write`), so a repointed tag would execute inside the jobs holding this project's
-strongest credentials. Trusted Publishing has no stored token for an attacker to steal; executing
-in that job is the whole attack. The shared action's default directories, `.github/workflows` and
-`.github/actions`, are this repository's, so the local `file-failure-issue` action is checked too.
+(`contents: write`), so a repointed third-party tag would execute inside the jobs holding this
+project's strongest credentials. Trusted Publishing has no stored token for an attacker to steal;
+executing in that job is the whole attack. The shared action's default directories,
+`.github/workflows` and `.github/actions`, are this repository's, so the local
+`file-failure-issue` action is checked too.
 
 A `Code review` workflow (`code-review.yaml`) calls the shared Claude review workflow at the same
-pinned commit. The header of that file says when this repository asks for a review; the shared
+version tag. The header of that file says when this repository asks for a review; the shared
 README describes how the review itself runs.
 
 **A failed run is posted to Slack.**  A failed run is otherwise one red entry in a list nobody
 opens.  `.github/workflows/report-failures.yaml` names the workflows to watch and calls the
-shared Slack reporter from github-workflows, pinned by SHA like the actions above.  What the
-reporter posts and when is in that repository's README; it is not restated here because it
+shared Slack reporter from github-workflows, at the same version tag as the actions above.  What
+the reporter posts and when is in that repository's README; it is not restated here because it
 would drift.  This repository has it report runs started by `schedule`, `push`, `release` or
 `pull_request`, since a failing pull request run's page is easy to miss.  A run started by hand,
 or a review asked for by comment, is left out on purpose, because whoever started it is
-watching.  The post goes to the Slack
-channel of the webhook in the `SLACK_WEBHOOK` secret; a repository secret of that name
-overrides an organisation one.  This is in addition to the `ci-failure` issues the canary and
-the release file: the post says a run failed, the issue is the deduplicated record of a failure
-stream.  To add a workflow triggered by `schedule`, `push`, `release` or `pull_request`, give it
-a `name:` and add that name to the `workflows:` list in `report-failures.yaml`, exactly as
-written, since GitHub matches on it; the shared hygiene check enforces the list.
+watching.  The post goes to the channel in the workflow's `with:`, through the bot token in
+`SLACK_BOT_TOKEN`.  This is in addition to the `ci-failure` issues the canary and the release
+file: the post says a run failed, the issue is the deduplicated record of a failure stream.  To
+add a workflow triggered by `schedule`, `push`, `release` or `pull_request`, give it a `name:`
+and add that name to the `workflows:` list in `report-failures.yaml`, exactly as written, since
+GitHub matches on it; the shared hygiene check enforces the list.
+
+**A pull request that needs action is posted to Slack** by `announce-pull-requests.yaml`,
+through the shared announcer, whose README says which.  `SLACK_BOT_TOKEN` must also be a
+Dependabot secret, or Dependabot's pull requests are not announced.
 
 An `mcp<2` cap existed briefly: mcp 2.0.0 removed `mcp.server.fastmcp`, which `server.py` imported
 `FastMCP` from, and an uncapped 2.2.0 shipped dead on arrival at import while every CI job stayed

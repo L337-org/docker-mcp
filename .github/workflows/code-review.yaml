@@ -3,7 +3,7 @@ permissions:
   contents: read
 
 # What this caller decides.  The shared workflow decides everything else about the review, and
-# its README describes it at the commit pinned below.
+# its README describes it at the version named below.
 #
 # - Opening a pull request, and every push to one, asks for a review at the depth the shared
 #   workflow picks.  A push is reviewed deliberately: the loop that invites, a reviewing agent and
@@ -41,7 +41,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
-    uses: L337-org/github-workflows/.github/workflows/claude-review.yaml@fd692a603b2f6bb8bc73aaeaefa46c24b409705b # v1.3.1
+    uses: L337-org/github-workflows/.github/workflows/claude-review.yaml@v2
     with:
       pr-number: ${{ github.event.pull_request.number || github.event.issue.number }}
       depth: >-
