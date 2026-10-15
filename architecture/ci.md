@@ -19,18 +19,8 @@ The `Repository hygiene` and `Action pin check` jobs (`premerge.yaml`) each run 
 from [L337-org/github-workflows](https://github.com/L337-org/github-workflows), named at its
 major-version tag, rather than a copy kept in this repository. What each check covers, and how to
 run the hygiene check locally at that version, is in that repository's README; it is not restated
-here because it would drift. A change to either check lands there and reaches this repository
-when that repository moves the tag; a breaking change gets a new major tag, which this repository
-moves to in its own pull request.
-
-Third-party actions are pinned by full commit SHA. The shared workflows are the one exception, and
-it holds only while that tag is protected by a ruleset in that repository, so that moving it takes
-the same people as merging there. That repository's README, under "Versions and releases", states
-the condition and is where keeping it true belongs. Whoever can move it reaches what the shared
-code runs with here: the review's `pull-requests: write` permission and `CLAUDE_CODE_OAUTH_TOKEN`,
-the `SLACK_BOT_TOKEN` passed to the reporter and the announcer, and the logic of the required
-`Repository hygiene` and `Action pin check` jobs. `publish.yaml`, which holds the release
-credentials, uses nothing from github-workflows.
+here because it would drift. A change to either check reaches this repository when that
+repository moves the tag. Every other action is pinned by full commit SHA.
 
 The pin check matters most here because `publish.yaml` mints an OIDC token for PyPI Trusted
 Publishing (`id-token: write`), pushes to GHCR (`packages: write`) and uploads release assets
@@ -46,26 +36,21 @@ README describes how the review itself runs.
 
 **A failed run is posted to Slack.**  A failed run is otherwise one red entry in a list nobody
 opens.  `.github/workflows/report-failures.yaml` names the workflows to watch and calls the
-shared Slack reporter from github-workflows, at the same version tag as the actions above.
-What the reporter posts and when is in that repository's README; it is not restated here
-because it would drift.  This repository has it report runs started by `schedule`, `push`,
-`release` or `pull_request`, since a failing pull request run's page is easy to miss.  A run
-started by hand, or a review asked for by comment, is left out on purpose, because whoever
-started it is watching.  The post goes to the project's Slack channel, named in the workflow's
-`with:`, through the bot token in `SLACK_BOT_TOKEN`, which must also be set as a Dependabot
-secret because a run Dependabot starts sees only Dependabot secrets.
-This is in addition to the `ci-failure` issues the canary and the release file: the post says a
-run failed, the issue is the deduplicated record of a failure stream.  To add a workflow
-triggered by `schedule`, `push`, `release` or `pull_request`, give it a `name:` and add that
-name to the `workflows:` list in `report-failures.yaml`, exactly as written, since GitHub
-matches on it; the shared hygiene check enforces the list.
+shared Slack reporter from github-workflows, at the same version tag as the actions above.  What
+the reporter posts and when is in that repository's README; it is not restated here because it
+would drift.  This repository has it report runs started by `schedule`, `push`, `release` or
+`pull_request`, since a failing pull request run's page is easy to miss.  A run started by hand,
+or a review asked for by comment, is left out on purpose, because whoever started it is
+watching.  The post goes to the channel in the workflow's `with:`, through the bot token in
+`SLACK_BOT_TOKEN`.  This is in addition to the `ci-failure` issues the canary and the release
+file: the post says a run failed, the issue is the deduplicated record of a failure stream.  To
+add a workflow triggered by `schedule`, `push`, `release` or `pull_request`, give it a `name:`
+and add that name to the `workflows:` list in `report-failures.yaml`, exactly as written, since
+GitHub matches on it; the shared hygiene check enforces the list.
 
-**A pull request that needs action is posted to Slack.**  `announce-pull-requests.yaml` calls
-the shared announcer at the same version tag on a pull request being opened, reopened or marked
-ready for review, and posts to the project's Slack channel through the same token, which must
-also be a Dependabot secret so that Dependabot's pull requests are announced.  What it posts and
-which pull requests it skips is in github-workflows' README.  It runs on `pull_request`, so it
-is in the `workflows:` list above.
+**A pull request that needs action is posted to Slack** by `announce-pull-requests.yaml`,
+through the shared announcer, whose README says which.  `SLACK_BOT_TOKEN` must also be a
+Dependabot secret, or Dependabot's pull requests are not announced.
 
 An `mcp<2` cap existed briefly: mcp 2.0.0 removed `mcp.server.fastmcp`, which `server.py` imported
 `FastMCP` from, and an uncapped 2.2.0 shipped dead on arrival at import while every CI job stayed
