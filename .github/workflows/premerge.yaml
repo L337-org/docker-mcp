@@ -22,7 +22,7 @@ jobs:
 
   repo-hygiene:
     # Conventions every repository in this organisation shares, checked by the one copy in the
-    # shared workflows repository at the commit pinned here.
+    # shared workflows repository at the version tag named here.
     runs-on: [ubuntu-latest]
     name: Repository hygiene
     # 9s for the whole job on the first run of the shared action here, uv setup included.
@@ -32,11 +32,12 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Repository conventions hold
-        uses: L337-org/github-workflows/actions/repo-hygiene@fd692a603b2f6bb8bc73aaeaefa46c24b409705b # v1.3.1
+        uses: L337-org/github-workflows/actions/repo-hygiene@v2
 
   action-pins:
-    # Every `uses:` in .github/workflows and .github/actions names a full commit SHA, checked by
-    # the shared copy pinned here.  Its default directories are this repository's, so the local
+    # Every third-party `uses:` in .github/workflows and .github/actions names a full commit SHA,
+    # and the shared workflows repository is named at its protected version tag, checked by the
+    # shared copy.  Its default directories are this repository's, so the local
     # file-failure-issue action is covered too.  Why the pin matters most here: publish.yaml
     # mints an OIDC token for PyPI Trusted Publishing (`id-token: write`), pushes to GHCR
     # (`packages: write`) and uploads release assets (`contents: write`), so a repointed tag
@@ -49,8 +50,8 @@ jobs:
       - name: Check out source repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Every `uses:` must name a 40-hex commit SHA
-        uses: L337-org/github-workflows/actions/action-pins@fd692a603b2f6bb8bc73aaeaefa46c24b409705b # v1.3.1
+      - name: Every `uses:` must name a 40-hex commit SHA or a protected version tag
+        uses: L337-org/github-workflows/actions/action-pins@v2
 
   fresh-resolve-import:
     # Answers a question `uv sync --locked` (used by every other job here) cannot: would a
