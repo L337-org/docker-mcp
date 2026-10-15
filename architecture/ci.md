@@ -25,7 +25,8 @@ moves to in its own pull request.
 
 Third-party actions are pinned by full commit SHA. The shared workflows are the one exception, and
 it holds only while that tag is protected by a ruleset in that repository, so that moving it takes
-the same people as merging there. Whoever can move it reaches what the shared code runs with here:
+the same people as merging there. That repository's README, under "Versions and releases", states
+the condition and is where keeping it true belongs. Whoever can move it reaches what the shared code runs with here:
 the review's `pull-requests: write` permission and `CLAUDE_CODE_OAUTH_TOKEN`, the
 `SLACK_BOT_TOKEN` passed to the reporter and the announcer, and the logic of the required
 `Repository hygiene` and `Action pin check` jobs. `publish.yaml`, which holds the release
