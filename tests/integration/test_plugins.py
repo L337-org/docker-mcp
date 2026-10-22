@@ -1,14 +1,14 @@
-"""Integration coverage for `plugin_privileges`, which needs a reachable registry.
+"""Integration coverage for `plugin_install(dry_run=True)`, which needs a reachable registry.
 
-The call resolves a *remote* plugin through the daemon, so it exercises registry reachability and
+The dry run resolves a *remote* plugin through the daemon, so it exercises registry reachability and
 auth rather than any local state. It installs nothing, which is the property worth pinning: the
-whole point of the tool is to inspect what a plugin would be granted before `plugin_install` grants
-it non-interactively.
+whole point is to see what a plugin would be granted before `plugin_install` grants it
+non-interactively.
 """
 
 from docker.errors import DockerException
 
-from docker_mcp.tools.plugins import plugin_list, plugin_privileges
+from docker_mcp.tools.plugins import plugin_install, plugin_list
 
 from tests.integration.conftest import fail_unless_environmental_error
 
@@ -16,13 +16,13 @@ from tests.integration.conftest import fail_unless_environmental_error
 _REMOTE = "vieux/sshfs:latest"
 
 
-def test_plugin_privileges_lists_requested_privileges_without_installing():
+def test_plugin_install_dry_run_lists_requested_privileges_without_installing():
     installed_before = {plugin["Name"] for plugin in plugin_list()}
 
     try:
-        privileges = plugin_privileges(_REMOTE)
+        privileges = plugin_install(_REMOTE, dry_run=True)["privileges"]
     except (DockerException, RuntimeError) as exc:
-        fail_unless_environmental_error(exc, what=f"plugin_privileges({_REMOTE})")
+        fail_unless_environmental_error(exc, what=f"plugin_install({_REMOTE}, dry_run=True)")
         return
 
     assert isinstance(privileges, list)

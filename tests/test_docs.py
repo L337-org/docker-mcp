@@ -9,12 +9,14 @@ enumeration in the docs names it.
 
 import asyncio
 import re
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
 
 import docker_mcp.tools  # noqa: F401  - importing registers every tool on the server singleton
-from docker_mcp.server import _CLI_DOMAINS, _REMOTE_EXEC_DOMAINS, mcp
+from docker_mcp.server import _CLI_DOMAINS, _REMOTE_EXEC_DOMAINS, ALWAYS_ON_DOMAINS, _tool_registry, mcp
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _ARCHITECTURE_DIR = _REPO_ROOT / "architecture"
@@ -181,6 +183,19 @@ def test_the_enumeration_check_itself_flags_what_it_should(line, expected):
 #
 # Scope is deliberately only tool descriptions. Comments, tests and workflow files still hold em
 # dashes; none of them ship, and sweeping them is a separate decision rather than a gap here.
+def test_the_readme_lists_every_domain_that_can_be_disabled():
+    # The DOCKER_MCP_SERVER_DISABLE bullet names the domains by hand; it had to be edited when containers and
+    # system became impossible to disable, and nothing else would notice a domain added or removed.
+    readme = (_REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    match = re.search(r"A domain is a tool module's name - (.*?)\.", readme)
+    assert match, "README.md no longer has the 'A domain is a tool module's name - ...' sentence this checks"
+    listed = set(re.findall(r"`([a-z]+)`", match.group(1)))
+    can_disable = {record.domain for record in _tool_registry.values() if record.domain} - ALWAYS_ON_DOMAINS
+    assert listed == can_disable, (
+        f"README lists {sorted(listed)}; the domains that can be disabled are {sorted(can_disable)}"
+    )
+
+
 def test_advertised_tool_descriptions_are_plain_ascii():
     offenders = [
         f"{t.name}: {char!r} (U+{ord(char):04X})"
@@ -212,3 +227,21 @@ def test_the_instruction_file_names_a_check_that_exists():
     defined = set(re.findall(r"^def (test_\w+)", Path(__file__).read_text(encoding="utf-8"), re.M))
     missing = sorted(referenced - defined)
     assert not missing, f"named in AGENTS.md but not defined here: {missing}"
+
+
+def test_the_pre_commit_hook_the_docs_tell_contributors_to_install_exists_and_is_committable():
+    # CONTRIBUTING.md and AGENTS.md tell contributors to run `uv run pre-commit install`, so the config must be
+    # committed. The root `/.*` rule in .gitignore hides every dotfile it does not re-include, so the config
+    # needs its own re-include, or a local copy never reaches a commit.
+    git = shutil.which("git")
+    assert git, "git is needed to check the ignore rules"
+    config = _REPO_ROOT / ".pre-commit-config.yaml"
+    assert config.is_file()
+    ignored = subprocess.run(  # noqa: S603 - fixed argv, resolved binary, no shell
+        [git, "check-ignore", "--quiet", config.name], cwd=_REPO_ROOT, capture_output=True, timeout=30, check=False
+    )
+    assert ignored.returncode == 1, ".pre-commit-config.yaml is git-ignored; re-include it in .gitignore"
+    # The hooks CONTRIBUTING.md promises, run through `uv run` so they use the locked ruff CI uses.
+    text = config.read_text(encoding="utf-8")
+    assert "entry: uv run ruff check --fix" in text
+    assert "entry: uv run ruff format" in text

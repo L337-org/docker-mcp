@@ -1,9 +1,11 @@
 import inspect
 from unittest.mock import MagicMock, patch
 
+from docker.errors import APIError
+
 import pytest
 
-from docker_mcp.exceptions import ToolInputError
+from docker_mcp.exceptions import RemoteFailureError, ToolInputError
 from docker_mcp.tools.images import (
     image_build,
     image_inspect,
@@ -13,7 +15,6 @@ from docker_mcp.tools.images import (
     image_list,
     image_load,
     image_prune,
-    image_prune_builds,
     image_pull,
     image_push,
     image_remove,
@@ -125,35 +126,76 @@ def test_image_prune():
         assert image_prune() == {"SpaceReclaimed": 200}
 
 
-def test_image_prune_builds_passes_no_args_by_default():
-    # Every arg is version-gated (API v1.39+), so an unqualified prune must send none of them
-    # rather than passing explicit Nones/False through to an older daemon.
+@pytest.mark.parametrize(
+    "dockerfile",
+    ["/etc/passwd", "../secrets/Dockerfile", "sub/../../Dockerfile", "{ctx}/../Dockerfile"],
+)
+def test_image_build_refuses_a_dockerfile_outside_the_context(tmp_path, dockerfile):
+    # docker-py would read it from the server host and send it to the daemon.
+    context = tmp_path / "ctx"
+    context.mkdir()
+    with _patch() as mock_client, pytest.raises(ToolInputError, match="outside the build context"):
+        image_build(path=str(context), dockerfile=dockerfile.format(ctx=context))
+    mock_client.return_value.images.build.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "dockerfile", ["Dockerfile", "docker/Dockerfile.prod", "sub/../Dockerfile", "{ctx}/Dockerfile"]
+)
+def test_image_build_passes_a_dockerfile_inside_the_context(tmp_path, dockerfile):
+    context = tmp_path / "ctx"
+    context.mkdir()
+    image = MagicMock()
+    image.attrs = {"Id": "img1"}
     with _patch() as mock_client:
-        mock_client.return_value.images.prune_builds.return_value = {"SpaceReclaimed": 300}
-        assert image_prune_builds() == {"SpaceReclaimed": 300}
-    mock_client.return_value.images.prune_builds.assert_called_once_with()
+        mock_client.return_value.images.build.return_value = (image, iter([]))
+        image_build(path=str(context), dockerfile=dockerfile.format(ctx=context))
+    assert mock_client.return_value.images.build.call_args.kwargs["dockerfile"] == dockerfile.format(ctx=context)
 
 
-def test_image_prune_builds_forwards_supplied_args():
+def test_image_prune_leaves_the_build_cache_alone_by_default():
     with _patch() as mock_client:
-        mock_client.return_value.images.prune_builds.return_value = {"CachesDeleted": ["c1"], "SpaceReclaimed": 400}
-        result = image_prune_builds(filters={"until": "24h"}, all=True)
-    assert result == {"CachesDeleted": ["c1"], "SpaceReclaimed": 400}
-    mock_client.return_value.images.prune_builds.assert_called_once_with(filters={"until": "24h"}, all=True)
+        mock_client.return_value.images.prune.return_value = {"SpaceReclaimed": 200}
+        assert image_prune() == {"SpaceReclaimed": 200}
+    assert not mock_client.return_value.images.prune_builds.called
 
 
-def test_image_prune_builds_does_not_forward_the_deprecated_keep_storage():
-    # The Engine renamed `keep-storage` to `reserved-space` at API v1.48 and v1.56 no longer
-    # documents the old name; moby honours it as a deprecated fallback for now. docker-py 7.2.0
-    # still sends only `keep-storage`, so the day that fallback goes the value is *ignored* rather
-    # than rejected - and a call meaning "prune but keep 5GB" prunes the lot, from a tool classified
-    # destructive. `buildx_prune` carries `reserved_space` and the newer ceilings instead. Guard both
-    # directions, because the parameter is still in the docker-py signature to be copied back.
+def test_image_prune_with_build_cache_prunes_both_and_reports_each():
     with _patch() as mock_client:
-        mock_client.return_value.images.prune_builds.return_value = {"SpaceReclaimed": 0}
-        image_prune_builds(all=True)
-    assert "keep_storage" not in mock_client.return_value.images.prune_builds.call_args.kwargs
-    assert "keep_storage" not in inspect.signature(image_prune_builds).parameters
+        client = mock_client.return_value
+        client.images.prune.return_value = {"ImagesDeleted": [], "SpaceReclaimed": 200}
+        client.images.prune_builds.return_value = {"CachesDeleted": ["c1"], "SpaceReclaimed": 900}
+        result = image_prune(filters={"until": "24h"}, build_cache=True)
+    assert result == {
+        "ImagesDeleted": [],
+        "SpaceReclaimed": 200,
+        "BuildCache": {"CachesDeleted": ["c1"], "SpaceReclaimed": 900},
+    }
+    client.images.prune.assert_called_once_with(filters={"until": "24h"})
+    # No arguments: they are all version-gated, image filters mean nothing to the cache, and
+    # `keep_storage` is the deprecated name an Engine may ignore, which would prune past a floor.
+    client.images.prune_builds.assert_called_once_with()
+    # The high-level collection method is the public path; the low-level APIClient one is not used.
+    assert not client.api.prune_builds.called
+
+
+def test_image_prune_stops_before_images_when_the_build_cache_prune_fails():
+    with _patch() as mock_client:
+        client = mock_client.return_value
+        client.images.prune_builds.side_effect = APIError("cache prune refused")
+        with pytest.raises(APIError):
+            image_prune(build_cache=True)
+    assert not client.images.prune.called
+
+
+def test_image_prune_reports_the_cache_already_pruned_when_the_image_prune_fails():
+    # The cache is gone by then, so the error has to say so rather than look like nothing happened.
+    with _patch() as mock_client:
+        client = mock_client.return_value
+        client.images.prune_builds.return_value = {"CachesDeleted": [], "SpaceReclaimed": 900}
+        client.images.prune.side_effect = APIError("image prune refused")
+        with pytest.raises(RemoteFailureError, match=r"build cache was already pruned \(900 bytes"):
+            image_prune(build_cache=True)
 
 
 def test_image_load():
@@ -173,6 +215,35 @@ def test_image_import_from_data_forwards_repository_tag_and_changes():
     api.import_image_from_data.assert_called_once_with(
         b"rootfs", repository="myorg/rootfs", tag="v1", changes=["CMD /bin/sh"]
     )
+
+
+@pytest.mark.parametrize("repository", ["myorg/rootfs:v1", "localhost:5000/rootfs:v1"])
+def test_image_import_refuses_a_tag_that_would_replace_the_one_in_repository(repository):
+    # The Engine applies `tag` over a tag already in `repository`, silently.
+    with _patch() as mock_client, pytest.raises(ToolInputError, match="already carries the tag 'v1'"):
+        image_import(data=b"rootfs", repository=repository, tag="v2")
+    mock_client.return_value.api.import_image_from_data.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("repository", "tag"),
+    [
+        ("myorg/rootfs:v1", "v1"),
+        ("localhost:5000/rootfs", "v2"),
+        ("myorg/rootfs", "v2"),
+        ("myorg/rootfs:v1", None),
+        # A digest is not a tag: these reach the daemon, which refuses a digested reference itself.
+        ("myorg/rootfs@sha256:" + "a" * 64, "v1"),
+        ("myorg/rootfs:v1@sha256:" + "a" * 64, "v1"),
+    ],
+)
+def test_image_import_passes_a_tag_that_agrees_with_repository(repository, tag):
+    # A matching pair, a registry port, a bare repository and no tag at all are all unambiguous.
+    with _patch() as mock_client:
+        api = mock_client.return_value.api
+        api.import_image_from_data.return_value = ""
+        image_import(data=b"rootfs", repository=repository, tag=tag)
+    api.import_image_from_data.assert_called_once()
 
 
 def test_image_import_omits_unset_optionals_so_the_sdk_defaults_apply():
@@ -277,15 +348,15 @@ def test_image_import_allows_a_repository_without_a_tag():
     api.import_image_from_data.assert_called_once_with(b"rootfs", repository="myorg/rootfs")
 
 
-def test_image_import_forwards_repository_and_tag_separately_without_reconciling_them():
-    # `tag` overrides a tag already in `repository` -- the daemon rebuilds the reference from the
-    # repository's domain+path and applies `tag` (reference.WithTag), so both are forwarded as given
-    # rather than parsed here. Pins that we do not silently rewrite either value.
+def test_image_import_forwards_repository_and_tag_as_given():
+    # The daemon rebuilds the reference from the repository's domain+path and applies `tag`
+    # (reference.WithTag); a conflicting pair is refused before this point, and an agreeing one is
+    # forwarded exactly as given rather than rewritten here.
     with _patch() as mock_client:
         api = mock_client.return_value.api
         api.import_image_from_data.return_value = ""
-        image_import(data=b"rootfs", repository="myorg/rootfs:v1", tag="v2")
-    api.import_image_from_data.assert_called_once_with(b"rootfs", repository="myorg/rootfs:v1", tag="v2")
+        image_import(data=b"rootfs", repository="myorg/rootfs:v1", tag="v1")
+    api.import_image_from_data.assert_called_once_with(b"rootfs", repository="myorg/rootfs:v1", tag="v1")
 
 
 def test_image_save():

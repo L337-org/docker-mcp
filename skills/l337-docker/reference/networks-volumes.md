@@ -9,6 +9,7 @@ docker network ls --filter driver=bridge --filter label=app=web
 docker network inspect <net>                              # JSON array
 docker network inspect <net> --format '{{json .Containers}}' | jq
 docker network inspect <net> --format '{{range .IPAM.Config}}{{.Subnet}} {{.Gateway}}{{end}}'
+docker network inspect -v <overlay>                       # swarm: also the services and peers across nodes
 ```
 
 `network inspect`'s `.Containers` is the authoritative "who is attached", including each
@@ -21,11 +22,13 @@ container's IP on that network - more reliable than reading each container's
 docker network create appnet
 docker network create --driver bridge --subnet 172.28.0.0/16 --gateway 172.28.0.1 appnet
 docker network create --internal backend                  # no outbound route
-docker network create --label l337-docker-skill.managed=true appnet
+docker network create --driver overlay --attachable appnet   # swarm overlay plain containers can join too
+docker network create --label l337-docker-skill.managed=true --label l337-docker-skill.created="$(date -u +%FT%TZ)" appnet
 
 docker network connect appnet <container>
 docker network connect --alias db appnet <container>      # extra DNS name on this network
 docker network disconnect appnet <container>
+docker network disconnect -f appnet <container>           # an endpoint left behind by a container that is gone
 ```
 
 **The default `bridge` network has no DNS.** Containers on it can only reach each other by IP.
@@ -69,7 +72,7 @@ Volumes are addressed by **name only** - there is no separate id, and no short-i
 
 ```bash
 docker volume create appdata
-docker volume create --label l337-docker-skill.managed=true appdata
+docker volume create --label l337-docker-skill.managed=true --label l337-docker-skill.created="$(date -u +%FT%TZ)" appdata
 docker volume create --driver local \
   --opt type=nfs --opt o=addr=10.0.0.1,rw --opt device=:/export/data nfsdata
 ```

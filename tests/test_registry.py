@@ -21,9 +21,18 @@ from docker_mcp.tools.registry import (
     hub_repo_info,
     registry_image_config,
     registry_manifest,
-    registry_tag_wait,
     registry_tags,
 )
+from docker_mcp.tools.registry import _wait_registry_tag
+
+
+def wait_registry_tag(
+    repository, tag, username=None, password=None, limit=1000, timeout_seconds=600.0, poll_interval=5.0
+):
+    """The registry helper with the defaults `system_wait` supplies, so these cases read as they did."""
+    return _wait_registry_tag(
+        repository, tag, timeout_seconds, poll_interval, username=username, password=password, limit=limit
+    )
 
 
 # ---------- _parse_image_ref ----------
@@ -1077,28 +1086,28 @@ def test_registry_response_size_is_capped(monkeypatch):
             registry_tags("alpine")
 
 
-# ---------- registry_tag_wait ----------
+# ---------- wait_registry_tag ----------
 
 
-def test_registry_tag_wait_already_present_returns_immediately():
+def test_wait_registry_tag_already_present_returns_immediately():
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"tags": ["1.0", "1.1", "latest"]})
 
     with _mock_client(handler), patch("docker_mcp.tools.registry.time.sleep") as sleep:
-        result = registry_tag_wait("alpine", "latest", timeout_seconds=5)
+        result = wait_registry_tag("alpine", "latest", timeout_seconds=5)
     assert result["met"] is True
     assert result["timed_out"] is False
     sleep.assert_not_called()
 
 
-def test_registry_tag_wait_forwards_limit_to_registry_tags():
+def test_wait_registry_tag_forwards_limit_to_registry_tags():
     with patch("docker_mcp.tools.registry.registry_tags") as mock_tags:
         mock_tags.return_value = {"tags": ["1.0"]}
-        registry_tag_wait("alpine", "9.9", limit=5, timeout_seconds=0.0)
+        wait_registry_tag("alpine", "9.9", limit=5, timeout_seconds=0.0)
     mock_tags.assert_called_once_with("alpine", username=None, password=None, limit=5)
 
 
-def test_registry_tag_wait_polls_until_tag_appears():
+def test_wait_registry_tag_polls_until_tag_appears():
     responses = iter(
         [
             httpx.Response(200, json={"tags": ["1.0"]}),
@@ -1110,29 +1119,29 @@ def test_registry_tag_wait_polls_until_tag_appears():
         return next(responses)
 
     with _mock_client(handler), patch("docker_mcp.tools.registry.time.sleep") as sleep:
-        result = registry_tag_wait("alpine", "1.1", timeout_seconds=5, poll_interval=0.01)
+        result = wait_registry_tag("alpine", "1.1", timeout_seconds=5, poll_interval=0.01)
     assert result["met"] is True
     sleep.assert_called_once()
 
 
-def test_registry_tag_wait_times_out():
+def test_wait_registry_tag_times_out():
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"tags": ["1.0"]})
 
     with _mock_client(handler):
-        result = registry_tag_wait("alpine", "9.9", timeout_seconds=0.0)
+        result = wait_registry_tag("alpine", "9.9", timeout_seconds=0.0)
     assert result["met"] is False
     assert result["timed_out"] is True
 
 
-def test_registry_tag_wait_rejects_negative_timeout():
+def test_wait_registry_tag_rejects_negative_timeout():
     with pytest.raises(ToolInputError, match="timeout_seconds"):
-        registry_tag_wait("alpine", "latest", timeout_seconds=-1)
+        wait_registry_tag("alpine", "latest", timeout_seconds=-1)
 
 
-def test_registry_tag_wait_rejects_nonpositive_poll_interval():
+def test_wait_registry_tag_rejects_nonpositive_poll_interval():
     with pytest.raises(ToolInputError, match="poll_interval"):
-        registry_tag_wait("alpine", "latest", poll_interval=0)
+        wait_registry_tag("alpine", "latest", poll_interval=0)
 
 
 def test_a_credential_leak_refusal_tells_the_caller_why_on_the_wire(on_the_wire):

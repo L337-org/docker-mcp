@@ -2,6 +2,7 @@
 /.*
 !/.agents/
 !/.python-version
+!/.pre-commit-config.yaml
 !/.gitignore
 !/.dockerignore
 !/.mcpbignore

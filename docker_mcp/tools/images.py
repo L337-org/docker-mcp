@@ -5,9 +5,12 @@ Producing them, moving them between daemon and registry, and inspecting what is 
 
 # library of mcp tools relating to image management
 
+import os
 from typing import cast
 
-from docker_mcp.exceptions import ToolInputError
+from docker.errors import DockerException
+
+from docker_mcp.exceptions import RemoteFailureError, ToolInputError
 from docker_mcp.server import tool
 from docker_mcp.tools._utils import (
     MAX_PAYLOAD_BYTES,
@@ -20,8 +23,29 @@ from docker_mcp.tools._utils import (
 from docker_mcp.tools.system import _get_client
 
 
+def _dockerfile_outside_context(dockerfile: str, path: str) -> bool:
+    """Whether docker-py would read `dockerfile` from the host rather than from the build context.
+
+    Mirrors docker-py 7.2.0's `process_dockerfile` (docker/api/build.py) test, so the refusal fires
+    exactly when that path would read a host file into the build: a relative name is joined to `path`,
+    and the result is outside when it sits on another drive or its path relative to `path` climbs out
+    with `..`.
+
+    Args:
+        dockerfile: the `dockerfile` argument as given
+        path: the build context directory
+
+    Returns:
+        bool: True when the Dockerfile is outside the context
+    """
+    absolute = dockerfile if os.path.isabs(dockerfile) else os.path.join(path, dockerfile)
+    if os.path.splitdrive(path)[0] != os.path.splitdrive(absolute)[0]:
+        return True
+    return os.path.relpath(absolute, path).startswith("..")
+
+
 @tool()
-def image_build(  # noqa: DOC101,DOC103
+def image_build(  # noqa: DOC101,DOC103,DOC501,DOC503
     path: str | None = None,
     tag: str | None = None,
     quiet: bool = False,
@@ -56,15 +80,7 @@ def image_build(  # noqa: DOC101,DOC103
     Use this for simple single-platform builds from a local context. For multi-platform
     builds, BuildKit cache export/import, or advanced build features prefer `buildx_build`.
     `path` must be a directory accessible on the host running this server (it is the build
-    context sent to the daemon). `dockerfile` is normally relative to `path`; omit to use the
-    default `Dockerfile`.
-
-    `dockerfile` is not confined to the context, despite the usual relative form: docker-py detects
-    an absolute path, or a relative one escaping via `..`, reads that file from the **server host's**
-    filesystem and injects its contents into the build. So it can read any file the server user can,
-    like the other host-filesystem parameters (`dest_path`, `from_file`), and unlike them it is easy
-    to mistake for a context-relative name. `buildx_build`'s `--file` resolves differently again
-    (against the CLI's working directory) - see its docstring.
+    context sent to the daemon). `dockerfile` must be inside `path`; one outside it is refused.
 
     Args:
         path: Build context directory path on the server host
@@ -74,8 +90,7 @@ def image_build(  # noqa: DOC101,DOC103
         rm: Remove intermediate containers on success
         pull: Always pull a newer version of each FROM base image before building
         forcerm: Remove intermediate containers even on build failure
-        dockerfile: Dockerfile filename relative to path (default: "Dockerfile"); an absolute path or one containing
-            ".." reads that file from the server host instead of the context
+        dockerfile: Dockerfile path inside `path`, relative to it or absolute (default: "Dockerfile")
         buildargs: Build-time variables passed as `--build-arg`; dict of str to str
         container_limits: Resource limits for the build container, e.g. {"memory": 134217728}
         shmsize: Size of /dev/shm in bytes for build steps that need shared memory
@@ -93,6 +108,11 @@ def image_build(  # noqa: DOC101,DOC103
     Returns:
         dict: The built image's full inspect payload (as `docker inspect`)
     """
+    if dockerfile and path and _dockerfile_outside_context(dockerfile, path):
+        raise ToolInputError(
+            f"image_build: dockerfile {dockerfile!r} is outside the build context {path!r}; docker-py would read it "
+            "from the server host and send it to the daemon. Copy it into the context, or name one inside it."
+        )
     kwargs: dict = {
         "quiet": quiet,
         "nocache": nocache,
@@ -151,8 +171,8 @@ def image_registry_data(  # noqa: DOC101,DOC103
     """
     Get registry data for an image without pulling it, via the daemon's distribution endpoint.
 
-    Uses the daemon (and its cached credentials) to resolve the remote descriptor and platform
-    list. For direct registry access without a daemon use `registry_manifest`.
+    Uses the daemon, with the credentials this server's docker client has cached, to resolve the remote
+    descriptor and platform list. For direct registry access without a daemon use `registry_manifest`.
 
     Security: `auth_config` carries registry credentials, which many MCP clients log verbatim. Prefer
     `docker login` on the host so the `docker` module reuses credentials cached in
@@ -160,7 +180,8 @@ def image_registry_data(  # noqa: DOC101,DOC103
 
     Args:
         repository: Image reference
-        auth_config: Registry authentication config
+        auth_config: Per-call registry credentials under the keys `username` and `password`;
+            overrides the cached credential for this call only
 
     Returns:
         dict: The registry data document {"Descriptor", "Platforms"} - the OCI descriptor and
@@ -246,7 +267,8 @@ def image_push(  # noqa: DOC101,DOC103
     `~/.docker/config.json`, and leave `auth_config` unset.
 
     Args:
-        auth_config: Registry authentication config
+        auth_config: Per-call registry credentials under the keys `username` and `password`;
+            overrides the cached credential for this call only
 
     Returns:
         str: Push output as a string
@@ -305,61 +327,46 @@ def image_search(term: str, limit: int | None = None, host: str | None = None) -
 
 
 @tool()
-def image_prune(filters: dict | None = None, host: str | None = None) -> dict:  # noqa: DOC101,DOC103
+def image_prune(  # noqa: DOC101,DOC103,DOC501,DOC503
+    filters: dict | None = None,
+    build_cache: bool = False,
+    host: str | None = None,
+) -> dict:
     """
-    Remove unused local images to reclaim disk space.
+    Remove unused local images to reclaim disk space, and with `build_cache=True` the daemon's build cache too.
 
     Without filters removes only "dangling" images - untagged layers not referenced by any
     tag or container. To remove all images not used by any container (including tagged ones)
     pass `filters={"dangling": False}`. Valid filter keys: `dangling` (bool as string
     "true"/"false"), `until` (RFC3339 timestamp or duration like "24h"), `label`
-    (key or key=value). Use `system_df` first to see how much space is reclaimable.
+    (key or key=value). Use `system_df` first to see how much space is reclaimable. The build cache
+    is a separate resource, often the larger one on a machine that builds images; `build_cache=True`
+    prunes its unused records through the Engine API, with `filters` applying to images only. For a
+    non-default builder's cache, cache filters, or a space floor, use `buildx_prune` instead.
 
     Args:
         filters: Narrow which images to remove; omit to remove dangling images only
+        build_cache: Also prune the daemon's unused build cache
 
     Returns:
-        dict: {"ImagesDeleted": [...], "SpaceReclaimed": <bytes>}
+        dict: {"ImagesDeleted": [...], "SpaceReclaimed": <bytes>}, plus with `build_cache` a "BuildCache" key holding
+            {"CachesDeleted": [...], "SpaceReclaimed": <bytes>}
     """
-    return _get_client(host).images.prune(filters=filters)
-
-
-@tool()
-def image_prune_builds(  # noqa: DOC101,DOC103
-    filters: dict | None = None,
-    all: bool | None = None,
-    host: str | None = None,
-) -> dict:
-    """
-    Delete the daemon's build cache to reclaim disk space.
-
-    Prunes the *build cache* - a separate Engine resource from the images `image_prune` removes,
-    so run both to reclaim everything a build leaves behind. Prefer `buildx_prune` when the build
-    ran on a non-default buildx builder (that builder keeps its own cache, invisible here) or when
-    you need any disk ceiling at all - `reserved_space`, `max_used_space` or `min_free_space`, none of
-    which the docker-py path can send; this tool needs no CLI plugin and works over any
-    transport, including a daemon with no local `docker` binary. Inventory first with `system_df`
-    (its `BuildCache` entry) or `buildx_du`. Destructive and immediate: later builds must re-run
-    the steps whose cache was removed. Needs Docker API v1.31+; passing either `filters` or `all`
-    needs v1.39+ and raises `InvalidVersion` on an older daemon - omit both to prune with the
-    daemon's own defaults.
-
-    Args:
-        filters: Narrow which cache records to remove, e.g. {"until": "24h"} (a duration or timestamp relative to the
-            daemon's clock); also accepts `id`, `parent`, `type`, `description`, `inuse`, `shared`, `private`; omit to
-            let the daemon prune unused cache
-        all: Remove all types of build cache, not just the unused records
-
-    Returns:
-        dict: {"CachesDeleted": [...], "SpaceReclaimed": <bytes>}
-    """
-    # No `keep_storage`: the Engine renamed it `reserved-space` at API v1.48 and v1.56 no longer
-    # documents the old name. moby still honours the old spelling as a deprecated fallback, so this
-    # is not a bug fix - it removes a parameter whose failure mode when that fallback goes is silent.
-    # docker-py sends only `keep-storage`, so an ignored value would prune the entire cache while the
-    # caller believed a floor was in effect, from a tool classified destructive. `buildx_prune`
-    # carries `reserved_space` and the newer ceilings. Do not re-add it from the docker-py signature.
-    return _get_client(host).images.prune_builds(**drop_none(filters=filters, all=all))
+    client = _get_client(host)
+    if not build_cache:
+        return client.images.prune(filters=filters)
+    # The cache first, so that if it fails nothing else has been removed yet. No arguments: every
+    # prune_builds argument is version-gated, image filters mean nothing to the cache, and its
+    # `keep_storage` is the deprecated spelling an Engine may ignore - see buildx_prune for limits.
+    cache = client.images.prune_builds()
+    try:
+        result = client.images.prune(filters=filters)
+    except DockerException as exc:
+        raise RemoteFailureError(
+            f"pruning images failed after the build cache was already pruned "
+            f"({cache.get('SpaceReclaimed', 0)} bytes reclaimed there): {exc}"
+        ) from exc
+    return {**result, "BuildCache": cache}
 
 
 @tool()
@@ -412,27 +419,21 @@ def image_import(  # noqa: DOC101,DOC103,DOC501,DOC503
     came from somewhere else: a `container_export` archive, a distro base tarball, a VM image dump.
     The result has an empty config - no `CMD`/`ENTRYPOINT`/`ENV` - unless you supply `changes`, so an
     imported image is usually not runnable until you set at least a command. Pass exactly one source
-    (`from_file`, `data`, `from_url` or `from_image`); ToolInputError otherwise. `from_url` and
-    `from_image` are fetched by the *daemon*, `from_file`/`data` are read here and uploaded; a
-    `from_file` path that is not a readable file raises rather than being retried as a URL. Unlike
-    the other image-creating tools this stamps no provenance labels: the Engine's import call accepts
+    (`from_file`, `data`, `from_url` or `from_image`). `from_url` and `from_image` are fetched by the
+    *daemon*, `from_file`/`data` are read here and uploaded. Like every image-creating tool it stamps
+    no provenance labels, and here a caller cannot add one either: the Engine's import call accepts
     no labels field, and `changes` does not cover `LABEL`.
 
     Args:
         repository: Repository name to give the new image, e.g. "myorg/rootfs"; may include a tag (`myorg/rootfs:v1`),
             and defaults to `:latest` when it does not. Omit to import untagged, addressable only by the id in the
-            returned progress (omit it entirely -- a blank string is a ToolInputError, not a shorthand for untagged). A
-            digest reference is refused by the daemon. Required if `tag` is given
-        tag: Tag to apply, e.g. "v1". **Overrides** a tag already in `repository` rather than being ignored, so passing
-            `repository="myorg/rootfs:v1"` with `tag="v2"` yields `:v2`. Requires `repository` (ToolInputError without
-            it - the daemon would otherwise silently drop the tag and import untagged). Blank is also a ToolInputError,
-            not a shorthand for the default: the daemon would substitute `latest` without saying so
-        from_file: Path to a rootfs tarball on the server host (`~` expanded), read by the server's user; refused if it
-            is not an existing regular file; exactly one source
+            returned progress
+        tag: Tag to apply, e.g. "v1". Needs `repository`, and must match any tag already in it
+        from_file: Path to a rootfs tarball on the server host (`~` expanded), read by the server's user
         data: Rootfs tarball contents in band (base64-encoded by MCP, so prefer `from_file` for anything but small
-            archives); exactly one source
-        from_url: URL the daemon fetches the tarball from; exactly one source
-        from_image: Name of an existing image to import from, like a Dockerfile `FROM`; exactly one source
+            archives)
+        from_url: URL the daemon fetches the tarball from
+        from_image: Name of an existing image to import from, like a Dockerfile `FROM`
         changes: Dockerfile instructions applied to the new image, e.g. ['CMD ["/bin/sh"]']; only CMD, ENTRYPOINT, ENV,
             EXPOSE, ONBUILD, USER, VOLUME and WORKDIR are supported. Parsed as real Dockerfile syntax, so shell form is
             wrapped exactly as a Dockerfile would wrap it (`CMD /bin/sh` is stored as `["/bin/sh","-c","/bin/sh"]`) -
@@ -466,6 +467,17 @@ def image_import(  # noqa: DOC101,DOC103,DOC501,DOC503
     if tag is not None and repository is None:
         raise ToolInputError(
             "`tag` needs a `repository` to attach to; pass `repository`, or omit `tag` to import untagged."
+        )
+    # The Engine applies `tag` over a tag already in `repository`, so "myorg/rootfs:v1" with tag "v2"
+    # silently becomes ":v2". Only the last path segment can carry the tag: a colon before the last
+    # "/" is a registry port ("localhost:5000/rootfs").
+    # A digest ("@sha256:...") is not a tag; the daemon refuses a digested reference on its own.
+    _, _, last_segment = (repository or "").partition("@")[0].rpartition("/")
+    repository_tag = last_segment.partition(":")[2] if ":" in last_segment else None
+    if tag is not None and repository_tag is not None and repository_tag != tag:
+        raise ToolInputError(
+            f"`repository` {repository!r} already carries the tag {repository_tag!r}, and `tag` {tag!r} would "
+            "silently replace it; drop one of them."
         )
 
     # The high-level ImageCollection has no import; these four are the documented low-level calls.

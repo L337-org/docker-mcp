@@ -37,7 +37,7 @@ Read the linked file before judging a substantive change to that area.
 | code calling `docker` | [architecture/docker-sdk.md](architecture/docker-sdk.md) | an unverified method; a hand-built route that is not in the Engine API spec; a reach-in past the public SDK introduced without recorded sign-off |
 | `Dockerfile`, `manifest.json`, `server.json`, `claude-plugin/`, release workflows | [architecture/distribution.md](architecture/distribution.md) | a version-declaring file missing from the bump checklist there, `preflight`, or the version tests; a registry ownership marker no longer matching `server.json`'s `name` |
 | `skills/l337-docker/` | [architecture/agent-skill.md](architecture/agent-skill.md) | the skill described as equivalent to the server; tool-permission frontmatter added; a hand-edited figure in `MCP_VS_SKILLS.md` |
-| `.github/workflows/` | [architecture/ci.md](architecture/ci.md) | a `uses:` naming a tag or branch; a new job without `timeout-minutes` where the workflow requires one |
+| `.github/workflows/` | [architecture/ci.md](architecture/ci.md) | a third-party `uses:` naming a tag or branch (`L337-org/github-workflows` is named at its major-version tag); a new job without `timeout-minutes` where the workflow requires one |
 
 ## Project
 
@@ -136,7 +136,10 @@ Any tool wrapping a `docker` CLI feature (Compose, Stack, Buildx, Scout, Context
 `docker_mcp/tools/_cli.py:run_docker` — never call `subprocess.run` directly from a tool module. That
 helper is the single place holding binary resolution, `shell=False`, UTF-8 decoding, the output byte
 cap, Windows console suppression and the environment allow-list. Always pass an explicit `timeout=`.
-Never pass `shell=True`, never build paths by string concatenation, never expand `~` or globs yourself.
+Never pass `shell=True`, never build paths by string concatenation, and never expand a glob or a
+variable. Expand only a leading `~`, only where the tool documents it (`buildx_build`'s path
+parameters), and only with `os.path.expanduser`: pathlib's `expanduser()` raises a bare
+`RuntimeError` for an unknown `~user`, where `os.path` leaves the value for the CLI to report.
 
 **Read [architecture/cli-shell-out.md](architecture/cli-shell-out.md) before touching any of it**, and
 before adding a CLI-backed tool. It covers the SSH remote-exec fallback (which changes *which host* a
@@ -152,8 +155,9 @@ module method you have not confirmed in the docs. Do not assume a method exists 
 plausible; if you cannot confirm it, say so and do not use it.
 
 Prefer the high-level object API; drop to `_get_client().api` only for documented gaps, verified the
-same way. **"The method exists" and "the method works" are separate claims** — `plugin_push` is the
-standing example of a documented, importable SDK method that 404s against every daemon.
+same way. **"The method exists" and "the method works" are separate claims** — docker-py's
+`Plugin.push()` is the standing example of a documented, importable SDK method that 404s against
+every daemon.
 
 **Reaching past the public SDK is not an agent's call to make.** Where the public path fails, stop,
 write up what you found, and escalate for a human decision rather than implementing a workaround.
@@ -186,6 +190,17 @@ discovery layers. Four cleanup rounds have chased the same failure.
   `timeout_seconds`. `tests/test_naming.py` enforces all of this (approved prefixes, banned short forms and
   1.x spellings, canonical shared-param descriptions) — a violating tool fails CI.
 - New Docker functionality goes in the matching `docker_mcp/tools/<domain>.py` file, not in a new file.
+- **Waiting is one tool, `system_wait`.** A new thing to wait for is a new `kind` or `until` in `_WAIT_KINDS`
+  (`system.py`) with its helper in the owning domain's module, never a new `*_wait` tool and never a blocking
+  option on an action tool: action tools return once their work is started. The exceptions are
+  `container_exec` and `container_run(timeout_seconds=...)`: both serve running something quick and getting
+  the answer straight back, which would otherwise take several calls. Both are bounded; see
+  [architecture/server.md](architecture/server.md#waiting). `kind`/`until` are built from the
+  enabled domains at import, so a disabled domain's waits are not offered. Its `target` parameter is a
+  deliberate exception to the identifier spellings above, because one argument names a container, service,
+  node, stack, compose project or `repository:tag`. `system` and `containers` cannot be disabled
+  (`ALWAYS_ON_DOMAINS` in `server.py`); naming either in `DOCKER_MCP_SERVER_DISABLE` is reported as ignored,
+  not silently dropped.
 - Every new `docker_mcp/tools/` file must be imported in `docker_mcp/tools/__init__.py` (private `_*.py` helpers excluded).
 - Every new `docker_mcp/tools/<module>.py` must have a matching `tests/test_<module>.py`.
 - Tool functions are decorated with `@tool()` (imported from `docker_mcp.server`) and must have a `TOOL_CATEGORIES` entry in `docker_mcp/server.py`.
@@ -237,7 +252,7 @@ discovery layers. Four cleanup rounds have chased the same failure.
 
 Resources this server **creates** are stamped with `docker-mcp-server.*` provenance labels (`.managed=true`, `.version`, `.tool`, `.created`) via `docker_mcp/tools/_labels.py`, so the agent/operator can later enumerate that footprint — the `managed_only=True` arg on `container_list` / `network_list` / `volume_list` / `service_list`, or `--filter label=docker-mcp-server.managed=true`. The `prune_managed` prompt tears down only the managed footprint. Stamping is **on by default** and additive (a caller-supplied label always wins on a key collision); `DOCKER_MCP_SERVER_NO_LABELS=1` turns it off. The prefix is the bare project name (deliberately not reverse-DNS) and is a single constant in `_labels.py`.
 
-When adding a new create tool that accepts a `labels` dict, route it through `_labels.py:with_provenance(labels, "<tool_name>")` (it accepts the dict/list/None shapes the SDK accepts and returns `None` — feed it through `drop_none` — when stamping is off and the caller passed nothing). The seven stamped creators today are `container_run`, `container_create`, `network_create`, `volume_create`, `service_create` (service-level `labels` only, not `container_labels`), `config_create`, `secret_create`. **Image builds are intentionally NOT stamped** — a build label changes the resulting image digest. Compose/stack containers (created via CLI shell-out) are also unstamped, as is `plugin_create` — the Engine's plugin-create call accepts no labels field, so there is nothing to stamp. The rule is conditional on the tool *accepting a `labels` dict*: a creator with nowhere to put a label is an expected exception, not an oversight, and should say so in its docstring. New `managed_only`-style label filters go through `_labels.py:managed_filter`.
+When adding a new create tool that accepts a `labels` dict, route it through `_labels.py:with_provenance(labels, "<tool_name>")` (it accepts the dict/list/None shapes the SDK accepts and returns `None` — feed it through `drop_none` — when stamping is off and the caller passed nothing). The seven stamped creators today are `container_run`, `container_create`, `network_create`, `volume_create`, `service_create` (service-level `labels` only, not `container_labels`), `config_create`, `secret_create`. **Image builds are intentionally NOT stamped** — a build label changes the resulting image digest. Compose/stack containers (created via CLI shell-out) are also unstamped. The rule is conditional on the tool *accepting a `labels` dict*: a creator with nowhere to put a label is an expected exception, not an oversight, and should say so in its docstring. New `managed_only`-style label filters go through `_labels.py:managed_filter`.
 
 ## Invariants that fail silently
 
@@ -354,17 +369,14 @@ Removing an entry is a real decision, not a tidy-up.
 **SDK surface deliberately not wrapped, or wrapped unobviously.** A recurring audit routine
 re-proposes these; it has no memory of last time.
 
-- **`plugin_push`'s hand-built endpoint call.** docker-py's `Plugin.push()` / `APIClient.push_plugin()`
-  both POST to `/plugins/{name}/pull`, a route the Engine does not define, so they 404 against every
-  daemon. Our call is the working path, not debt. Revisit only if upstream fixes the URL.
 - **`Container.attach` / `attach_socket` / `resize` unwrapped.** An interactive bidirectional stream
   does not fit a request/response tool call. `container_exec` covers scripted execution.
 - **`service_rollback`'s `api.inspect_service` + `api.update_service`.** The high-level
   `Service`/`ServiceCollection` expose no `rollback`. Permanently low-level.
 - **`system_logout`'s `api._auth_configs`.** There is no `logout` anywhere in the SDK and no server-side
   session to end. Permanently low-level.
-- **`swarm_task_list` / `swarm_task_inspect`'s `api.tasks()` / `api.inspect_task()`.** docker-py has no
-  task collection at all. These documented `APIClient` methods are the only public path.
+- **`service_ps`'s `api.tasks()` with no service, and `service_logs(task=...)`'s hand-built
+  `GET /tasks/{id}/logs`.** docker-py has no task collection and no task-logs method at all.
 
 **Other settled decisions.**
 
@@ -384,7 +396,7 @@ re-proposes these; it has no memory of last time.
   (pyupgrade, 3.14 target) may rewrite to the unparenthesized form.
 
 - **Image builds are not provenance-stamped.** A build label changes the resulting image digest.
-  Compose and stack containers, and `plugin_create`, are unstamped for their own recorded reasons.
+  Compose and stack containers are unstamped for their own recorded reasons.
 - **Cross-host redirects are followed on purpose.** Registries answer blob fetches with a redirect to a
   CDN on another host as normal operation, so refusing them breaks `registry_image_config`. httpx
   strips `Authorization` on any cross-origin redirect, and a redirect reaches nothing a tool argument
@@ -471,9 +483,8 @@ afterthought: at this server's size it is the dominant cost of connecting to it 
 `tests/test_surface_budget.py` holds the ceilings: per tool, per component, and in total.
 
 **What is measured is the wire form, not the docstring.** A tool costs its name, its description
-and its whole input schema, and the schema is usually the larger half - `buildx_build` is 5,091
-bytes on the wire against 3,398 of description. A docstring-only budget would go green on a
-change that added twenty parameters.
+and its whole input schema, so a docstring-only budget would go green on a change that added
+twenty parameters. `tests/test_surface_budget.py`'s header gives the command that measures both.
 
 **Bytes, not tokens.** Tokens are what a model pays, but they need a tokenizer pinned to a model
 that changes underneath us, so the figure moves without the surface moving. That is why

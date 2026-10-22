@@ -5,17 +5,85 @@
 import time
 from typing import Literal, cast
 
-from docker_mcp.exceptions import ToolInputError
+import docker
+import docker.models.services
+
+from docker_mcp.exceptions import CapabilityError, RemoteFailureError, ToolInputError
 from docker_mcp.server import tool
 from docker_mcp.tools._labels import managed_filter, with_provenance
-from docker_mcp.tools._utils import MAX_PAYLOAD_BYTES, as_byte_chunks, drop_none, join_bounded
+from docker_mcp.tools._utils import (
+    MAX_PAYLOAD_BYTES,
+    as_byte_chunks,
+    close_stream_quietly,
+    drop_none,
+    join_bounded,
+)
 from docker_mcp.tools.system import _get_client
 
 
 # --- shared read helpers, also used by the service-logs:// / service-tasks:// resources in
-# resources.py, and by service_wait's "running" mode ---
+# resources.py, and by the service and stack waits behind system_wait ---
 
 _FAILING_TASK_STATES = frozenset({"failed", "rejected"})
+# `UpdateStatus.State` values after which a rolling update is over, and those where it stopped on a failure
+# and will not move again without someone acting (moby `api/types/swarm` UpdateState).
+_UPDATE_DONE = frozenset({"completed", "rollback_completed"})
+_UPDATE_STUCK = frozenset({"paused", "rollback_paused"})
+# Desired states up to and including "running", the ones swarm still means a task to reach (docker/cli's
+# `numberedStates` in cli/command/service/progress/progress.go). A replacement waiting out its restart
+# delay is desired "ready", so this keeps its node counted between a rejection and the retry.
+_LIVE_DESIRED_STATES = frozenset(
+    {"new", "allocated", "pending", "assigned", "accepted", "preparing", "ready", "starting", "running"}
+)
+
+
+def _runs_current_spec(task: dict, template: dict) -> bool:
+    """Whether a task was created from its service's current task template, i.e. an update left it alone.
+
+    Compares the keys the task's own spec carries: the template also holds `Runtime`, which tasks omit.
+    Swarm decides whether a task needs replacing the same way, from its spec against the template. The
+    template must be read without the daemon's inserted defaults, as docker-py reads it; tasks carry none.
+
+    Args:
+        task: a task document, as `client.api.tasks()` returns it
+        template: the service's `Spec.TaskTemplate`
+
+    Returns:
+        bool: True when every key of the task's spec equals the template's
+    """
+    spec = task.get("Spec") or {}
+    return all(template.get(key) == value for key, value in spec.items())
+
+
+def _global_node_counts(service: docker.models.services.Service, client: docker.DockerClient) -> tuple[int, int, int]:
+    """How many nodes a global service wants a task on, and on how many one is running, of them on the current spec.
+
+    Counted by node rather than by task, as docker/cli's `globalProgressUpdater` does: a node whose task
+    was rejected keeps a replacement swarm still means to run, so it stays wanted rather than dropping out
+    of both counts until the retry. A drained node's tasks are shut down and stop counting; a task on a
+    node that is down is not counted as running.
+
+    Args:
+        service: the docker-py Service model
+        client: the docker-py client it came from
+
+    Returns:
+        tuple: (nodes wanted, nodes running, nodes running a task made from the current spec)
+    """
+    tasks = service.tasks()
+    template = (service.attrs.get("Spec") or {}).get("TaskTemplate") or {}
+    down = {node.id for node in client.nodes.list() if (node.attrs.get("Status") or {}).get("State") == "down"}
+    wanted = {t.get("NodeID") for t in tasks if t.get("NodeID") and t.get("DesiredState") in _LIVE_DESIRED_STATES}
+    running_tasks = [
+        t
+        for t in tasks
+        if t.get("DesiredState") == "running"
+        and (t.get("Status") or {}).get("State") == "running"
+        and t.get("NodeID") not in down
+    ]
+    running = {t.get("NodeID") for t in running_tasks}
+    current = {t.get("NodeID") for t in running_tasks if _runs_current_spec(t, template)}
+    return len(wanted), len(running), len(current)
 
 
 def _read_service_log_tail(id_or_name: str, tail: int = 200, host: str | None = None) -> str:
@@ -46,9 +114,12 @@ def _read_service_task_summary(id_or_name: str, host: str | None = None) -> dict
     """Return a computed task/rollout status summary for a swarm service.
 
     Reproduces what the `audit_swarm_health` prompt already does by hand: counts tasks whose
-    *desired* state is "running" by their actual `Status.State`, compares the count against the
-    service's desired replica count (Replicated mode) or the total returned tasks (Global mode -
-    one task per eligible node, no fixed target), and surfaces any failing tasks' id/node/error.
+    *desired* state is "running" by their actual `Status.State` and compares the count against the
+    service's desired replica count (Replicated mode). A Global service has no fixed target, so it is
+    counted by node instead: the nodes swarm still means to run a task on, against those running one.
+    Surfaces any failing tasks' id/node/error. `current_tasks` counts only the running tasks made from
+    the service's current spec, the same way by node for a Global service: during a rolling update, and
+    for a moment after one is requested, the old tasks still run and are in `running_tasks` but not here.
     Also includes `UpdateStatus.State` from the same service read, so this one summary doubles as
     a rollout-progress view.
 
@@ -59,17 +130,24 @@ def _read_service_task_summary(id_or_name: str, host: str | None = None) -> dict
     Returns:
         dict: the task and rollout status summary
     """
-    service = _get_client(host).services.get(id_or_name)
+    client = _get_client(host)
+    service = client.services.get(id_or_name)
     attrs = service.attrs
     mode = (attrs.get("Spec", {}) or {}).get("Mode", {}) or {}
     tasks = service.tasks(filters={"desired-state": "running"})
-    running = sum(1 for t in tasks if (t.get("Status") or {}).get("State") == "running")
-    # `Replicas` is optional in the daemon's own schema (no documented default), so a Replicated
-    # service could in principle omit it - fall back to the observed task count in that case too,
-    # the same fallback already used for every non-Replicated mode.
-    desired = mode.get("Replicated", {}).get("Replicas") if "Replicated" in mode else None
-    if desired is None:
-        desired = len(tasks)
+    if "Global" in mode:
+        desired, running, current = _global_node_counts(service, client)
+    else:
+        template = (attrs.get("Spec") or {}).get("TaskTemplate") or {}
+        live = [t for t in tasks if (t.get("Status") or {}).get("State") == "running"]
+        running = len(live)
+        current = sum(1 for t in live if _runs_current_spec(t, template))
+        # `Replicas` is optional in the daemon's own schema (no documented default), so a Replicated
+        # service could in principle omit it - fall back to the observed task count in that case too,
+        # the same fallback already used for every other mode.
+        desired = mode.get("Replicated", {}).get("Replicas") if "Replicated" in mode else None
+        if desired is None:
+            desired = len(tasks)
     failed_tasks = [
         {
             "id": t.get("ID"),
@@ -86,10 +164,30 @@ def _read_service_task_summary(id_or_name: str, host: str | None = None) -> dict
         "service": service.name,
         "mode": "replicated" if "Replicated" in mode else ("global" if "Global" in mode else None),
         "running_tasks": running,
+        "current_tasks": current,
         "desired_tasks": desired,
         "failed_tasks": failed_tasks,
         "update_state": update_status.get("State"),
     }
+
+
+def _awaiting_global_tasks(summary: dict) -> bool:
+    """Whether a global service has no tasks yet, so its desired count says nothing about its nodes.
+
+    A global service's desired count is the nodes it has a live task on, which is zero until the
+    orchestrator creates them, so "every node runs one" would be met before anything ran. The
+    orchestrator creates every eligible node's task at once, so docker/cli's own `--detach=false` waits
+    for the first (cli/command/service/progress/progress.go, `globalProgressUpdater`); the waits do the
+    same. A global service whose constraints match no node therefore waits to its timeout, as the CLI
+    does.
+
+    Args:
+        summary: a `_read_service_task_summary` result
+
+    Returns:
+        bool: True for a global service with no task to count yet
+    """
+    return summary["mode"] == "global" and summary["desired_tasks"] == 0
 
 
 @tool()
@@ -232,29 +330,44 @@ def service_remove(id_or_name: str, host: str | None = None) -> bool:  # noqa: D
 
 
 @tool()
-def service_ps(id_or_name: str, filters: dict | None = None, host: str | None = None) -> list:  # noqa: DOC101,DOC103
+def service_ps(  # noqa: DOC101,DOC103
+    id_or_name: str | None = None,
+    filters: dict | None = None,
+    host: str | None = None,
+) -> list:
     """
-    List a swarm service's tasks (per-replica scheduling units), like `docker service ps`.
+    List swarm tasks: one service's, or with no service every task in the swarm, like `docker service ps`.
 
-    Shows where replicas run and why they fail: each task carries `Status`
-    (State/Message/ContainerStatus), `DesiredState`, `NodeID`, and `Slot`. Prefer this over
-    `container_list` for services (tasks may run on other nodes), `stack_ps` for a whole stack,
-    and the `service-tasks://{id_or_name}` resource for a computed rollout summary. Requires a
-    swarm manager.
+    Omit `id_or_name` for the cluster-wide view - what is failing anywhere, or with the `node` filter
+    one node's workload (the CLI's `docker node ps`) - in one call rather than one per service;
+    `stack_ps` covers one stack. Find a single task with the `id` filter (full id or prefix) or
+    `name` (the full `<service>.<slot>.<taskid>`, or `<service>.<slot>` for every task that slot has
+    run). Both match by prefix, so an ambiguous prefix returns several tasks rather than an error, and
+    `web.1` also matches `web.10`. Only container tasks come back unless `runtime` is filtered (e.g.
+    `attachment`). Each task carries `Status` (State/Message/ContainerStatus), `DesiredState`,
+    `NodeID`, `Slot` and its full `Spec`; `service_logs(task=...)` reads what one printed. Prefer this
+    over `container_list` for services, whose tasks may run on other nodes. Read-only. Requires a swarm
+    manager: on any other node the daemon refuses, and its refusal is what comes back.
 
     Args:
-        filters: Filter dict; keys: id, name, node, label, desired-state (running|shutdown|accepted)
+        id_or_name: The service whose tasks to list; omit for every task in the swarm
+        filters: Filter dict; keys: id, name, service, node, label, desired-state (running|shutdown|accepted), runtime
 
     Returns:
-        list: Task dicts (ID, Slot, NodeID, Status, DesiredState, Spec)
+        list: One full task document per task (ID, ServiceID, NodeID, Slot, Spec, Status, DesiredState)
     """
-    service = _get_client(host).services.get(id_or_name)
-    return service.tasks(filters=filters)
+    client = _get_client(host)
+    if id_or_name is None:
+        # docker-py has no task collection (no `client.tasks`), so the swarm-wide list is the
+        # documented low-level call; `Service.tasks` below is the same call with a service filter.
+        return client.api.tasks(filters=filters)
+    return client.services.get(id_or_name).tasks(filters=filters)
 
 
 @tool()
-def service_logs(  # noqa: DOC101,DOC103
-    id_or_name: str,
+def service_logs(  # noqa: DOC101,DOC103,DOC501,DOC503
+    id_or_name: str | None = None,
+    task: str | None = None,
     details: bool = False,
     stdout: bool = True,
     stderr: bool = True,
@@ -265,19 +378,22 @@ def service_logs(  # noqa: DOC101,DOC103
     host: str | None = None,
 ) -> str:
     """
-    Get a bounded snapshot of a swarm service's logs (never follows).
+    Get a bounded snapshot of a swarm service's logs, or of one of its tasks (never follows).
 
-    `follow` is intentionally not exposed: the stream is joined into one string before returning, so
-    following would block forever and grow unbounded. Collection is capped at `max_bytes` (ToolInputError
-    if exceeded) so a noisy service can't OOM the server. The default is a bounded `tail=200`;
-    `tail="all"` returns the whole buffer, which can be huge on long-running services and exceed
-    the agent's context - prefer an integer, or `since`, to constrain output. Logs aggregate across
-    all the service's tasks: use `swarm_task_logs` for one task, `container_logs` for one container,
-    and the `service-logs://{id_or_name}` resource for the resource-flavored equivalent of this
-    tool.
+    Pass `id_or_name` for every task of a service interleaved, or `task` for one replica - the one
+    that actually failed, found with `service_ps` - just as `docker service logs` takes either.
+    `container_logs` is no substitute on a multi-node swarm: a task's container lives on whichever
+    node the scheduler chose, and this server talks to one daemon. `follow` is not exposed (the
+    stream is joined into one string, so following would never finish). `tail` and `max_bytes` apply
+    to what was asked for, so a quiet replica is not crowded out by noisy ones; `tail="all"` can
+    exceed the agent's context, so prefer an integer or `since`. docker-py has no public call for a
+    task's logs, so that path uses its private request helpers and raises if those internals move.
 
     Args:
-        details: Show extra details
+        id_or_name: The service whose logs to read; give this or `task`, not both
+        task: One task's id, an unambiguous id prefix, or its full `<service>.<slot>.<taskid>` name; give this or
+            `id_or_name`, not both
+        details: Include the extra attributes given to the log driver (`--details`)
         since: Show logs since this Unix timestamp
         tail: Number of lines from the end, or the literal "all" for everything
         max_bytes: Abort with ToolInputError if the buffered logs exceed this many bytes (default 32 MiB)
@@ -285,18 +401,108 @@ def service_logs(  # noqa: DOC101,DOC103
     Returns:
         str: Decoded log output
     """
+    if (id_or_name is None) == (task is None):
+        raise ToolInputError(
+            "service_logs reads either a whole service or one task: pass exactly one of `id_or_name` "
+            f"(got {id_or_name!r}) or `task` (got {task!r})"
+        )
+    params = {
+        "details": details,
+        "stdout": stdout,
+        "stderr": stderr,
+        "since": since,
+        "timestamps": timestamps,
+        "tail": tail,
+    }
+    if task is not None:
+        return _read_task_logs(task, params, max_bytes, host)
     service = _get_client(host).services.get(id_or_name)
-    output = service.logs(
-        details=details,
-        follow=False,
-        stdout=stdout,
-        stderr=stderr,
-        since=since,
-        timestamps=timestamps,
-        tail=tail,
-    )
-
+    output = service.logs(follow=False, **params)
     raw = join_bounded(as_byte_chunks(output), max_bytes, f"logs of service {id_or_name}")
+    return raw.decode("utf-8", errors="replace")
+
+
+def _read_task_logs(task: str, params: dict, max_bytes: int, host: str | None) -> str:
+    """Read one swarm task's logs through `GET /tasks/{id}/logs`, bounded and non-following.
+
+    docker-py has no task collection and no `APIClient.task_logs`, so this drives its private
+    request helpers against the published Engine route. Drop the reach-in if docker-py grows a public
+    method.
+
+    Args:
+        task: the task's id, an unambiguous id prefix, or its full name
+        params: the log query options, without `follow`
+        max_bytes: abort with ToolInputError if the buffered logs exceed this many bytes
+        host: the host label to target, or None for the default
+
+    Returns:
+        str: the decoded log output
+
+    Raises:
+        CapabilityError: the installed docker-py no longer has the private helpers this needs
+        RemoteFailureError: the daemon returned a task document with no ID to address
+    """
+    api = _get_client(host).api
+    # Resolved via getattr so a docker-py that has moved these internals gives the actionable
+    # message below rather than an AttributeError from inside the call.
+    build_url = getattr(api, "_url", None)
+    get = getattr(api, "_get", None)
+    raise_for_status = getattr(api, "_raise_for_status", None)
+    result_tty = getattr(api, "_get_result_tty", None)
+    if build_url is None or get is None or raise_for_status is None or result_tty is None:
+        missing = sorted(
+            attr
+            for attr, fn in (
+                ("_url", build_url),
+                ("_get", get),
+                ("_raise_for_status", raise_for_status),
+                ("_get_result_tty", result_tty),
+            )
+            if fn is None
+        )
+        raise CapabilityError(
+            f"the installed docker-py no longer exposes {', '.join(missing)} on APIClient, which "
+            "service_logs(task=...) needs to reach GET /tasks/{id}/logs; read the whole service's "
+            "logs with service_logs(id_or_name=...), or run `docker service logs` on a manager"
+        )
+    # Without a TTY the Engine multiplexes stdout and stderr into framed chunks, so the 8-byte frame
+    # headers have to be stripped or they land in the returned text. `_get_result_tty` does that, but
+    # only if told which mode applies, and the task's own spec is the only place that records it.
+    document = api.inspect_task(task)
+    is_tty = document.get("Spec", {}).get("ContainerSpec", {}).get("TTY", False)
+    # The URL gets the resolved id, not what the caller passed. `inspect_task` accepts an id prefix
+    # or the full `<service>.<slot>.<taskid>` name and `task` advertises both, but whether the
+    # logs route resolves them too is undocumented - and there is no need to find out when the
+    # canonical id is already in hand. It also removes the chance of inspecting one task and
+    # reading another's output if the two endpoints ever disagreed about an ambiguous prefix.
+    #
+    # Not falling back to `task` when the id is absent: that is the unresolved reference this
+    # exists to avoid, so the fallback would quietly reinstate the defect on the one path where the
+    # daemon has already behaved unexpectedly. A bare KeyError would be no better - it is not in
+    # `_LIBRARY_FAILURES`, so it reaches the client as "Error executing tool" with the text withheld.
+    task_id = document.get("ID")
+    if not task_id:
+        raise RemoteFailureError(
+            f"the daemon returned a task document for {task!r} with no 'ID' field, so its "
+            'logs endpoint cannot be addressed; `service_ps(filters={"id": ...})` shows what came back'
+        )
+    response = get(
+        build_url("/tasks/{0}/logs", task_id),
+        params={**params, "follow": False},
+        stream=True,
+    )
+    # `_get_result_tty` raises for status itself on the multiplexed path but not on the TTY one,
+    # where it would otherwise stream an error body back as though it were log output.
+    raise_for_status(response)
+    try:
+        raw = join_bounded(as_byte_chunks(result_tty(True, response, is_tty)), max_bytes, f"logs of task {task}")
+    finally:
+        # A fully consumed stream releases its pooled connection by itself, but `join_bounded` raises
+        # on the max_bytes abort with the body part-read, which would strand that connection for
+        # every oversized task. No `CancellableStream` here: there is no watchdog to interrupt a
+        # blocked read from, because `follow` is never sent and the daemon closes the stream itself
+        # once the tail is written.
+        close_stream_quietly(response)
     return raw.decode("utf-8", errors="replace")
 
 
@@ -374,7 +580,7 @@ def _service_wait_result(
     failed_tasks: list | None = None,
     update_state: str | None = None,
 ) -> dict:
-    """Build the unified service_wait result snapshot - the same shape for every `until` mode.
+    """Build the unified service wait result snapshot - the same shape for every `until` mode.
 
     Args:
         id_or_name: the object waited on
@@ -403,38 +609,39 @@ def _service_wait_result(
     }
 
 
-@tool()
-def service_wait(  # noqa: DOC101,DOC103,DOC501,DOC503
+def _wait_service(
     id_or_name: str,
-    until: Literal["running", "update-converged"] = "running",
+    until: str,
+    timeout_seconds: float,
+    poll_interval: float,
     replicas: int | None = None,
-    timeout_seconds: float = 600.0,
-    poll_interval: float = 2.0,
     host: str | None = None,
 ) -> dict:
-    """
-    Block until a swarm service's tasks converge, or a rolling update finishes.
+    """Wait for a swarm service to converge; `system_wait(kind="service")` is the tool that calls this.
 
-    One contract for both modes: never raises on timeout - the result always carries `met` and
-    `timed_out`. "running" polls task state via the same task-counting logic as
-    `service-tasks://{id_or_name}` (not the unconfirmed daemon `ServiceStatus` field) until running
-    tasks reach the desired count (Replicated mode) or every returned task is running (Global mode,
-    which has no fixed target). "update-converged" polls `UpdateStatus.State` until it reaches a
-    terminal value (`completed` or `rollback_completed`); if the service has never been updated (no
-    `UpdateStatus` at all), returns promptly with `met=false` - there's nothing to converge to, same
-    as `container_wait`'s no-healthcheck case.
+    Never raises on timeout. Both modes count only tasks made from the current spec (`current_tasks` in
+    `service-tasks://{id_or_name}`): straight after an update is requested swarm clears `UpdateStatus`
+    and only later sets it to `updating`, while the old tasks still run, so counting every running task
+    would report a rollout that has not started as finished. "running" polls until current-spec tasks
+    reach the desired count, or run on every node a global service wants once it has any.
+    "update-converged" is met on `completed` or `rollback_completed`, or with no `UpdateStatus` at all
+    once current-spec tasks reach the desired count; it polls through `updating`, and returns promptly
+    with `met: false` on an update paused on a failure, which will not move again without someone acting.
 
     Args:
-        until: Condition to wait for: "running" (default) or "update-converged"
-        replicas: "running" mode only: override the desired replica count (e.g. right after a same-turn `service_scale`
-            call, before polling reflects the new target)
-        timeout_seconds: Max seconds to wait before returning with timed_out=true
-        poll_interval: Seconds between re-checks (default 2, > 0); capped by the time left so a large value can't push
-            the total wait past the timeout
+        id_or_name: the service to wait on
+        until: "running" or "update-converged"
+        timeout_seconds: seconds to wait before returning with timed_out=true
+        poll_interval: seconds between re-checks, capped by the time left
+        replicas: "running" only: the desired count to wait for, overriding the service's own
+        host: the host label to target, or None for the default
 
     Returns:
-        dict: {"service", "until", "met", "timed_out", "running_tasks", "desired_tasks", "failed_tasks", "update_state",
-            "waited_seconds"}
+        dict: {"service", "until", "met", "timed_out", "running_tasks", "desired_tasks", "failed_tasks",
+            "update_state", "waited_seconds"}
+
+    Raises:
+        ToolInputError: a negative timeout or replica count, or a non-positive poll interval
     """
     if timeout_seconds < 0:
         raise ToolInputError(f"timeout_seconds must be >= 0, got {timeout_seconds}.")
@@ -453,15 +660,15 @@ def service_wait(  # noqa: DOC101,DOC103,DOC501,DOC503
             "failed_tasks": summary["failed_tasks"],
             "update_state": summary["update_state"],
         }
+        rolled_out = summary["current_tasks"] >= desired and not (replicas is None and _awaiting_global_tasks(summary))
         if until == "running":
-            if summary["running_tasks"] >= desired:
+            if rolled_out:
                 return _service_wait_result(id_or_name, until, met=True, start=start, **common)
         else:  # "update-converged"
             update_state = summary["update_state"]
-            if update_state is None:
-                # No UpdateStatus at all: nothing to converge to, don't poll to the timeout.
+            if update_state in _UPDATE_STUCK:
                 return _service_wait_result(id_or_name, until, met=False, start=start, **common)
-            if update_state in ("completed", "rollback_completed"):
+            if update_state in _UPDATE_DONE or (update_state is None and rolled_out):
                 return _service_wait_result(id_or_name, until, met=True, start=start, **common)
         remaining = deadline - time.monotonic()
         if remaining <= 0:

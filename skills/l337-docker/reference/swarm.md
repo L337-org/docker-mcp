@@ -28,6 +28,8 @@ docker swarm join-token manager -q                        # token only
 docker swarm join-token worker --rotate                   # invalidates the old token
 docker swarm leave                                        # worker
 docker swarm leave --force                                # last manager - DESTROYS THE SWARM
+docker swarm init --default-addr-pool 10.20.0.0/16 --default-addr-pool-mask-length 24
+docker swarm init --force-new-cluster                     # recover a swarm that lost quorum, from this manager
 docker swarm update --autolock=true
 docker swarm ca --rotate
 docker info --format '{{json .Swarm}}' | jq               # cluster state
@@ -41,6 +43,11 @@ docker info --format '{{json .Swarm}}' | jq               # cluster state
   definition in it**. There is no undo. Confirm explicitly, every time.
 - Run an **odd** number of managers (3 or 5). One manager means no fault tolerance; an even number
   gives no quorum benefit over the odd number below it.
+
+`--default-addr-pool` sets the subnets overlay networks are carved from; set it when the default
+`10.0.0.0/8` clashes with the network the hosts sit on. `--force-new-cluster` turns the surviving
+manager into a one-manager swarm keeping the services, after the others are lost for good; it is
+recovery, not a routine command.
 
 Autolock: with it enabled, a restarted manager needs the unlock key before it rejoins.
 
@@ -64,6 +71,7 @@ docker service inspect <svc> --format '{{json .UpdateStatus}}' | jq
 docker service ps <svc> --no-trunc
 docker service ps <svc> --filter desired-state=running
 docker service logs --tail 200 --timestamps <svc>
+docker service logs --tail 200 --timestamps <task-id>    # one task, from `docker service ps`'s ID
 ```
 
 `docker service ls` shows `REPLICAS` as `running/desired` - the fastest convergence read. When they
@@ -76,7 +84,7 @@ crash loop:
 
 ```bash
 docker service ps <svc> --no-trunc --format json | jq -rs \
-  '.[] | [.Name,.CurrentState,.DesiredState,.Error] | @tsv'
+  '.[] | [.ID,.Name,.CurrentState,.DesiredState,.Error] | @tsv'
 ```
 
 `--no-trunc` matters here - the `Error` column is where the real reason lives and it is truncated
@@ -91,45 +99,51 @@ service. Fan out over the service list instead:
 for svc in $(docker service ls -q); do
   docker service ps "$svc" --no-trunc --format json
 done | jq -rs '.[] | select(.CurrentState | startswith("Running") | not)
-                   | [.Name, .Node, .CurrentState, .Error] | @tsv'
+                   | [.ID, .Name, .Node, .CurrentState, .Error] | @tsv'
 docker node ps <node> --no-trunc            # the other axis: every task on one node
 docker inspect --type task <task-id>        # one task, full document
 ```
 
 `docker service ps` prints `NAME` as `<service>.<slot>`, but `docker inspect --type task` will not
 resolve that form - pass the task `ID` from the same row instead. (The MCP server exposes the
-cluster-wide read directly as `swarm_task_list`, with `node`, `service` and `desired-state`
-filters.)
+cluster-wide read directly as `service_ps` with no service, with `node`, `service` and
+`desired-state` filters.)
 
 ### Creating and updating
 
 ```bash
-docker service create --name web --replicas 3 \
+docker service create -d --name web --replicas 3 \
   --network appnet --publish published=8080,target=80 \
   --constraint 'node.role==worker' \
   --limit-memory 512m --reserve-memory 256m \
   --secret db_password --config app_config \
-  --label l337-docker-skill.managed=true \
+  --label l337-docker-skill.managed=true --label l337-docker-skill.created="$(date -u +%FT%TZ)" \
+  --container-label l337-docker-skill.managed=true \
   nginx:1.27
 
-docker service create --mode global --name agent monitoring:latest   # one task per node
+docker service create -d --mode global --name agent monitoring:latest   # one task per node
 ```
 
 ```bash
-docker service update --image nginx:1.28 web              # rolling update
-docker service update --replicas 5 web
-docker service scale web=5                                # shorthand
-docker service scale web=5 api=3                          # several at once
-docker service update --force web                         # redistribute tasks, no spec change
-docker service rollback web                               # back to the previous spec
+docker service update -d --image nginx:1.28 web           # rolling update
+docker service update -d --replicas 5 web
+docker service scale -d web=5                             # shorthand
+docker service scale -d web=5 api=3                       # several at once
+docker service update -d --force web                      # redistribute tasks, no spec change
+docker service rollback -d web                            # back to the previous spec
 docker service rm web                                     # no confirmation, no undo
 ```
+
+**Always pass `-d` to `create`, `update`, `scale` and `rollback`.** Without it each one waits for
+the service to converge, with no timeout: a service that never converges hangs the session. With
+`-d` they return once the change is accepted, and `wait_service` (`reference/observability.md`)
+then waits for convergence with a timeout.
 
 Rolling-update behaviour is worth setting explicitly rather than inheriting the defaults, which
 update one task at a time and **pause** the whole rollout on the first failure:
 
 ```bash
-docker service update --image myapp:v2 \
+docker service update -d --image myapp:v2 \
   --update-parallelism 2 --update-delay 10s \
   --update-failure-action rollback \
   --update-order start-first \
@@ -164,8 +178,9 @@ or whose `ManagerStatus.Reachability` is not `reachable` - an unreachable manage
 docker node update --availability drain <node>            # evacuate; tasks reschedule elsewhere
 docker node update --availability active <node>
 docker node update --label-add zone=eu-west-1 <node>
+docker node update --label-rm zone <node>
 docker node update --role manager <node>                  # promote (also: docker node promote)
-docker node rm <node>                                     # must be down or drained first
+docker node rm <node>                                     # refused while the node is ready
 docker node rm --force <node>
 ```
 
@@ -173,8 +188,12 @@ Draining is the safe maintenance primitive: it reschedules tasks off the node be
 Check capacity first - draining a node whose replicas cannot be placed elsewhere leaves the
 service under-replicated rather than failing loudly.
 
-`docker node rm` on a still-reachable node needs `--force`, and that leaves the node believing it
-is still in the swarm; run `docker swarm leave` on the node itself as well.
+`docker node update` changes only the fields named; the rest of the node's spec is kept.
+
+`docker node rm` refuses a node whose state is `ready` ("is not down and can't be removed"), drained
+or not, and a manager until it is demoted. On a still-reachable node it needs `--force`, and that
+leaves the node believing it is still in the swarm; run `docker swarm leave` on the node itself as
+well.
 
 ## Stacks (Compose on Swarm)
 
@@ -183,6 +202,7 @@ docker stack deploy -c compose.yaml mystack
 docker stack deploy -c compose.yaml -c override.yaml mystack
 docker stack deploy -c compose.yaml --with-registry-auth mystack     # private images
 docker stack deploy -c compose.yaml --prune mystack                  # remove departed services
+docker stack deploy -c compose.yaml --resolve-image never mystack    # keep tags as written, no registry query
 docker stack ls
 docker stack services mystack
 docker stack ps mystack --no-trunc --filter desired-state=running
@@ -196,6 +216,11 @@ docker stack rm mystack                                              # removes e
 - `--prune` removes services that have left the Compose file. Useful, but it deletes services -
   confirm it.
 - Services are named `<stack>_<service>`. Use that full name with `docker service ...`.
+- `stack deploy` and `stack rm` return at once. Wait with `wait_service` per service, or
+  `wait_stack_removed` before reusing the stack's name (`reference/observability.md`).
+- `--resolve-image` (`always`, `changed`, `never`) controls whether the manager pins each tag to a
+  digest from the registry. `never` suits images that exist only on the nodes, or a registry the
+  manager cannot reach.
 
 **The swarm orchestrator ignores several Compose keys** - `build`, `depends_on`, `restart` (use
 `deploy.restart_policy`), `links`, `network_mode`. A file that works under `docker compose` can
@@ -215,17 +240,22 @@ at `/run/secrets/<name>`, in-memory, encrypted at rest in raft); **configs** are
 files (arbitrary mount path). Neither is available to plain `docker run` - swarm services only.
 
 ```bash
-docker secret create db_password ./password.txt
-printf 'hunter2' | docker secret create db_password -     # from stdin, no file on disk
+docker secret create --label l337-docker-skill.managed=true --label l337-docker-skill.created="$(date -u +%FT%TZ)" \
+  db_password ./password.txt                             # from a file the user supplies
+openssl rand -base64 32 | docker secret create db_password -   # generated; nobody types it
+docker secret create --driver <provider> db_password      # held by an external secret store plugin
 docker secret ls
 docker secret inspect db_password                         # METADATA ONLY
 docker secret rm db_password
 
-docker config create app_config ./app.conf
+docker config create --label l337-docker-skill.managed=true --label l337-docker-skill.created="$(date -u +%FT%TZ)" \
+  app_config ./app.conf
 docker config ls
 docker config inspect app_config --format '{{json .Spec.Data}}'   # base64 of the content
 docker config rm app_config
 ```
+
+Stamp every secret and config with the provenance labels, as in the first of each above.
 
 **A secret's value cannot be read back - by design.** `docker secret inspect` returns metadata
 only. If the value is lost, rotate it; there is no recovery. (A config's content *is* readable via
@@ -235,17 +265,19 @@ Secrets and configs are **immutable**. Updating one means create-new, point the 
 remove the old:
 
 ```bash
-printf 'newsecret' | docker secret create db_password_v2 -
-docker service update --secret-rm db_password --secret-add db_password_v2 myapp
+openssl rand -base64 32 | docker secret create db_password_v2 -
+docker service update -d --secret-rm db_password --secret-add db_password_v2 myapp
 docker secret rm db_password
 ```
 
 `--secret-rm`/`--secret-add` in one `service update` avoids a window where the service has neither.
 
-Prefer stdin (`-`) over a file: it leaves no plaintext copy on disk and nothing in shell history.
+**Never write a secret's value on the command line**, `printf 'value' | ...` included. The
+command, value and all, is in shell history and in this conversation's transcript. Take it from a
+file the user supplies, or generate it so that nobody ever sees it.
 
 ## Waiting for convergence
 
-Swarm operations are asynchronous - `service update` returns before the rollout finishes. Do not
-report success off the command's exit code. See `reference/observability.md` for the polling loops
-that block until replicas converge or a node reaches `ready`.
+With `-d`, and always for `stack deploy`, the command returns before the rollout finishes. Do not
+report success off its exit code. See `reference/observability.md` for the loops that wait, with a
+timeout, until replicas converge, a stack is gone, or a node reaches a state.

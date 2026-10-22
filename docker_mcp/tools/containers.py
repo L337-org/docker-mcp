@@ -12,9 +12,12 @@ import time
 from collections.abc import Iterable
 from typing import Any, Literal, TypedDict, cast
 
+import docker.errors
+import docker.models.containers
 import requests.exceptions
+import urllib3.exceptions
 
-from docker_mcp.exceptions import ToolInputError
+from docker_mcp.exceptions import RemoteFailureError, ToolInputError
 from docker_mcp.server import tool
 from docker_mcp.tools._labels import managed_filter, with_provenance
 from docker_mcp.tools._utils import (
@@ -24,9 +27,10 @@ from docker_mcp.tools._utils import (
     drop_none,
     open_host_read_file,
     join_bounded,
+    keep_up_to,
     stream_to_file,
 )
-from docker_mcp.tools.system import _get_client, guard_not_self
+from docker_mcp.tools.system import _MAX_WAIT_SECONDS, _get_client, guard_not_self
 
 
 class RestartPolicy(TypedDict, total=False):
@@ -41,12 +45,37 @@ class RestartPolicy(TypedDict, total=False):
     MaximumRetryCount: int  # only meaningful with Name="on-failure"
 
 
+def _reread(container: docker.models.containers.Container) -> dict:
+    """Re-read a container after acting on it, allowing for one that `auto_remove` has already deleted.
+
+    Docker deletes an `auto_remove` container as soon as it stops, so a re-read straight after starting,
+    stopping or signalling one can find it gone although the action worked. Reporting `NotFound` then
+    would tell the agent the action failed and invite it to try again.
+
+    Args:
+        container: the docker-py Container acted on, as fetched before the action
+
+    Returns:
+        dict: the inspect payload after the action; for an `auto_remove` container already gone, the one
+            fetched before it, with `removed_on_exit: true`
+
+    Raises:
+        docker.errors.NotFound: the container is gone and was not `auto_remove`, so something else removed it
+    """
+    try:
+        container.reload()
+    except docker.errors.NotFound:
+        if not (container.attrs.get("HostConfig") or {}).get("AutoRemove"):
+            raise
+        return {**container.attrs, "removed_on_exit": True}
+    return container.attrs
+
+
 @tool()
-def container_run(  # noqa: DOC101,DOC103
+def container_run(  # noqa: DOC101,DOC103,DOC501,DOC503
     image: str,
     command: str | list | None = None,
     name: str | None = None,
-    detach: bool = True,
     environment: dict | list | None = None,
     ports: dict | None = None,
     volumes: dict | list | None = None,
@@ -57,53 +86,62 @@ def container_run(  # noqa: DOC101,DOC103
     entrypoint: str | list | None = None,
     restart_policy: RestartPolicy | None = None,
     labels: dict | list | None = None,
-    remove: bool = False,
     auto_remove: bool = False,
     privileged: bool = False,
     tty: bool = False,
     stdin_open: bool = False,
     mem_limit: int | str | None = None,
     cpu_count: int | None = None,
+    timeout_seconds: float | None = None,
     extra_kwargs: dict | None = None,
     host: str | None = None,
-) -> dict | str:
+) -> dict:
     """
     Run a container from an image (create and start in one call, like `docker run`).
 
-    Use `container_create` to prepare a container without starting it, or `container_exec` to run
-    a command in a container that already exists. With detach=False the call blocks until the
-    container exits and returns its output, so long-running images need detach=True. Created
-    containers are stamped with provenance labels.
+    Returns once the container has started. For a one-shot command set `timeout_seconds` (with `auto_remove`,
+    like `docker run --rm`) to wait for it to exit and get its exit code and output; one still running then
+    is reported `timed_out` and left, never auto-removed: remove it with `container_remove(force=True)`. For
+    a long job, wait with `system_wait` instead. `container_create` prepares one without starting it;
+    `container_exec` runs a command in an existing one. Created containers get provenance labels.
 
     Args:
-        command: The command to run in the container
-        name: Name to assign to the container
-        detach: Run in the background and return container info
         environment: Environment variables, as `{"KEY": "value"}` or a list of "KEY=value" strings
         ports: Port mappings, e.g. {'2222/tcp': 3333}
         volumes: Volumes to mount, as `{"/host/path": {"bind": "/in/container", "mode": "rw"}}`
             or a list of "host:container:mode" strings
-        network: Name of the network to attach
-        hostname: Hostname for the container
         user: Username or UID to run as
-        working_dir: Working directory inside the container
-        entrypoint: Entrypoint to override the image default
         restart_policy: Restart policy, e.g. {'Name': 'on-failure', 'MaximumRetryCount': 3}
         labels: Labels to set on the container
-        remove: Remove the container when it exits (only with detach=False)
-        auto_remove: Enable auto-removal of the container on daemon side
+        auto_remove: Delete the container on exit, logs and exit code included; with `timeout_seconds`, after
+            they are read. Not with a restart policy
         privileged: Give extended privileges to the container
-        tty: Allocate a pseudo-TTY
         mem_limit: Memory limit: bytes as an int, or a units string ("100000b", "1000k", "128m", "1g")
-        cpu_count: Number of CPUs
+        cpu_count: Usable CPUs, on a Windows daemon only
+        timeout_seconds: Seconds to wait for exit before returning with timed_out=true
         extra_kwargs: Additional keyword arguments forwarded to ContainerCollection.run (call
             `docs_lookup(section="containers")` for the full accepted set)
 
     Returns:
-        dict | str: The container's full inspect payload when detach=True, else stdout/stderr as a string
+        dict: Without `timeout_seconds`, the started container's full inspect payload; an `auto_remove` container
+            already gone returns the payload from before the start, with `removed_on_exit: true`. With it,
+            {"id", "name", "exit_code", "stdout", "stderr", "timed_out", "truncated", "removed", "error"}: each
+            stream cut at 32 MiB (truncated=true); tty=True puts all in stdout; exit_code null if timed_out;
+            error says why a stream is null or why a requested removal did not happen
     """
+    # Checked before anything runs, so a bad bound never leaves a started container behind. The ceiling is
+    # system_wait's: past it the socket timeout the wait sets overflows.
+    if timeout_seconds is not None and not (
+        math.isfinite(timeout_seconds) and 0 < timeout_seconds <= _MAX_WAIT_SECONDS
+    ):
+        raise ToolInputError(
+            f"timeout_seconds must be a finite number above 0 and at most {_MAX_WAIT_SECONDS}, got {timeout_seconds}."
+        )
+    # Always detached: docker-py's blocking run waits for the image to finish with no bound, so an image that
+    # never exits would hang the call for good. `timeout_seconds` waits through system_wait's bounded helper
+    # instead - the one blocking option an action tool has (architecture/server.md, "Waiting").
     kwargs: dict = {
-        "detach": detach,
+        "detach": True,
         **drop_none(
             command=command,
             name=name,
@@ -122,7 +160,6 @@ def container_run(  # noqa: DOC101,DOC103
         ),
     }
     for key, value in {
-        "remove": remove,
         "auto_remove": auto_remove,
         "privileged": privileged,
         "tty": tty,
@@ -131,7 +168,30 @@ def container_run(  # noqa: DOC101,DOC103
         if value:
             kwargs[key] = value
     if extra_kwargs:
+        # Forwarded after the defaults, so these two would bring back docker-py's unbounded blocking run.
+        blocked = sorted({"detach", "remove"} & set(extra_kwargs))
+        if blocked:
+            raise ToolInputError(
+                f"container_run does not take {blocked} in extra_kwargs. For a one-shot command set timeout_seconds, "
+                "with auto_remove=True to clean up; otherwise wait with system_wait(kind='container'), read the "
+                "output with container_logs, and clean up with container_remove."
+            )
         kwargs.update(extra_kwargs)
+    remove_after = False
+    if timeout_seconds is not None:
+        # The daemon's own auto-remove would delete the logs and exit code the moment the container exits,
+        # racing the read below. Removal is done here instead, once both have been read.
+        remove_after = bool(kwargs.pop("auto_remove", False))
+        # Taking auto_remove off the daemon also takes away the daemon's refusal of auto-remove with a restart
+        # policy, and the removal below would then meet a container the daemon is restarting. Refused here
+        # instead, in the daemon's terms, before anything starts.
+        restart = kwargs.get("restart_policy")
+        policy = restart.get("Name") if isinstance(restart, dict) else restart
+        if remove_after and policy not in (None, "", "no"):
+            raise ToolInputError(
+                f"auto_remove cannot be combined with restart policy {policy!r}: the daemon refuses an auto-removed "
+                "container with a restart policy. Drop one of them."
+            )
     # Stamped after extra_kwargs, matching container_create/service_create. Stamping before the
     # update let extra_kwargs={"labels": ...} replace the whole dict and drop the managed labels,
     # which silently hid the container from managed_only listings and prune_managed. A caller still
@@ -139,12 +199,172 @@ def container_run(  # noqa: DOC101,DOC103
     provenance = with_provenance(kwargs.get("labels"), "container_run")
     if provenance is not None:
         kwargs["labels"] = provenance
-    result = _get_client(host).containers.run(image, **kwargs)
-    if detach:
-        return result.attrs
-    if isinstance(result, bytes):
-        return result.decode("utf-8", errors="replace")
-    return str(result)
+    client = _get_client(host)
+    if timeout_seconds is None:
+        container = client.containers.run(image, **kwargs)
+        # docker-py's run returns the object it fetched before starting it, so its attrs still say "created";
+        # re-read it, as container_start does, so the payload describes the started container.
+        return _reread(container)
+    return _run_to_completion(_start_one_shot(client, image, kwargs, remove_after), timeout_seconds, remove_after, host)
+
+
+# DOC503: the bare `raise` re-raises whichever of _DAEMON_FAILURES the start raised, which pydoclint cannot name.
+def _start_one_shot(client: Any, image: str, kwargs: dict, remove_after: bool) -> Any:  # noqa: DOC503
+    """Create and start a one-shot container, removing it again if it was to be removed and cannot start.
+
+    docker-py's `run` is create-then-start and does not clean up when the start fails, which the daemon's
+    own auto-remove would have done (a missing command fails exactly there). With `timeout_seconds` the daemon
+    is not given auto-remove, so this does the same three steps `run` does - create, pulling the image first
+    if it is missing, then start - and removes the container itself when the start fails.
+
+    Args:
+        client: the Docker client for the target host
+        image: the image to run
+        kwargs: the container options, as for `ContainerCollection.run`
+        remove_after: whether the caller asked for the container to be removed
+
+    Returns:
+        Any: the started container
+
+    Raises:
+        RemoteFailureError: the start failed and the container is still there; the message names it
+        docker.errors.DockerException: the start failed and the container was removed; the start's own error
+    """
+    try:
+        container = client.containers.create(image, **kwargs)
+    except docker.errors.ImageNotFound:
+        # What docker-py's run does on a missing image: pull it, then create again.
+        client.images.pull(image, platform=kwargs.get("platform"))
+        container = client.containers.create(image, **kwargs)
+    try:
+        container.start()
+    except _DAEMON_FAILURES as exc:
+        if remove_after:
+            try:
+                container.remove(force=True, v=True)
+            except _DAEMON_FAILURES as cleanup:
+                raise RemoteFailureError(
+                    f"Container {container.name!r} ({container.id[:12]}) could not start ({exc}), and removing it "
+                    f"failed too ({cleanup}). Remove it with container_remove(force=True)."
+                ) from exc
+            # Removed, as the daemon's auto-remove would have done; the start failure says what went wrong.
+            raise
+        raise RemoteFailureError(
+            f"Created container {container.name!r} ({container.id[:12]}), but it could not start ({exc}). It is "
+            "still there: remove it with container_remove."
+        ) from exc
+    return container
+
+
+# What a daemon call can fail with once the container has started. docker-py reads a log stream straight off
+# the raw urllib3 response, with the socket timeout disabled, so a dropped connection mid-read surfaces as a
+# urllib3 or socket error rather than one of docker-py's own; requests' errors are OSErrors too.
+_DAEMON_FAILURES = (docker.errors.DockerException, OSError, urllib3.exceptions.HTTPError)
+
+
+def _run_to_completion(container: Any, timeout_seconds: float, remove_after: bool, host: str | None) -> dict:
+    """Wait a bounded time for a started container to exit, then collect its output and optionally remove it.
+
+    Returns rather than raises on a timeout, because the output so far is still worth having: a container
+    still running at the bound is reported with `timed_out: true` and a null exit code, and left running
+    (and not removed) for the caller to deal with. Once the wait has an answer, a failure to read a stream or
+    to remove the container is reported in the result rather than raised, so the exit code survives it, and
+    a container whose output could not be read is kept so the output can still be fetched.
+
+    Args:
+        container: the container `container_run` just started
+        timeout_seconds: how long to wait for it to exit
+        remove_after: remove it, with its anonymous volumes, once its output has been read
+        host: the host label to target, or None for the default
+
+    Returns:
+        dict: {"id", "name", "exit_code", "stdout", "stderr", "timed_out", "truncated", "removed", "error"}
+
+    Raises:
+        RemoteFailureError: the wait itself failed; the message names the container, which is still there
+    """
+    try:
+        waited = _wait_container(container.id, "not-running", timeout_seconds, poll_interval=1.0, host=host)
+    except _DAEMON_FAILURES as exc:
+        # Without this the caller would not learn the id of a container that may now be running unattended.
+        raise RemoteFailureError(
+            f"Started container {container.name!r} ({container.id[:12]}), but waiting for it to exit failed "
+            f"({exc}). It is still there: check it with container_inspect, and remove it with "
+            "container_remove(force=True)."
+        ) from exc
+    errors: list[str] = []
+    if waited["error"]:
+        # The daemon's own explanation from the wait response, e.g. why the container could not run.
+        errors.append(f"the daemon reported: {waited['error']}")
+    # One read per stream: Docker logs the two through separate pipes, so a combined read can return lines
+    # from different streams out of order and gives no way to tell which stream a line came from. Each is
+    # read and reported on its own, so a failure reading one does not throw away the other.
+    streams: dict[str, str | None] = {}
+    truncated = False
+    for which in ("stdout", "stderr"):
+        try:
+            text, cut = _read_capped_output(container, stdout=which == "stdout", stderr=which == "stderr")
+        except _DAEMON_FAILURES as exc:
+            # Reported in the result rather than raised, because the exit code is already known and still worth
+            # having - e.g. a container on the `none` log driver, which "does not support reading".
+            streams[which] = None
+            errors.append(f"reading {which} failed: {exc}")
+        else:
+            streams[which] = text
+            truncated = truncated or cut
+    removed = False
+    if remove_after and not waited["timed_out"]:
+        if None in streams.values():
+            # Removing it now would destroy the only copy of output that may yet be readable, if the failure
+            # was transient. Kept, and said so.
+            errors.append("not removed, in case a later container_logs read succeeds; remove it with container_remove")
+        else:
+            try:
+                # v=True matches `docker run --rm`, which also removes the container's anonymous volumes.
+                container.remove(v=True)
+                removed = True
+            except _DAEMON_FAILURES as exc:
+                # Reported in the result for the same reason; removed=false tells the caller it is still there.
+                errors.append(f"removing the container failed: {exc}")
+    return {
+        "id": container.id,
+        "name": container.name,
+        "exit_code": None if waited["timed_out"] else waited["status_code"],
+        "stdout": streams["stdout"],
+        "stderr": streams["stderr"],
+        "timed_out": waited["timed_out"],
+        "truncated": truncated,
+        "removed": removed,
+        "error": "; ".join(errors) or None,
+    }
+
+
+def _read_capped_output(container: Any, *, stdout: bool, stderr: bool) -> tuple[str, bool]:
+    """Read a container's logs so far, keeping at most MAX_PAYLOAD_BYTES and saying whether it cut them.
+
+    Unlike `_read_bounded_container_logs`, which refuses an over-cap read, this keeps the first part: a
+    one-shot run has already happened, so its output is worth returning even when it is too long to keep
+    whole, as `container_exec` does.
+
+    Args:
+        container: the container to read from
+        stdout: include the container's stdout
+        stderr: include the container's stderr
+
+    Returns:
+        tuple[str, bool]: the decoded output, and whether it was cut at the cap
+    """
+    stream = container.logs(stdout=stdout, stderr=stderr, stream=True, follow=False)
+    kept = bytearray()
+    truncated = False
+    try:
+        for chunk in as_byte_chunks(stream):
+            if keep_up_to(kept, chunk, MAX_PAYLOAD_BYTES):
+                truncated = True
+                break
+    finally:
+        close_stream_quietly(stream)
+    return kept.decode("utf-8", errors="replace"), truncated
 
 
 @tool()
@@ -188,9 +408,6 @@ def container_inspect(id_or_name: str, host: str | None = None) -> dict:  # noqa
     network settings, mounts, environment variables, and resource limits. To enumerate many
     containers use `container_list` instead (same payload per container by default; abridged
     with sparse=True). For just logs or stats use `container_logs` / `container_stats`.
-
-    Args:
-        id_or_name: Container id (full or short) or name
 
     Returns:
         dict: Full container inspect attrs (equivalent to `docker inspect`)
@@ -293,16 +510,13 @@ def container_start(id_or_name: str, host: str | None = None) -> dict:  # noqa: 
     an already-running container has no effect (the daemon returns 304 and no error is
     raised). To stop then start a running container use `container_restart`.
 
-    Args:
-        id_or_name: Container id (full or short) or name
-
     Returns:
-        dict: The container's full inspect payload after starting
+        dict: The container's full inspect payload after starting; for an `auto_remove` container already
+            gone, the one from before, with `removed_on_exit: true`
     """
     container = _get_client(host).containers.get(id_or_name)
     container.start()
-    container.reload()
-    return container.attrs
+    return _reread(container)
 
 
 @tool()
@@ -324,13 +538,13 @@ def container_stop(  # noqa: DOC101,DOC103
         stop_timeout_seconds: Seconds between the stop signal and SIGKILL
 
     Returns:
-        dict: The container's full inspect payload after the stop (exit code under State.ExitCode)
+        dict: The container's full inspect payload after the stop (exit code under State.ExitCode); for an
+            `auto_remove` container, which the stop deletes, the one from before, with `removed_on_exit: true`
     """
     container = _get_client(host).containers.get(id_or_name)
     guard_not_self(container, host=host)
     container.stop(timeout=stop_timeout_seconds)
-    container.reload()
-    return container.attrs
+    return _reread(container)
 
 
 @tool()
@@ -351,13 +565,13 @@ def container_restart(  # noqa: DOC101,DOC103
         stop_timeout_seconds: Seconds between the stop signal and SIGKILL
 
     Returns:
-        dict: The container's full inspect payload after the restart
+        dict: The container's full inspect payload after the restart; for an `auto_remove` container already
+            gone, the one from before, with `removed_on_exit: true`
     """
     container = _get_client(host).containers.get(id_or_name)
     guard_not_self(container, host=host)
     container.restart(timeout=stop_timeout_seconds)
-    container.reload()
-    return container.attrs
+    return _reread(container)
 
 
 @tool()
@@ -375,13 +589,13 @@ def container_kill(id_or_name: str, signal: str | None = None, host: str | None 
         signal: Signal name or number as a string (e.g. "SIGHUP", "9"); default SIGKILL
 
     Returns:
-        dict: The container's full inspect payload after the signal
+        dict: The container's full inspect payload after the signal; for an `auto_remove` container already
+            gone, the one from before, with `removed_on_exit: true`
     """
     container = _get_client(host).containers.get(id_or_name)
     guard_not_self(container, host=host)
     container.kill(signal=signal)
-    container.reload()
-    return container.attrs
+    return _reread(container)
 
 
 @tool()
@@ -435,7 +649,7 @@ def container_remove(  # noqa: DOC101,DOC103
 
     Args:
         volumes: Also remove anonymous volumes (the CLI's `--volumes`); named volumes persist
-        link: Remove the specified link
+        link: Remove the legacy link named `id_or_name`, not the container
         force: Kill a running container before removing it (default False: running is an error)
 
     Returns:
@@ -498,8 +712,8 @@ def container_logs(  # noqa: DOC101,DOC103
     container exits, whichever comes first - so the agent can watch live output without blocking
     forever. `limit_lines`/`timeout_seconds` apply only in follow mode; `until` only in snapshot mode.
 
-    Snapshot mode is capped at 32 MiB and raises ToolInputError past it, so a noisy container can't
-    exhaust the server's memory; `service_logs` caps the same way and lets the caller raise it.
+    Snapshot mode is capped at 32 MiB, so a noisy container can't exhaust the server's memory;
+    `service_logs` caps the same way and lets the caller raise it.
     Prefer an integer `tail`, or `since`, over `tail="all"` on a long-running container: "all" is
     safe but will abort on the cap rather than returning a partial answer, and a large result can
     still exceed the agent's context.
@@ -517,8 +731,7 @@ def container_logs(  # noqa: DOC101,DOC103
         timeout_seconds: Follow mode: max wall-clock seconds before returning what was collected
 
     Returns:
-        str: Decoded log output (up to `limit_lines` lines in follow mode). Raises ToolInputError in snapshot mode if
-            the logs exceed 32 MiB.
+        str: Decoded log output (up to `limit_lines` lines in follow mode)
     """
     container = _get_client(host).containers.get(id_or_name)
     if not follow:
@@ -727,8 +940,13 @@ def container_top(id_or_name: str, ps_args: str | None = None, host: str | None 
     return cast(dict, container.top(ps_args=ps_args))
 
 
+# container_exec's default bound. A command run this way is expected to finish; anything longer passes its
+# own `timeout_seconds`.
+_EXEC_TIMEOUT_SECONDS = 120.0
+
+
 @tool()
-def container_exec(  # noqa: DOC101,DOC103
+def container_exec(  # noqa: DOC101,DOC103,DOC501,DOC503
     id_or_name: str,
     cmd: str | list,
     stdout: bool = True,
@@ -737,14 +955,23 @@ def container_exec(  # noqa: DOC101,DOC103
     tty: bool = False,
     privileged: bool = False,
     user: str = "",
-    detach: bool = False,
     environment: dict | list | None = None,
     workdir: str | None = None,
     demux: bool = False,
+    timeout_seconds: float = _EXEC_TIMEOUT_SECONDS,
+    max_bytes: int = MAX_PAYLOAD_BYTES,
     host: str | None = None,
 ) -> dict:
     """
-    Run a command inside a running container (for a compose service, prefer `compose_exec`).
+    Run a command inside a running container and return its output (for a compose service, prefer `compose_exec`).
+
+    Waits for the command, bounded by `timeout_seconds` (default 120). A command still running then is
+    reported with `timed_out: true` and whatever output arrived. Each stream past `max_bytes` (default
+    32 MiB) is cut off with `truncated: true`; once every stream being kept is cut, the call returns at once
+    rather than waiting for the command. A command still running then has a null `exit_code` and keeps
+    running in the container, because the
+    Engine has no way to stop an exec: `container_top` shows it, and another `container_exec` can kill it. For a
+    long-running or background job, start a container with `container_run` and wait with `system_wait`.
 
     Security: when any element of `cmd` is agent-controlled, use an exec-form argv list that does not
     invoke a shell (e.g. `["python", "-V"]`, `["ls", path]`). A string `cmd`, or a shell form like
@@ -752,19 +979,32 @@ def container_exec(  # noqa: DOC101,DOC103
 
     Args:
         cmd: Command to execute (prefer exec-form argv, no shell, when any element is agent-controlled)
-        tty: Allocate a pseudo-TTY
         privileged: Run with extended privileges
-        user: User to run the command as
-        detach: Detach from the exec
         environment: Environment variables, as `{"KEY": "value"}` or a list of "KEY=value" strings
         workdir: Working directory inside the container
-        demux: Return stdout and stderr separately
+        demux: Return `stdout` and `stderr` as separate keys instead of one combined `output`
+        timeout_seconds: Wall-clock seconds to wait for the command before returning with timed_out=true
+        max_bytes: Most bytes to keep of each stream (stdout and stderr each, with `demux`)
 
     Returns:
-        dict: {"exit_code", "output"}; output is combined stdout+stderr, or a [stdout, stderr] pair with demux=True
+        dict: {"exit_code", "output", "timed_out", "truncated", "exec_id"}, with "stdout" and "stderr" in place of
+            "output" when demux=True; exit_code is null when the command had not finished
     """
-    container = _get_client(host).containers.get(id_or_name)
-    result = container.exec_run(
+    # Thread.join rejects NaN and anything past threading.TIMEOUT_MAX, and it runs only once the command has
+    # started, so a bound it would refuse is refused here instead, before anything runs.
+    if not (math.isfinite(timeout_seconds) and 0 < timeout_seconds <= threading.TIMEOUT_MAX):
+        raise ToolInputError(
+            f"timeout_seconds must be a finite number above 0 and at most {threading.TIMEOUT_MAX:.0f}, "
+            f"got {timeout_seconds}."
+        )
+    if max_bytes <= 0:
+        raise ToolInputError(f"max_bytes must be > 0, got {max_bytes}.")
+    client = _get_client(host)
+    container = client.containers.get(id_or_name)
+    # Not Container.exec_run: it has no timeout, and its non-blocking mode discards the exec id and returns
+    # neither output nor exit code. The documented APIClient calls give a stream this can bound.
+    exec_id = client.api.exec_create(
+        container.id,
         cmd,
         stdout=stdout,
         stderr=stderr,
@@ -772,17 +1012,66 @@ def container_exec(  # noqa: DOC101,DOC103
         tty=tty,
         privileged=privileged,
         user=user,
-        detach=detach,
-        stream=False,
-        socket=False,
         environment=environment,
         workdir=workdir,
-        demux=demux,
-    )
-    output = result.output
-    if isinstance(output, bytes):
-        output = output.decode("utf-8", errors="replace")
-    return {"exit_code": result.exit_code, "output": output}
+    )["Id"]
+    # With stream=True, exec_start returns a CancellableStream of chunks (or of (stdout, stderr) pairs).
+    stream = cast(Iterable[Any], client.api.exec_start(exec_id, tty=tty, stream=True, demux=demux))
+    buffers = (bytearray(), bytearray())
+    lock = threading.Lock()
+    state: dict[str, Any] = {"truncated": False, "error": None, "abandoned": False}
+    # Each stream is capped on its own, so a command that floods stdout cannot crowd out the stderr that says
+    # why it failed. Without demux everything arrives as one stream in the first buffer. A stream that will
+    # never deliver - not requested, or stderr under a TTY, which merges it into stdout - starts out done, or
+    # the call could never return early once the other one is cut.
+    cut = [not stdout, not stderr or tty] if demux else [False, True]
+
+    def read() -> None:
+        try:
+            for chunk in stream:
+                parts = enumerate(chunk) if demux else ((0, chunk),)
+                with lock:
+                    # The call has returned without this thread. On ssh:// the stream cannot be closed, so
+                    # without this a command still flooding the stream would keep being read and thrown away.
+                    if state["abandoned"]:
+                        return
+                    for index, data in parts:
+                        if not data or cut[index]:
+                            continue
+                        if keep_up_to(buffers[index], data, max_bytes):
+                            state["truncated"] = True
+                            cut[index] = True
+                    # Nothing more would be kept, so stop rather than wait for the command to finish.
+                    if all(cut):
+                        return
+        except Exception as exc:  # noqa: BLE001 - handed to the caller below, unless the close caused it
+            state["error"] = exc
+
+    # The read runs in a thread the call waits on for at most `timeout_seconds`, so the bound holds on every
+    # transport: closing the stream ends the read on a local or TCP daemon, but docker-py cannot close an
+    # ssh:// stream, where the thread instead ends at its next chunk, or stays blocked waiting for one until
+    # the command ends or the connection drops.
+    reader = threading.Thread(target=read, name=f"container_exec {exec_id[:12]}", daemon=True)
+    reader.start()
+    reader.join(timeout_seconds)
+    timed_out = reader.is_alive()
+    with lock:
+        state["abandoned"] = True
+    close_stream_quietly(stream)
+    if not timed_out and state["error"] is not None:
+        raise state["error"]
+    with lock:
+        out = buffers[0].decode("utf-8", errors="replace")
+        err = buffers[1].decode("utf-8", errors="replace")
+    # Still running after a timeout or a cut-off read, in which case the Engine reports no exit code yet.
+    exit_code = None if timed_out else client.api.exec_inspect(exec_id).get("ExitCode")
+    return {
+        "exit_code": exit_code,
+        **({"stdout": out, "stderr": err} if demux else {"output": out}),
+        "timed_out": timed_out,
+        "truncated": state["truncated"],
+        "exec_id": exec_id,
+    }
 
 
 @tool()
@@ -808,11 +1097,9 @@ def container_commit(  # noqa: DOC101,DOC103
     snapshot, e.g. `["CMD [\"python\", \"app.py\"]", "ENV FOO=bar"]`.
 
     Args:
-        id_or_name: Container id or name to snapshot
         repository: Repository name for the new image, e.g. "myorg/myimage"
         tag: Tag for the new image (default: "latest")
         message: Commit message stored in the image metadata
-        author: Author string stored in the image metadata
         pause: Pause the container during commit for consistency
         changes: Dockerfile instructions (CMD, ENV, EXPOSE, etc.) to apply to the image
         conf: Additional image configuration overrides as a dict
@@ -885,7 +1172,6 @@ def container_update(id_or_name: str, updates: dict, host: str | None = None) ->
     `container_run`).
 
     Args:
-        id_or_name: Container id or name to update
         updates: Resource fields to update; see description for valid keys
 
     Returns:
@@ -910,7 +1196,7 @@ def _wait_result(
     status: str | None = None,
     matched_line: str | None = None,
 ) -> dict:
-    """Build the unified container_wait result snapshot - the same shape for every `until` mode.
+    """Build the unified container wait result snapshot - the same shape for every `until` mode.
 
     Args:
         id_or_name: the container waited on
@@ -945,54 +1231,41 @@ def _wait_result(
 _LOG_MATCH_TAIL_LINES = 1000
 
 
-@tool()
-def container_wait(  # noqa: DOC101,DOC103,DOC501,DOC503
+def _wait_container(
     id_or_name: str,
-    until: Literal["not-running", "next-exit", "removed", "healthy", "log-match"] = "not-running",
-    timeout_seconds: float = 600.0,
-    poll_interval: float = 2.0,
+    until: str,
+    timeout_seconds: float,
+    poll_interval: float,
     pattern: str | None = None,
     regex: bool = False,
     host: str | None = None,
 ) -> dict:
-    """
-    Block until a container reaches a condition: stopped, "healthy", or its logs contain a pattern.
+    """Wait for a container condition; `system_wait(kind="container")` is the tool that calls this.
 
-    One contract for every mode: never raises on timeout - the result always carries `met` (condition
-    reached) and `timed_out`. The stop conditions ("not-running"/"next-exit"/"removed") use the
-    daemon's blocking wait and fill `status_code`/`error` (the container's exit info); "healthy" polls
-    the container's HEALTHCHECK every `poll_interval`s and fills `health`/`status`; "log-match" polls
-    recent logs every `poll_interval`s for `pattern` and fills `matched_line`. For a compose
-    project use `compose_wait`; for swarm services use `service_wait`.
-
-    Health semantics: with no HEALTHCHECK defined, once the container is `running` the tool returns
-    promptly with `health: null` and `met: false` (false = "not confirmed healthy", not "unhealthy" -
-    check `health` to tell them apart). A container that exits before becoming healthy returns its
-    terminal `status` and `met: false`.
-
-    Log-match semantics: `pattern` is matched as a **plain substring** by default - safe against any
-    input, including adversarial ones. Pass `regex=True` to match `pattern` as a regular expression
-    (via `re.search`) instead; only do this with patterns you trust, since a regex with catastrophic
-    backtracking run against attacker-influenced log content can exhaust CPU (ReDoS). Checks stdout
-    and stderr, most recent lines first within each poll. If the container exits/dies before the
-    pattern ever appears, returns promptly with `met=false` (not `timed_out`) - no further logs can
-    arrive, so there's nothing to keep polling for.
+    Never raises on timeout: the result always carries `met` and `timed_out`. The stop conditions
+    ("not-running"/"next-exit"/"removed") use the daemon's blocking wait and fill `status_code`/`error`;
+    "healthy" polls the HEALTHCHECK and fills `health`/`status`, returning promptly with `health: null`
+    and `met: false` when no HEALTHCHECK is defined; "log-match" polls recent logs for `pattern`, as a
+    plain substring unless `regex` is set, since a hostile regex run over attacker-influenced logs can
+    exhaust CPU. A container that exits before the condition holds returns promptly with `met: false`.
 
     Args:
-        until: Condition to wait for: "not-running" (default), "next-exit", "removed", "healthy", or "log-match"
-            (requires `pattern`)
-        timeout_seconds: Max seconds to wait before returning with timed_out=true
-        poll_interval: "healthy"/"log-match" only: seconds between re-checks (default 2, > 0); capped by the time left
-            so a large value can't push the total wait past the timeout
-        pattern: "log-match" only: substring (or, with `regex=True`, a regular expression) to look for in the
-            container's logs
-        regex: "log-match" only: treat `pattern` as a regular expression instead of a plain substring
+        id_or_name: the container to wait on
+        until: "not-running", "next-exit", "removed", "healthy" or "log-match"
+        timeout_seconds: seconds to wait before returning with timed_out=true
+        poll_interval: seconds between re-checks for "healthy"/"log-match", capped by the time left
+        pattern: "log-match" only: the substring, or with `regex` the regular expression, to look for
+        regex: "log-match" only: treat `pattern` as a regular expression
+        host: the host label to target, or None for the default
 
     Returns:
-        dict: {"container", "until", "met", "timed_out", "status_code", "error", "health", "status", "matched_line",
-            "waited_seconds"}; stop modes fill status_code/error, "healthy" fills health
-            ("starting"/"healthy"/"unhealthy", or null with no healthcheck) and status, "log-match" fills matched_line
-            when met and status if the container exited without matching.
+        dict: {"container", "until", "met", "timed_out", "status_code", "error", "health", "status",
+            "matched_line", "waited_seconds"}
+
+    Raises:
+        ToolInputError: a negative timeout, a non-positive poll interval, or "log-match" without a pattern
+        requests.exceptions.ConnectionError: the daemon connection failed for a reason other than the wait's
+            own read timeout
     """
     if timeout_seconds < 0:
         raise ToolInputError(f"timeout_seconds must be >= 0, got {timeout_seconds}.")
@@ -1002,12 +1275,42 @@ def container_wait(  # noqa: DOC101,DOC103,DOC501,DOC503
         raise ToolInputError("`pattern` is required when until='log-match'.")
     container = _get_client(host).containers.get(id_or_name)
     start = time.monotonic()
+    if until not in ("healthy", "log-match") and math.ceil(timeout_seconds) == 0:
+        # A zero timeout means check once, as for every other kind. The daemon's wait cannot express it:
+        # requests refuses a zero timeout with a builtin ValueError. A next exit has not happened yet, and
+        # a container just fetched has not been removed, so only "not-running" can already be met.
+        state = container.attrs.get("State") or {}
+        if until == "not-running" and not state.get("Running"):
+            return _wait_result(
+                id_or_name,
+                until,
+                met=True,
+                start=start,
+                status_code=state.get("ExitCode"),
+                error=state.get("Error") or None,
+            )
+        return _wait_result(id_or_name, until, met=False, start=start, timed_out=True)
     if until not in ("healthy", "log-match"):
         try:
             # The daemon wait takes whole seconds; round up so a small fractional timeout still
             # waits (int() would truncate 0.5 to an immediate 0s timeout).
-            result = cast(dict, container.wait(timeout=math.ceil(timeout_seconds), condition=until))
+            result = cast(
+                dict,
+                container.wait(
+                    timeout=math.ceil(timeout_seconds),
+                    condition=cast(Literal["not-running", "next-exit", "removed"], until),
+                ),
+            )
         except requests.exceptions.ReadTimeout:
+            return _wait_result(id_or_name, until, met=False, start=start, timed_out=True)
+        except requests.exceptions.ConnectionError as exc:
+            # The Engine sends the wait's response headers at once and the body only when the condition
+            # is met, so the bound usually expires mid-body. requests reports that as its generic
+            # ConnectionError wrapping urllib3's ReadTimeoutError, not as ReadTimeout (requests/models.py,
+            # iter_content). Only that cause is a timeout; any other connection failure is real and
+            # propagates.
+            if not (exc.args and isinstance(exc.args[0], urllib3.exceptions.ReadTimeoutError)):
+                raise
             return _wait_result(id_or_name, until, met=False, start=start, timed_out=True)
         return _wait_result(
             id_or_name,

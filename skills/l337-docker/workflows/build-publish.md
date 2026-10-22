@@ -10,8 +10,10 @@ Choosing a version without pulling anything. Full command detail in `reference/r
    TOKEN=$(curl -s "https://auth.docker.io/token?service=registry.docker.io&scope=repository:$REPO:pull" | jq -r .token)
    curl -s -H "Authorization: Bearer $TOKEN" "https://registry-1.docker.io/v2/$REPO/tags/list?n=1000" | jq -r '.tags[]'
    ```
-   On Docker Hub, `?ordering=last_updated` on the Hub API answers "what shipped most recently",
-   which lexical order cannot.
+   That is one page. A repository with more tags says so in a `Link` header; follow it with the
+   loop in `reference/registry.md` before calling any tag the newest. On Docker Hub,
+   `?ordering=last_updated` on the Hub API answers "what shipped most recently", which lexical
+   order cannot.
 2. **Filter to stable releases** - drop floating tags (`latest`, `edge`, `nightly`, `stable`) and
    pre-releases (`-rc`, `-beta`, `-alpha`), then sort by version:
    ```bash

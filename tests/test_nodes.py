@@ -3,7 +3,13 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from docker_mcp.exceptions import ToolInputError
-from docker_mcp.tools.nodes import node_inspect, node_list, node_remove, node_update, node_wait
+from docker_mcp.tools.nodes import node_inspect, node_list, node_remove, node_update
+from docker_mcp.tools.nodes import _wait_node
+
+
+def wait_node(id_or_name, until="ready", timeout_seconds=600.0, poll_interval=2.0):
+    """The node helper with the defaults `system_wait` supplies, so these cases read as they did."""
+    return _wait_node(id_or_name, until, timeout_seconds, poll_interval)
 
 
 def _patch():
@@ -33,13 +39,46 @@ def test_list_nodes_with_filters():
     mock_client.return_value.nodes.list.assert_called_once_with(filters={"role": "manager"})
 
 
-def test_node_update():
+def _node_with_spec(spec):
     node = MagicMock()
-    spec = {"Availability": "drain", "Role": "worker"}
+    node.attrs = {"ID": "n1", "Version": {"Index": 7}, "Spec": spec}
+    return node
+
+
+def test_node_update_changes_only_the_fields_sent():
+    # The Engine replaces the whole spec, so sending only Availability would wipe the node's role and
+    # labels. The current spec has to go back with the change laid over it.
+    node = _node_with_spec({"Availability": "active", "Role": "manager", "Labels": {"zone": "a"}})
     with _patch() as mock_client:
         mock_client.return_value.nodes.get.return_value = node
-        assert node_update("n1", spec) is True
-    node.update.assert_called_once_with(spec)
+        assert node_update("n1", {"Availability": "drain"}) is True
+    node.update.assert_called_once_with({"Availability": "drain", "Role": "manager", "Labels": {"zone": "a"}})
+
+
+def test_node_update_merges_labels_and_removes_the_ones_listed():
+    node = _node_with_spec({"Role": "worker", "Labels": {"zone": "a", "disk": "ssd", "old": "x"}})
+    with _patch() as mock_client:
+        mock_client.return_value.nodes.get.return_value = node
+        node_update("n1", {"Labels": {"disk": "hdd", "gpu": "yes"}, "RemoveLabels": ["old", "not-there"]})
+    node.update.assert_called_once_with({"Role": "worker", "Labels": {"zone": "a", "disk": "hdd", "gpu": "yes"}})
+
+
+def test_node_update_adds_labels_to_a_node_that_has_none():
+    node = _node_with_spec({"Role": "worker", "Availability": "active"})
+    with _patch() as mock_client:
+        mock_client.return_value.nodes.get.return_value = node
+        node_update("n1", {"Labels": {"zone": "b"}})
+    node.update.assert_called_once_with({"Role": "worker", "Availability": "active", "Labels": {"zone": "b"}})
+
+
+def test_node_update_does_not_modify_the_fetched_spec():
+    # The merge works on a copy, so a failed update leaves the node object describing the daemon's state.
+    spec = {"Role": "worker", "Labels": {"zone": "a"}}
+    node = _node_with_spec(spec)
+    with _patch() as mock_client:
+        mock_client.return_value.nodes.get.return_value = node
+        node_update("n1", {"Role": "manager", "RemoveLabels": ["zone"]})
+    assert spec == {"Role": "worker", "Labels": {"zone": "a"}}
 
 
 def test_remove_node_resolves_name_then_uses_high_level_remove():
@@ -78,11 +117,11 @@ def _reloading_node(*states: dict) -> MagicMock:
     return node
 
 
-def test_node_wait_ready_returns_when_ready():
+def test_wait_node_ready_returns_when_ready():
     node = _reloading_node({"Status": {"State": "ready"}, "Spec": {"Availability": "active"}})
     with _patch() as mock_client:
         mock_client.return_value.nodes.get.return_value = node
-        result = node_wait("n1", until="ready", timeout_seconds=5)
+        result = wait_node("n1", until="ready", timeout_seconds=5)
     assert result["met"] is True
     assert result["state"] == "ready"
     assert result["availability"] == "active"
@@ -90,42 +129,65 @@ def test_node_wait_ready_returns_when_ready():
     node.reload.assert_called()
 
 
-def test_node_wait_polls_through_down_to_ready():
+def test_wait_node_polls_through_down_to_ready():
     node = _reloading_node(
         {"Status": {"State": "down"}, "Spec": {"Availability": "active"}},
         {"Status": {"State": "ready"}, "Spec": {"Availability": "active"}},
     )
     with _patch() as mock_client, patch("docker_mcp.tools.nodes.time.sleep") as sleep:
         mock_client.return_value.nodes.get.return_value = node
-        result = node_wait("n1", until="ready", timeout_seconds=10, poll_interval=0.01)
+        result = wait_node("n1", until="ready", timeout_seconds=10, poll_interval=0.01)
     assert result["met"] is True
     assert node.reload.call_count == 2
     sleep.assert_called_once()
 
 
-def test_node_wait_times_out():
+def test_wait_node_times_out():
     node = _reloading_node({"Status": {"State": "down"}, "Spec": {"Availability": "active"}})
     with _patch() as mock_client:
         mock_client.return_value.nodes.get.return_value = node
-        result = node_wait("n1", until="ready", timeout_seconds=0.0)
+        result = wait_node("n1", until="ready", timeout_seconds=0.0)
     assert result["met"] is False
     assert result["timed_out"] is True
     assert result["state"] == "down"
 
 
-def test_node_wait_sleep_bounded_by_timeout():
+def test_wait_node_sleep_bounded_by_timeout():
     node = _reloading_node({"Status": {"State": "down"}, "Spec": {"Availability": "active"}})
     with _patch() as mock_client:
         mock_client.return_value.nodes.get.return_value = node
-        result = node_wait("n1", until="ready", timeout_seconds=0.05, poll_interval=100)
+        result = wait_node("n1", until="ready", timeout_seconds=0.05, poll_interval=100)
     assert result["timed_out"] is True
 
 
-def test_node_wait_rejects_negative_timeout():
+def test_wait_node_rejects_negative_timeout():
     with pytest.raises(ToolInputError, match="timeout_seconds"):
-        node_wait("n1", timeout_seconds=-1)
+        wait_node("n1", timeout_seconds=-1)
 
 
-def test_node_wait_rejects_nonpositive_poll_interval():
+def test_wait_node_rejects_nonpositive_poll_interval():
     with pytest.raises(ToolInputError, match="poll_interval"):
-        node_wait("n1", poll_interval=0)
+        wait_node("n1", poll_interval=0)
+
+
+@pytest.mark.parametrize(
+    "updates",
+    [
+        {"availability": "drain"},  # misspelt key: the Engine would ignore it and the call would claim success
+        {"Availability": "drained"},
+        {"Role": "leader"},
+        {"Labels": {"zone": None}},  # removal is RemoveLabels, so a null label value is refused
+    ],
+)
+def test_node_update_refuses_a_misspelt_key_or_value_on_the_wire(on_the_wire, updates):
+    # Through call_tool, the path a client uses, so this proves the server refuses the call before any daemon
+    # call. What a client is shown is tested in test_server.
+    with _patch() as mock_client, pytest.raises(Exception, match="validation error"):
+        on_the_wire("node_update", {"id_or_name": "n1", "updates": updates})
+    mock_client.assert_not_called()
+
+
+def test_node_update_refuses_a_label_both_set_and_removed():
+    with _patch() as mock_client, pytest.raises(ToolInputError, match=r"both name \['zone'\]"):
+        node_update("n1", {"Labels": {"zone": "b"}, "RemoveLabels": ["zone"]})
+    mock_client.assert_not_called()

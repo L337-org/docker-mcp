@@ -1,4 +1,6 @@
+import inspect
 import os
+import socket
 import threading
 import types
 from typing import Any
@@ -7,7 +9,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from docker.errors import DockerException
 
-from docker_mcp.exceptions import RemoteFailureError, ToolRefusalError
+from docker_mcp.exceptions import RemoteFailureError, ToolInputError, ToolRefusalError
 import docker_mcp._hosts as _hosts_mod
 import docker_mcp.tools.system as system_module
 from docker_mcp._hosts import Host, parse_registry
@@ -716,7 +718,38 @@ def test_ensure_reachable_family_leaves_literal_ip_unchanged(monkeypatch):
     assert system_module._ensure_reachable_family("ssh://bob@[::1]:2222") == "ssh://bob@[::1]:2222"
 
 
+def _resolves_to(monkeypatch, *addresses):
+    """Make the hostname resolve to `addresses`, in that order, as getaddrinfo reports them."""
+    infos = [(None, None, None, "", (address, 0)) for address in addresses]
+    monkeypatch.setattr(system_module.socket, "getaddrinfo", lambda *args, **kwargs: infos)
+
+
+def test_ensure_reachable_family_keeps_the_hostname_when_the_first_address_answers(monkeypatch):
+    # paramiko checks known_hosts against the name in the URL; splicing in an address that paramiko would
+    # have reached anyway turned a known `[host]:port` entry into an unknown `[address]:port` one.
+    _resolves_to(monkeypatch, "2001:db8::1", "203.0.113.5")
+    fake_sock = MagicMock()
+    fake_sock.getpeername.return_value = ("2001:db8::1", 2222, 0, 0)
+    monkeypatch.setattr(system_module, "connect_socket_with_family_fallback", MagicMock(return_value=fake_sock))
+    assert system_module._ensure_reachable_family("ssh://bob@example.com:2222") == "ssh://bob@example.com:2222"
+    fake_sock.close.assert_called_once()
+
+
+def test_ensure_reachable_family_splices_as_before_if_the_second_lookup_fails(monkeypatch):
+    # A transient resolver failure on the second lookup must not escape: fall back to the old behaviour.
+    def no_answer(*args, **kwargs):
+        raise socket.gaierror("temporary failure in name resolution")
+
+    monkeypatch.setattr(system_module.socket, "getaddrinfo", no_answer)
+    fake_sock = MagicMock()
+    fake_sock.getpeername.return_value = ("203.0.113.5", 2222)
+    monkeypatch.setattr(system_module, "connect_socket_with_family_fallback", MagicMock(return_value=fake_sock))
+    assert system_module._ensure_reachable_family("ssh://bob@example.com:2222") == "ssh://bob@203.0.113.5:2222"
+
+
 def test_ensure_reachable_family_splices_in_the_reachable_address(monkeypatch):
+    # The first address (IPv6) failed and IPv4 answered: the case the workaround exists for.
+    _resolves_to(monkeypatch, "2001:db8::1", "203.0.113.5")
     fake_sock = MagicMock()
     fake_sock.getpeername.return_value = ("203.0.113.5", 2222)
     probe = MagicMock(return_value=fake_sock)
@@ -728,6 +761,7 @@ def test_ensure_reachable_family_splices_in_the_reachable_address(monkeypatch):
 
 
 def test_ensure_reachable_family_brackets_an_ipv6_literal_result(monkeypatch):
+    _resolves_to(monkeypatch, "203.0.113.5", "2001:db8::1")
     fake_sock = MagicMock()
     fake_sock.getpeername.return_value = ("2001:db8::1", 22)
     monkeypatch.setattr(system_module, "connect_socket_with_family_fallback", MagicMock(return_value=fake_sock))
@@ -751,7 +785,261 @@ def test_ensure_reachable_family_leaves_url_alone_when_every_address_fails(monke
 
 
 def test_ensure_reachable_family_preserves_username(monkeypatch):
+    _resolves_to(monkeypatch, "2001:db8::1", "203.0.113.5")
     fake_sock = MagicMock()
     fake_sock.getpeername.return_value = ("203.0.113.5", 22)
     monkeypatch.setattr(system_module, "connect_socket_with_family_fallback", MagicMock(return_value=fake_sock))
     assert system_module._ensure_reachable_family("ssh://deploy@example.com") == "ssh://deploy@203.0.113.5:22"
+
+
+# ---------- system_wait ----------
+
+
+def _helper_result(**extra):
+    return {"until": "x", "met": True, "timed_out": False, "waited_seconds": 0.5, **extra}
+
+
+@pytest.mark.parametrize(
+    ("kind", "until", "module", "helper", "target_key"),
+    [
+        ("container", "healthy", "containers", "_wait_container", "container"),
+        ("service", "running", "services", "_wait_service", "service"),
+        ("node", "ready", "nodes", "_wait_node", "node"),
+        ("stack", "converged", "stack", "_wait_stack", "stack"),
+        ("compose", "exited", "compose", "_wait_compose", "project"),
+    ],
+)
+def test_system_wait_dispatches_each_daemon_kind_with_the_default_poll(kind, until, module, helper, target_key):
+    with patch(f"docker_mcp.tools.{module}.{helper}", return_value=_helper_result(**{target_key: "t"}, state="s")) as h:
+        result = system_module.system_wait(kind=kind, target="t", until=until, host="h")
+    args = h.call_args
+    assert args.args[:4] == ("t", until, 600.0, 2.0)
+    assert args.kwargs["host"] == "h"
+    assert result == {
+        "kind": kind,
+        "target": "t",
+        "until": until,
+        "met": True,
+        "timed_out": False,
+        "waited_seconds": 0.5,
+        # The helper's own name for the target and the shared fields are not repeated in `detail`.
+        "detail": {"state": "s"},
+    }
+
+
+def test_system_wait_passes_each_kinds_own_options_through():
+    with patch("docker_mcp.tools.containers._wait_container", return_value=_helper_result()) as container:
+        system_module.system_wait(kind="container", target="c", until="log-match", pattern="ready", regex=True)
+    assert container.call_args.kwargs == {"pattern": "ready", "regex": True, "host": None}
+    with patch("docker_mcp.tools.services._wait_service", return_value=_helper_result()) as service:
+        system_module.system_wait(kind="service", target="s", until="running", replicas=3, poll_interval=0.5)
+    assert service.call_args.args[3] == 0.5
+    assert service.call_args.kwargs["replicas"] == 3
+    with patch("docker_mcp.tools.compose._wait_compose", return_value=_helper_result()) as compose:
+        system_module.system_wait(kind="compose", target="app", until="running", services=["web"])
+    assert compose.call_args.kwargs["services"] == ["web"]
+
+
+@pytest.mark.parametrize(
+    ("target", "repository", "tag"),
+    [
+        ("alpine:3.20", "alpine", "3.20"),
+        ("ghcr.io/org/app:1.2", "ghcr.io/org/app", "1.2"),
+        # A registry port is not a tag: only a colon after the last slash is.
+        ("localhost:5000/app:dev", "localhost:5000/app", "dev"),
+    ],
+)
+def test_system_wait_registry_tag_splits_the_target_and_polls_more_slowly(target, repository, tag):
+    result_value = {"repository": repository, "tag": tag, "met": True, "timed_out": False, "waited_seconds": 1.0}
+    with patch("docker_mcp.tools.registry._wait_registry_tag", return_value=result_value) as h:
+        result = system_module.system_wait(
+            kind="registry_tag", target=target, until="present", username="u", password="p", limit=50
+        )
+    assert h.call_args.args == (repository, tag, 600.0, 5.0)
+    assert h.call_args.kwargs == {"username": "u", "password": "p", "limit": 50}
+    assert result["detail"] == {}
+
+
+@pytest.mark.parametrize("target", ["alpine", "localhost:5000/app", "alpine@sha256:" + "a" * 64])
+def test_system_wait_registry_tag_needs_a_tag_not_a_digest(target):
+    with (
+        patch("docker_mcp.tools.registry._wait_registry_tag") as h,
+        pytest.raises(ToolInputError, match="repository:tag"),
+    ):
+        system_module.system_wait(kind="registry_tag", target=target, until="present")
+    h.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("call", "message"),
+    [
+        ({"kind": "container", "until": "running"}, "waits until one of"),
+        ({"kind": "stack", "until": "healthy"}, "waits until one of"),
+        ({"kind": "container", "until": "healthy", "pattern": "x"}, "does not take \\['pattern'\\]"),
+        ({"kind": "container", "until": "healthy", "regex": True}, "does not take \\['regex'\\]"),
+        ({"kind": "service", "until": "update-converged", "replicas": 2}, "does not take \\['replicas'\\]"),
+        ({"kind": "node", "until": "ready", "services": ["web"]}, "does not take \\['services'\\]"),
+        ({"kind": "stack", "until": "removed", "username": "u", "password": "p"}, "\\['username', 'password'\\]"),
+        ({"kind": "compose", "until": "running", "limit": 5}, "does not take \\['limit'\\]"),
+        ({"kind": "registry_tag", "until": "present", "host": "h"}, "does not take \\['host'\\]"),
+        ({"kind": "container", "until": "log-match"}, "needs `pattern`"),
+        ({"kind": "container", "until": "not-running", "timeout_seconds": float("nan")}, "timeout_seconds must be"),
+        ({"kind": "container", "until": "not-running", "timeout_seconds": float("inf")}, "timeout_seconds must be"),
+        ({"kind": "service", "until": "running", "timeout_seconds": 2**31}, "timeout_seconds must be"),
+        ({"kind": "stack", "until": "converged", "poll_interval": float("nan")}, "poll_interval must be"),
+    ],
+)
+def test_system_wait_refuses_what_does_not_belong_to_the_kind_before_waiting(call, message):
+    call.setdefault("target", "alpine:1")
+    helpers = [
+        "docker_mcp.tools.containers._wait_container",
+        "docker_mcp.tools.services._wait_service",
+        "docker_mcp.tools.nodes._wait_node",
+        "docker_mcp.tools.stack._wait_stack",
+        "docker_mcp.tools.compose._wait_compose",
+        "docker_mcp.tools.registry._wait_registry_tag",
+    ]
+    patches = [patch(h) for h in helpers]
+    mocks = [p.start() for p in patches]
+    try:
+        with pytest.raises(ToolInputError, match=message):
+            system_module.system_wait(**call)
+    finally:
+        for p in patches:
+            p.stop()
+    assert not any(m.called for m in mocks)
+
+
+def test_system_wait_has_no_ceiling_short_of_what_a_socket_can_hold():
+    # The owner chose no upper limit on the wait; only values a socket timeout cannot represent are refused.
+    reading = {"met": True, "timed_out": False, "waited_seconds": 0.0}
+    with patch("docker_mcp.tools.containers._wait_container", return_value=reading) as helper:
+        system_module.system_wait(
+            kind="container", target="web", until="not-running", timeout_seconds=system_module._MAX_WAIT_SECONDS
+        )
+    assert helper.call_args.args[2] == system_module._MAX_WAIT_SECONDS
+
+
+def test_system_wait_refuses_a_kind_whose_domain_is_disabled(monkeypatch):
+    monkeypatch.setattr(system_module, "_WAIT_ENABLED", ("container",))
+    with pytest.raises(ToolInputError, match="enabled kinds: \\['container'\\]"):
+        system_module.system_wait(kind="stack", target="shop", until="removed")
+
+
+def test_system_wait_bad_until_is_refused_on_the_wire(on_the_wire):
+    from mcp.server.mcpserver.exceptions import ToolError
+
+    with pytest.raises(ToolError, match="waits until one of"):
+        on_the_wire("system_wait", {"kind": "node", "target": "n1", "until": "healthy"})
+
+
+def _fitted(monkeypatch, enabled, stub):
+    monkeypatch.setattr(system_module, "_WAIT_ENABLED", enabled)
+    return system_module._fit_to_enabled_kinds(stub)
+
+
+def test_fit_to_enabled_kinds_drops_a_disabled_kinds_lines_args_and_parameters(monkeypatch):
+    def stub(kind, pattern=None, regex=False, username=None, password=None, limit=1000, poll_interval=None):
+        """
+        Hand-tuned summary.
+
+        Lead.
+
+        - container: one
+          continued
+        - registry_tag: two
+          continued
+        Not a continuation: it is not indented past the bullet.
+
+        Args:
+            poll_interval: shared
+            pattern: container only
+                continued
+            username: registry only
+            limit: registry only
+                continued
+
+        Returns:
+            dict: the result
+        """
+
+    fitted = _fitted(monkeypatch, ("container",), stub)
+    lines = [line.strip() for line in (fitted.__doc__ or "").splitlines() if line.strip()]
+    assert lines == [
+        "Wait until a container exits or is healthy.",
+        "Lead.",
+        "- container: one",
+        "continued",
+        "Not a continuation: it is not indented past the bullet.",
+        "Args:",
+        "poll_interval: shared",
+        "pattern: container only",
+        "continued",
+        "Returns:",
+        "dict: the result",
+    ]
+    assert list(inspect.signature(fitted).parameters) == ["kind", "pattern", "regex", "poll_interval"]
+
+
+def test_fit_to_enabled_kinds_changes_nothing_with_every_kind_enabled(monkeypatch):
+    def stub(kind, username=None):
+        """Hand-tuned summary.
+
+        - registry_tag: kept
+        """
+
+    before = stub.__doc__
+    fitted = _fitted(monkeypatch, tuple(system_module._WAIT_KINDS), stub)
+    assert fitted.__doc__ == before
+    assert list(inspect.signature(fitted).parameters) == ["kind", "username"]
+
+
+def test_system_wait_description_fits_what_claude_code_shows():
+    import asyncio
+
+    from docker_mcp.server import mcp
+
+    tool = next(t for t in asyncio.run(mcp.list_tools()) if t.name == "system_wait")
+    assert len((tool.description or "").encode("utf-16-le")) // 2 <= 2048
+
+
+def test_startup_preflight_prints_each_disable_switch_warning_even_when_the_daemon_is_down(capsys):
+    warnings = ["DOCKER_MCP_SERVER_DISABLE names 'swram', ...", "DOCKER_MCP_SERVER_DISABLE names 'system', ..."]
+    with (
+        patch.object(system_module, "disable_switch_warnings", return_value=warnings),
+        patch.object(system_module, "_get_client", side_effect=DockerException("connection refused")),
+    ):
+        system_module.startup_preflight()
+    lines = capsys.readouterr().err.splitlines()
+    assert lines[:2] == [f"docker-mcp-server: WARNING: {w}" for w in warnings]
+
+
+def test_startup_preflight_prints_no_warning_for_a_sound_disable_switch(capsys):
+    with (
+        patch.object(system_module, "disable_switch_warnings", return_value=[]),
+        patch.object(system_module, "_get_client", side_effect=DockerException("connection refused")),
+    ):
+        system_module.startup_preflight()
+    assert "WARNING" not in capsys.readouterr().err
+
+
+# Tools allowed a parameter that makes them wait, each with its reason. Anything else that grows one fails.
+_BLOCKING_OPTION_EXCEPTIONS: dict[str, set[str]] = {}
+
+
+def test_no_registered_tool_keeps_an_option_that_makes_it_wait():
+    # Waiting is system_wait's job alone: an action tool returns once its work is started. Derived from the
+    # registry rather than a list, so a new tool that grows `detach=`, `wait=` or `remove=` fails here too.
+    # `rm` is not checked: image_build's `rm` removes intermediate build containers and waits for nothing.
+    from docker_mcp.server import _tool_registry
+
+    offenders = {
+        record.name: blocking
+        for record in _tool_registry.values()
+        if record.name != "system_wait"
+        and (
+            blocking := {"detach", "wait", "remove"}
+            & set(record.params) - _BLOCKING_OPTION_EXCEPTIONS.get(record.name, set())
+        )
+    }
+    assert offenders == {}
