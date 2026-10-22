@@ -44,6 +44,13 @@ dependencies = [
     # Pulled in transitively by docker, but we import requests.exceptions directly
     # (system_wait's container wait catches ReadTimeout), so declare it explicitly.
     "requests>=2.26.0",
+    # Also transitive (through requests), but imported directly: a read timeout partway through a
+    # response body reaches the caller as requests' generic ConnectionError, and the container wait
+    # matches urllib3's ReadTimeoutError as its cause to tell that apart from a real connection failure.
+    "urllib3>=1.21.1",
+    # Also transitive (through mcp), but imported directly: nodes.py configures a TypedDict with
+    # `pydantic.with_config`. The floor is mcp's own, which has it.
+    "pydantic>=2.12.0",
 ]
 
 [project.scripts]

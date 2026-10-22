@@ -116,13 +116,14 @@ def volume_remove(name: str, force: bool = False, host: str | None = None) -> bo
     """
     Remove a single volume by name.
 
-    Fails if any container, running or stopped, still references the volume - remove or
-    recreate those containers first, or pass `force=True` to remove it anyway (the
-    containers keep their reference but lose the underlying data). For bulk cleanup of
-    volumes with no container references at all, use `volume_prune` instead.
+    Fails if any container, running or stopped, still references the volume, even with
+    `force` - remove those containers first (`container_list` with a `volume` filter finds
+    them). For bulk cleanup of volumes with no container references at all, use
+    `volume_prune` instead.
 
     Args:
-        force: Remove even if a container still references the volume
+        force: Drop Docker's record of a volume its driver plugin has already deleted out of band; it
+            does not override a container's reference
 
     Returns:
         bool: True after removal

@@ -89,7 +89,7 @@ _BANNED_PARAMS = frozenset(
         "v",
         "timeout",  # always timeout_seconds (or stop_timeout_seconds for Docker's stop grace)
         "filter",  # always plural
-        "node_spec",  # node_update takes `spec`
+        "node_spec",  # node_update takes `updates`, as container_update and swarm_update do
         "remote_name",  # plugin tools take `remote`
     }
 )
@@ -115,7 +115,6 @@ _ECHO_EXCEPTIONS = {
     ("buildx_create", "platforms"): "what the builder advertises, not what it builds",
     ("buildx_remove", "keep_state"): "names the BuildKit state volume it keeps",
     ("compose_config", "services_only"): "maps to `--services`",
-    ("compose_cp", "all_containers"): "maps to `--all`, every container of the service",
     ("compose_port", "protocol"): "a plain string: gives the accepted values",
     ("container_archive_get", "path"): "inside the container, not on the server host",
     ("container_archive_get_to_file", "path"): "inside the container, not on the server host",
@@ -188,6 +187,21 @@ def test_no_tool_uses_a_banned_parameter_spelling():
         if param in _BANNED_PARAMS
     ]
     assert offenders == [], f"banned parameter spellings: {offenders}"
+
+
+# Durations are `timeout_seconds`, or `stop_timeout_seconds` for Docker's stop grace (AGENTS.md, naming
+# convention); `test_no_tool_uses_a_banned_parameter_spelling` only catches a bare `timeout`.
+_DURATION_NAMES = frozenset({"timeout_seconds", "stop_timeout_seconds"})
+
+
+def test_every_duration_parameter_is_timeout_seconds():
+    offenders = [
+        f"{name}({param})"
+        for name, func in _tool_functions()
+        for param in inspect.signature(func).parameters
+        if param.endswith("_seconds") and param not in _DURATION_NAMES
+    ]
+    assert offenders == [], f"durations must be timeout_seconds or stop_timeout_seconds: {offenders}"
 
 
 # Canonical docstring lines for params shared across many tools: same param, same words.

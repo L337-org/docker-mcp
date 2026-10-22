@@ -285,7 +285,9 @@ dependencies = [
     { name = "docker", extra = ["ssh"] },
     { name = "httpx" },
     { name = "mcp" },
+    { name = "pydantic" },
     { name = "requests" },
+    { name = "urllib3" },
 ]
 
 [package.dev-dependencies]
@@ -303,7 +305,9 @@ requires-dist = [
     { name = "docker", extras = ["ssh"], specifier = ">=7.2.0" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "mcp", specifier = ">=2.1.0" },
+    { name = "pydantic", specifier = ">=2.12.0" },
     { name = "requests", specifier = ">=2.26.0" },
+    { name = "urllib3", specifier = ">=1.21.1" },
 ]
 
 [package.metadata.requires-dev]

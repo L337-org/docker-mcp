@@ -33,6 +33,7 @@ from docker_mcp.tools.services import (
     _UPDATE_STUCK,
     _awaiting_global_tasks,
     _read_service_task_summary,
+    _runs_current_spec,
 )
 from docker_mcp.tools.system import _get_client
 
@@ -335,23 +336,6 @@ _STACK_LABEL = "com.docker.stack.namespace"
 _ACTIVE_TASK_STATES = frozenset(
     {"new", "allocated", "pending", "assigned", "accepted", "preparing", "ready", "starting", "running"}
 )
-
-
-def _runs_current_spec(task: dict, template: dict) -> bool:
-    """Whether a task was created from its service's current task template, i.e. an update left it alone.
-
-    Compares the keys the task's own spec carries: the template also holds `Runtime`, which tasks omit.
-    Swarm decides whether a task needs replacing the same way, from its spec against the template.
-
-    Args:
-        task: a task document, as `client.api.tasks()` returns it
-        template: the service's `Spec.TaskTemplate`
-
-    Returns:
-        bool: True when every key of the task's spec equals the template's
-    """
-    spec = task.get("Spec") or {}
-    return all(template.get(key) == value for key, value in spec.items())
 
 
 def _wait_stack(

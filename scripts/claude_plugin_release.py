@@ -30,6 +30,7 @@ from __future__ import annotations
 import argparse
 import base64
 import hashlib
+from http.client import HTTPException
 import json
 import os
 import queue
@@ -64,6 +65,12 @@ IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"}
 MAX_DOWNLOAD_BYTES = 64 * 1024 * 1024
 MAX_MCP_LINE_BYTES = 16 * 1024 * 1024
 HTTP_TIMEOUT = 60
+# GET is retried on a transient failure - a 5xx, a dropped connection or a timeout - because GitHub's
+# API returns the odd 500 under load, and one would otherwise fail a release partway through.  Writes
+# are never retried: a write that failed after reaching the server may have happened.
+HTTP_GET_ATTEMPTS = 3
+HTTP_RETRY_DELAY = 5
+HTTP_RETRYABLE_STATUSES = frozenset({500, 502, 503, 504})
 # uv's Accept header for pypi.org (MediaType::pypi() in crates/uv-client/src/registry_client.rs,
 # uv 0.11.21).  PyPI's CDN caches the index once per Accept value (`Vary: Accept`), so the wait
 # below asks with exactly this header to see the copy uv would be served.
@@ -150,7 +157,10 @@ def run(argv: list[str], *, timeout: int, env: dict[str, str] | None = None, cwd
 def http(
     method: str, url: str, *, token: str | None = None, body: dict | None = None, raw: bool = False
 ) -> tuple[int, object]:
-    """Make one HTTPS request with a timeout and a size cap.
+    """Make an HTTPS request with a timeout and a size cap, retrying a GET on a transient failure.
+
+    A GET that meets a 5xx, a dropped connection or a timeout is retried up to `HTTP_GET_ATTEMPTS`
+    times in all, each retry logged; other methods are tried once.
 
     Args:
         method: HTTP method
@@ -164,7 +174,43 @@ def http(
         use it to mean "does not exist"
 
     Raises:
-        ReleaseError: on any other HTTP error, with the server's message, or an oversized body
+        ReleaseError: on any other HTTP error, with the server's message, a failure that outlasted the
+            retries, or an oversized body
+    """
+    attempts = HTTP_GET_ATTEMPTS if method == "GET" else 1
+    for attempt in range(1, attempts + 1):
+        try:
+            return _http_once(method, url, token=token, body=body, raw=raw)
+        except _TransientHTTPError as exc:
+            if attempt == attempts:
+                raise ReleaseError(f"{exc} (attempt {attempt} of {attempts})") from exc.__cause__
+            delay = HTTP_RETRY_DELAY * attempt
+            log(f"{exc}; retrying in {delay}s (attempt {attempt} of {attempts})")
+            time.sleep(delay)
+    raise AssertionError("unreachable: the last attempt returns or raises")
+
+
+class _TransientHTTPError(Exception):
+    """A failure worth retrying for an idempotent request; `http` turns the last one into a ReleaseError."""
+
+
+def _http_once(method: str, url: str, *, token: str | None, body: dict | None, raw: bool) -> tuple[int, object]:
+    """Make one HTTPS request; `http` documents the contract and does the retrying.
+
+    Args:
+        method: HTTP method
+        url: absolute https URL
+        token: bearer token for the GitHub API, if any
+        body: JSON request body, if any
+        raw: return the body as bytes rather than parsed JSON
+
+    Returns:
+        tuple: (status, parsed JSON or bytes); 404 is returned rather than raised
+
+    Raises:
+        _TransientHTTPError: a 5xx, a dropped connection, a body shorter than its Content-Length, or a
+            timeout, with the cause chained
+        ReleaseError: any other HTTP error, an oversized body, or a body that is not JSON
     """
     data = json.dumps(body).encode() if body is not None else None
     headers = {"Accept": "application/vnd.github+json"}
@@ -172,18 +218,24 @@ def http(
         headers["Authorization"] = f"Bearer {token}"
     if data is not None:
         headers["Content-Type"] = "application/json"
-    status, content, _ = fetch(method, url, headers=headers, data=data)
+    status, content, _ = _fetch_once(method, url, headers=headers, data=data)
     if status == 404:
         return 404, None
     if raw:
         return status, content
-    return status, (json.loads(content) if content else None)
+    try:
+        return status, (json.loads(content) if content else None)
+    except json.JSONDecodeError as exc:
+        raise ReleaseError(f"{method} {url} returned a body that is not JSON: {exc}") from exc
 
 
-def fetch(
+def _fetch_once(
     method: str, url: str, *, headers: dict[str, str], data: bytes | None = None
 ) -> tuple[int, bytes, dict[str, str]]:
-    """Make one HTTPS request with a timeout and a size cap, keeping the response headers.
+    """Make one HTTPS request with a timeout and a size cap, returning the raw body and headers.
+
+    `_http_once` builds on this for the GitHub API; the PyPI reads call it directly, because they
+    need the response headers and their wait loop does its own retrying.
 
     Args:
         method: HTTP method
@@ -196,7 +248,9 @@ def fetch(
         empty body rather than raised
 
     Raises:
-        ReleaseError: on any other HTTP error, with the server's message, or an oversized body
+        _TransientHTTPError: a 5xx, a dropped connection, a body shorter than its Content-Length, or a
+            timeout, with the cause chained
+        ReleaseError: any other HTTP error, with the server's message, or an oversized body
     """
     request = urllib.request.Request(url, data=data, method=method)  # noqa: S310  (https URLs built here)
     for name, value in {**headers, "User-Agent": "docker-mcp-claude-plugin-release"}.items():
@@ -210,11 +264,25 @@ def fetch(
         if exc.code == 404:
             return 404, b"", {k.lower(): v for k, v in exc.headers.items()}
         detail = exc.read(64 * 1024).decode("utf-8", errors="replace")
-        raise ReleaseError(f"{method} {url} failed with HTTP {exc.code}: {detail.strip()}") from exc
+        message = f"{method} {url} failed with HTTP {exc.code}: {detail.strip()}"
+        if exc.code in HTTP_RETRYABLE_STATUSES:
+            raise _TransientHTTPError(message) from exc
+        raise ReleaseError(message) from exc
     except urllib.error.URLError as exc:
-        raise ReleaseError(f"{method} {url} failed: {exc.reason}") from exc
+        raise _TransientHTTPError(f"{method} {url} failed: {exc.reason}") from exc
+    except TimeoutError as exc:
+        raise _TransientHTTPError(f"{method} {url} timed out after {HTTP_TIMEOUT}s") from exc
+    except (ConnectionError, HTTPException) as exc:
+        # urllib wraps only errors raised while sending.  A connection the server drops before its
+        # response (RemoteDisconnected), or a body cut short (IncompleteRead, a reset mid-read),
+        # arrives unwrapped.
+        raise _TransientHTTPError(f"{method} {url} failed: {type(exc).__name__}: {exc}") from exc
     if len(content) > MAX_DOWNLOAD_BYTES:
         raise ReleaseError(f"{method} {url} returned more than {MAX_DOWNLOAD_BYTES} bytes; refusing to read it")
+    # A sized read returns what arrived when the connection closes rather than raising IncompleteRead.
+    declared = received.get("content-length")
+    if declared is not None and declared.isdigit() and len(content) < int(declared):
+        raise _TransientHTTPError(f"{method} {url} body cut short: {len(content)} of {declared} bytes")
     return status, content, received
 
 
@@ -461,6 +529,25 @@ def is_complete(files: dict[str, str]) -> bool:
     return any(n.endswith(".whl") for n in files) and any(n.endswith(".tar.gz") for n in files)
 
 
+def parse_json(content: bytes, url: str) -> object:
+    """Parse a response body as JSON.
+
+    Args:
+        content: the body
+        url: where it came from, for the error
+
+    Returns:
+        object: the parsed value
+
+    Raises:
+        ReleaseError: if the body is not JSON
+    """
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError as exc:
+        raise ReleaseError(f"GET {url} returned a body that is not JSON: {exc}") from exc
+
+
 def read_json_api(version: str) -> PypiView:
     """Read the release from PyPI's JSON API, which `pypi_release_files` and verify use.
 
@@ -468,17 +555,21 @@ def read_json_api(version: str) -> PypiView:
         version: the release
 
     Returns:
-        PypiView: its files once the API lists both a wheel and an sdist; a failed read is returned
-        as not ready, with the error, since the caller retries
+        PypiView: its files once the API lists both a wheel and an sdist; a transient failure (a
+        5xx, a dropped connection, a timeout) is returned as not ready, with the error, since the
+        caller retries
+
+    Raises:
+        ReleaseError: on any other HTTP error, or a body that is not the JSON object expected
     """
     url = f"https://pypi.org/pypi/{PACKAGE}/{version}/json"
     try:
-        status, content, headers = fetch("GET", url, headers={"Accept": "application/json"})
-    except ReleaseError as exc:
+        status, content, headers = _fetch_once("GET", url, headers={"Accept": "application/json"})
+    except _TransientHTTPError as exc:
         return PypiView(None, f"JSON API: {exc}")
     if status == 404:
         return PypiView(None, f"JSON API {url}: HTTP 404 {cdn_note(headers)}")
-    urls = expect_dict(json.loads(content), f"PyPI's JSON for {PACKAGE} {version}").get("urls", [])
+    urls = expect_dict(parse_json(content, url), f"PyPI's JSON for {PACKAGE} {version}").get("urls", [])
     files = {u["filename"]: u["digests"]["sha256"] for u in urls}
     note = f"JSON API {url}: {len(files)} file(s) {sorted(files)} {cdn_note(headers)}"
     return PypiView(files if is_complete(files) else None, note)
@@ -492,20 +583,21 @@ def read_index(version: str) -> PypiView:
 
     Returns:
         PypiView: its files once the index lists the version with both a wheel and an sdist; a
-        failed read is returned as not ready, with the error, since the caller retries
+        transient failure is returned as not ready, with the error, since the caller retries
 
     Raises:
-        ReleaseError: if PyPI answers in a format other than the PEP 691 JSON asked for
+        ReleaseError: on any other HTTP error, or if PyPI answers in a format other than the PEP 691
+            JSON asked for
     """
     url = f"{PYPI_INDEX}/{PACKAGE}/"
     try:
-        _, content, headers = fetch("GET", url, headers={"Accept": INDEX_ACCEPT})
-    except ReleaseError as exc:
+        _, content, headers = _fetch_once("GET", url, headers={"Accept": INDEX_ACCEPT})
+    except _TransientHTTPError as exc:
         return PypiView(None, f"index: {exc}")
     kind = headers.get("content-type", "")
     if not kind.startswith("application/vnd.pypi.simple.v1+json"):
         raise ReleaseError(f"PyPI's index {url} answered with {kind!r}, not the PEP 691 JSON this check reads")
-    page = expect_dict(json.loads(content), f"PyPI's index page for {PACKAGE}")
+    page = expect_dict(parse_json(content, url), f"PyPI's index page for {PACKAGE}")
     versions = page.get("versions", [])
     # A wheel is named <dist>-<version>-<tags>.whl and an sdist <dist>-<version>.tar.gz.
     stem = f"{PACKAGE.replace('-', '_')}-{version}"
