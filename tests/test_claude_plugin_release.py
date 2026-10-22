@@ -5,6 +5,7 @@ job instead (premerge.yaml), against the real services; what is here is the logi
 whether a publish may go ahead, and the checks whose failure must stop it.
 """
 
+import argparse
 import base64
 import http.client
 import io
@@ -543,6 +544,255 @@ def test_a_rerun_checks_pypis_digests_without_a_build_to_compare(tmp_path, monke
     _fake_pypi(monkeypatch, _FILES)
     (tmp_path / "dl").mkdir()
     assert len(release.pypi_release_files("1.0", tmp_path / "dl", None)) == 2
+
+
+# --------------------------------------------------------------------------------------------
+# wait_for_pypi(): both of PyPI's views must serve the release before anything reads it
+# --------------------------------------------------------------------------------------------
+
+# Shapes recorded from pypi.org for docker-mcp-server 2.2.8 on 2026-10-22: the JSON API's
+# `urls[].filename`/`digests.sha256`, the PEP 691 index page's `versions` and
+# `files[].filename`/`hashes.sha256` served as application/vnd.pypi.simple.v1+json, and the CDN
+# headers both carry.
+_WHL, _SDIST = "docker_mcp_server-1.0-py3-none-any.whl", "docker_mcp_server-1.0.tar.gz"
+_DIGESTS = {_WHL: "a" * 64, _SDIST: "b" * 64}
+_CDN = {"x-served-by": "cache-iad-1-IAD, cache-lcy-2-LCY", "x-cache": "MISS, HIT", "x-pypi-last-serial": "42"}
+
+
+def _api(files=_DIGESTS):
+    urls = [{"filename": n, "digests": {"sha256": d}} for n, d in files.items()]
+    return 200, json.dumps({"urls": urls}).encode(), dict(_CDN)
+
+
+def _index(versions=("0.9", "1.0"), files=_DIGESTS, kind="application/vnd.pypi.simple.v1+json"):
+    page = {
+        "versions": list(versions),
+        "files": [{"filename": "docker_mcp_server-0.9.tar.gz", "hashes": {"sha256": "c" * 64}}]
+        + [{"filename": n, "hashes": {"sha256": d}} for n, d in files.items()],
+    }
+    return 200, json.dumps(page).encode(), {**_CDN, "content-type": kind}
+
+
+_STALE_INDEX = _index(versions=("0.9",), files={})
+_MISSING = (404, b"", dict(_CDN))
+
+
+def _serve(monkeypatch, api_answers, index_answers):
+    """Answer each read with the next scripted response; the last one repeats.  An exception in
+    the script is raised, as fetch raises on a failed request."""
+    answers = {"api": list(api_answers), "index": list(index_answers)}
+    sleeps = []
+    clock = [0.0]
+
+    def fetch(method, url, *, headers, data=None):
+        view = "index" if url.startswith(release.PYPI_INDEX) else "api"
+        if view == "index":
+            assert headers["Accept"] == release.INDEX_ACCEPT
+        queue = answers[view]
+        answer = queue.pop(0) if len(queue) > 1 else queue[0]
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    def sleep(seconds):
+        sleeps.append(seconds)
+        clock[0] += seconds
+
+    monkeypatch.setattr(release, "_fetch_once", fetch)
+    monkeypatch.setattr(release.time, "sleep", sleep)
+    monkeypatch.setattr(release.time, "monotonic", lambda: clock[0])
+    return sleeps
+
+
+def test_a_release_both_views_serve_returns_at_once(monkeypatch, capsys):
+    sleeps = _serve(monkeypatch, [_api()], [_index()])
+    assert release.wait_for_pypi("1.0", dict(_DIGESTS)) == _DIGESTS
+    assert sleeps == []
+    assert "on both views (attempt 1)" in capsys.readouterr().out
+
+
+def test_a_stale_index_is_waited_out_and_each_attempt_names_the_cdn_location(monkeypatch, capsys):
+    """The JSON API serves the release while the index does not list it yet."""
+    sleeps = _serve(monkeypatch, [_api()], [_STALE_INDEX, _STALE_INDEX, _index()])
+    assert release.wait_for_pypi("1.0", None, interval=10) == _DIGESTS
+    assert sleeps == [10, 10]
+    out = capsys.readouterr().out
+    assert "attempt 1: PyPI does not serve 1.0 on both views yet" in out
+    assert "does not list 1.0 (newest listed 0.9)" in out
+    assert "x-served-by=cache-iad-1-IAD, cache-lcy-2-LCY; x-cache=MISS, HIT; x-pypi-last-serial=42" in out
+    assert "on both views (attempt 3)" in out
+
+
+def test_a_release_with_only_some_files_listed_is_waited_out(monkeypatch):
+    sleeps = _serve(monkeypatch, [_api({_WHL: _DIGESTS[_WHL]}), _api()], [_index()])
+    assert release.wait_for_pypi("1.0", None, interval=5) == _DIGESTS
+    assert sleeps == [5]
+
+
+def test_a_transient_failure_is_waited_out_and_its_error_kept(monkeypatch, capsys):
+    error = release._TransientHTTPError("GET https://pypi.org/simple/docker-mcp-server/ failed with HTTP 503: busy")
+    _serve(monkeypatch, [_api()], [error, _index()])
+    assert release.wait_for_pypi("1.0", None, interval=1) == _DIGESTS
+    assert "index: GET https://pypi.org/simple/docker-mcp-server/ failed with HTTP 503: busy" in capsys.readouterr().out
+
+
+def test_a_failure_waiting_cannot_fix_fails_at_once(monkeypatch):
+    error = release.ReleaseError("GET https://pypi.org/pypi/docker-mcp-server/1.0/json failed with HTTP 403: no")
+    sleeps = _serve(monkeypatch, [error], [_index()])
+    with pytest.raises(release.ReleaseError, match="HTTP 403"):
+        release.wait_for_pypi("1.0", None)
+    assert sleeps == []
+
+
+def test_the_pypi_reads_go_through_the_same_transport_checks_as_http(monkeypatch):
+    """A PyPI body cut short is caught by the transport's Content-Length check, as a GitHub one is,
+    and waited out rather than parsed."""
+
+    class Cut:
+        status, headers = 200, {"Content-Length": "100", "Content-Type": "application/vnd.pypi.simple.v1+json"}
+
+        def read(self, _limit):
+            return b'{"versions"'
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc):
+            return False
+
+    monkeypatch.setattr(release.urllib.request, "urlopen", lambda request, timeout: Cut())
+    view = release.read_index("1.0")
+    assert view.files is None
+    assert "body cut short: 11 of 100 bytes" in view.summary
+
+
+def test_a_pypi_body_that_is_not_json_is_a_release_error(monkeypatch):
+    _serve(monkeypatch, [(200, b"<html>", dict(_CDN))], [_index()])
+    with pytest.raises(release.ReleaseError, match="not JSON"):
+        release.wait_for_pypi("1.0", None)
+
+
+def test_giving_up_names_both_urls_and_what_each_last_said(monkeypatch):
+    _serve(monkeypatch, [_MISSING], [_STALE_INDEX])
+    with pytest.raises(release.ReleaseError) as caught:
+        release.wait_for_pypi("1.0", None, timeout=30, interval=10)
+    message = str(caught.value)
+    assert "did not serve docker-mcp-server 1.0 on both its JSON API and its index within 30s (4 attempts)" in message
+    assert "JSON API https://pypi.org/pypi/docker-mcp-server/1.0/json: HTTP 404 [x-served-by=" in message
+    assert "index https://pypi.org/simple/docker-mcp-server/: does not list 1.0 (newest listed 0.9)" in message
+
+
+def test_views_disagreeing_about_a_file_fail_at_once(monkeypatch):
+    sleeps = _serve(monkeypatch, [_api()], [_index(files={**_DIGESTS, _SDIST: "d" * 64})])
+    with pytest.raises(release.ReleaseError, match="JSON API and its index disagree"):
+        release.wait_for_pypi("1.0", None)
+    assert sleeps == []
+
+
+def test_pypi_serving_other_files_than_were_uploaded_fails_at_once(monkeypatch):
+    sleeps = _serve(monkeypatch, [_api()], [_index()])
+    with pytest.raises(release.ReleaseError, match="PyPI is not serving what was uploaded"):
+        release.wait_for_pypi("1.0", {**_DIGESTS, _WHL: "e" * 64})
+    assert sleeps == []
+
+
+def test_an_index_answer_in_another_format_is_refused(monkeypatch):
+    _serve(monkeypatch, [_api()], [_index(kind="text/html")])
+    with pytest.raises(release.ReleaseError, match="answered with 'text/html', not the PEP 691 JSON"):
+        release.wait_for_pypi("1.0", None)
+
+
+def test_the_upload_is_read_from_the_build_output_and_must_be_complete(tmp_path):
+    (tmp_path / _WHL).write_bytes(b"wheel")
+    (tmp_path / "docker_mcp_server-0.9.tar.gz").write_bytes(b"old")
+    (tmp_path / ".gitignore").write_text("*")
+    with pytest.raises(release.ReleaseError, match=r"lacks a wheel or an sdist .* \['docker_mcp_server-1.0-py3"):
+        release.dist_digests(tmp_path, "1.0")
+    (tmp_path / _SDIST).write_bytes(b"sdist")
+    assert set(release.dist_digests(tmp_path, "1.0")) == {_WHL, _SDIST}
+
+
+def test_an_index_404_is_reported_as_one_and_waited_out(monkeypatch, capsys):
+    """PyPI answers a missing index page with 404 and text/plain (observed 2026-10-22), which must
+    read as "not there yet", not as a format the check cannot read."""
+    sleeps = _serve(monkeypatch, [_api()], [_MISSING, _index()])
+    assert release.wait_for_pypi("1.0", None, interval=1) == _DIGESTS
+    assert sleeps == [1]
+    assert "index https://pypi.org/simple/docker-mcp-server/: HTTP 404 [x-served-by=" in capsys.readouterr().out
+
+
+class _Stop(Exception):
+    """Raised by a stub to end a command once the step under test has been reached."""
+
+
+def _record_waits(monkeypatch, events: list[str]):
+    def wait(version, expect, **_):
+        events.append("wait")
+        raise _Stop
+
+    monkeypatch.setattr(release, "wait_for_pypi", wait)
+
+
+def test_build_waits_for_pypi_before_reading_it(tmp_path, monkeypatch):
+    events: list[str] = []
+    _record_waits(monkeypatch, events)
+    monkeypatch.setattr(release, "pypi_release_files", lambda *a: events.append("read PyPI"))
+    monkeypatch.setattr(release, "run", lambda argv, **kw: events.append(" ".join(argv[:2])))
+    args = argparse.Namespace(
+        version=_VERSION, out=str(tmp_path / "out"), source_root=str(_ROOT), source="pypi", expect_dist=None
+    )
+    with pytest.raises(_Stop):
+        release.build(args)
+    assert events == ["wait"], "the wait must come before PyPI's files are read and before `uv lock`"
+
+
+def _build_dir(tmp_path: Path, source: str) -> Path:
+    build = tmp_path / "build"
+    shutil.copytree(_ROOT / "claude-plugin", build / "claude-plugin")
+    release.write_build_record(build, _VERSION, source, "tree")
+    return build
+
+
+@pytest.mark.parametrize(("source", "expected"), [("pypi", ["uv sync", "wait"]), ("local", ["uv sync", "--version"])])
+def test_smoke_waits_for_the_index_before_the_manifest_install_only_for_a_pypi_build(
+    tmp_path, monkeypatch, source, expected
+):
+    """Install 1 fetches by the lock's URLs; install 2 resolves through the index, so only it waits,
+    and a rehearsal's local wheels never touch PyPI at all."""
+    events: list[str] = []
+    _record_waits(monkeypatch, events)
+
+    def run(argv, **kw):
+        if "--version" in argv:
+            events.append("--version")
+            raise _Stop
+        events.append(" ".join(argv[:2]))
+        return ""
+
+    monkeypatch.setattr(release, "run", run)
+    args = argparse.Namespace(build=str(_build_dir(tmp_path, source)), docker=False)
+    with pytest.raises(_Stop):
+        release.smoke(args)
+    assert events == expected
+
+
+def test_the_index_accept_header_was_copied_from_the_uv_the_release_runs():
+    """The CDN caches the index once per Accept value, so the wait only sees uv's copy while
+    INDEX_ACCEPT matches uv byte for byte.  A uv bump fails here until someone re-reads uv's
+    MediaType::pypi() for the new version and updates the header and the version named beside it."""
+    source = (_ROOT / "scripts" / "claude_plugin_release.py").read_text()
+    copied_from = re.search(r"# uv (\d+\.\d+\.\d+); a test holds this to the release jobs' uv pin", source)
+    assert copied_from, "the INDEX_ACCEPT comment no longer names the uv version it was copied from"
+    release_uv = {v for kind, v in _pins(_job("publish.yaml", "claude-plugin-smoke")) if kind == "uv"}
+    assert release_uv == {copied_from.group(1)}
+
+
+def test_the_pypi_job_waits_after_publishing_and_verify_checks_the_index():
+    """The order is the point: the pypi job is only done once PyPI serves what it uploaded."""
+    pypi = _job("publish.yaml", "pypi")
+    assert pypi.index("wait-pypi") > pypi.index("pypa/gh-action-pypi-publish")
+    assert "--expect-dist dist" in pypi
+    assert "wait-pypi" in _job("publish.yaml", "verify")
 
 
 # --------------------------------------------------------------------------------------------

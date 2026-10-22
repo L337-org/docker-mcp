@@ -17,6 +17,9 @@ rehearses is the code a release runs:
     smoke    install the built plugin both ways it can be installed, start the server and check
              what it registers, with the plugin's settings applied
     publish  add the commit to the branch - or, with --dry-run, only decide
+    wait-pypi
+             wait until PyPI serves the release on its JSON API and its package index; the pypi
+             and verify jobs run it, and build and smoke wait the same way before reading PyPI
 
 Every check fails the run rather than warning, and `publish` changes nothing until all of them have
 passed in the jobs before it.  Standard library only, so CI runs it with a bare Python.
@@ -68,6 +71,16 @@ HTTP_TIMEOUT = 60
 HTTP_GET_ATTEMPTS = 3
 HTTP_RETRY_DELAY = 5
 HTTP_RETRYABLE_STATUSES = frozenset({500, 502, 503, 504})
+# uv's Accept header for pypi.org (MediaType::pypi() in crates/uv-client/src/registry_client.rs,
+# uv 0.11.21; a test holds this to the release jobs' uv pin).  PyPI's CDN caches the index once per
+# Accept value (`Vary: Accept`), so the wait below asks with exactly this header to see the copy uv
+# would be served.
+INDEX_ACCEPT = "application/vnd.pypi.simple.v1+json, application/vnd.pypi.simple.v1+html;q=0.2, text/html;q=0.01"
+# Response headers that say which CDN location answered and how old its copy was.
+CDN_HEADERS = ("x-served-by", "x-cache", "age", "x-pypi-last-serial")
+# How long a job waits for PyPI to serve a release, and how often it looks.
+PYPI_WAIT_SECONDS = 600
+PYPI_POLL_SECONDS = 10
 # How far back publish reads the branch's history, at one release per commit plus any reverts.
 MAX_HISTORY_COMMITS = 1000
 
@@ -201,21 +214,56 @@ def _http_once(method: str, url: str, *, token: str | None, body: dict | None, r
         ReleaseError: any other HTTP error, an oversized body, or a body that is not JSON
     """
     data = json.dumps(body).encode() if body is not None else None
-    request = urllib.request.Request(url, data=data, method=method)  # noqa: S310  (https URLs built here)
-    request.add_header("Accept", "application/vnd.github+json")
-    request.add_header("User-Agent", "docker-mcp-claude-plugin-release")
+    headers = {"Accept": "application/vnd.github+json"}
     if token:
-        request.add_header("Authorization", f"Bearer {token}")
+        headers["Authorization"] = f"Bearer {token}"
     if data is not None:
-        request.add_header("Content-Type", "application/json")
+        headers["Content-Type"] = "application/json"
+    status, content, _ = _fetch_once(method, url, headers=headers, data=data)
+    if status == 404:
+        return 404, None
+    if raw:
+        return status, content
+    try:
+        return status, (json.loads(content) if content else None)
+    except json.JSONDecodeError as exc:
+        raise ReleaseError(f"{method} {url} returned a body that is not JSON: {exc}") from exc
+
+
+def _fetch_once(
+    method: str, url: str, *, headers: dict[str, str], data: bytes | None = None
+) -> tuple[int, bytes, dict[str, str]]:
+    """Make one HTTPS request with a timeout and a size cap, returning the raw body and headers.
+
+    `_http_once` builds on this for the GitHub API; the PyPI reads call it directly, because they
+    need the response headers and their wait loop does its own retrying.
+
+    Args:
+        method: HTTP method
+        url: absolute https URL
+        headers: request headers; a User-Agent is added
+        data: request body, if any
+
+    Returns:
+        tuple: (status, body, response headers with lower-cased names); a 404 is returned with an
+        empty body rather than raised
+
+    Raises:
+        _TransientHTTPError: a 5xx, a dropped connection, a body shorter than its Content-Length, or a
+            timeout, with the cause chained
+        ReleaseError: any other HTTP error, with the server's message, or an oversized body
+    """
+    request = urllib.request.Request(url, data=data, method=method)  # noqa: S310  (https URLs built here)
+    for name, value in {**headers, "User-Agent": "docker-mcp-claude-plugin-release"}.items():
+        request.add_header(name, value)
     try:
         with urllib.request.urlopen(request, timeout=HTTP_TIMEOUT) as response:  # noqa: S310
             content = response.read(MAX_DOWNLOAD_BYTES + 1)
             status = response.status
-            declared = response.headers.get("Content-Length")
+            received = {k.lower(): v for k, v in response.headers.items()}
     except urllib.error.HTTPError as exc:
         if exc.code == 404:
-            return 404, None
+            return 404, b"", {k.lower(): v for k, v in exc.headers.items()}
         detail = exc.read(64 * 1024).decode("utf-8", errors="replace")
         message = f"{method} {url} failed with HTTP {exc.code}: {detail.strip()}"
         if exc.code in HTTP_RETRYABLE_STATUSES:
@@ -233,14 +281,10 @@ def _http_once(method: str, url: str, *, token: str | None, body: dict | None, r
     if len(content) > MAX_DOWNLOAD_BYTES:
         raise ReleaseError(f"{method} {url} returned more than {MAX_DOWNLOAD_BYTES} bytes; refusing to read it")
     # A sized read returns what arrived when the connection closes rather than raising IncompleteRead.
+    declared = received.get("content-length")
     if declared is not None and declared.isdigit() and len(content) < int(declared):
         raise _TransientHTTPError(f"{method} {url} body cut short: {len(content)} of {declared} bytes")
-    if raw:
-        return status, content
-    try:
-        return status, (json.loads(content) if content else None)
-    except json.JSONDecodeError as exc:
-        raise ReleaseError(f"{method} {url} returned a body that is not JSON: {exc}") from exc
+    return status, content, received
 
 
 def expect_dict(value: object, what: str) -> dict:
@@ -453,6 +497,231 @@ def uv_env(cache: Path) -> dict[str, str]:
     return env
 
 
+@dataclass
+class PypiView:
+    """What one of PyPI's two views said about a release on one read."""
+
+    files: dict[str, str] | None  # filename -> sha256, or None while the release is incomplete
+    summary: str  # what was seen, for the log
+
+
+def cdn_note(headers: dict[str, str]) -> str:
+    """Name the CDN location that answered and how old its copy was.
+
+    Args:
+        headers: response headers with lower-cased names
+
+    Returns:
+        str: the headers in CDN_HEADERS that were present, or a note that none were
+    """
+    seen = [f"{name}={headers[name]}" for name in CDN_HEADERS if name in headers]
+    return f"[{'; '.join(seen)}]" if seen else "[no CDN headers]"
+
+
+def is_complete(files: dict[str, str]) -> bool:
+    """Whether a release's files include both a wheel and an sdist.
+
+    Args:
+        files: filename -> sha256
+
+    Returns:
+        bool: true once both kinds are present
+    """
+    return any(n.endswith(".whl") for n in files) and any(n.endswith(".tar.gz") for n in files)
+
+
+def parse_json(content: bytes, url: str) -> object:
+    """Parse a response body as JSON.
+
+    Args:
+        content: the body
+        url: where it came from, for the error
+
+    Returns:
+        object: the parsed value
+
+    Raises:
+        ReleaseError: if the body is not JSON
+    """
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError as exc:
+        raise ReleaseError(f"GET {url} returned a body that is not JSON: {exc}") from exc
+
+
+def read_json_api(version: str) -> PypiView:
+    """Read the release from PyPI's JSON API, which `pypi_release_files` and verify use.
+
+    Args:
+        version: the release
+
+    Returns:
+        PypiView: its files once the API lists both a wheel and an sdist; a transient failure (a
+        5xx, a dropped connection, a timeout) is returned as not ready, with the error, since the
+        caller retries
+
+    Raises:
+        ReleaseError: on any other HTTP error, or a body that is not the JSON object expected
+    """
+    url = f"https://pypi.org/pypi/{PACKAGE}/{version}/json"
+    try:
+        status, content, headers = _fetch_once("GET", url, headers={"Accept": "application/json"})
+    except _TransientHTTPError as exc:
+        return PypiView(None, f"JSON API: {exc}")
+    if status == 404:
+        return PypiView(None, f"JSON API {url}: HTTP 404 {cdn_note(headers)}")
+    urls = expect_dict(parse_json(content, url), f"PyPI's JSON for {PACKAGE} {version}").get("urls", [])
+    files = {u["filename"]: u["digests"]["sha256"] for u in urls}
+    note = f"JSON API {url}: {len(files)} file(s) {sorted(files)} {cdn_note(headers)}"
+    return PypiView(files if is_complete(files) else None, note)
+
+
+def read_index(version: str) -> PypiView:
+    """Read the release from PyPI's package index, the page uv and pip resolve versions from.
+
+    Args:
+        version: the release
+
+    Returns:
+        PypiView: its files once the index lists the version with both a wheel and an sdist; a
+        transient failure is returned as not ready, with the error, since the caller retries
+
+    Raises:
+        ReleaseError: on any other HTTP error, or if PyPI answers in a format other than the PEP 691
+            JSON asked for
+    """
+    url = f"{PYPI_INDEX}/{PACKAGE}/"
+    try:
+        status, content, headers = _fetch_once("GET", url, headers={"Accept": INDEX_ACCEPT})
+    except _TransientHTTPError as exc:
+        return PypiView(None, f"index: {exc}")
+    if status == 404:
+        # A project's first release has no index page until PyPI publishes one.
+        return PypiView(None, f"index {url}: HTTP 404 {cdn_note(headers)}")
+    kind = headers.get("content-type", "")
+    if not kind.startswith("application/vnd.pypi.simple.v1+json"):
+        raise ReleaseError(f"PyPI's index {url} answered with {kind!r}, not the PEP 691 JSON this check reads")
+    page = expect_dict(parse_json(content, url), f"PyPI's index page for {PACKAGE}")
+    versions = page.get("versions", [])
+    # A wheel is named <dist>-<version>-<tags>.whl and an sdist <dist>-<version>.tar.gz.
+    stem = f"{PACKAGE.replace('-', '_')}-{version}"
+    files = {
+        f["filename"]: f["hashes"]["sha256"]
+        for f in page.get("files", [])
+        if f["filename"].startswith(f"{stem}-") or f["filename"] == f"{stem}.tar.gz"
+    }
+    if version not in versions:
+        plain = [v for v in versions if re.fullmatch(r"\d+(\.\d+)*", v)]
+        newest = max(plain, key=version_key, default=None)
+        note = f"index {url}: does not list {version} (newest listed {newest}) {cdn_note(headers)}"
+        return PypiView(None, note)
+    note = f"index {url}: lists {version} with {len(files)} file(s) {sorted(files)} {cdn_note(headers)}"
+    return PypiView(files if is_complete(files) else None, note)
+
+
+def wait_for_pypi(
+    version: str,
+    expect: dict[str, str] | None,
+    *,
+    timeout: float = PYPI_WAIT_SECONDS,
+    interval: float = PYPI_POLL_SECONDS,
+) -> dict[str, str]:
+    """Wait until both of PyPI's views serve the release, as seen from this machine.
+
+    PyPI's JSON API and its package index are cached separately, and each CDN location holds its
+    own copy, so one job seeing the release says nothing about the next job's runner.  Every job
+    that reads PyPI therefore waits here first, and every attempt is logged with the CDN location
+    that answered, so a stale copy can be told apart from a missing release from the log alone.
+
+    Args:
+        version: the release
+        expect: filename -> sha256 of the files this run uploaded, or None to accept what PyPI
+            serves (a re-run, or a job without the upload to hand)
+        timeout: seconds to keep looking
+        interval: seconds between looks
+
+    Returns:
+        dict: filename -> sha256 of the files PyPI serves for the release
+
+    Raises:
+        ReleaseError: at once if the two views, or PyPI and the upload, disagree about a file,
+            since waiting cannot fix that; otherwise once the timeout passes, with what each view
+            last said
+    """
+    deadline = time.monotonic() + timeout
+    attempt = 0
+    while True:
+        attempt += 1
+        api, index = read_json_api(version), read_index(version)
+        if api.files is not None and index.files is not None:
+            if api.files != index.files:
+                raise ReleaseError(
+                    f"PyPI's JSON API and its index disagree about {PACKAGE} {version}'s files:\n"
+                    f"  {api.summary}: {api.files}\n  {index.summary}: {index.files}"
+                )
+            if expect is not None and api.files != expect:
+                raise ReleaseError(
+                    f"PyPI serves {PACKAGE} {version} as {api.files}, but this run uploaded {expect}; "
+                    "PyPI is not serving what was uploaded, so investigate before re-running"
+                )
+            log(
+                f"  PyPI serves {PACKAGE} {version} on both views (attempt {attempt}):\n"
+                f"    {api.summary}\n    {index.summary}"
+            )
+            return api.files
+        if time.monotonic() >= deadline:
+            raise ReleaseError(
+                f"PyPI did not serve {PACKAGE} {version} on both its JSON API and its index within {timeout:.0f}s "
+                f"({attempt} attempts); last seen:\n  {api.summary}\n  {index.summary}"
+            )
+        log(
+            f"  attempt {attempt}: PyPI does not serve {version} on both views yet; looking again in {interval:.0f}s\n"
+            f"    {api.summary}\n    {index.summary}"
+        )
+        time.sleep(interval)
+
+
+def dist_digests(dist: Path, version: str) -> dict[str, str]:
+    """The release's files in a build output directory, by name, with their digests.
+
+    Args:
+        dist: the directory `uv build` wrote
+        version: the release
+
+    Returns:
+        dict: filename -> sha256 of its wheels and sdist
+
+    Raises:
+        ReleaseError: if it holds no wheel or no sdist for the release
+    """
+    stem = f"{PACKAGE.replace('-', '_')}-{version}"
+    files = {
+        p.name: sha256_file(p)
+        for p in dist.iterdir()
+        if p.is_file() and (p.name.startswith(f"{stem}-") and p.name.endswith(".whl") or p.name == f"{stem}.tar.gz")
+    }
+    if not is_complete(files):
+        raise ReleaseError(f"{dist} lacks a wheel or an sdist for {PACKAGE} {version} (has {sorted(files)})")
+    return files
+
+
+def wait_pypi(args: argparse.Namespace) -> None:
+    """The `wait-pypi` command: block until PyPI serves the release on both views.
+
+    Args:
+        args: parsed command line
+
+    Raises:
+        ReleaseError: as wait_for_pypi does, or if --expect-dist lacks the release's files
+    """
+    expect = dist_digests(Path(args.expect_dist), args.version) if args.expect_dist else None
+    log(
+        f"== waiting for PyPI to serve {PACKAGE} {args.version}"
+        + (f", as built in {args.expect_dist}" if expect else "")
+    )
+    wait_for_pypi(args.version, expect, timeout=args.timeout)
+
+
 def pypi_release_files(version: str, workdir: Path, expect_dist: Path | None) -> set[str]:
     """Download this release's files from PyPI and check them.
 
@@ -530,6 +799,9 @@ def build(args: argparse.Namespace) -> None:
     lock_argv = ["uv", "lock", "--default-index", PYPI_INDEX]
     if args.source == "pypi":
         log(f"== checking {PACKAGE} {version} on PyPI")
+        # Both reads below, and `uv lock`, must see the release; this runner's CDN location may
+        # still hold an older copy than the one the pypi job saw.
+        wait_for_pypi(version, None)
         downloads = out / "pypi"
         downloads.mkdir()
         pypi_hashes = pypi_release_files(version, downloads, Path(args.expect_dist) if args.expect_dist else None)
@@ -792,6 +1064,10 @@ def smoke(args: argparse.Namespace) -> None:
         locked_server = [str(bindir / (PACKAGE + (".exe" if os.name == "nt" else "")))]
 
         log("== install 2: the manifest's own command")
+        if not local:
+            # Install 1 fetched files by the URLs in the lock; this one resolves the version from
+            # the index, which this runner's CDN location may not have refreshed yet.
+            wait_for_pypi(version, None)
         server = manifest["mcpServers"][PACKAGE]
         manifest_server = [server["command"], *find_links, *server["args"]]
         if local:
@@ -1159,6 +1435,12 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--build", required=True, help="a directory written by build")
     p.add_argument("--docker", action="store_true", help="also call system_ping against the local daemon")
     p.set_defaults(func=smoke)
+
+    p = sub.add_parser("wait-pypi", help="wait until PyPI serves the release on its JSON API and its index")
+    p.add_argument("--version", required=True)
+    p.add_argument("--expect-dist", help="the files this run uploaded; PyPI must serve exactly these")
+    p.add_argument("--timeout", type=int, default=PYPI_WAIT_SECONDS, help="seconds to keep looking")
+    p.set_defaults(func=wait_pypi)
 
     p = sub.add_parser("publish", help="add the tested build to the release branch")
     p.add_argument("--version", required=True)
