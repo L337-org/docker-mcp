@@ -5,6 +5,7 @@ job instead (premerge.yaml), against the real services; what is here is the logi
 whether a publish may go ahead, and the checks whose failure must stop it.
 """
 
+import argparse
 import base64
 import http.client
 import io
@@ -611,7 +612,7 @@ def test_a_release_both_views_serve_returns_at_once(monkeypatch, capsys):
 
 
 def test_a_stale_index_is_waited_out_and_each_attempt_names_the_cdn_location(monkeypatch, capsys):
-    """The v2.2.8 failure: the JSON API served the release while the index did not yet list it."""
+    """The JSON API serves the release while the index does not list it yet."""
     sleeps = _serve(monkeypatch, [_api()], [_STALE_INDEX, _STALE_INDEX, _index()])
     assert release.wait_for_pypi("1.0", None, interval=10) == _DIGESTS
     assert sleeps == [10, 10]
@@ -709,6 +710,81 @@ def test_the_upload_is_read_from_the_build_output_and_must_be_complete(tmp_path)
         release.dist_digests(tmp_path, "1.0")
     (tmp_path / _SDIST).write_bytes(b"sdist")
     assert set(release.dist_digests(tmp_path, "1.0")) == {_WHL, _SDIST}
+
+
+def test_an_index_404_is_reported_as_one_and_waited_out(monkeypatch, capsys):
+    """PyPI answers a missing index page with 404 and text/plain (observed 2026-10-22), which must
+    read as "not there yet", not as a format the check cannot read."""
+    sleeps = _serve(monkeypatch, [_api()], [_MISSING, _index()])
+    assert release.wait_for_pypi("1.0", None, interval=1) == _DIGESTS
+    assert sleeps == [1]
+    assert "index https://pypi.org/simple/docker-mcp-server/: HTTP 404 [x-served-by=" in capsys.readouterr().out
+
+
+class _Stop(Exception):
+    """Raised by a stub to end a command once the step under test has been reached."""
+
+
+def _record_waits(monkeypatch, events: list[str]):
+    def wait(version, expect, **_):
+        events.append("wait")
+        raise _Stop
+
+    monkeypatch.setattr(release, "wait_for_pypi", wait)
+
+
+def test_build_waits_for_pypi_before_reading_it(tmp_path, monkeypatch):
+    events: list[str] = []
+    _record_waits(monkeypatch, events)
+    monkeypatch.setattr(release, "pypi_release_files", lambda *a: events.append("read PyPI"))
+    monkeypatch.setattr(release, "run", lambda argv, **kw: events.append(" ".join(argv[:2])))
+    args = argparse.Namespace(
+        version=_VERSION, out=str(tmp_path / "out"), source_root=str(_ROOT), source="pypi", expect_dist=None
+    )
+    with pytest.raises(_Stop):
+        release.build(args)
+    assert events == ["wait"], "the wait must come before PyPI's files are read and before `uv lock`"
+
+
+def _build_dir(tmp_path: Path, source: str) -> Path:
+    build = tmp_path / "build"
+    shutil.copytree(_ROOT / "claude-plugin", build / "claude-plugin")
+    release.write_build_record(build, _VERSION, source, "tree")
+    return build
+
+
+@pytest.mark.parametrize(("source", "expected"), [("pypi", ["uv sync", "wait"]), ("local", ["uv sync", "--version"])])
+def test_smoke_waits_for_the_index_before_the_manifest_install_only_for_a_pypi_build(
+    tmp_path, monkeypatch, source, expected
+):
+    """Install 1 fetches by the lock's URLs; install 2 resolves through the index, so only it waits,
+    and a rehearsal's local wheels never touch PyPI at all."""
+    events: list[str] = []
+    _record_waits(monkeypatch, events)
+
+    def run(argv, **kw):
+        if "--version" in argv:
+            events.append("--version")
+            raise _Stop
+        events.append(" ".join(argv[:2]))
+        return ""
+
+    monkeypatch.setattr(release, "run", run)
+    args = argparse.Namespace(build=str(_build_dir(tmp_path, source)), docker=False)
+    with pytest.raises(_Stop):
+        release.smoke(args)
+    assert events == expected
+
+
+def test_the_index_accept_header_was_copied_from_the_uv_the_release_runs():
+    """The CDN caches the index once per Accept value, so the wait only sees uv's copy while
+    INDEX_ACCEPT matches uv byte for byte.  A uv bump fails here until someone re-reads uv's
+    MediaType::pypi() for the new version and updates the header and the version named beside it."""
+    source = (_ROOT / "scripts" / "claude_plugin_release.py").read_text()
+    copied_from = re.search(r"# uv (\d+\.\d+\.\d+); a test holds this to the release jobs' uv pin", source)
+    assert copied_from, "the INDEX_ACCEPT comment no longer names the uv version it was copied from"
+    release_uv = {v for kind, v in _pins(_job("publish.yaml", "claude-plugin-smoke")) if kind == "uv"}
+    assert release_uv == {copied_from.group(1)}
 
 
 def test_the_pypi_job_waits_after_publishing_and_verify_checks_the_index():

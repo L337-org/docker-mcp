@@ -72,8 +72,9 @@ HTTP_GET_ATTEMPTS = 3
 HTTP_RETRY_DELAY = 5
 HTTP_RETRYABLE_STATUSES = frozenset({500, 502, 503, 504})
 # uv's Accept header for pypi.org (MediaType::pypi() in crates/uv-client/src/registry_client.rs,
-# uv 0.11.21).  PyPI's CDN caches the index once per Accept value (`Vary: Accept`), so the wait
-# below asks with exactly this header to see the copy uv would be served.
+# uv 0.11.21; a test holds this to the release jobs' uv pin).  PyPI's CDN caches the index once per
+# Accept value (`Vary: Accept`), so the wait below asks with exactly this header to see the copy uv
+# would be served.
 INDEX_ACCEPT = "application/vnd.pypi.simple.v1+json, application/vnd.pypi.simple.v1+html;q=0.2, text/html;q=0.01"
 # Response headers that say which CDN location answered and how old its copy was.
 CDN_HEADERS = ("x-served-by", "x-cache", "age", "x-pypi-last-serial")
@@ -591,9 +592,12 @@ def read_index(version: str) -> PypiView:
     """
     url = f"{PYPI_INDEX}/{PACKAGE}/"
     try:
-        _, content, headers = _fetch_once("GET", url, headers={"Accept": INDEX_ACCEPT})
+        status, content, headers = _fetch_once("GET", url, headers={"Accept": INDEX_ACCEPT})
     except _TransientHTTPError as exc:
         return PypiView(None, f"index: {exc}")
+    if status == 404:
+        # A project's first release has no index page until PyPI publishes one.
+        return PypiView(None, f"index {url}: HTTP 404 {cdn_note(headers)}")
     kind = headers.get("content-type", "")
     if not kind.startswith("application/vnd.pypi.simple.v1+json"):
         raise ReleaseError(f"PyPI's index {url} answered with {kind!r}, not the PEP 691 JSON this check reads")

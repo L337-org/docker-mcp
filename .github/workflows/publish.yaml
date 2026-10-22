@@ -29,11 +29,11 @@ name: Release
 # the jobs that published them, so it repeats checks other jobs have made rather than trusting them.
 # A publishing job waits, before it reports success, until what it published is readable, but only
 # where both hold: the channel serves an upload some time after the upload returns, and a later job
-# in this pipeline reads it.  Today that is PyPI alone, whose JSON API and package index are cached
-# separately at each CDN location; image pushes, release assets and the registry publish are
-# readable when the call returns.  A job that reads PyPI also waits briefly first, since its runner
-# may reach a CDN location still holding an older copy than the one the pypi job saw.  The waits
-# are in scripts/claude_plugin_release.py (`wait-pypi`), and log which CDN location answered.
+# in this pipeline reads it.  The steps that run `wait-pypi` are the ones that wait: PyPI's JSON API
+# and package index are cached separately at each CDN location.  A job that reads PyPI also waits
+# first, since its runner may reach a CDN location still holding an older copy than the one the
+# pypi job saw.  The waits are in scripts/claude_plugin_release.py, and log which CDN location
+# answered.
 #
 # Two releases published minutes apart run in parallel (per-tag concurrency groups); the only
 # shared mutable state is the Docker Hub description (last-writer-wins, identical content) —
@@ -169,7 +169,8 @@ jobs:
     # trusted publisher on PyPI must name THIS workflow file (publish.yaml); see the header.
     name: Build and publish to PyPI
     runs-on: ubuntu-latest
-    # An sdist and wheel build, one upload, then up to ten minutes waiting for PyPI to serve it.
+    # An sdist and wheel build, one upload, then waiting up to PYPI_WAIT_SECONDS (in the release
+    # script) for PyPI to serve it, plus one more attempt's HTTP timeouts.
     timeout-minutes: 25
     needs: [preflight]
     permissions:
@@ -874,8 +875,9 @@ jobs:
     # notice.
     name: Build Claude plugin
     runs-on: ubuntu-latest
-    # A lock and a validate; downloads from PyPI.
-    timeout-minutes: 20
+    # Up to PYPI_WAIT_SECONDS (in the release script) waiting for PyPI, then a lock and a validate;
+    # sized so the wait's own error, naming what PyPI served, fires before the job is killed.
+    timeout-minutes: 30
     needs: [preflight, pypi, verify]
     permissions:
       contents: read
@@ -962,8 +964,9 @@ jobs:
     # claim to.  On Linux it also calls a real tool against the runner's Docker daemon.
     name: Smoke-test Claude plugin (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    # Two installs from PyPI and a server session for each settings case; no Intel runner, so wheels only.
-    timeout-minutes: 30
+    # Two installs from PyPI, with up to PYPI_WAIT_SECONDS (in the release script) waiting for PyPI
+    # before the second, and a server session for each settings case; no Intel runner, so wheels only.
+    timeout-minutes: 40
     needs: [preflight, claude-plugin-build]
     if: always() && needs.claude-plugin-build.result == 'success' && needs.claude-plugin-build.outputs.has_plugin == 'true'
     permissions:
