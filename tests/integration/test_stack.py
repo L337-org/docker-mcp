@@ -10,8 +10,8 @@ from docker_mcp.tools.system import _get_client, system_info, system_wait
 from docker_mcp.tools.stack import stack_deploy, stack_list, stack_ps, stack_remove, stack_services
 
 # A minimal stack: one alpine service that sleeps. `deploy.replicas` is what makes it a swarm service.
-# Every service here sets `init: true` because `sleep` as PID 1 ignores SIGTERM, so without an init
-# every update and removal waits out the stop grace period before the task is killed.
+# Give every service here `init: true`: `sleep` as PID 1 ignores SIGTERM, so without an init every
+# update and removal waits out the stop grace period before the task is killed.
 _STACK_YAML = """\
 services:
   sleeper:
