@@ -24,11 +24,13 @@ from docker_mcp.tools.containers import container_logs, container_remove
 from docker_mcp.tools.system import system_wait
 
 # A tiny compose project: one alpine container that sleeps. Avoids pulling a large image
-# while still exercising the up/ps/down cycle.
+# while still exercising the up/ps/down cycle.  `init: true` because `sleep` as PID 1 ignores SIGTERM,
+# so without an init every `down` waits out the stop grace period before the container is killed.
 _COMPOSE_YAML = """\
 services:
   sleeper:
     image: alpine:3
+    init: true
     command: ["sleep", "300"]
 """
 
@@ -184,7 +186,7 @@ def test_system_wait_compose_running_accepts_a_completed_dependency(compose_proj
     Path(compose_project["file"]).write_text(
         "services:\n"
         '  migrate:\n    image: alpine:3\n    command: ["sh", "-c", "exit 0"]\n'
-        '  web:\n    image: alpine:3\n    command: ["sleep", "300"]\n'
+        '  web:\n    image: alpine:3\n    init: true\n    command: ["sleep", "300"]\n'
         "    depends_on:\n      migrate:\n        condition: service_completed_successfully\n",
         encoding="utf-8",
     )

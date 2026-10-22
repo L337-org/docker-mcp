@@ -252,7 +252,10 @@ def _wait_service_snippet() -> str:
 
 
 def _create_service(cleanup, name: str, *extra: str) -> None:
-    result = _docker("service", "create", "-d", "--name", name, "--label", _TEST_LABEL, *extra, _IMAGE, "sleep", "3600")
+    # --init because `sleep` as PID 1 ignores SIGTERM, so without an init every update, rollback and
+    # removal waits out the stop grace period before the task is killed.
+    args = ["service", "create", "-d", "--init", "--name", name, "--label", _TEST_LABEL, *extra, _IMAGE]
+    result = _docker(*args, "sleep", "3600")
     assert result.returncode == 0, result.stderr.decode(errors="replace")
     cleanup["service"].append(name)
 

@@ -28,10 +28,11 @@ def running_service():
     """
     name = f"dmcp-it-task-{uuid.uuid4().hex[:8]}"
     try:
+        # init: `sleep` as PID 1 ignores SIGTERM, so without one each removal waits out the grace period.
         service_create(
             "alpine:3",
             command=["sleep", "120"],
-            extra_kwargs={"name": name, "mode": {"Replicated": {"Replicas": 1}}},
+            extra_kwargs={"name": name, "init": True, "mode": {"Replicated": {"Replicas": 1}}},
         )
         yield name
     finally:

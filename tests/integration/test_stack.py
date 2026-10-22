@@ -10,10 +10,13 @@ from docker_mcp.tools.system import _get_client, system_info, system_wait
 from docker_mcp.tools.stack import stack_deploy, stack_list, stack_ps, stack_remove, stack_services
 
 # A minimal stack: one alpine service that sleeps. `deploy.replicas` is what makes it a swarm service.
+# Every service here sets `init: true` because `sleep` as PID 1 ignores SIGTERM, so without an init
+# every update and removal waits out the stop grace period before the task is killed.
 _STACK_YAML = """\
 services:
   sleeper:
     image: alpine:3
+    init: true
     command: ["sleep", "300"]
     deploy:
       replicas: 1
@@ -80,7 +83,8 @@ def test_stack_ps_names_a_global_service_task_by_its_node_on_every_node(tmp_path
     name = f"dmcp-it-{uuid.uuid4().hex[:8]}"
     compose_file = tmp_path / "stack.yml"
     compose_file.write_text(
-        'services:\n  agent:\n    image: alpine:3\n    command: ["sleep", "300"]\n    deploy:\n      mode: global\n',
+        'services:\n  agent:\n    image: alpine:3\n    init: true\n    command: ["sleep", "300"]\n'
+        "    deploy:\n      mode: global\n",
         encoding="utf-8",
     )
     nodes = {n.id: n.attrs["Description"]["Hostname"] for n in _get_client().nodes.list()}
@@ -112,7 +116,7 @@ def test_a_global_service_rejected_on_one_node_does_not_converge(tmp_path):
     name = f"dmcp-it-{uuid.uuid4().hex[:8]}"
     compose_file = tmp_path / "stack.yml"
     compose_file.write_text(
-        'services:\n  agent:\n    image: alpine:3\n    command: ["sleep", "300"]\n'
+        'services:\n  agent:\n    image: alpine:3\n    init: true\n    command: ["sleep", "300"]\n'
         f"    volumes:\n      - type: bind\n        source: {marker}\n        target: /marker\n"
         "    deploy:\n      mode: global\n",
         encoding="utf-8",
@@ -142,7 +146,7 @@ def test_stack_remove_removes_the_secrets_and_configs_a_stack_created(tmp_path):
     (tmp_path / "app.conf").write_text("level=debug\n", encoding="utf-8")
     compose_file = tmp_path / "stack.yml"
     compose_file.write_text(
-        'services:\n  sleeper:\n    image: alpine:3\n    command: ["sleep", "300"]\n'
+        'services:\n  sleeper:\n    image: alpine:3\n    init: true\n    command: ["sleep", "300"]\n'
         "    secrets: [token]\n    configs: [app]\n"
         "secrets:\n  token:\n    file: ./token.txt\n"
         "configs:\n  app:\n    file: ./app.conf\n",
@@ -190,7 +194,7 @@ def test_system_wait_stack_converged_waits_out_a_rolling_update(tmp_path):
 
     def write(command):
         compose_file.write_text(
-            "services:\n  sleeper:\n    image: alpine:3\n"
+            "services:\n  sleeper:\n    image: alpine:3\n    init: true\n"
             f"    command: {command}\n"
             "    deploy:\n      replicas: 3\n      update_config:\n        parallelism: 1\n        delay: 3s\n",
             encoding="utf-8",
