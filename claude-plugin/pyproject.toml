@@ -5,9 +5,9 @@
 # publishing and commits it to the claude-plugin-release branch (see architecture/distribution.md).
 [project]
 name = "docker-mcp-server-claude-plugin"
-version = "2.2.7"
+version = "2.2.8"
 requires-python = ">=3.14"
-dependencies = ["docker-mcp-server==2.2.7"]
+dependencies = ["docker-mcp-server==2.2.8"]
 
 [tool.uv]
 package = false
