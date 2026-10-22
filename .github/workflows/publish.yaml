@@ -25,6 +25,16 @@ name: Release
 # (`skip-existing` on PyPI, re-pushed image tags, `--clobber` on the .mcpb, duplicate-tolerant
 # registry publish).
 #
+# Who checks what.  `verify` is the audit: it checks the end state of every channel, independently of
+# the jobs that published them, so it repeats checks other jobs have made rather than trusting them.
+# A publishing job waits, before it reports success, until what it published is readable, but only
+# where both hold: the channel serves an upload some time after the upload returns, and a later job
+# in this pipeline reads it.  Today that is PyPI alone, whose JSON API and package index are cached
+# separately at each CDN location; image pushes, release assets and the registry publish are
+# readable when the call returns.  A job that reads PyPI also waits briefly first, since its runner
+# may reach a CDN location still holding an older copy than the one the pypi job saw.  The waits
+# are in scripts/claude_plugin_release.py (`wait-pypi`), and log which CDN location answered.
+#
 # Two releases published minutes apart run in parallel (per-tag concurrency groups); the only
 # shared mutable state is the Docker Hub description (last-writer-wins, identical content) —
 # acceptable. cancel-in-progress is off so a re-run can never kill a half-done publish.
@@ -159,8 +169,8 @@ jobs:
     # trusted publisher on PyPI must name THIS workflow file (publish.yaml); see the header.
     name: Build and publish to PyPI
     runs-on: ubuntu-latest
-    # An sdist and wheel build, then one upload.
-    timeout-minutes: 15
+    # An sdist and wheel build, one upload, then up to ten minutes waiting for PyPI to serve it.
+    timeout-minutes: 25
     needs: [preflight]
     permissions:
       contents: read
@@ -218,6 +228,27 @@ jobs:
           # wrong version: preflight pins tag == pyproject version, and verify independently
           # confirms the version exists on PyPI.
           skip-existing: true
+
+      - name: Check out the workflow's own commit, for the release script
+        # Like the Claude plugin jobs, so a re-run of an older tag still has the wait below.
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: workflow-src
+
+      - name: Wait until PyPI serves the release
+        # The jobs after this one install from PyPI, and PyPI serves an upload a little after
+        # accepting it: its JSON API and its package index (what uv and pip resolve from) are
+        # cached separately.  This job is done once both serve the release, and, when this run
+        # uploaded it, serve exactly the files built above.
+        env:
+          VERSION: ${{ needs.preflight.outputs.version }}
+          UPLOADED: ${{ steps.existing.outputs.uploaded }}
+        run: |
+          args=(wait-pypi --version "$VERSION")
+          if [ "$UPLOADED" = true ]; then
+            args+=(--expect-dist dist)
+          fi
+          python workflow-src/scripts/claude_plugin_release.py "${args[@]}"
 
   images:
     # Publishes the container images:
@@ -590,7 +621,8 @@ jobs:
 
   verify:
     # Confirms every channel converged on the released version, so a partial release can't pass
-    # silently. Each check retries briefly (5 x 15s) to absorb CDN/index lag.
+    # silently. Each check retries briefly to absorb CDN/index lag.  The pypi job has already
+    # waited for PyPI; the check here repeats it on purpose (see "Who checks what" above).
     name: Verify release convergence
     runs-on: ubuntu-latest
     # Short external checks, each retrying a few times.
@@ -614,18 +646,17 @@ jobs:
       DOCKERHUB_USER: ${{ secrets.DOCKERHUB_USER }}
       DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
     steps:
-      - name: Verify PyPI has the version
-        run: |
-          set -euo pipefail
-          for i in $(seq 1 5); do
-            if curl -fsS --max-time 30 "https://pypi.org/pypi/docker-mcp-server/${VERSION}/json" >/dev/null; then
-              echo "PyPI OK: docker-mcp-server ${VERSION}"; exit 0
-            fi
-            echo "::notice::PyPI does not serve ${VERSION} yet (attempt $i/5); waiting 15s"
-            sleep 15
-          done
-          echo "::error::PyPI never served docker-mcp-server ${VERSION}"
-          exit 1
+      - name: Check out the workflow's own commit, for the release script
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python environment
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+
+      - name: Verify PyPI serves the version, on its JSON API and its package index
+        # The index is what uv and pip install from; the JSON API is what other checks read.
+        run: python scripts/claude_plugin_release.py wait-pypi --version "$VERSION" --timeout 120
 
       - name: Verify no newer version is on PyPI
         # The images job moves :latest to this release, so a re-run of a superseded release points
