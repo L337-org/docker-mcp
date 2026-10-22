@@ -252,7 +252,10 @@ def _wait_service_snippet() -> str:
 
 
 def _create_service(cleanup, name: str, *extra: str) -> None:
-    result = _docker("service", "create", "-d", "--name", name, "--label", _TEST_LABEL, *extra, _IMAGE, "sleep", "3600")
+    # --init because `sleep` as PID 1 ignores SIGTERM, so without an init every update, rollback and
+    # removal waits out the stop grace period before the task is killed.
+    args = ["service", "create", "-d", "--init", "--name", name, "--label", _TEST_LABEL, *extra, _IMAGE]
+    result = _docker(*args, "sleep", "3600")
     assert result.returncode == 0, result.stderr.decode(errors="replace")
     cleanup["service"].append(name)
 
@@ -289,6 +292,8 @@ def test_wait_service_matches_tasks_of_a_service_with_many_options_set(cleanup):
 
     A partial restart policy, a stop grace period at its default, limits, a constraint and a
     healthcheck each make the two documents differ; none may stop the tasks counting as current.
+    The healthcheck runs every second because a task counts as running only once it has passed,
+    and at the default 30 s interval the first check is half a minute away.
     """
     network = _docker("network", "create", "-d", "overlay", "--label", _TEST_LABEL, "sktest-optsnet")
     assert network.returncode == 0, network.stderr.decode(errors="replace")
@@ -296,7 +301,7 @@ def test_wait_service_matches_tasks_of_a_service_with_many_options_set(cleanup):
     _create_service(
         cleanup, "sktest-opts", "--replicas", "1", "--restart-condition", "on-failure",
         "--stop-grace-period", "10s", "--limit-memory", "64m", "--constraint", "node.role==manager",
-        "--health-cmd", "true", "--env", "A=1", "--mount", "type=tmpfs,target=/t",
+        "--health-cmd", "true", "--health-interval", "1s", "--env", "A=1", "--mount", "type=tmpfs,target=/t",
         "--network", "sktest-optsnet", "--log-driver", "json-file", "--log-opt", "max-size=1m",
     )  # fmt: skip
     ran = _run_shell(f"{_wait_service_snippet()}\nwait_service sktest-opts 90")
