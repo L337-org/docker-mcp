@@ -29,11 +29,12 @@ name: Release
 # the jobs that published them, so it repeats checks other jobs have made rather than trusting them.
 # A publishing job waits, before it reports success, until what it published is readable, but only
 # where both hold: the channel serves an upload some time after the upload returns, and a later job
-# in this pipeline reads it.  The steps that run `wait-pypi` are the ones that wait: PyPI's JSON API
-# and package index are cached separately at each CDN location.  A job that reads PyPI also waits
-# first, since its runner may reach a CDN location still holding an older copy than the one the
-# pypi job saw.  The waits are in scripts/claude_plugin_release.py, and log which CDN location
-# answered.
+# in this pipeline reads it.  The steps that run `wait-pypi` are the ones that wait: PyPI's CDN keeps
+# separate copies of its JSON API and of its package index at each location, and of the index for
+# each set of request headers.  A job that reads PyPI also waits first, since its runner may reach a
+# CDN location still holding an older copy than the one the pypi job saw.  The waits are in
+# scripts/claude_plugin_release.py; they ask uv itself to resolve the release, since only uv's own
+# request is sure to get the copy uv will, and log what uv and the CDN said.
 #
 # Two releases published minutes apart run in parallel (per-tag concurrency groups); the only
 # shared mutable state is the Docker Hub description (last-writer-wins, identical content) —
@@ -238,9 +239,9 @@ jobs:
 
       - name: Wait until PyPI serves the release
         # The jobs after this one install from PyPI, and PyPI serves an upload a little after
-        # accepting it: its JSON API and its package index (what uv and pip resolve from) are
-        # cached separately.  This job is done once both serve the release, and, when this run
-        # uploaded it, serve exactly the files built above.
+        # accepting it.  This job is done once PyPI's JSON API serves the release and uv can resolve
+        # it from the index, and, when this run uploaded it, PyPI lists exactly the files built
+        # above.  uv is the one set up above for the build.
         env:
           VERSION: ${{ needs.preflight.outputs.version }}
           UPLOADED: ${{ steps.existing.outputs.uploaded }}
@@ -655,8 +656,15 @@ jobs:
         with:
           python-version: "3.14"
 
-      - name: Verify PyPI serves the version, on its JSON API and its package index
-        # The index is what uv and pip install from; the JSON API is what other checks read.
+      - name: Set up uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.11.21"
+          enable-cache: false
+
+      - name: Verify PyPI serves the version, on its JSON API and to uv
+        # uv resolving it from the index is what installing needs; the JSON API is what other checks
+        # read.
         run: python scripts/claude_plugin_release.py wait-pypi --version "$VERSION" --timeout 120
 
       - name: Verify no newer version is on PyPI
