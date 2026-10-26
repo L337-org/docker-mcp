@@ -4,6 +4,10 @@
 
 import time
 
+from pathlib import Path
+
+from docker.errors import DockerException
+
 from docker_mcp.exceptions import RemoteFailureError, ToolInputError
 from docker_mcp.server import tool
 from docker_mcp.tools._utils import host_read_path
@@ -12,6 +16,23 @@ from docker_mcp.tools.system import _get_client
 # Ceiling on reading an upgrade's progress stream. An upgrade pulls the new version from its registry,
 # so it is sized like an image pull rather than a query.
 _UPGRADE_TIMEOUT_SECONDS = 600.0
+
+
+def _data_dir_has(path: Path, entry: str) -> bool:
+    """Whether a plugin data directory holds `entry` in the shape the daemon needs.
+
+    `rootfs` has to be a directory: a regular file of that name would pass a bare existence check
+    and leave the caller with the daemon's opaque rejection instead of this module's message.
+
+    Args:
+        path: the plugin data directory being validated
+        entry: "config.json" or "rootfs"
+
+    Returns:
+        bool: True when the entry is present and of the right kind
+    """
+    target = path / entry
+    return target.is_dir() if entry == "rootfs" else target.is_file()
 
 
 @tool()
@@ -81,13 +102,12 @@ def plugin_create(  # noqa: DOC101,DOC103,DOC501,DOC503
     Create a local plugin from a rootfs directory on the server host, without a registry.
 
     This is the plugin-author path - `docker plugin create`, not `docker plugin install`: it uploads
-    a directory you already built, so nothing is pulled and no privileges are granted at this point.
-    Use `plugin_install` for a plugin that lives in a registry. `plugin_data_dir` is read on the
-    machine running this server (not on the target daemon's host, and not in the daemon's network
-    namespace) and must hold a `config.json` manifest beside a `rootfs` directory; the whole tree is
-    tarred and sent to the daemon, so keep it to the plugin's own files. The endpoint has no enable
-    option - enabling is a separate call - so the new plugin arrives **disabled**: `plugin_configure`
-    any settings it declares, then `plugin_enable` it. A name with no tag becomes `:latest`.
+    a directory you already built, so nothing is pulled. Use `plugin_install` for a plugin that lives
+    in a registry. The directory is tarred whole and sent to the daemon, so keep it to the plugin's
+    own files. Creating grants nothing, but `plugin_enable` then grants every mount, device,
+    capability and host network its `config.json` asks for, with no privilege prompt and no
+    equivalent of `plugin_install(dry_run=True)` - so on a directory you did not write yourself,
+    read `Config` from `plugin_inspect` first. Order is `plugin_configure`, then `plugin_enable`.
 
     Args:
         name: Plugin name to create, e.g. "myorg/myplugin:v1"; the `:latest` tag is optional and is the default
@@ -101,22 +121,39 @@ def plugin_create(  # noqa: DOC101,DOC103,DOC501,DOC503
     """
     # Same host-filesystem treatment as `image_import(from_file=...)`: this resolves the path and, in
     # a container, turns a missing file into the "mount this directory" message rather than an ENOENT.
-    path = host_read_path(plugin_data_dir)
+    # Unlike those tools this one has no in-band byte form, so the message must not offer one.
+    path = host_read_path(plugin_data_dir, in_band_alternative=False)
     if not path.is_dir():
         raise ToolInputError(f"No such plugin data directory: {path}.")
     # docker-py's `create_plugin` tars whatever `docker.utils.build.walk` finds and lets the daemon
     # reject the result, so an empty or wrong directory becomes an opaque daemon error. The daemon
     # needs both of these, so check them here where the message can name what is missing.
-    missing = [entry for entry in ("config.json", "rootfs") if not (path / entry).exists()]
+    missing = [entry for entry in ("config.json", "rootfs") if not _data_dir_has(path, entry)]
     if missing:
         raise ToolInputError(
             f"{path} is not a plugin data directory: it has no {' and no '.join(missing)}. "
             "A plugin data directory holds the `config.json` manifest beside the `rootfs` directory "
             "the plugin runs from."
         )
-    # `gzip` is docker-py's spelling of the CLI's `--compress`; the parameter follows the CLI, which
-    # is the vocabulary the tool surface is anchored to.
-    return _get_client(host).plugins.create(name, str(path), gzip=compress).attrs
+    try:
+        # `gzip` is docker-py's spelling of the CLI's `--compress`; the parameter follows the CLI,
+        # which is the vocabulary the tool surface is anchored to.
+        return _get_client(host).plugins.create(name, str(path), gzip=compress).attrs
+    except DockerException:
+        # `APIError` is an `OSError` as well as a `DockerException`, so it would be swallowed by the
+        # clause below; let every daemon-reported failure travel as itself.
+        raise
+    except OSError as exc:
+        # Building the tar reads the tree as *this* process's user: `walk` calls `os.listdir`, which
+        # raises `PermissionError` on an unreadable directory, and `create_archive` raises a bare
+        # `OSError("Can not read file in context: ...")` on an unreadable file. Neither is a
+        # `DockerException`, and `server.py`'s `_LIBRARY_FAILURES` translates no `OSError`, so
+        # without this the message naming the file is withheld and the caller sees only "Error
+        # executing tool". Not a corner case: a `rootfs` laid down by `docker export` as root is
+        # unreadable to a server running as an ordinary user.
+        raise ToolInputError(
+            f"Could not read the plugin data directory {path} as the user running this server: {exc}"
+        ) from exc
 
 
 @tool()

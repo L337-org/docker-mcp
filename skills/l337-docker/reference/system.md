@@ -188,8 +188,11 @@ docker plugin create <name> <plugin-data-dir>             # from a local config.
   and compare it with the installed one (`docker plugin inspect <plugin>`) before upgrading.
 - `disable` fails while a volume or network still uses the plugin - find and remove those first.
 - `create` is the plugin-*author* path, not an install: it uploads a directory holding a
-  `config.json` manifest beside the `rootfs` the plugin runs from, pulls nothing, and grants no
-  privileges. The new plugin arrives disabled, so `set` then `enable` as above.
+  `config.json` manifest beside the `rootfs` the plugin runs from, and pulls nothing. The new plugin
+  arrives disabled, so `set` then `enable` as above - but note **`enable` grants everything the
+  uploaded `config.json` asks for** (mounts, devices, capabilities, host network) with no privilege
+  prompt and no equivalent of the registry recipe below, so on a directory you did not build
+  yourself, read its `config.json` first.
 
 ### Reading a plugin's privileges before installing it
 

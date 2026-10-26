@@ -76,9 +76,10 @@ def plugin_data_dir(tmp_path):
     return tmp_path
 
 
-def test_plugin_create_installs_a_local_plugin_disabled_and_pulls_nothing(plugin_data_dir):
-    # The point of `create` over `install`: no registry is consulted and no privilege is granted, so
-    # the new plugin must arrive disabled rather than running with whatever its config asked for.
+def test_plugin_create_installs_a_local_plugin_disabled(plugin_data_dir):
+    # The property worth pinning is the one a caller acts on: the plugin arrives disabled rather than
+    # running with whatever its config asked for. (That no registry is consulted is not asserted
+    # here - nothing in this process can observe it.)
     if any(plugin["Name"] == _LOCAL for plugin in plugin_list()):
         plugin_remove(_LOCAL, force=True)
 

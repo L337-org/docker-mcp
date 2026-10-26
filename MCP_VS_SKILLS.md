@@ -2,7 +2,7 @@
 
 This repo ships two ways to give an AI agent control of Docker:
 
-- **`docker-mcp-server`** - an MCP server exposing 154 typed tools, 30 prompts and a set of
+- **`docker-mcp-server`** - an MCP server exposing 155 typed tools, 30 prompts and a set of
   resources, over the Docker SDK plus the docker CLI.
 - **`l337-docker`** - a Claude Code [agent skill](skills/l337-docker/) that drives the `docker`
   CLI directly, with no server process at all. Download it from the
@@ -35,7 +35,7 @@ We have no commercial interest in either. Both are MIT-licensed and free.
 | **Other prerequisites** | Python ≥3.14 + uv, or a container runtime | None |
 | **Works with** | Any MCP client: Claude Code, Claude Desktop, Cursor, Zed, Continue, ... | Claude Code and GitHub Copilot. Not Claude's own apps (claude.ai, Desktop), where skills run in a hosted sandbox that can't reach your Docker |
 | **Ships executable code** | Yes - a Python package you run | **No** - markdown only |
-| **Choosing the right operation** | 154 names anchored to the CLI's own structure, and every description names a sibling to prefer or avoid | A router table points at one domain file, which carries prose discriminators and worked examples |
+| **Choosing the right operation** | 155 names anchored to the CLI's own structure, and every description names a sibling to prefer or avoid | A router table points at one domain file, which carries prose discriminators and worked examples |
 | **Getting the arguments right** | Every argument typed, 80% with an explicit default, **validated before the call runs** | The model composes a shell string; wrong flags surface only when Docker rejects them, at execution |
 | **Searching the documentation** | Names are a complete always-in-context index, and `tool_list` answers structured queries (by domain, category or parameter) with a definitive negative; full descriptions are still fetched one at a time, through whatever search the client implements | The whole corpus is files on disk: greppable with standard tools, and readable end to end |
 | **Output** | Structured JSON, typed; bounded by default arguments (log tails, list limits), with hard memory caps behind them that set a `truncated` flag | Raw text/NDJSON the model must parse; bounding is a written rule |
@@ -47,7 +47,7 @@ We have no commercial interest in either. Both are MIT-licensed and free.
 | **Runtime auditability** | `tool-catalog` resource reports exactly what is registered | None |
 | **Updates** | Version-pinned via `uvx`/image tag | Manual re-download; goes stale silently |
 | **Trim the surface to fit the job** | `DOCKER_MCP_SERVER_DISABLE` drops whole domains; read-only / no-destructive drop categories - **and the router and prompts shrink with them** | Not really - the router is one file, though you can delete reference files you'll never use |
-| **Token cost, eager client, idle** | **~46,700** at full surface; **~19,200** trimmed to a triage-shaped config. Add up to ~2,100 for a client that also loads prompts, resources and resource templates | **~140** |
+| **Token cost, eager client, idle** | **~47,100** at full surface; **~19,200** trimmed to a triage-shaped config. Add up to ~2,100 for a client that also loads prompts, resources and resource templates | **~140** |
 | **Token cost, lazy client, idle** | ~1,000 full; ~400 trimmed | ~140 |
 | **Token cost, typical task** | **~1,300-2,600** (lazy) | ~7,100-10,200 |
 | **Failure mode** | Server can fail to start / resolve deps; a wrong argument is rejected before anything runs | Cannot fail to "start"; a wrong command usually errors, but some wrong values exit 0 with a plausible result (see below) |
@@ -86,7 +86,7 @@ need a proper evaluation harness. Treat it accordingly.
 It splits into two jobs that do not come out the same way.
 
 **Picking the operation is closer than you would expect.** The server has the more systematic
-machinery: all 154 of its descriptions name at least one sibling tool by exact name, 2.1 on
+machinery: all 155 of its descriptions name at least one sibling tool by exact name, 2.1 on
 average, saying which to prefer and when. On a lazy client that text is fetched at the exact moment
 of choice, usually alongside the siblings it names, so the disambiguation arrives when it is
 needed. The skill answers with a router table pointing at one domain file, plus 52 explicit
@@ -165,7 +165,7 @@ finding.
 An MCP client chooses how much of a server it puts in front of the model, and the two strategies
 differ by orders of magnitude.
 
-**Eager loading** sends every tool definition at the start of the conversation: all 154 names,
+**Eager loading** sends every tool definition at the start of the conversation: all 155 names,
 descriptions and JSON schemas, present whether or not Docker ever comes up. **Lazy loading**
 advertises only the tool *names* plus the server's `instructions` string, and fetches a tool's full
 definition at the moment the model reaches for it. Claude Code is a lazy client. Several others,
@@ -199,7 +199,7 @@ The range between the loosest and tightest usable configuration is wide:
 
 | Config | Tools | Eager idle | Lazy idle |
 |---|---|---|---|
-| Full whack: everything enabled | 154 | 46,687 | 976 |
+| Full whack: everything enabled | 155 | 47,100 | 979 |
 | Read-only, all domains | 69 | 18,702 | 692 |
 | **Triage config** (below) | **63** | **19,219** | **417** |
 | Core only: `containers` + `system` | 37 | 11,074 | 305 |
@@ -209,8 +209,8 @@ The eager column is **tools plus the router**: what every eager client pays. Pro
 resource templates are counted separately, because each is fetched by a separate call and only by a
 client that supports it - see [Idle](#idle---loaded-but-not-used).
 
-**On an eager client that spread is 4,722 to 46,687 tokens, roughly 10x**, which makes trimming
-the single biggest lever available to you. **On a lazy client the same spread is 235 to 976: the
+**On an eager client that spread is 4,722 to 47,100 tokens, roughly 10x**, which makes trimming
+the single biggest lever available to you. **On a lazy client the same spread is 235 to 979: the
 whole saving is around 740 tokens**, so there is little to gain from trimming for footprint alone.
 On a lazy client, configure the surface for safety or clarity and treat any context saving as
 incidental.
@@ -235,10 +235,10 @@ config and restart, whereas the skill always has every recipe available at no id
 
 | | MCP (eager, full) | MCP (eager, triage config) | MCP (lazy, full) | Skill |
 |---|---|---|---|---|
-| Always in context | all 154 tool defs + router | 63 tool defs + router | router + tool names | name + description |
-| | 46,247 (tools) | 19,007 (tools) | 440 (router) | 136 |
-| | 440 (router) | 212 (router) | 536 (names) | |
-| **Floor - every eager client** | **~46,700 tok** | **~19,200 tok** | **~1,000 tok** | **~140 tok** |
+| Always in context | all 155 tool defs + router | 63 tool defs + router | router + tool names | name + description |
+| | 46,660 (tools) | 19,007 (tools) | 440 (router) | 136 |
+| | 440 (router) | 212 (router) | 539 (names) | |
+| **Floor - every eager client** | **~47,100 tok** | **~19,200 tok** | **~1,000 tok** | **~140 tok** |
 | *plus, for a client that loads them:* | | | | |
 | prompts | +1,113 (30) | +596 (16) | - | - |
 | resources | +405 (3) | +405 (3) | - | - |
@@ -253,7 +253,7 @@ and `system` kept, the other twelve domains dropped.
 calls - `tools/list`, `prompts/list`, `resources/list` and `resources/templates/list` - and a
 client pays only for the ones it implements. Every eager client fetches tools, so that plus the
 router is the floor; the other three are conditional. At full surface they come to ~2,100 tokens,
-4% of that configuration's 46,700-token floor. They do not shrink the way the tools do when you
+4% of that configuration's 47,100-token floor. They do not shrink the way the tools do when you
 trim, though - resources and resource templates do not shrink at all - so in the tightest
 configuration in the table above (*Floor: core, read-only*) they are ~1,440 tokens against a
 4,722-token floor, or **31%**. That is why, on a trimmed server, your client's feature support
@@ -267,7 +267,7 @@ its own attachment picker. So treat the conditional rows as an upper bound on wh
 charged for. Settling it needs an instrumented client, not more arithmetic.
 
 This is still the skill's strongest result. On a client that eagerly loads every tool, the server
-at full surface costs roughly **46,700 tokens of every conversation** whether or not Docker comes
+at full surface costs roughly **47,100 tokens of every conversation** whether or not Docker comes
 up - around a third of a 128k window before you have said anything. Trimming to the triage config
 cuts that to ~19,200 - a large and genuine saving, though still around 140 times what the skill
 costs to sit installed.
@@ -279,9 +279,9 @@ narrows to something most people would not notice either way.
 
 | Task | MCP (lazy, full) | MCP (lazy, triage cfg) | MCP (eager, full) | MCP (eager, triage cfg) | Skill |
 |---|---|---|---|---|---|
-| List containers (one-off) | 1,344 | **785** | 46,687 | 19,219 | 7,937 |
-| Triage a crashed container | 2,557 | **1,998** | 46,687 | 19,219 | 10,223 |
-| Bring up a Compose project | 2,376 | n/a¹ | 46,687 | n/a¹ | 7,079 |
+| List containers (one-off) | 1,344 | **785** | 47,100 | 19,219 | 7,937 |
+| Triage a crashed container | 2,557 | **1,998** | 47,100 | 19,219 | 10,223 |
+| Bring up a Compose project | 2,376 | n/a¹ | 47,100 | n/a¹ | 7,079 |
 
 ¹ Compose is disabled in the triage config (`containers`, `images`, `networks`, `volumes`,
 `system` only), which is the point: a trimmed surface is trimmed for a purpose, and a task outside
@@ -350,7 +350,7 @@ workflow file at once; in practice a task touches one or two.
 - Cheaper per task on a lazy client.
 - **The surface is configurable.** Disable the domains you do not use and the tools, prompts *and*
   router shrink together - a triage-shaped config is 63 tools and ~19,200 eager tokens instead of
-  154 and ~46,700. The skill has no equivalent lever beyond deleting reference files by hand.
+  155 and ~47,100. The skill has no equivalent lever beyond deleting reference files by hand.
 - Auditable at runtime - one resource reports exactly which tools are registered under the current
   configuration, so you can confirm what a given config actually exposes rather than inferring it.
 
@@ -375,7 +375,7 @@ Three situations where the answer is clear, and they are mostly about the client
 Docker work:
 
 - **Occasional Docker use from an agent with a shell whose MCP client loads eagerly.** Use the
-  skill. Paying ~46,700 tokens of every conversation for a capability you reach for once a
+  skill. Paying ~47,100 tokens of every conversation for a capability you reach for once a
   fortnight is a bad trade, and ~140 is not. This is the skill's strongest case by a distance, and
   it is worth being clear that **it is a case created by the client, not by the skill being
   better**. As the client moves to lazy loading, the idle cost drops to ~1,000 and this narrows
@@ -397,7 +397,7 @@ Docker work:
 # Detailed mapping
 
 **Everything from here on is written from the skill's point of view.** It takes the MCP server's
-surface as the reference: 154 tools, 31 prompts (30 of them registered on a single-host server, as
+surface as the reference: 155 tools, 31 prompts (30 of them registered on a single-host server, as
 [Prompts](#prompts-31-defined-30-registered-on-a-single-host-server) explains, which is why the
 measured figures above say 30) and the resource endpoints, in the server's own categories, and for
 each one records what the skill does instead. It is a coverage record for the skill, not a

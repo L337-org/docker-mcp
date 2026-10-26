@@ -155,12 +155,15 @@ def _host_backed(path: Path) -> bool:
     return best_len >= 0 and best_fstype not in _PSEUDO_FSTYPES
 
 
-def _unmapped_path_message(path: Path, *, for_write: bool) -> str:
+def _unmapped_path_message(path: Path, *, for_write: bool, in_band_alternative: bool = True) -> str:
     """Actionable error text telling the user how to bind-mount a host directory into the container.
 
     Args:
         path: the path that is not mounted
         for_write: whether the caller was writing, which changes the verb and the consequence
+        in_band_alternative: whether the calling tool has an in-band byte form to suggest instead.
+            False for a tool that reads a whole tree (`plugin_create`), where that advice would
+            point at something the tool does not have.
 
     Returns:
         str: the error text, naming the bind mount to add
@@ -173,12 +176,14 @@ def _unmapped_path_message(path: Path, *, for_write: bool) -> str:
     else:
         verb, consequence = "read from", "no such path is visible inside the container"
     parent = path.parent
+    in_band = (
+        " Small payloads can use the in-band byte tools instead, which need no mount." if in_band_alternative else ""
+    )
     return (
         f"Cannot {verb} {path}: {consequence}. This docker-mcp-server is running in a container, so "
         f"host paths must be bind-mounted in. Add a mount for the directory to the `docker run` args "
         f"in your MCP client config - e.g. `-v {parent}:{parent}` (using the same path inside and out "
-        f"keeps host and container paths identical) - then retry. Small payloads can use the in-band "
-        f"byte tools instead, which need no mount."
+        f"keeps host and container paths identical) - then retry.{in_band}"
     )
 
 
@@ -202,7 +207,7 @@ def assert_host_writable(dest_path: str) -> None:
         raise ToolInputError(_unmapped_path_message(Path(dest_path).expanduser(), for_write=True))
 
 
-def host_read_path(file_path: str) -> Path:
+def host_read_path(file_path: str, *, in_band_alternative: bool = True) -> Path:
     """Resolve a host read path, enriching the "missing file" case with mount guidance in a container.
 
     Returns the expanded path unchanged on the host install, or when the file genuinely exists (it
@@ -212,6 +217,8 @@ def host_read_path(file_path: str) -> Path:
 
     Args:
         file_path: the path the caller supplied
+        in_band_alternative: whether this tool has an in-band byte form the message may suggest;
+            False where it does not, so the guidance names only the mount.
 
     Returns:
         Path: the expanded path
@@ -222,7 +229,7 @@ def host_read_path(file_path: str) -> Path:
     """
     path = Path(file_path).expanduser()
     if in_container() and not path.exists() and not _host_backed(path):
-        raise ToolInputError(_unmapped_path_message(path, for_write=False))
+        raise ToolInputError(_unmapped_path_message(path, for_write=False, in_band_alternative=in_band_alternative))
     return path
 
 

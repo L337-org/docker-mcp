@@ -1,6 +1,8 @@
+import re
 from unittest.mock import MagicMock, patch
 
 import pytest
+from docker.errors import APIError
 
 from docker_mcp.exceptions import RemoteFailureError, ToolInputError
 
@@ -129,25 +131,58 @@ def test_plugin_create_refuses_a_file_given_where_a_directory_is_required(tmp_pa
 
 
 @pytest.mark.parametrize(
-    ("present", "missing"),
+    ("present", "expected"),
     [
-        (("config.json",), "rootfs"),
-        (("rootfs",), "config.json"),
-        ((), "config.json"),
+        (("config.json",), "it has no rootfs."),
+        (("rootfs",), "it has no config.json."),
+        ((), "it has no config.json and no rootfs."),
     ],
 )
-def test_plugin_create_names_what_the_data_directory_is_missing(tmp_path, present, missing):
+def test_plugin_create_names_what_the_data_directory_is_missing(tmp_path, present, expected):
     # docker-py tars whatever it finds and lets the daemon reject it, so without this guard a wrong
-    # directory becomes an opaque daemon error instead of naming the file that is absent.
+    # directory becomes an opaque daemon error instead of naming the entry that is absent.
+    # Matched against the *variable* clause: the message's fixed second sentence names both entries,
+    # so a `match=` on a bare name would pass however wrongly `missing` was computed.
     for entry in present:
         if entry == "rootfs":
             (tmp_path / "rootfs").mkdir()
         else:
             (tmp_path / entry).write_text("{}")
     with _patch() as mock_client:
-        with pytest.raises(ToolInputError, match=missing):
+        with pytest.raises(ToolInputError, match=re.escape(expected)):
             plugin_create("myorg/myplugin:v1", str(tmp_path))
     mock_client.return_value.plugins.create.assert_not_called()
+
+
+def test_plugin_create_refuses_a_rootfs_that_is_a_regular_file(tmp_path):
+    # `rootfs` has to be a directory; a file of that name would pass a bare existence check.
+    (tmp_path / "config.json").write_text("{}")
+    (tmp_path / "rootfs").write_text("not a directory")
+    with _patch() as mock_client:
+        with pytest.raises(ToolInputError, match=re.escape("it has no rootfs.")):
+            plugin_create("myorg/myplugin:v1", str(tmp_path))
+    mock_client.return_value.plugins.create.assert_not_called()
+
+
+def test_plugin_create_turns_an_unreadable_tree_into_an_actionable_error(tmp_path):
+    # Building the tar reads the tree as this process's user, and neither `walk`'s `PermissionError`
+    # nor `create_archive`'s bare `OSError` is a `DockerException`, so `_LIBRARY_FAILURES` would
+    # translate neither and the caller would lose the message naming the file.
+    data_dir = _plugin_data_dir(tmp_path)
+    with _patch() as mock_client:
+        mock_client.return_value.plugins.create.side_effect = PermissionError(13, "Permission denied")
+        with pytest.raises(ToolInputError, match="Could not read the plugin data directory"):
+            plugin_create("myorg/myplugin:v1", str(data_dir))
+
+
+def test_plugin_create_lets_a_daemon_failure_travel_as_itself(tmp_path):
+    # `APIError` is an `OSError` as well as a `DockerException`, so the guard above must not catch
+    # it and relabel a daemon refusal as a bad argument.
+    data_dir = _plugin_data_dir(tmp_path)
+    with _patch() as mock_client:
+        mock_client.return_value.plugins.create.side_effect = APIError("plugin already exists")
+        with pytest.raises(APIError):
+            plugin_create("myorg/myplugin:v1", str(data_dir))
 
 
 def test_plugin_list():
