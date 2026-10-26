@@ -56,7 +56,7 @@
     "docker-mcp-server": {
       "command": "uvx",
       "args": [
-        "docker-mcp-server==2.2.8"
+        "docker-mcp-server==2.2.9"
       ],
       "env": {
         "DOCKER_MCP_SERVER_HOSTS": "${user_config.docker_hosts}",
