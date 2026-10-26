@@ -156,6 +156,7 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     # plugins
     "plugin_inspect": ToolCategory.READ_ONLY,
     "plugin_install": ToolCategory.MUTATING,
+    "plugin_create": ToolCategory.MUTATING,
     "plugin_list": ToolCategory.READ_ONLY,
     "plugin_configure": ToolCategory.MUTATING,
     "plugin_disable": ToolCategory.MUTATING,

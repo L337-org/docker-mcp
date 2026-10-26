@@ -500,9 +500,9 @@ All ✓: `docker scout cves/quickview/compare/recommendations/sbom`.
 
 All ✓: `docker context create/ls/inspect/rm/use`.
 
-### plugins (8) - `reference/system.md`
+### plugins (9) - `reference/system.md`
 
-All ✓: `docker plugin install/ls/inspect/enable/disable/set/upgrade/rm`.
+All ✓: `docker plugin create/install/ls/inspect/enable/disable/set/upgrade/rm`.
 `plugin_configure` -> `docker plugin set`.
 `plugin_install` / `plugin_upgrade` with `dry_run` ≈ no `docker plugin` subcommand prints the
 privileges, and `docker plugin inspect` needs the plugin installed first; the skill reads the

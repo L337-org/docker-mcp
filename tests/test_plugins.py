@@ -6,6 +6,7 @@ from docker_mcp.exceptions import RemoteFailureError, ToolInputError
 
 from docker_mcp.tools.plugins import (
     plugin_configure,
+    plugin_create,
     plugin_disable,
     plugin_enable,
     plugin_inspect,
@@ -74,6 +75,79 @@ def test_plugin_upgrade_dry_run_asks_about_the_reference_the_upgrade_would_pull(
         ("vieux/sshfs:next",),
     ]
     plugin.upgrade.assert_not_called()
+
+
+def _plugin_data_dir(tmp_path):
+    """Build a minimal plugin data directory: the `config.json` and `rootfs` the daemon requires.
+
+    Args:
+        tmp_path: pytest's per-test temporary directory.
+
+    Returns:
+        Path: the directory to pass as `plugin_data_dir`.
+    """
+    (tmp_path / "config.json").write_text('{"description": "test"}')
+    (tmp_path / "rootfs" / "bin").mkdir(parents=True)
+    (tmp_path / "rootfs" / "bin" / "entry").write_text("#!/bin/sh\n")
+    return tmp_path
+
+
+def test_plugin_create_uploads_the_directory_and_returns_the_new_plugins_attrs(tmp_path):
+    data_dir = _plugin_data_dir(tmp_path)
+    plugin = MagicMock()
+    plugin.attrs = {"Id": "p1", "Name": "myorg/myplugin:v1", "Enabled": False}
+    with _patch() as mock_client:
+        mock_client.return_value.plugins.create.return_value = plugin
+        result = plugin_create("myorg/myplugin:v1", str(data_dir))
+    assert result == {"Id": "p1", "Name": "myorg/myplugin:v1", "Enabled": False}
+    mock_client.return_value.plugins.create.assert_called_once_with("myorg/myplugin:v1", str(data_dir), gzip=False)
+
+
+def test_plugin_create_maps_compress_onto_docker_pys_gzip(tmp_path):
+    # The parameter follows the CLI's `--compress`; docker-py spells the same thing `gzip`, so a
+    # rename on either side has to keep meeting here.
+    data_dir = _plugin_data_dir(tmp_path)
+    with _patch() as mock_client:
+        plugin_create("myorg/myplugin:v1", str(data_dir), compress=True)
+    assert mock_client.return_value.plugins.create.call_args.kwargs == {"gzip": True}
+
+
+def test_plugin_create_refuses_a_directory_that_does_not_exist(tmp_path):
+    with _patch() as mock_client:
+        with pytest.raises(ToolInputError, match="No such plugin data directory"):
+            plugin_create("myorg/myplugin:v1", str(tmp_path / "absent"))
+    mock_client.return_value.plugins.create.assert_not_called()
+
+
+def test_plugin_create_refuses_a_file_given_where_a_directory_is_required(tmp_path):
+    not_a_dir = tmp_path / "config.json"
+    not_a_dir.write_text("{}")
+    with _patch() as mock_client:
+        with pytest.raises(ToolInputError, match="No such plugin data directory"):
+            plugin_create("myorg/myplugin:v1", str(not_a_dir))
+    mock_client.return_value.plugins.create.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("present", "missing"),
+    [
+        (("config.json",), "rootfs"),
+        (("rootfs",), "config.json"),
+        ((), "config.json"),
+    ],
+)
+def test_plugin_create_names_what_the_data_directory_is_missing(tmp_path, present, missing):
+    # docker-py tars whatever it finds and lets the daemon reject it, so without this guard a wrong
+    # directory becomes an opaque daemon error instead of naming the file that is absent.
+    for entry in present:
+        if entry == "rootfs":
+            (tmp_path / "rootfs").mkdir()
+        else:
+            (tmp_path / entry).write_text("{}")
+    with _patch() as mock_client:
+        with pytest.raises(ToolInputError, match=missing):
+            plugin_create("myorg/myplugin:v1", str(tmp_path))
+    mock_client.return_value.plugins.create.assert_not_called()
 
 
 def test_plugin_list():

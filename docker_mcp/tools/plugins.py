@@ -6,6 +6,7 @@ import time
 
 from docker_mcp.exceptions import RemoteFailureError, ToolInputError
 from docker_mcp.server import tool
+from docker_mcp.tools._utils import host_read_path
 from docker_mcp.tools.system import _get_client
 
 # Ceiling on reading an upgrade's progress stream. An upgrade pulls the new version from its registry,
@@ -67,6 +68,55 @@ def plugin_install(  # noqa: DOC101,DOC103
         # one, and the same call `PluginCollection.install` makes before granting the result.
         return {"remote": remote, "privileges": client.api.plugin_privileges(remote)}
     return client.plugins.install(remote, local_name=local_name).attrs
+
+
+@tool()
+def plugin_create(  # noqa: DOC101,DOC103,DOC501,DOC503
+    name: str,
+    plugin_data_dir: str,
+    compress: bool = False,
+    host: str | None = None,
+) -> dict:
+    """
+    Create a local plugin from a rootfs directory on the server host, without a registry.
+
+    This is the plugin-author path - `docker plugin create`, not `docker plugin install`: it uploads
+    a directory you already built, so nothing is pulled and no privileges are granted at this point.
+    Use `plugin_install` for a plugin that lives in a registry. `plugin_data_dir` is read on the
+    machine running this server (not on the target daemon's host, and not in the daemon's network
+    namespace) and must hold a `config.json` manifest beside a `rootfs` directory; the whole tree is
+    tarred and sent to the daemon, so keep it to the plugin's own files. The endpoint has no enable
+    option - enabling is a separate call - so the new plugin arrives **disabled**: `plugin_configure`
+    any settings it declares, then `plugin_enable` it. A name with no tag becomes `:latest`.
+
+    Args:
+        name: Plugin name to create, e.g. "myorg/myplugin:v1"; the `:latest` tag is optional and is the default
+            if omitted
+        plugin_data_dir: Directory on the server host holding the plugin's `config.json` and `rootfs`
+        compress: Gzip the uploaded tar (`docker plugin create --compress`); costs CPU, sends less over the wire
+
+    Returns:
+        dict: The created plugin's full document ({"Id", "Name", "Enabled", "Settings", "Config"}), as
+            `plugin_inspect` returns it; `Enabled` is false until `plugin_enable`
+    """
+    # Same host-filesystem treatment as `image_import(from_file=...)`: this resolves the path and, in
+    # a container, turns a missing file into the "mount this directory" message rather than an ENOENT.
+    path = host_read_path(plugin_data_dir)
+    if not path.is_dir():
+        raise ToolInputError(f"No such plugin data directory: {path}.")
+    # docker-py's `create_plugin` tars whatever `docker.utils.build.walk` finds and lets the daemon
+    # reject the result, so an empty or wrong directory becomes an opaque daemon error. The daemon
+    # needs both of these, so check them here where the message can name what is missing.
+    missing = [entry for entry in ("config.json", "rootfs") if not (path / entry).exists()]
+    if missing:
+        raise ToolInputError(
+            f"{path} is not a plugin data directory: it has no {' and no '.join(missing)}. "
+            "A plugin data directory holds the `config.json` manifest beside the `rootfs` directory "
+            "the plugin runs from."
+        )
+    # `gzip` is docker-py's spelling of the CLI's `--compress`; the parameter follows the CLI, which
+    # is the vocabulary the tool surface is anchored to.
+    return _get_client(host).plugins.create(name, str(path), gzip=compress).attrs
 
 
 @tool()

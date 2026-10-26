@@ -171,6 +171,7 @@ docker plugin enable --timeout 60 <plugin>                # a slow plugin; the d
 docker plugin disable <plugin>                            # must be unused
 docker plugin upgrade <plugin> [REMOTE]                   # must be disabled first
 docker plugin rm <plugin>
+docker plugin create <name> <plugin-data-dir>             # from a local config.json + rootfs, no registry
 ```
 
 - Installing a plugin **grants it privileges on the host** (mounts, network, devices, capabilities).
@@ -186,6 +187,9 @@ docker plugin rm <plugin>
 - **An upgrade can ask for new privileges.** Read the new version's list the same way, with its tag,
   and compare it with the installed one (`docker plugin inspect <plugin>`) before upgrading.
 - `disable` fails while a volume or network still uses the plugin - find and remove those first.
+- `create` is the plugin-*author* path, not an install: it uploads a directory holding a
+  `config.json` manifest beside the `rootfs` the plugin runs from, pulls nothing, and grants no
+  privileges. The new plugin arrives disabled, so `set` then `enable` as above.
 
 ### Reading a plugin's privileges before installing it
 
