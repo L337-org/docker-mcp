@@ -1,7 +1,7 @@
 {
   "name": "docker-mcp-server",
   "displayName": "Docker MCP Server",
-  "version": "2.2.8",
+  "version": "2.2.9",
   "description": "Manage Docker through the Docker SDK for Python and the docker CLI: containers, images, networks, volumes, Compose, Swarm, Buildx, Scout, and OCI registries, exposed as MCP tools.",
   "author": {
     "name": "Gavin Lucas",
