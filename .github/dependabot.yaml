@@ -24,3 +24,7 @@ updates:
       uv:
         patterns:
           - "*"
+      uv-security:
+        applies-to: security-updates
+        patterns:
+          - "*"
