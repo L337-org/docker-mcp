@@ -369,7 +369,7 @@ ssh = [
 
 [[package]]
 name = "docker-mcp-server"
-version = "2.2.8"
+version = "2.2.9"
 source = { editable = "." }
 dependencies = [
     { name = "docker", extra = ["ssh"] },
