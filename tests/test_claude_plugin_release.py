@@ -547,16 +547,23 @@ def test_a_rerun_checks_pypis_digests_without_a_build_to_compare(tmp_path, monke
 
 
 # --------------------------------------------------------------------------------------------
-# wait_for_pypi(): both of PyPI's views must serve the release before anything reads it
+# wait_for_pypi(): PyPI's JSON API must serve the release and uv must resolve it before anything reads it
 # --------------------------------------------------------------------------------------------
 
 # Shapes recorded from pypi.org for docker-mcp-server 2.2.8 on 2026-10-22: the JSON API's
-# `urls[].filename`/`digests.sha256`, the PEP 691 index page's `versions` and
-# `files[].filename`/`hashes.sha256` served as application/vnd.pypi.simple.v1+json, and the CDN
-# headers both carry.
+# `urls[].filename`/`digests.sha256`, and the CDN headers it carries.
 _WHL, _SDIST = "docker_mcp_server-1.0-py3-none-any.whl", "docker_mcp_server-1.0.tar.gz"
 _DIGESTS = {_WHL: "a" * 64, _SDIST: "b" * 64}
 _CDN = {"x-served-by": "cache-iad-1-IAD, cache-lcy-2-LCY", "x-cache": "MISS, HIT", "x-pypi-last-serial": "42"}
+_MISSING = (404, b"", dict(_CDN))
+# uv 0.11.21's own wording, captured from `uv pip compile --no-deps` against pypi.org on 2026-10-26.
+_RESOLVED = (True, "uv resolves docker-mcp-server==1.0: docker-mcp-server==1.0 Resolved 1 package in 254ms")
+_UNRESOLVED = (
+    False,
+    "uv does not resolve docker-mcp-server==1.0: 'uv pip compile ...' exited 1: error: No solution found when "
+    "resolving dependencies cause: Because there is no version of docker-mcp-server==1.0 and you require "
+    "docker-mcp-server==1.0, we can conclude that your requirements are unsatisfiable.",
+)
 
 
 def _api(files=_DIGESTS):
@@ -564,95 +571,88 @@ def _api(files=_DIGESTS):
     return 200, json.dumps({"urls": urls}).encode(), dict(_CDN)
 
 
-def _index(versions=("0.9", "1.0"), files=_DIGESTS, kind="application/vnd.pypi.simple.v1+json"):
-    page = {
-        "versions": list(versions),
-        "files": [{"filename": "docker_mcp_server-0.9.tar.gz", "hashes": {"sha256": "c" * 64}}]
-        + [{"filename": n, "hashes": {"sha256": d}} for n, d in files.items()],
-    }
-    return 200, json.dumps(page).encode(), {**_CDN, "content-type": kind}
-
-
-_STALE_INDEX = _index(versions=("0.9",), files={})
-_MISSING = (404, b"", dict(_CDN))
-
-
-def _serve(monkeypatch, api_answers, index_answers):
-    """Answer each read with the next scripted response; the last one repeats.  An exception in
-    the script is raised, as fetch raises on a failed request."""
-    answers = {"api": list(api_answers), "index": list(index_answers)}
+def _serve(monkeypatch, api_answers, uv_answers):
+    """Answer each JSON API read and each uv check with the next scripted answer; the last one
+    repeats.  An exception in the script is raised, as the real call would raise it."""
+    answers = {"api": list(api_answers), "uv": list(uv_answers)}
     sleeps = []
     clock = [0.0]
 
-    def fetch(method, url, *, headers, data=None):
-        view = "index" if url.startswith(release.PYPI_INDEX) else "api"
-        if view == "index":
-            assert headers["Accept"] == release.INDEX_ACCEPT
-        queue = answers[view]
+    def next_answer(kind):
+        queue = answers[kind]
         answer = queue.pop(0) if len(queue) > 1 else queue[0]
         if isinstance(answer, Exception):
             raise answer
         return answer
+
+    def fetch(method, url, *, headers, data=None):
+        assert url.startswith("https://pypi.org/pypi/"), url
+        return next_answer("api")
 
     def sleep(seconds):
         sleeps.append(seconds)
         clock[0] += seconds
 
     monkeypatch.setattr(release, "_fetch_once", fetch)
+    monkeypatch.setattr(release, "uv_resolves", lambda version: next_answer("uv"))
     monkeypatch.setattr(release.time, "sleep", sleep)
     monkeypatch.setattr(release.time, "monotonic", lambda: clock[0])
     return sleeps
 
 
-def test_a_release_both_views_serve_returns_at_once(monkeypatch, capsys):
-    sleeps = _serve(monkeypatch, [_api()], [_index()])
+def test_a_release_pypi_serves_and_uv_resolves_returns_at_once(monkeypatch, capsys):
+    sleeps = _serve(monkeypatch, [_api()], [_RESOLVED])
     assert release.wait_for_pypi("1.0", dict(_DIGESTS)) == _DIGESTS
     assert sleeps == []
-    assert "on both views (attempt 1)" in capsys.readouterr().out
+    assert "and uv resolves it (attempt 1)" in capsys.readouterr().out
 
 
-def test_a_stale_index_is_waited_out_and_each_attempt_names_the_cdn_location(monkeypatch, capsys):
-    """The JSON API serves the release while the index does not list it yet."""
-    sleeps = _serve(monkeypatch, [_api()], [_STALE_INDEX, _STALE_INDEX, _index()])
+def test_uv_not_resolving_the_release_is_waited_out_and_each_attempt_logged(monkeypatch, capsys):
+    """The JSON API serves the release while the copy of the index uv is served does not list it yet."""
+    sleeps = _serve(monkeypatch, [_api()], [_UNRESOLVED, _UNRESOLVED, _RESOLVED])
     assert release.wait_for_pypi("1.0", None, interval=10) == _DIGESTS
     assert sleeps == [10, 10]
     out = capsys.readouterr().out
-    assert "attempt 1: PyPI does not serve 1.0 on both views yet" in out
-    assert "does not list 1.0 (newest listed 0.9)" in out
+    assert "attempt 1: PyPI does not serve 1.0 on its JSON API and to uv yet" in out
+    assert "there is no version of docker-mcp-server==1.0" in out
     assert "x-served-by=cache-iad-1-IAD, cache-lcy-2-LCY; x-cache=MISS, HIT; x-pypi-last-serial=42" in out
-    assert "on both views (attempt 3)" in out
+    assert "and uv resolves it (attempt 3)" in out
 
 
-def test_a_release_with_only_some_files_listed_is_waited_out(monkeypatch):
-    sleeps = _serve(monkeypatch, [_api({_WHL: _DIGESTS[_WHL]}), _api()], [_index()])
+def test_uv_resolving_while_the_json_api_lacks_the_release_is_waited_out(monkeypatch):
+    sleeps = _serve(monkeypatch, [_MISSING, _api({_WHL: _DIGESTS[_WHL]}), _api()], [_RESOLVED])
     assert release.wait_for_pypi("1.0", None, interval=5) == _DIGESTS
-    assert sleeps == [5]
+    assert sleeps == [5, 5]
 
 
-def test_a_transient_failure_is_waited_out_and_its_error_kept(monkeypatch, capsys):
-    error = release._TransientHTTPError("GET https://pypi.org/simple/docker-mcp-server/ failed with HTTP 503: busy")
-    _serve(monkeypatch, [_api()], [error, _index()])
+def test_a_transient_json_api_failure_is_waited_out_and_its_error_kept(monkeypatch, capsys):
+    error = release._TransientHTTPError(
+        "GET https://pypi.org/pypi/docker-mcp-server/1.0/json failed with HTTP 503: busy"
+    )
+    _serve(monkeypatch, [error, _api()], [_RESOLVED])
     assert release.wait_for_pypi("1.0", None, interval=1) == _DIGESTS
-    assert "index: GET https://pypi.org/simple/docker-mcp-server/ failed with HTTP 503: busy" in capsys.readouterr().out
+    assert "JSON API: GET https://pypi.org/pypi/docker-mcp-server/1.0/json failed with HTTP 503: busy" in (
+        capsys.readouterr().out
+    )
 
 
 def test_a_failure_waiting_cannot_fix_fails_at_once(monkeypatch):
     error = release.ReleaseError("GET https://pypi.org/pypi/docker-mcp-server/1.0/json failed with HTTP 403: no")
-    sleeps = _serve(monkeypatch, [error], [_index()])
+    sleeps = _serve(monkeypatch, [error], [_RESOLVED])
     with pytest.raises(release.ReleaseError, match="HTTP 403"):
         release.wait_for_pypi("1.0", None)
     assert sleeps == []
 
 
-def test_the_pypi_reads_go_through_the_same_transport_checks_as_http(monkeypatch):
-    """A PyPI body cut short is caught by the transport's Content-Length check, as a GitHub one is,
-    and waited out rather than parsed."""
+def test_the_json_api_read_goes_through_the_same_transport_checks_as_http(monkeypatch):
+    """A body cut short is caught by the transport's Content-Length check, as a GitHub one is, and
+    waited out rather than parsed."""
 
     class Cut:
-        status, headers = 200, {"Content-Length": "100", "Content-Type": "application/vnd.pypi.simple.v1+json"}
+        status, headers = 200, {"Content-Length": "100", "Content-Type": "application/json"}
 
         def read(self, _limit):
-            return b'{"versions"'
+            return b'{"urls"'
 
         def __enter__(self):
             return self
@@ -661,45 +661,32 @@ def test_the_pypi_reads_go_through_the_same_transport_checks_as_http(monkeypatch
             return False
 
     monkeypatch.setattr(release.urllib.request, "urlopen", lambda request, timeout: Cut())
-    view = release.read_index("1.0")
+    view = release.read_json_api("1.0")
     assert view.files is None
-    assert "body cut short: 11 of 100 bytes" in view.summary
+    assert "body cut short: 7 of 100 bytes" in view.summary
 
 
-def test_a_pypi_body_that_is_not_json_is_a_release_error(monkeypatch):
-    _serve(monkeypatch, [(200, b"<html>", dict(_CDN))], [_index()])
+def test_a_json_api_body_that_is_not_json_is_a_release_error(monkeypatch):
+    _serve(monkeypatch, [(200, b"<html>", dict(_CDN))], [_RESOLVED])
     with pytest.raises(release.ReleaseError, match="not JSON"):
         release.wait_for_pypi("1.0", None)
 
 
-def test_giving_up_names_both_urls_and_what_each_last_said(monkeypatch):
-    _serve(monkeypatch, [_MISSING], [_STALE_INDEX])
+def test_giving_up_says_what_the_json_api_and_uv_last_said(monkeypatch):
+    _serve(monkeypatch, [_MISSING], [_UNRESOLVED])
     with pytest.raises(release.ReleaseError) as caught:
         release.wait_for_pypi("1.0", None, timeout=30, interval=10)
     message = str(caught.value)
-    assert "did not serve docker-mcp-server 1.0 on both its JSON API and its index within 30s (4 attempts)" in message
+    assert "did not serve docker-mcp-server 1.0 on its JSON API and to uv within 30s (4 attempts)" in message
     assert "JSON API https://pypi.org/pypi/docker-mcp-server/1.0/json: HTTP 404 [x-served-by=" in message
-    assert "index https://pypi.org/simple/docker-mcp-server/: does not list 1.0 (newest listed 0.9)" in message
-
-
-def test_views_disagreeing_about_a_file_fail_at_once(monkeypatch):
-    sleeps = _serve(monkeypatch, [_api()], [_index(files={**_DIGESTS, _SDIST: "d" * 64})])
-    with pytest.raises(release.ReleaseError, match="JSON API and its index disagree"):
-        release.wait_for_pypi("1.0", None)
-    assert sleeps == []
+    assert "there is no version of docker-mcp-server==1.0" in message
 
 
 def test_pypi_serving_other_files_than_were_uploaded_fails_at_once(monkeypatch):
-    sleeps = _serve(monkeypatch, [_api()], [_index()])
+    sleeps = _serve(monkeypatch, [_api()], [_UNRESOLVED])
     with pytest.raises(release.ReleaseError, match="PyPI is not serving what was uploaded"):
         release.wait_for_pypi("1.0", {**_DIGESTS, _WHL: "e" * 64})
     assert sleeps == []
-
-
-def test_an_index_answer_in_another_format_is_refused(monkeypatch):
-    _serve(monkeypatch, [_api()], [_index(kind="text/html")])
-    with pytest.raises(release.ReleaseError, match="answered with 'text/html', not the PEP 691 JSON"):
-        release.wait_for_pypi("1.0", None)
 
 
 def test_the_upload_is_read_from_the_build_output_and_must_be_complete(tmp_path):
@@ -712,13 +699,73 @@ def test_the_upload_is_read_from_the_build_output_and_must_be_complete(tmp_path)
     assert set(release.dist_digests(tmp_path, "1.0")) == {_WHL, _SDIST}
 
 
-def test_an_index_404_is_reported_as_one_and_waited_out(monkeypatch, capsys):
-    """PyPI answers a missing index page with 404 and text/plain (observed 2026-10-22), which must
-    read as "not there yet", not as a format the check cannot read."""
-    sleeps = _serve(monkeypatch, [_api()], [_MISSING, _index()])
-    assert release.wait_for_pypi("1.0", None, interval=1) == _DIGESTS
-    assert sleeps == [1]
-    assert "index https://pypi.org/simple/docker-mcp-server/: HTTP 404 [x-served-by=" in capsys.readouterr().out
+# --------------------------------------------------------------------------------------------
+# uv_resolves(): the index check is uv's own request, from an empty cache every time
+# --------------------------------------------------------------------------------------------
+
+
+@pytest.fixture
+def uv_calls(monkeypatch):
+    """Record each uv command and its environment, answering with the scripted output or error."""
+    calls: list[tuple[list[str], dict[str, str]]] = []
+    script: list = []
+
+    def run(argv, *, timeout, env=None, cwd=None):
+        calls.append((argv, env or {}))
+        answer = script.pop(0)
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    monkeypatch.setattr(release, "run", run)
+    monkeypatch.setattr(release.shutil, "which", lambda name, path=None: f"/usr/bin/{name}")
+    return calls, script
+
+
+def test_uv_resolves_asks_uv_for_exactly_the_release_from_pypi(uv_calls):
+    calls, script = uv_calls
+    script.append("docker-mcp-server==1.0\nResolved 1 package in 254ms\n")
+    resolved, note = release.uv_resolves("1.0")
+    assert resolved is True
+    assert "uv resolves docker-mcp-server==1.0" in note
+    [(argv, _)] = calls
+    assert argv[:3] == ["uv", "pip", "compile"]
+    assert "--no-deps" in argv
+    assert argv[argv.index("--default-index") + 1] == release.PYPI_INDEX
+
+
+def test_uv_resolves_starts_from_an_empty_cache_every_time(uv_calls, tmp_path):
+    """A copy of the index uv cached on an earlier attempt must never answer for a later one."""
+    calls, script = uv_calls
+    script.extend(["docker-mcp-server==1.0\n", "docker-mcp-server==1.0\n"])
+    release.uv_resolves("1.0")
+    release.uv_resolves("1.0")
+    caches = [env["UV_CACHE_DIR"] for _, env in calls]
+    assert caches[0] != caches[1]
+    assert not any(Path(c).exists() for c in caches), "each attempt's cache must be gone afterwards"
+    assert all(env["UV_NO_CONFIG"] == "1" for _, env in calls)
+
+
+def test_uv_failing_to_resolve_is_returned_with_uvs_own_words(uv_calls):
+    calls, script = uv_calls
+    script.append(
+        release.ReleaseError("'uv pip compile' exited 1:\nBecause there is no version of docker-mcp-server==1.0")
+    )
+    resolved, note = release.uv_resolves("1.0")
+    assert resolved is False
+    assert "there is no version of docker-mcp-server==1.0" in note
+
+
+def test_uv_resolving_some_other_version_does_not_count(uv_calls):
+    calls, script = uv_calls
+    script.append("docker-mcp-server==1.0.1\n")
+    assert release.uv_resolves("1.0")[0] is False
+
+
+def test_a_missing_uv_fails_at_once(monkeypatch):
+    monkeypatch.setattr(release.shutil, "which", lambda name, path=None: None)
+    with pytest.raises(release.ReleaseError, match="'uv' is not on PATH"):
+        release.uv_resolves("1.0")
 
 
 class _Stop(Exception):
@@ -754,7 +801,7 @@ def _build_dir(tmp_path: Path, source: str) -> Path:
 
 
 @pytest.mark.parametrize(("source", "expected"), [("pypi", ["uv sync", "wait"]), ("local", ["uv sync", "--version"])])
-def test_smoke_waits_for_the_index_before_the_manifest_install_only_for_a_pypi_build(
+def test_smoke_waits_for_pypi_before_the_manifest_install_only_for_a_pypi_build(
     tmp_path, monkeypatch, source, expected
 ):
     """Install 1 fetches by the lock's URLs; install 2 resolves through the index, so only it waits,
@@ -776,18 +823,7 @@ def test_smoke_waits_for_the_index_before_the_manifest_install_only_for_a_pypi_b
     assert events == expected
 
 
-def test_the_index_accept_header_was_copied_from_the_uv_the_release_runs():
-    """The CDN caches the index once per Accept value, so the wait only sees uv's copy while
-    INDEX_ACCEPT matches uv byte for byte.  A uv bump fails here until someone re-reads uv's
-    MediaType::pypi() for the new version and updates the header and the version named beside it."""
-    source = (_ROOT / "scripts" / "claude_plugin_release.py").read_text()
-    copied_from = re.search(r"# uv (\d+\.\d+\.\d+); a test holds this to the release jobs' uv pin", source)
-    assert copied_from, "the INDEX_ACCEPT comment no longer names the uv version it was copied from"
-    release_uv = {v for kind, v in _pins(_job("publish.yaml", "claude-plugin-smoke")) if kind == "uv"}
-    assert release_uv == {copied_from.group(1)}
-
-
-def test_the_pypi_job_waits_after_publishing_and_verify_checks_the_index():
+def test_the_pypi_job_waits_after_publishing_and_verify_checks_too():
     """The order is the point: the pypi job is only done once PyPI serves what it uploaded."""
     pypi = _job("publish.yaml", "pypi")
     assert pypi.index("wait-pypi") > pypi.index("pypa/gh-action-pypi-publish")
@@ -824,6 +860,14 @@ def test_the_rehearsal_pins_the_release_jobs_uv_and_claude_code():
     assert {kind for kind, _ in release_pins} == {"uv", "claude-code"}, release_pins
     assert len({v for kind, v in release_pins if kind == "uv"}) == 1, f"the release jobs pin uv twice: {release_pins}"
     assert rehearsal_pins == release_pins
+
+
+def test_verify_checks_pypi_with_the_uv_the_plugin_jobs_install_with():
+    """Asking uv only shows what uv will be served while it is the same uv; a version that sends
+    other request headers can be given another copy of the index."""
+    release_uv = {v for kind, v in _pins(_job("publish.yaml", "claude-plugin-smoke")) if kind == "uv"}
+    verify_uv = {v for kind, v in _pins(_job("publish.yaml", "verify")) if kind == "uv"}
+    assert verify_uv == release_uv
 
 
 # --------------------------------------------------------------------------------------------

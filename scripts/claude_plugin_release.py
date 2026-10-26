@@ -18,8 +18,8 @@ rehearses is the code a release runs:
              what it registers, with the plugin's settings applied
     publish  add the commit to the branch - or, with --dry-run, only decide
     wait-pypi
-             wait until PyPI serves the release on its JSON API and its package index; the pypi
-             and verify jobs run it, and build and smoke wait the same way before reading PyPI
+             wait until PyPI's JSON API serves the release and uv can resolve it from the index;
+             the pypi and verify jobs run it, and build and smoke wait the same way first
 
 Every check fails the run rather than warning, and `publish` changes nothing until all of them have
 passed in the jobs before it.  Standard library only, so CI runs it with a bare Python.
@@ -71,11 +71,6 @@ HTTP_TIMEOUT = 60
 HTTP_GET_ATTEMPTS = 3
 HTTP_RETRY_DELAY = 5
 HTTP_RETRYABLE_STATUSES = frozenset({500, 502, 503, 504})
-# uv's Accept header for pypi.org (MediaType::pypi() in crates/uv-client/src/registry_client.rs,
-# uv 0.11.21; a test holds this to the release jobs' uv pin).  PyPI's CDN caches the index once per
-# Accept value (`Vary: Accept`), so the wait below asks with exactly this header to see the copy uv
-# would be served.
-INDEX_ACCEPT = "application/vnd.pypi.simple.v1+json, application/vnd.pypi.simple.v1+html;q=0.2, text/html;q=0.01"
 # Response headers that say which CDN location answered and how old its copy was.
 CDN_HEADERS = ("x-served-by", "x-cache", "age", "x-pypi-last-serial")
 # How long a job waits for PyPI to serve a release, and how often it looks.
@@ -499,7 +494,7 @@ def uv_env(cache: Path) -> dict[str, str]:
 
 @dataclass
 class PypiView:
-    """What one of PyPI's two views said about a release on one read."""
+    """What PyPI's JSON API said about a release on one read."""
 
     files: dict[str, str] | None  # filename -> sha256, or None while the release is incomplete
     summary: str  # what was seen, for the log
@@ -576,47 +571,43 @@ def read_json_api(version: str) -> PypiView:
     return PypiView(files if is_complete(files) else None, note)
 
 
-def read_index(version: str) -> PypiView:
-    """Read the release from PyPI's package index, the page uv and pip resolve versions from.
+def uv_resolves(version: str) -> tuple[bool, str]:
+    """Ask uv whether it can resolve the release from PyPI's index, as `uvx` and `uv lock` will.
+
+    PyPI's CDN keeps a separate copy of the index for each set of request headers at each location,
+    so a read with any other client can see a fresher copy than uv is served.  Asking uv itself
+    sends exactly uv's request.  Each call starts from an empty cache, as the build's `uv lock` and
+    the smoke's `uvx` do, so a copy cached by an earlier attempt cannot answer for it.
 
     Args:
         version: the release
 
     Returns:
-        PypiView: its files once the index lists the version with both a wheel and an sdist; a
-        transient failure is returned as not ready, with the error, since the caller retries
+        tuple: (whether uv resolved exactly this version, what uv said, for the log); any uv failure,
+        including a timeout, is returned rather than raised, since the caller retries
 
     Raises:
-        ReleaseError: on any other HTTP error, or if PyPI answers in a format other than the PEP 691
-            JSON asked for
+        ReleaseError: if uv is not on PATH, since waiting cannot fix that
     """
-    url = f"{PYPI_INDEX}/{PACKAGE}/"
-    try:
-        status, content, headers = _fetch_once("GET", url, headers={"Accept": INDEX_ACCEPT})
-    except _TransientHTTPError as exc:
-        return PypiView(None, f"index: {exc}")
-    if status == 404:
-        # A project's first release has no index page until PyPI publishes one.
-        return PypiView(None, f"index {url}: HTTP 404 {cdn_note(headers)}")
-    kind = headers.get("content-type", "")
-    if not kind.startswith("application/vnd.pypi.simple.v1+json"):
-        raise ReleaseError(f"PyPI's index {url} answered with {kind!r}, not the PEP 691 JSON this check reads")
-    page = expect_dict(parse_json(content, url), f"PyPI's index page for {PACKAGE}")
-    versions = page.get("versions", [])
-    # A wheel is named <dist>-<version>-<tags>.whl and an sdist <dist>-<version>.tar.gz.
-    stem = f"{PACKAGE.replace('-', '_')}-{version}"
-    files = {
-        f["filename"]: f["hashes"]["sha256"]
-        for f in page.get("files", [])
-        if f["filename"].startswith(f"{stem}-") or f["filename"] == f"{stem}.tar.gz"
-    }
-    if version not in versions:
-        plain = [v for v in versions if re.fullmatch(r"\d+(\.\d+)*", v)]
-        newest = max(plain, key=version_key, default=None)
-        note = f"index {url}: does not list {version} (newest listed {newest}) {cdn_note(headers)}"
-        return PypiView(None, note)
-    note = f"index {url}: lists {version} with {len(files)} file(s) {sorted(files)} {cdn_note(headers)}"
-    return PypiView(files if is_complete(files) else None, note)
+    if shutil.which("uv") is None:
+        raise ReleaseError("'uv' is not on PATH; the PyPI wait asks uv whether it can resolve the release")
+    pin = f"{PACKAGE}=={version}"
+    with tempfile.TemporaryDirectory(prefix="pypi-wait-") as tmp:
+        requirements = Path(tmp) / "requirements.in"
+        requirements.write_text(pin + "\n", encoding="utf-8")
+        argv = [
+            "uv", "pip", "compile", str(requirements), "--no-deps", "--no-header", "--no-annotate",
+            "--default-index", PYPI_INDEX,
+            # The Python this job runs, so the release's requires-python is judged against it rather
+            # than against whichever interpreter uv would find first.
+            "--python-version", f"{sys.version_info.major}.{sys.version_info.minor}",
+        ]  # fmt: skip
+        try:
+            output = run(argv, timeout=120, env=uv_env(Path(tmp) / "cache"))
+        except ReleaseError as exc:
+            return False, f"uv does not resolve {pin}: {exc}"
+    resolved = pin in output.split()
+    return resolved, f"uv {'resolves' if resolved else 'does not resolve'} {pin}: {' '.join(output.split())}"
 
 
 def wait_for_pypi(
@@ -626,12 +617,13 @@ def wait_for_pypi(
     timeout: float = PYPI_WAIT_SECONDS,
     interval: float = PYPI_POLL_SECONDS,
 ) -> dict[str, str]:
-    """Wait until both of PyPI's views serve the release, as seen from this machine.
+    """Wait until PyPI's JSON API serves the release and uv can resolve it, as seen from this machine.
 
-    PyPI's JSON API and its package index are cached separately, and each CDN location holds its
-    own copy, so one job seeing the release says nothing about the next job's runner.  Every job
-    that reads PyPI therefore waits here first, and every attempt is logged with the CDN location
-    that answered, so a stale copy can be told apart from a missing release from the log alone.
+    The JSON API and the index are cached separately, and each CDN location holds its own copies, so
+    one job seeing the release says nothing about the next job's runner.  Every job that reads PyPI
+    therefore waits here first.  Each attempt is logged with the CDN location that answered the JSON
+    API and with what uv said, so a stale copy can be told apart from a missing release from the log
+    alone.
 
     Args:
         version: the release
@@ -641,42 +633,37 @@ def wait_for_pypi(
         interval: seconds between looks
 
     Returns:
-        dict: filename -> sha256 of the files PyPI serves for the release
+        dict: filename -> sha256 of the files PyPI's JSON API lists for the release
 
     Raises:
-        ReleaseError: at once if the two views, or PyPI and the upload, disagree about a file,
-            since waiting cannot fix that; otherwise once the timeout passes, with what each view
-            last said
+        ReleaseError: at once if PyPI serves other files than were uploaded, or uv is missing, since
+            waiting cannot fix either; otherwise once the timeout passes, with what each check last said
     """
     deadline = time.monotonic() + timeout
     attempt = 0
     while True:
         attempt += 1
-        api, index = read_json_api(version), read_index(version)
-        if api.files is not None and index.files is not None:
-            if api.files != index.files:
-                raise ReleaseError(
-                    f"PyPI's JSON API and its index disagree about {PACKAGE} {version}'s files:\n"
-                    f"  {api.summary}: {api.files}\n  {index.summary}: {index.files}"
-                )
-            if expect is not None and api.files != expect:
-                raise ReleaseError(
-                    f"PyPI serves {PACKAGE} {version} as {api.files}, but this run uploaded {expect}; "
-                    "PyPI is not serving what was uploaded, so investigate before re-running"
-                )
+        api = read_json_api(version)
+        if api.files is not None and expect is not None and api.files != expect:
+            raise ReleaseError(
+                f"PyPI serves {PACKAGE} {version} as {api.files}, but this run uploaded {expect}; "
+                "PyPI is not serving what was uploaded, so investigate before re-running"
+            )
+        resolved, uv_note = uv_resolves(version)
+        if api.files is not None and resolved:
             log(
-                f"  PyPI serves {PACKAGE} {version} on both views (attempt {attempt}):\n"
-                f"    {api.summary}\n    {index.summary}"
+                f"  PyPI serves {PACKAGE} {version} and uv resolves it (attempt {attempt}):\n"
+                f"    {api.summary}\n    {uv_note}"
             )
             return api.files
         if time.monotonic() >= deadline:
             raise ReleaseError(
-                f"PyPI did not serve {PACKAGE} {version} on both its JSON API and its index within {timeout:.0f}s "
-                f"({attempt} attempts); last seen:\n  {api.summary}\n  {index.summary}"
+                f"PyPI did not serve {PACKAGE} {version} on its JSON API and to uv within {timeout:.0f}s "
+                f"({attempt} attempts); last seen:\n  {api.summary}\n  {uv_note}"
             )
         log(
-            f"  attempt {attempt}: PyPI does not serve {version} on both views yet; looking again in {interval:.0f}s\n"
-            f"    {api.summary}\n    {index.summary}"
+            f"  attempt {attempt}: PyPI does not serve {version} on its JSON API and to uv yet; "
+            f"looking again in {interval:.0f}s\n    {api.summary}\n    {uv_note}"
         )
         time.sleep(interval)
 
@@ -706,7 +693,7 @@ def dist_digests(dist: Path, version: str) -> dict[str, str]:
 
 
 def wait_pypi(args: argparse.Namespace) -> None:
-    """The `wait-pypi` command: block until PyPI serves the release on both views.
+    """The `wait-pypi` command: block until PyPI's JSON API serves the release and uv resolves it.
 
     Args:
         args: parsed command line
@@ -1436,7 +1423,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--docker", action="store_true", help="also call system_ping against the local daemon")
     p.set_defaults(func=smoke)
 
-    p = sub.add_parser("wait-pypi", help="wait until PyPI serves the release on its JSON API and its index")
+    p = sub.add_parser("wait-pypi", help="wait until PyPI's JSON API serves the release and uv resolves it")
     p.add_argument("--version", required=True)
     p.add_argument("--expect-dist", help="the files this run uploaded; PyPI must serve exactly these")
     p.add_argument("--timeout", type=int, default=PYPI_WAIT_SECONDS, help="seconds to keep looking")
