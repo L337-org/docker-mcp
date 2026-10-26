@@ -171,7 +171,7 @@ jobs:
     name: Build and publish to PyPI
     runs-on: ubuntu-latest
     # An sdist and wheel build, one upload, then waiting up to PYPI_WAIT_SECONDS (in the release
-    # script) for PyPI to serve it, plus one more attempt's HTTP timeouts.
+    # script) for PyPI to serve it, plus one more attempt's HTTP and uv timeouts.
     timeout-minutes: 25
     needs: [preflight]
     permissions:
@@ -241,7 +241,9 @@ jobs:
         # The jobs after this one install from PyPI, and PyPI serves an upload a little after
         # accepting it.  This job is done once PyPI's JSON API serves the release and uv can resolve
         # it from the index, and, when this run uploaded it, PyPI lists exactly the files built
-        # above.  uv is the one set up above for the build.
+        # above.  The uv here is the unpinned one set up for the build, not the plugin jobs'
+        # pinned uv, so this is a first, coarse gate; the plugin build and smoke wait again with
+        # the uv they install with, which is the check that has to match uv's own request.
         env:
           VERSION: ${{ needs.preflight.outputs.version }}
           UPLOADED: ${{ steps.existing.outputs.uploaded }}

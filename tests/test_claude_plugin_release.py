@@ -862,6 +862,14 @@ def test_the_rehearsal_pins_the_release_jobs_uv_and_claude_code():
     assert rehearsal_pins == release_pins
 
 
+def test_verify_checks_pypi_with_the_uv_the_plugin_jobs_install_with():
+    """Asking uv only shows what uv will be served while it is the same uv; a version that sends
+    other request headers can be given another copy of the index."""
+    release_uv = {v for kind, v in _pins(_job("publish.yaml", "claude-plugin-smoke")) if kind == "uv"}
+    verify_uv = {v for kind, v in _pins(_job("publish.yaml", "verify")) if kind == "uv"}
+    assert verify_uv == release_uv
+
+
 # --------------------------------------------------------------------------------------------
 # http(): a transient failure on a read is retried; a write never is
 # --------------------------------------------------------------------------------------------

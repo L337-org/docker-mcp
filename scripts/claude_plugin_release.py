@@ -494,7 +494,7 @@ def uv_env(cache: Path) -> dict[str, str]:
 
 @dataclass
 class PypiView:
-    """What one of PyPI's two views said about a release on one read."""
+    """What PyPI's JSON API said about a release on one read."""
 
     files: dict[str, str] | None  # filename -> sha256, or None while the release is incomplete
     summary: str  # what was seen, for the log
@@ -574,11 +574,10 @@ def read_json_api(version: str) -> PypiView:
 def uv_resolves(version: str) -> tuple[bool, str]:
     """Ask uv whether it can resolve the release from PyPI's index, as `uvx` and `uv lock` will.
 
-    PyPI's CDN keeps a separate copy of the index for each set of request headers (`Vary: Accept,
-    Accept-Encoding`) at each location, so a read with any other client can see a fresher copy than
-    uv is served.  Asking uv itself sends exactly uv's request.  Each call starts from an empty cache,
-    as the build's `uv lock` and the smoke's `uvx` do, so a copy cached by an earlier attempt cannot
-    answer for it.
+    PyPI's CDN keeps a separate copy of the index for each set of request headers at each location,
+    so a read with any other client can see a fresher copy than uv is served.  Asking uv itself
+    sends exactly uv's request.  Each call starts from an empty cache, as the build's `uv lock` and
+    the smoke's `uvx` do, so a copy cached by an earlier attempt cannot answer for it.
 
     Args:
         version: the release
