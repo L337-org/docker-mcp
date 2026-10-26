@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 
 from docker.errors import DockerException
+from requests.exceptions import RequestException
 
 from docker_mcp.exceptions import RemoteFailureError, ToolInputError
 from docker_mcp.server import tool
@@ -135,22 +136,22 @@ def plugin_create(  # noqa: DOC101,DOC103,DOC501,DOC503
             "A plugin data directory holds the `config.json` manifest beside the `rootfs` directory "
             "the plugin runs from."
         )
+    client = _get_client(host)
     try:
         # `gzip` is docker-py's spelling of the CLI's `--compress`; the parameter follows the CLI,
         # which is the vocabulary the tool surface is anchored to.
-        return _get_client(host).plugins.create(name, str(path), gzip=compress).attrs
-    except DockerException:
-        # `APIError` is an `OSError` as well as a `DockerException`, so it would be swallowed by the
-        # clause below; let every daemon-reported failure travel as itself.
+        return client.plugins.create(name, str(path), gzip=compress).attrs
+    except DockerException, RequestException:
+        # Both are `OSError` subclasses that would otherwise be caught below and reported as a
+        # local file this process cannot read. They are not: docker-py uploads through `requests`,
+        # whose `RequestException` derives from `OSError`, and `APIError` is both. Let them travel.
         raise
     except OSError as exc:
-        # Building the tar reads the tree as *this* process's user: `walk` calls `os.listdir`, which
-        # raises `PermissionError` on an unreadable directory, and `create_archive` raises a bare
-        # `OSError("Can not read file in context: ...")` on an unreadable file. Neither is a
-        # `DockerException`, and `server.py`'s `_LIBRARY_FAILURES` translates no `OSError`, so
-        # without this the message naming the file is withheld and the caller sees only "Error
-        # executing tool". Not a corner case: a `rootfs` laid down by `docker export` as root is
-        # unreadable to a server running as an ordinary user.
+        # Building the tar reads the tree as *this* process's user, and neither shape it fails in is
+        # a `DockerException`, so `server.py`'s `_LIBRARY_FAILURES` translates neither and the text
+        # naming the file would be withheld: `walk` calls `os.listdir`, raising `PermissionError` on
+        # an unreadable directory, while `create_archive` turns an unreadable file into a bare
+        # `OSError("Can not read file in context: ...")` that is *not* a `PermissionError`.
         raise ToolInputError(
             f"Could not read the plugin data directory {path} as the user running this server: {exc}"
         ) from exc

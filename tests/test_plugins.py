@@ -3,6 +3,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from docker.errors import APIError
+from requests.exceptions import ConnectionError as RequestsConnectionError
 
 from docker_mcp.exceptions import RemoteFailureError, ToolInputError
 
@@ -171,6 +172,28 @@ def test_plugin_create_turns_an_unreadable_tree_into_an_actionable_error(tmp_pat
     data_dir = _plugin_data_dir(tmp_path)
     with _patch() as mock_client:
         mock_client.return_value.plugins.create.side_effect = PermissionError(13, "Permission denied")
+        with pytest.raises(ToolInputError, match="Could not read the plugin data directory"):
+            plugin_create("myorg/myplugin:v1", str(data_dir))
+
+
+def test_plugin_create_lets_a_transport_failure_travel_as_itself(tmp_path):
+    # `requests.RequestException` is an `OSError` but not a `DockerException`, so without an explicit
+    # re-raise a refused connection mid-upload would be reported as an unreadable local directory.
+    data_dir = _plugin_data_dir(tmp_path)
+    with _patch() as mock_client:
+        mock_client.return_value.plugins.create.side_effect = RequestsConnectionError("Connection refused")
+        with pytest.raises(RequestsConnectionError):
+            plugin_create("myorg/myplugin:v1", str(data_dir))
+
+
+def test_plugin_create_reports_an_unreadable_file_that_is_not_a_permission_error(tmp_path):
+    # docker-py's `create_archive` turns an unreadable *file* into a bare OSError, not a
+    # PermissionError, so a guard narrowed to PermissionError would miss the `docker export` case.
+    data_dir = _plugin_data_dir(tmp_path)
+    with _patch() as mock_client:
+        mock_client.return_value.plugins.create.side_effect = OSError(
+            "Can not read file in context: /data/rootfs/etc/shadow"
+        )
         with pytest.raises(ToolInputError, match="Could not read the plugin data directory"):
             plugin_create("myorg/myplugin:v1", str(data_dir))
 
