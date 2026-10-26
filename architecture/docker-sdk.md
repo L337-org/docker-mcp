@@ -118,11 +118,11 @@ re-files the same rejected candidates forever. Removing an entry is a real decis
   `registry_manifest` nearby. The residue is a local-only image, since imagetools resolves against a
   registry. Narrow, and unasked for.
 - **Engine plugin authoring: `POST /plugins/create`, `POST /plugins/{name}/push`** - deliberately
-  not wrapped, on the merits.  `plugin_create` and `plugin_push` were added from an audit and removed
-  in 2.2.8 with no replacement: building and publishing an Engine plugin is a build-pipeline job for
-  the `docker plugin` CLI, not an agent's, and each tool cost every eager session its description.
-  docker-py's `Plugin.push()` also posts to the pull route (see above), so push would need a private
-  reach-in on top.  Installing, configuring and upgrading plugins stay covered.
+  not wrapped, on the merits; do not re-add `plugin_create` or `plugin_push` (removed in #262).
+  Building and publishing an Engine plugin is a build-pipeline job for the `docker plugin` CLI, not
+  an agent's, and each tool would cost every eager session its description.  docker-py's
+  `Plugin.push()` also posts to the pull route (see above), so push would need a private reach-in on
+  top.  The exclusion covers authoring only, not the tools that manage an installed plugin.
 
 The audit must also **check the latest published docker-py, not the pinned one**: `uv.lock` is
 routinely behind what `pyproject.toml`'s floor lets a fresh `uvx`/`pip install` resolve, so auditing
