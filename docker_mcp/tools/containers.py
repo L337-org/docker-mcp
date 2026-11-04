@@ -450,9 +450,8 @@ def container_list(  # noqa: DOC101,DOC103,DOC501,DOC503
 
     Returns:
         list: One dict per container: by default the daemon's list entry ({"Id", "Names", "Image", "State",
-            "Status", "Ports", "Labels", "Mounts", "NetworkSettings", ...}; `State` is e.g. "exited" and `Status`
-            the text "Exited (3) 2 minutes ago", carrying the exit code); with verbose=True the full inspect
-            payload, as `container_inspect` returns
+            "Status", "Ports", "Labels", "Mounts", ...}; a `Status` such as "Exited (3) 2 minutes ago" carries the
+            exit code); with verbose=True the full inspect payload, as `container_inspect` returns
     """
     if managed_only:
         filters = managed_filter(filters)

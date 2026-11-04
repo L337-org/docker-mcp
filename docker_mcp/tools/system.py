@@ -445,20 +445,129 @@ def system_info(host: str | None = None) -> dict:  # noqa: DOC101,DOC103
     return _get_client(host).info()
 
 
-@tool()
-def system_df(host: str | None = None) -> dict:  # noqa: DOC101,DOC103
-    """
-    Summarize Docker disk usage: layer storage plus per-object sizes for images, containers, volumes, build cache.
+# --- system_df: per-category totals, the shape `docker system df` prints ---
+#
+# API v1.52 moved `GET /system/df` to one `*Usage` object per category, carrying the daemon's own totals
+# and an `Items` list. A daemon at v1.52 or later still sends the pre-v1.52 top-level lists as well, so
+# the raw reply holds every object twice; an older daemon sends only those lists, with no totals. The
+# daemon has no reply without the lists: `verbose` only drops the legacy copy (probed against v1.51 and
+# v1.56), and docker-py's `df()` takes no parameters anyway. So the totals are taken from the `*Usage`
+# objects where they exist and otherwise derived from the lists exactly as Docker's own Go client derives
+# them for an old daemon: `*DiskUsageFromLegacyAPI` in moby/moby `client/system_disk_usage.go` (read at
+# 1a45789c04f1d2948f6128c52d170945fc4f1d18), which is where `docker system df` gets its figures there.
+# Re-check against that file if a figure ever disagrees with the CLI's.
+#
+# The two generations do not agree on one figure, and are not meant to: the legacy conversion leaves shared
+# build-cache records out of `BuildCache.TotalSize`, while a v1.52+ daemon counts them. On one Docker 29.9.2
+# daemon `docker system df` reported 5.396GB at API v1.56 and 1.566GB at v1.51 for the same cache. Each
+# output matches the CLI talking to that daemon at that version, which is the promise.
 
-    Equivalent to `docker system df`. Use it to find what to reclaim before `image_prune` /
-    `container_prune` / `volume_prune` / `buildx_prune`; use `system_info` for daemon config and
-    counts rather than sizes. The reply enumerates every object on the daemon, so expect a large
-    payload on busy hosts.
+# Output category -> (the v1.52+ `*Usage` key, the pre-v1.52 list key).
+_DF_CATEGORIES = {
+    "Images": ("ImageUsage", "Images"),
+    "Containers": ("ContainerUsage", "Containers"),
+    "Volumes": ("VolumeUsage", "Volumes"),
+    "BuildCache": ("BuildCacheUsage", "BuildCache"),
+}
+_DF_TOTALS = ("ActiveCount", "TotalCount", "TotalSize", "Reclaimable")
+# Container states the legacy conversion counts as active (moby `containerDiskUsageFromLegacyAPI`).
+_DF_ACTIVE_CONTAINER_STATES = frozenset({"running", "paused", "restarting"})
+
+
+def _legacy_df_totals(category: str, items: list[dict], layers_size: int) -> dict:
+    """One category's totals from a pre-v1.52 `/system/df` list, as moby's client derives them.
+
+    Args:
+        category: an `_DF_CATEGORIES` key
+        items: that category's list from the reply
+        layers_size: the reply's `LayersSize`, which is the image total
 
     Returns:
-        dict: {"LayersSize", "Images", "Containers", "Volumes", "BuildCache"} with per-object size fields
+        dict: {"ActiveCount", "TotalCount", "TotalSize", "Reclaimable"}
     """
-    return _get_client(host).df()
+    active = total_size = reclaimable = used = 0
+    if category == "Images":
+        total_size = layers_size
+        for image in items:
+            containers = image.get("Containers") or 0
+            if containers < 0:
+                continue  # no container count: moby skips it, neither active nor reclaimable
+            if containers > 0:
+                active += 1
+            elif image.get("Size", 0) != -1 and image.get("SharedSize", 0) != -1:
+                reclaimable += (image.get("Size") or 0) - (image.get("SharedSize") or 0)
+        return {"ActiveCount": active, "TotalCount": len(items), "TotalSize": total_size, "Reclaimable": reclaimable}
+    for item in items:
+        if category == "Containers":
+            size = item.get("SizeRw") or 0
+            total_size += size
+            if item.get("State") in _DF_ACTIVE_CONTAINER_STATES:
+                active += 1
+                used += size
+        elif category == "Volumes":
+            usage = item.get("UsageData")
+            if usage is None:
+                continue  # no usage data: moby ignores the volume
+            size = usage.get("Size") or 0
+            if (usage.get("RefCount") or 0) > 0:
+                active += 1
+                used += size
+            if size > 0:
+                total_size += size
+        else:  # BuildCache: a shared record is counted once, by whatever else holds it
+            size = 0 if item.get("Shared") else item.get("Size") or 0
+            total_size += size
+            if item.get("InUse"):
+                active += 1
+                used += size
+    return {"ActiveCount": active, "TotalCount": len(items), "TotalSize": total_size, "Reclaimable": total_size - used}
+
+
+def _summarise_df(raw: dict, verbose: bool) -> dict:
+    """Reduce a `/system/df` reply of either API generation to one totals block per category.
+
+    Args:
+        raw: the daemon's reply, as docker-py's `df()` returns it
+        verbose: also keep each category's per-object list, under "Items"
+
+    Returns:
+        dict: {"Images", "Containers", "Volumes", "BuildCache"}, each {"ActiveCount", "TotalCount", "TotalSize",
+            "Reclaimable"}, plus "Items" when `verbose`
+    """
+    summary = {}
+    for category, (usage_key, legacy_key) in _DF_CATEGORIES.items():
+        usage = raw.get(usage_key)
+        if usage is not None:
+            # The daemon omits a zero (Go `omitempty`): Docker 29.9.2 sends no ActiveCount when nothing is active.
+            totals = {key: usage.get(key) or 0 for key in _DF_TOTALS}
+            items = usage.get("Items") or []
+        else:
+            items = raw.get(legacy_key) or []
+            totals = _legacy_df_totals(category, items, raw.get("LayersSize") or 0)
+        summary[category] = {**totals, "Items": items} if verbose else totals
+    return summary
+
+
+@tool()
+def system_df(verbose: bool = False, host: str | None = None) -> dict:  # noqa: DOC101,DOC103
+    """
+    Summarize Docker disk usage per category, as `docker system df` does: how much each takes and could free.
+
+    Use it to find what to reclaim before `image_prune` / `container_prune` / `volume_prune` /
+    `buildx_prune`; use `system_info` for daemon config and counts rather than sizes. To see which
+    objects take the space, pass verbose=True, or list one category with `image_list`, `volume_list`
+    or `buildx_du`. Figures match the CLI's on every daemon version.
+
+    Args:
+        verbose: Also return every object in each category under "Items", as `docker system df -v` lists them;
+            large on a busy host
+
+    Returns:
+        dict: {"Images", "Containers", "Volumes", "BuildCache"}, each {"ActiveCount", "TotalCount", "TotalSize",
+            "Reclaimable"} with sizes in bytes; with verbose=True each also carries "Items", the category's
+            objects as the daemon lists them
+    """
+    return _summarise_df(_get_client(host).df(), verbose)
 
 
 @tool()

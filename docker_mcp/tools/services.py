@@ -438,8 +438,8 @@ def service_ps(  # noqa: DOC101,DOC103
     Args:
         id_or_name: The service whose tasks to list; omit for every task in the swarm
         filters: Filter dict; keys: id, name, service, node, label, desired-state (running|shutdown|accepted), runtime
-        verbose: Return each task's full document (its `Spec`, `Status.Message`, `Status.ContainerStatus`, network
-            attachments) instead of its summary row
+        verbose: Return each task's full document (adds `Spec`, `Status.Message`, the container's exit code)
+            instead of its summary row
 
     Returns:
         list: One {"id", "name", "service", "node", "image", "desired_state", "state", "error", "since"} per task,
