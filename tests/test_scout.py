@@ -99,6 +99,26 @@ def test_scout_cves_markdown_is_returned_verbatim():
     assert result["result"] == "## CVEs\n- none"
 
 
+@pytest.mark.parametrize(
+    "call",
+    [
+        lambda: scout_cves("alpine:3.19"),
+        lambda: scout_cves("alpine:3.19", format="markdown"),
+        lambda: scout_quickview("alpine:3.19"),
+        lambda: scout_recommendations("alpine:3.19"),
+        lambda: scout_compare("alpine:3.19", to_latest=True),
+        lambda: scout_sbom("alpine:3.19"),
+        lambda: scout_sbom("alpine:3.19", format="list"),
+    ],
+)
+def test_every_scout_tool_returns_stdout_once_in_result_and_not_again_in_raw(call):
+    # Not JSON, so every format, parsed or not, comes back as this exact text in `result`.
+    with patch("docker_mcp.tools.scout.run_docker", return_value=_ok("rendered report")):
+        result = call()
+    assert result["result"] == "rendered report"
+    assert set(result["raw"]) == {"returncode", "stderr", "truncated"}
+
+
 # ---------- scout_quickview ----------
 
 

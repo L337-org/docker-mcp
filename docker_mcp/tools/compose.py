@@ -217,7 +217,8 @@ def compose_ps(  # noqa: DOC101,DOC103
 
     Container-level view of one project (state, health, publishers); `compose_list` enumerates
     projects, and `container_list` covers non-compose containers.
-    Does not raise on a non-zero CLI exit: `services` comes back empty - inspect `raw.stderr`.
+    Does not raise on a non-zero CLI exit: `services` comes back empty - inspect `raw.stderr`, and
+    `raw.stdout`, which is present only then.
 
     Args:
         project_dir: Dir with the compose file (default: server cwd; copied to the target host if no local plugin)
@@ -226,8 +227,8 @@ def compose_ps(  # noqa: DOC101,DOC103
         all: Include stopped containers as well
 
     Returns:
-        dict: {"services": list[dict], "raw": <CliResult dict>}; on non-zero exit `services` is an empty list and the
-            caller should inspect `raw.stderr`.
+        dict: {"services": list[dict], "raw": {"returncode", "stderr", "truncated"}}; on a non-zero exit `services` is
+            empty and `raw` also carries "stdout"
     """
     args = [*_global_args(files, project_name, None), "ps", "--format", "json"]
     if all:
@@ -247,7 +248,8 @@ def compose_ps(  # noqa: DOC101,DOC103
         services_list = parsed
     else:
         services_list = []
-    return {"services": services_list, "raw": result.to_dict()}
+    # On success `services` is stdout, parsed; only a failure leaves stdout carrying anything else.
+    return {"services": services_list, "raw": result.to_dict(include_stdout=result.returncode != 0)}
 
 
 @tool()
@@ -308,7 +310,8 @@ def compose_config(  # noqa: DOC101,DOC103
     Render the canonical compose configuration after merges, profiles, and variable substitution.
 
     Use it to validate compose files and see exactly what the CLI will run before `compose_up`.
-    Does not raise on a non-zero CLI exit: on a failed render `config` may be None - inspect `raw.stderr`.
+    Does not raise on a non-zero CLI exit: on a failed render `config` is None - inspect `raw.stderr`, and
+    `raw.stdout`, which is present only then.
 
     Args:
         project_dir: Dir with the compose file (default: server cwd; copied to the target host if no local plugin)
@@ -318,8 +321,9 @@ def compose_config(  # noqa: DOC101,DOC103
         format: Render as YAML (default) or JSON
 
     Returns:
-        dict: {"config": str|dict|None, "raw": <CliResult dict>}; `config` is a parsed dict when format="json" and
-            parsing succeeds, otherwise the rendered text from stdout.
+        dict: {"config": str|dict|None, "raw": {"returncode", "stderr", "truncated"}}; `config` is a parsed dict when
+            format="json" and parsing succeeds, otherwise the rendered text from stdout; on a non-zero exit `config`
+            is None and `raw` also carries "stdout"
     """
     args = [*_global_args(files, project_name, profiles), "config"]
     if services_only:
@@ -335,7 +339,8 @@ def compose_config(  # noqa: DOC101,DOC103
         config = parsed if parsed is not None else result.stdout
     else:
         config = result.stdout
-    return {"config": config, "raw": result.to_dict()}
+    # On success `config` holds stdout, parsed or verbatim; only a failure leaves stdout carrying anything else.
+    return {"config": config, "raw": result.to_dict(include_stdout=result.returncode != 0)}
 
 
 @tool()

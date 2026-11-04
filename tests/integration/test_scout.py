@@ -26,7 +26,7 @@ def test_scout_quickview_alpine_runs_with_default_arguments():
     fail_unless_environmental(
         returncode=result["raw"]["returncode"],
         stderr=result["raw"]["stderr"],
-        stdout=result["raw"]["stdout"],
+        stdout=result["result"],  # quickview is text-only, so `result` is its stdout
         what="scout quickview",
     )
     assert result["result"] is not None

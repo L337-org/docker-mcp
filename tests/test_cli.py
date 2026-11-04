@@ -363,6 +363,11 @@ def test_cli_result_to_dict_is_serializable():
     assert r.to_dict() == {"returncode": 0, "stdout": "out", "stderr": "err", "truncated": False}
 
 
+def test_cli_result_to_dict_can_leave_stdout_out_for_a_tool_that_returns_it_parsed():
+    r = CliResult(returncode=0, stdout="out", stderr="err", truncated=True)
+    assert r.to_dict(include_stdout=False) == {"returncode": 0, "stderr": "err", "truncated": True}
+
+
 # ---------- safe_positional ----------
 
 
