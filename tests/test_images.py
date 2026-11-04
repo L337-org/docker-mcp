@@ -58,12 +58,24 @@ def test_image_registry_data():
     assert result == {"Descriptor": {"digest": "sha256:abc"}}
 
 
-def test_image_list():
+def test_image_list_returns_the_daemons_list_entries_without_inspecting():
+    # The shape `GET /images/json` returns (Engine API `ImageSummary`), as `APIClient.images` passes it on.
+    summary = {"Id": "sha256:img1", "RepoTags": ["alpine:3"], "Size": 8_000_000, "Containers": -1}
+    with _patch() as mock_client:
+        mock_client.return_value.api.images.return_value = [summary]
+        assert image_list(repository="alpine", filters={"dangling": False}) == [summary]
+    mock_client.return_value.api.images.assert_called_once_with(name="alpine", all=False, filters={"dangling": False})
+    mock_client.return_value.images.list.assert_not_called()
+
+
+def test_image_list_verbose_returns_full_inspect_payloads():
     image = MagicMock()
-    image.attrs = {"Id": "img1"}
+    image.attrs = {"Id": "img1", "Config": {"Env": ["PATH=/bin"]}}
     with _patch() as mock_client:
         mock_client.return_value.images.list.return_value = [image]
-        assert image_list() == [{"Id": "img1"}]
+        assert image_list(all=True, verbose=True) == [image.attrs]
+    mock_client.return_value.images.list.assert_called_once_with(name=None, all=True, filters=None)
+    mock_client.return_value.api.images.assert_not_called()
 
 
 def test_pull_image_single():

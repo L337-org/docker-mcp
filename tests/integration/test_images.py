@@ -12,7 +12,7 @@ import tarfile
 
 import pytest
 
-from docker_mcp.tools.images import image_import, image_inspect, image_remove
+from docker_mcp.tools.images import image_import, image_inspect, image_list, image_remove
 
 _REPOSITORY = "docker-mcp-server-test/imported-rootfs"
 _TAG = "integration"
@@ -59,3 +59,21 @@ def test_image_import_creates_an_image_from_a_rootfs_tarball():
         assert attrs["Config"]["Cmd"] == ["/bin/sh", "-c", "/bin/sh"]
     finally:
         image_remove(f"{_REPOSITORY}:{_TAG}", force=True)
+
+
+def test_image_list_returns_list_entries_by_default_and_inspect_payloads_with_verbose():
+    repository = f"{_REPOSITORY}-list"
+    image_import(data=_minimal_rootfs_tar(), repository=repository, tag=_TAG, changes=["ENV DMCP_IT_MARKER=present"])
+    try:
+        (entry,) = image_list(repository=repository)
+        # `GET /images/json`'s entry: tags and sizes, but no config and so no environment.
+        assert entry["RepoTags"] == [f"{repository}:{_TAG}"]
+        assert isinstance(entry["Created"], int)
+        assert "Config" not in entry
+        assert "DMCP_IT_MARKER" not in json.dumps(entry)
+
+        (full,) = image_list(repository=repository, verbose=True)
+        assert full["Id"] == entry["Id"]
+        assert "DMCP_IT_MARKER=present" in full["Config"]["Env"]
+    finally:
+        image_remove(f"{repository}:{_TAG}", force=True)

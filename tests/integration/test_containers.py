@@ -86,11 +86,37 @@ def test_run_container_stamps_provenance_and_managed_only_filters(healthy_contai
     # The container started by the fixture should carry the managed label by default,
     # and `managed_only=True` should be able to find it.
     matched = container_list(all=True, managed_only=True)
-    names = {name.lstrip("/") for c in matched for name in [c["Name"]]}
-    assert healthy_container in names
-    target = next(c for c in matched if c["Name"].lstrip("/") == healthy_container)
-    assert target["Config"]["Labels"]["docker-mcp-server.managed"] == "true"
-    assert target["Config"]["Labels"]["docker-mcp-server.tool"] == "container_run"
+    target = next(c for c in matched if f"/{healthy_container}" in c["Names"])
+    assert target["Labels"]["docker-mcp-server.managed"] == "true"
+    assert target["Labels"]["docker-mcp-server.tool"] == "container_run"
+
+
+@pytest.fixture
+def container_with_env():
+    """Run a container carrying an environment entry, to tell the list entry from the inspect payload."""
+    name = f"dmcp-it-{uuid.uuid4().hex[:8]}"
+    value = uuid.uuid4().hex
+    try:
+        container_run("alpine:3", command=["sleep", "120"], name=name, environment={"DMCP_IT_MARKER": value})
+    except Exception as exc:  # noqa: BLE001 - narrowed below: only a named environmental cause skips
+        fail_unless_environmental_error(exc, what="starting the environment container")
+    yield name, value
+    container_remove(name, force=True)
+
+
+def test_container_list_returns_list_entries_by_default_and_inspect_payloads_with_verbose(container_with_env):
+    name, value = container_with_env
+    (entry,) = container_list(filters={"name": name})
+    # The daemon's list entry: `State` is a plain string and nothing from the container's config.
+    assert entry["State"] == "running"
+    assert f"/{name}" in entry["Names"]
+    assert "Config" not in entry
+    assert value not in json.dumps(entry)
+
+    (full,) = container_list(filters={"name": name}, verbose=True)
+    assert full["State"]["Status"] == "running"
+    assert f"DMCP_IT_MARKER={value}" in full["Config"]["Env"]
+    assert len(json.dumps(entry)) < len(json.dumps(full))
 
 
 def test_container_observability_resources_against_real_container(healthy_container):
@@ -157,7 +183,7 @@ def test_a_one_shot_container_run_that_outlives_timeout_seconds_is_left_running(
         )
         assert (result["timed_out"], result["exit_code"], result["removed"]) == (True, None, False)
         assert result["stdout"].strip() == "started"
-        assert container_list(filters={"name": name})[0]["State"]["Status"] == "running"
+        assert container_list(filters={"name": name})[0]["State"] == "running"
     finally:
         container_remove(name, force=True)
 
