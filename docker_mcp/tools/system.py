@@ -450,17 +450,17 @@ def system_info(host: str | None = None) -> dict:  # noqa: DOC101,DOC103
 # API v1.52 moved `GET /system/df` to one `*Usage` object per category, carrying the daemon's own totals
 # and an `Items` list. A daemon at v1.52 or later still sends the pre-v1.52 top-level lists as well, so
 # the raw reply holds every object twice; an older daemon sends only those lists, with no totals. The
-# daemon has no reply without the lists: `verbose` only drops the legacy copy (probed against v1.51 and
-# v1.56), and docker-py's `df()` takes no parameters anyway. So the totals are taken from the `*Usage`
+# daemon has no reply without the lists: its `verbose` parameter only drops the legacy copy, and docker-py's
+# `df()` takes no parameters anyway. So the totals are taken from the `*Usage`
 # objects where they exist and otherwise derived from the lists exactly as Docker's own Go client derives
 # them for an old daemon: `*DiskUsageFromLegacyAPI` in moby/moby `client/system_disk_usage.go` (read at
 # 1a45789c04f1d2948f6128c52d170945fc4f1d18), which is where `docker system df` gets its figures there.
 # Re-check against that file if a figure ever disagrees with the CLI's.
 #
 # The two generations do not agree on one figure, and are not meant to: the legacy conversion leaves shared
-# build-cache records out of `BuildCache.TotalSize`, while a v1.52+ daemon counts them. On one Docker 29.9.2
-# daemon `docker system df` reported 5.396GB at API v1.56 and 1.566GB at v1.51 for the same cache. Each
-# output matches the CLI talking to that daemon at that version, which is the promise.
+# build-cache records out of `BuildCache.TotalSize`, while a v1.52+ daemon counts them, and `docker system df`
+# shows the same split. Each output matches the CLI talking to that daemon at that API version, which is the
+# promise.
 
 # Output category -> (the v1.52+ `*Usage` key, the pre-v1.52 list key).
 _DF_CATEGORIES = {
@@ -538,7 +538,7 @@ def _summarise_df(raw: dict, verbose: bool) -> dict:
     for category, (usage_key, legacy_key) in _DF_CATEGORIES.items():
         usage = raw.get(usage_key)
         if usage is not None:
-            # The daemon omits a zero (Go `omitempty`): Docker 29.9.2 sends no ActiveCount when nothing is active.
+            # The daemon omits a zero total (Go `omitempty`), so a missing key means 0.
             totals = {key: usage.get(key) or 0 for key in _DF_TOTALS}
             items = usage.get("Items") or []
         else:
@@ -551,7 +551,7 @@ def _summarise_df(raw: dict, verbose: bool) -> dict:
 @tool()
 def system_df(verbose: bool = False, host: str | None = None) -> dict:  # noqa: DOC101,DOC103
     """
-    Summarize Docker disk usage per category, as `docker system df` does: how much each takes and could free.
+    Summarise Docker disk usage per category, as `docker system df` does: how much each takes and could free.
 
     Use it to find what to reclaim before `image_prune` / `container_prune` / `volume_prune` /
     `buildx_prune`; use `system_info` for daemon config and counts rather than sizes. To see which

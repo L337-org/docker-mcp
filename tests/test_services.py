@@ -77,7 +77,7 @@ def test_service_inspect():
     mock_client.return_value.services.get.assert_called_once_with("svc1", insert_defaults=True)
 
 
-# Trimmed from real documents read from a Docker Engine API v1.56 swarm manager (2026-11-04): a
+# Trimmed from real documents read from a Docker Engine API v1.56 swarm manager: a
 # replicated service listed with `status=True`, and one of its tasks, failed.
 _SERVICE_DOC = {
     "ID": "svc1",
@@ -127,6 +127,22 @@ def test_service_list_returns_one_summary_row_per_service():
                 "update_state": None,
             }
         ]
+
+
+def test_service_list_sorts_its_rows_by_service_name():
+    later = {**_SERVICE_DOC, "ID": "svc2", "Spec": {**_SERVICE_DOC["Spec"], "Name": "worker"}}
+    with _patch() as mock_client:
+        mock_client.return_value.services.list.return_value = [_named("worker", later), _named("web", _SERVICE_DOC)]
+        assert [row["name"] for row in service_list()] == ["web", "worker"]
+
+
+def test_service_ps_sorts_its_rows_by_task_name():
+    second = {**_TASK_DOC, "ID": "task2", "Slot": 1}
+    with _patch() as mock_client:
+        mock_client.return_value.api.tasks.return_value = [_TASK_DOC, second]
+        mock_client.return_value.services.list.return_value = [_named("web", id_="svc1")]
+        mock_client.return_value.nodes.list.return_value = []
+        assert [row["name"] for row in service_ps()] == ["web.1", "web.2"]
 
 
 def test_service_list_counts_are_null_unless_status_was_asked_for():

@@ -84,7 +84,7 @@ def _df(reply, **kwargs):
 
 _ZERO = {"ActiveCount": 0, "TotalCount": 0, "TotalSize": 0, "Reclaimable": 0}
 
-# A v1.52+ reply, trimmed from Docker 29.9.2 at API v1.56: every object twice, once in the legacy
+# A v1.52+ reply, trimmed from a real one at API v1.56: every object twice, once in the legacy
 # top-level lists and once in the `*Usage` objects' `Items`, and no ActiveCount where it is zero.
 _V152_REPLY = {
     "LayersSize": 300,

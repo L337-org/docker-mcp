@@ -167,7 +167,7 @@ def scout_cves(  # noqa: DOC101,DOC103
         format: Parsed into `result` as JSON: "sarif" (default, the standard vulnerability-report schema), "spdx",
             "gitlab", "sbom". Returned verbatim as text: "packages" (Scout's own default, grouped by package),
             "markdown". There is no plain "json" for this subcommand
-        platform: Platform of the image to analyze, e.g. "linux/amd64"
+        platform: Platform of the image to analyse, e.g. "linux/amd64"
 
     Returns:
         dict: {"format": <format>, "result": <parsed-json-or-raw-text>, "raw": {"returncode", "stderr", "truncated"}}
@@ -199,7 +199,7 @@ def scout_quickview(image: str, platform: str | None = None, host: str | None = 
     Does not raise on a non-zero CLI exit - inspect `raw.stderr`.
 
     Args:
-        platform: Platform of the image to analyze, e.g. "linux/amd64"
+        platform: Platform of the image to analyse, e.g. "linux/amd64"
 
     Returns:
         dict: {"result": <rendered text>, "raw": {"returncode", "stderr", "truncated"}}

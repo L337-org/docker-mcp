@@ -49,7 +49,7 @@ We have no commercial interest in either. Both are MIT-licensed and free.
 | **Trim the surface to fit the job** | `DOCKER_MCP_SERVER_DISABLE` drops whole domains; read-only / no-destructive drop categories - **and the router and prompts shrink with them** | Not really - the router is one file, though you can delete reference files you'll never use |
 | **Token cost, eager client, idle** | **~47,200** at full surface; **~19,400** trimmed to a triage-shaped config. Add up to ~2,100 for a client that also loads prompts, resources and resource templates | **~140** |
 | **Token cost, lazy client, idle** | ~1,000 full; ~400 trimmed | ~140 |
-| **Token cost, typical task** | **~1,300-2,600** (lazy) | ~7,100-10,200 |
+| **Token cost, typical task** | **~1,400-2,600** (lazy) | ~7,100-10,200 |
 | **Failure mode** | Server can fail to start / resolve deps; a wrong argument is rejected before anything runs | Cannot fail to "start"; a wrong command usually errors, but some wrong values exit 0 with a plausible result (see below) |
 
 Two rows deserve emphasis because they cut in opposite directions and are easy to skim past.
@@ -236,14 +236,14 @@ config and restart, whereas the skill always has every recipe available at no id
 | | MCP (eager, full) | MCP (eager, triage config) | MCP (lazy, full) | Skill |
 |---|---|---|---|---|
 | Always in context | all 154 tool defs + router | 63 tool defs + router | router + tool names | name + description |
-| | 46,247 (tools) | 19,007 (tools) | 440 (router) | 136 |
+| | 46,755 (tools) | 19,225 (tools) | 440 (router) | 136 |
 | | 440 (router) | 212 (router) | 536 (names) | |
 | **Floor - every eager client** | **~47,200 tok** | **~19,400 tok** | **~1,000 tok** | **~140 tok** |
 | *plus, for a client that loads them:* | | | | |
 | prompts | +1,113 (30) | +596 (16) | - | - |
 | resources | +405 (3) | +405 (3) | - | - |
 | resource templates | +572 (5) | +572 (5) | - | - |
-| **Ceiling - all of them** | **~48,800 tok** | **~20,800 tok** | **~1,000 tok** | **~140 tok** |
+| **Ceiling - all of them** | **~49,300 tok** | **~21,000 tok** | **~1,000 tok** | **~140 tok** |
 
 "Triage config" here and below means the `DOCKER_MCP_SERVER_DISABLE` line in
 [Configuring the server down](#the-triage-config): `containers`, `images`, `networks`, `volumes`

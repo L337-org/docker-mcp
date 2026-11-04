@@ -3,6 +3,7 @@ from unittest.mock import patch
 import pytest
 
 from docker_mcp.exceptions import ToolInputError
+from docker_mcp.server import TOOL_CATEGORIES
 from docker_mcp.tools._cli import CliResult
 from docker_mcp.tools.scout import (
     _JSON_FORMATS,
@@ -99,18 +100,22 @@ def test_scout_cves_markdown_is_returned_verbatim():
     assert result["result"] == "## CVEs\n- none"
 
 
-@pytest.mark.parametrize(
-    "call",
-    [
-        lambda: scout_cves("alpine:3.19"),
-        lambda: scout_cves("alpine:3.19", format="markdown"),
-        lambda: scout_quickview("alpine:3.19"),
-        lambda: scout_recommendations("alpine:3.19"),
-        lambda: scout_compare("alpine:3.19", to_latest=True),
-        lambda: scout_sbom("alpine:3.19"),
-        lambda: scout_sbom("alpine:3.19", format="list"),
-    ],
-)
+# Every scout tool, with a call that reaches its reply. `test_the_stdout_check_covers_every_scout_tool`
+# fails until a new one is added here.
+_SCOUT_CALLS = {
+    "scout_cves": [lambda: scout_cves("alpine:3.19"), lambda: scout_cves("alpine:3.19", format="markdown")],
+    "scout_quickview": [lambda: scout_quickview("alpine:3.19")],
+    "scout_recommendations": [lambda: scout_recommendations("alpine:3.19")],
+    "scout_compare": [lambda: scout_compare("alpine:3.19", to_latest=True)],
+    "scout_sbom": [lambda: scout_sbom("alpine:3.19"), lambda: scout_sbom("alpine:3.19", format="list")],
+}
+
+
+def test_the_stdout_check_covers_every_scout_tool():
+    assert set(_SCOUT_CALLS) == {name for name in TOOL_CATEGORIES if name.startswith("scout_")}
+
+
+@pytest.mark.parametrize("call", [call for calls in _SCOUT_CALLS.values() for call in calls])
 def test_every_scout_tool_returns_stdout_once_in_result_and_not_again_in_raw(call):
     # Not JSON, so every format, parsed or not, comes back as this exact text in `result`.
     with patch("docker_mcp.tools.scout.run_docker", return_value=_ok("rendered report")):
