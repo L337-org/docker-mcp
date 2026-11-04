@@ -192,25 +192,37 @@ def image_registry_data(  # noqa: DOC101,DOC103
 
 @tool()
 def image_list(  # noqa: DOC101,DOC103
-    repository: str | None = None, all: bool = False, filters: dict | None = None, host: str | None = None
+    repository: str | None = None,
+    all: bool = False,
+    filters: dict | None = None,
+    verbose: bool = False,
+    host: str | None = None,
 ) -> list:
     """
     List images in the daemon's local store.
 
     Local only - for a registry's contents use `registry_tags` / `hub_tags`, and `image_search`
     to find images on Docker Hub. Dangling (untagged) build leftovers show with
-    filters={"dangling": True}.
+    filters={"dangling": True}. For an image's config, platform and layers pass verbose=True, or use
+    `image_inspect` for one image.
 
     Args:
         repository: Only show images of this repository
         all: Show intermediate image layers
         filters: Filter by attributes (label, dangling, before, since, etc.)
+        verbose: Return each image's full inspect payload instead of its list entry (one inspect call each)
 
     Returns:
-        list: One summary dict per image ({"Id", "RepoTags", "RepoDigests", "Created", "Size", "Labels", ...}); use
-            `image_inspect` for a full inspect payload
+        list: One dict per image: the daemon's list entry by default ({"Id", "RepoTags", "RepoDigests", "Created"
+            in Unix seconds, "Size", "Labels", "Containers", ...}; -1 means not computed); with verbose=True the
+            full inspect payload
     """
-    return [i.attrs for i in _get_client(host).images.list(name=repository, all=all, filters=filters)]
+    client = _get_client(host)
+    if verbose:
+        # `ImageCollection.list` inspects every image the list names, one call each.
+        return [i.attrs for i in client.images.list(name=repository, all=all, filters=filters)]
+    # The low-level call returns `GET /images/json` as the daemon sends it, with no inspect per image.
+    return client.api.images(name=repository, all=all, filters=filters)
 
 
 @tool()

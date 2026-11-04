@@ -400,7 +400,15 @@ def test_list_containers_default_args():
         mock_client.return_value.containers.list.return_value = [container]
         result = container_list()
     assert result == [{"Id": "abc"}]
-    mock_client.return_value.containers.list.assert_called_once_with(all=False, sparse=False, ignore_removed=False)
+    # The default is the daemon's list entry: docker-py inspects nothing when `sparse=True`.
+    mock_client.return_value.containers.list.assert_called_once_with(all=False, sparse=True, ignore_removed=False)
+
+
+def test_list_containers_verbose_inspects_each_container():
+    with _patch() as mock_client:
+        mock_client.return_value.containers.list.return_value = []
+        container_list(verbose=True, ignore_removed=True)
+    mock_client.return_value.containers.list.assert_called_once_with(all=False, sparse=False, ignore_removed=True)
 
 
 def test_list_containers_with_filters():

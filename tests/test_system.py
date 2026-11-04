@@ -75,11 +75,139 @@ def test_info():
         assert system_info() == {"ID": "abc"}
 
 
-def test_df():
+def _df(reply, **kwargs):
     mock_client = MagicMock()
-    mock_client.df.return_value = {"LayersSize": 1024}
+    mock_client.df.return_value = reply
     with patch("docker_mcp.tools.system._get_client", return_value=mock_client):
-        assert system_df() == {"LayersSize": 1024}
+        return system_df(**kwargs)
+
+
+_ZERO = {"ActiveCount": 0, "TotalCount": 0, "TotalSize": 0, "Reclaimable": 0}
+
+# A v1.52+ reply, trimmed from a real one at API v1.56: every object twice, once in the legacy
+# top-level lists and once in the `*Usage` objects' `Items`, and no ActiveCount where it is zero.
+_V152_REPLY = {
+    "LayersSize": 300,
+    "Images": [{"Id": "sha256:a", "Size": 300, "SharedSize": 0, "Containers": 1}],
+    "Containers": [{"Id": "c1", "State": "exited", "SizeRw": 12}],
+    "Volumes": [],
+    "BuildCache": [],
+    "ImageUsage": {
+        "ActiveCount": 1,
+        "TotalCount": 1,
+        "TotalSize": 300,
+        "Reclaimable": 0,
+        "Items": [{"Id": "sha256:a", "Size": 300, "SharedSize": 0, "Containers": 1}],
+    },
+    "ContainerUsage": {
+        "TotalCount": 1,
+        "TotalSize": 12,
+        "Reclaimable": 12,
+        "Items": [{"Id": "c1", "State": "exited", "SizeRw": 12}],
+    },
+    "VolumeUsage": {"Items": []},
+    "BuildCacheUsage": {"TotalCount": 2, "TotalSize": 900, "Reclaimable": 400, "Items": [{"ID": "r1"}, {"ID": "r2"}]},
+}
+
+
+def test_df_returns_the_daemons_own_totals_once_per_category():
+    assert _df(_V152_REPLY) == {
+        "Images": {"ActiveCount": 1, "TotalCount": 1, "TotalSize": 300, "Reclaimable": 0},
+        "Containers": {"ActiveCount": 0, "TotalCount": 1, "TotalSize": 12, "Reclaimable": 12},
+        "Volumes": _ZERO,
+        "BuildCache": {"ActiveCount": 0, "TotalCount": 2, "TotalSize": 900, "Reclaimable": 400},
+    }
+
+
+def test_df_verbose_adds_each_categorys_objects_once():
+    result = _df(_V152_REPLY, verbose=True)
+    assert set(result) == {"Images", "Containers", "Volumes", "BuildCache"}
+    assert result["Images"]["Items"] == _V152_REPLY["ImageUsage"]["Items"]
+    assert result["BuildCache"]["Items"] == [{"ID": "r1"}, {"ID": "r2"}]
+    # The legacy copy of the same lists is gone.
+    assert "LayersSize" not in result
+
+
+# The image cases below are moby's own, from TestImageDiskUsageFromLegacyAPI and TestLegacyDiskUsage in
+# moby/moby client/system_disk_usage_test.go (1a45789c04f1d2948f6128c52d170945fc4f1d18); the other
+# categories are derived from the conversion functions in client/system_disk_usage.go at the same commit.
+@pytest.mark.parametrize(
+    ("layers_size", "images", "expected"),
+    [
+        (4096, [], {"ActiveCount": 0, "TotalCount": 0, "TotalSize": 4096, "Reclaimable": 0}),
+        (0, [], _ZERO),
+        (
+            8192,
+            [{"Size": 4096, "SharedSize": 0, "Containers": 0}, {"Size": 4096, "SharedSize": 0, "Containers": 0}],
+            {"ActiveCount": 0, "TotalCount": 2, "TotalSize": 8192, "Reclaimable": 8192},
+        ),
+        (
+            12288,
+            [
+                {"Size": 4096, "SharedSize": 0, "Containers": 2},
+                {"Size": 2048, "SharedSize": 0, "Containers": 0},
+                {"Size": 6144, "SharedSize": 0, "Containers": 1},
+            ],
+            {"ActiveCount": 2, "TotalCount": 3, "TotalSize": 12288, "Reclaimable": 2048},
+        ),
+        (
+            15360,
+            [
+                {"Size": 4096, "SharedSize": 1024, "Containers": 1},
+                {"Size": 8192, "SharedSize": 2048, "Containers": 0},
+                {"Size": 3072, "SharedSize": 1024, "Containers": 0},
+            ],
+            {"ActiveCount": 1, "TotalCount": 3, "TotalSize": 15360, "Reclaimable": 8192},
+        ),
+        # -1 means "not computed": no container count skips the image, no size keeps it out of the reclaimable sum.
+        (
+            100,
+            [{"Size": 50, "SharedSize": 0, "Containers": -1}, {"Size": 50, "SharedSize": -1, "Containers": 0}],
+            {"ActiveCount": 0, "TotalCount": 2, "TotalSize": 100, "Reclaimable": 0},
+        ),
+    ],
+)
+def test_df_derives_image_totals_from_a_pre_v152_reply_as_dockers_client_does(layers_size, images, expected):
+    assert _df({"LayersSize": layers_size, "Images": images})["Images"] == expected
+
+
+def test_df_derives_container_volume_and_build_cache_totals_from_a_pre_v152_reply():
+    reply = {
+        "LayersSize": 0,
+        "Containers": [
+            {"State": "running", "SizeRw": 10},
+            {"State": "paused", "SizeRw": 20},
+            {"State": "restarting", "SizeRw": 30},
+            {"State": "exited", "SizeRw": 40},
+            {"State": "created", "SizeRw": 50},
+        ],
+        "Volumes": [
+            {"Name": "used", "UsageData": {"RefCount": 1, "Size": 100}},
+            {"Name": "unused", "UsageData": {"RefCount": 0, "Size": 200}},
+            {"Name": "unmeasured", "UsageData": {"RefCount": 0, "Size": -1}},
+            {"Name": "no-usage-data"},
+        ],
+        "BuildCache": [
+            {"ID": "a", "Size": 1000, "Shared": False, "InUse": True},
+            {"ID": "b", "Size": 500, "Shared": False, "InUse": False},
+            {"ID": "c", "Size": 700, "Shared": True, "InUse": True},
+            {"ID": "d", "Size": 300, "Shared": True, "InUse": False},
+        ],
+    }
+    result = _df(reply)
+    # Running, paused and restarting count as active, and only the rest is reclaimable.
+    assert result["Containers"] == {"ActiveCount": 3, "TotalCount": 5, "TotalSize": 150, "Reclaimable": 90}
+    # A volume without usage data is counted but ignored; a -1 size adds nothing.
+    assert result["Volumes"] == {"ActiveCount": 1, "TotalCount": 4, "TotalSize": 300, "Reclaimable": 200}
+    # Shared records count towards ActiveCount but not towards any size.
+    assert result["BuildCache"] == {"ActiveCount": 2, "TotalCount": 4, "TotalSize": 1500, "Reclaimable": 500}
+
+
+def test_df_verbose_on_a_pre_v152_reply_returns_the_legacy_lists_as_items():
+    reply = {"LayersSize": 0, "Containers": [{"State": "exited", "SizeRw": 4}]}
+    result = _df(reply, verbose=True)
+    assert result["Containers"]["Items"] == [{"State": "exited", "SizeRw": 4}]
+    assert result["Images"] == {**_ZERO, "Items": []}
 
 
 def test_login():

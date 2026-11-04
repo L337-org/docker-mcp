@@ -152,6 +152,8 @@ def test_compose_ps_parses_ndjson():
         {"Name": "db", "State": "running"},
     ]
     assert result["raw"]["returncode"] == 0
+    # `services` is stdout, parsed; the raw text would only repeat it.
+    assert "stdout" not in result["raw"]
 
 
 def test_compose_ps_handles_single_object_response():
@@ -166,6 +168,8 @@ def test_compose_ps_returns_empty_services_on_failure():
     assert result["services"] == []
     assert result["raw"]["returncode"] == 1
     assert "no such project" in result["raw"]["stderr"]
+    # Nothing was parsed, so stdout is the only copy of whatever the CLI printed there.
+    assert "stdout" in result["raw"]
 
 
 def test_compose_ps_passes_all_and_services():
@@ -247,6 +251,18 @@ def test_compose_config_returns_none_on_failure():
         result = compose_config(format="json")
     assert result["config"] is None
     assert result["raw"]["returncode"] == 1
+    assert "stdout" in result["raw"]
+
+
+def test_compose_config_leaves_stdout_out_of_raw_once_config_carries_it():
+    yaml_body = "services:\n  web: {}\n"
+    with patch("docker_mcp.tools.compose.run_docker", return_value=_ok(yaml_body)):
+        rendered = compose_config()
+    with patch("docker_mcp.tools.compose.run_docker", return_value=_ok('{"services": {"web": {}}}')):
+        parsed = compose_config(format="json")
+    assert (rendered["config"], parsed["config"]) == (yaml_body, {"services": {"web": {}}})
+    for result in (rendered, parsed):
+        assert set(result["raw"]) == {"returncode", "stderr", "truncated"}
 
 
 # ---------- compose_build / compose_pull / compose_restart ----------

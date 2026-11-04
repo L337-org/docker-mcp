@@ -103,7 +103,7 @@ legacy docstrings are cleaned opportunistically, not churned):
    echoes its name; a deliberate exception goes in `_ECHO_EXCEPTIONS` there, with the reason.
 4. **`Returns:` names the shape, not just the type.** There is no output schema, so this line is
    all an agent gets. For computed or partial returns, name the load-bearing keys (`{"Titles",
-   "Processes"}`; `{"LayersSize", "Images", "Containers", "Volumes", "BuildCache"}`). For a full
+   "Processes"}`; `{"ActiveCount", "TotalCount", "TotalSize", "Reclaimable"}` per category). For a full
    engine inspect document, do NOT enumerate an arbitrary subset of its hundreds of keys - say
    what document it is ("full inspect payload, as `docker inspect`"), optionally plus the one or
    two keys a caller typically wants from it. What stays banned is the shapeless "dict - The X's

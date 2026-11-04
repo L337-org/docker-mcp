@@ -102,6 +102,9 @@ _JSON_FORMATS = frozenset({"json", "sarif", "spdx", "gitlab", "sbom", "cyclonedx
 def _maybe_parse_json(text: str, format: str) -> dict | list | str | None:
     """Parse `text` as JSON when `format` names a JSON-emitting format, else return the raw text.
 
+    Every scout tool's `result` is stdout passed through here (or stdout itself, for the text-only
+    subcommands), so the tools leave stdout out of `raw` rather than return the same output twice.
+
     Args:
         text: the command's raw output
         format: the ``--format`` value that produced it
@@ -118,6 +121,23 @@ def _maybe_parse_json(text: str, format: str) -> dict | list | str | None:
         return json.loads(stripped)
     except json.JSONDecodeError:
         return text
+
+
+def _formatted_reply(result: CliResult, format: str) -> dict:
+    """The reply of a scout tool that takes `--format`: stdout parsed per the format, with the exit status beside it.
+
+    Args:
+        result: the scout command's outcome
+        format: the ``--format`` value that produced it
+
+    Returns:
+        dict: {"format", "result", "raw": {"returncode", "stderr", "truncated"}}
+    """
+    return {
+        "format": format,
+        "result": _maybe_parse_json(result.stdout, format),
+        "raw": result.to_dict(include_stdout=False),
+    }
 
 
 @tool()
@@ -147,10 +167,10 @@ def scout_cves(  # noqa: DOC101,DOC103
         format: Parsed into `result` as JSON: "sarif" (default, the standard vulnerability-report schema), "spdx",
             "gitlab", "sbom". Returned verbatim as text: "packages" (Scout's own default, grouped by package),
             "markdown". There is no plain "json" for this subcommand
-        platform: Platform of the image to analyze, e.g. "linux/amd64"
+        platform: Platform of the image to analyse, e.g. "linux/amd64"
 
     Returns:
-        dict: {"format": <format>, "result": <parsed-json-or-raw-text>, "raw": <CliResult dict>}
+        dict: {"format": <format>, "result": <parsed-json-or-raw-text>, "raw": {"returncode", "stderr", "truncated"}}
     """
     args: list[str] = ["cves", "--format", format]
     if only_fixed:
@@ -163,7 +183,7 @@ def scout_cves(  # noqa: DOC101,DOC103
         args.extend(["--platform", platform])
     args.append(safe_positional(image, "image"))
     result = _run_scout(args, host=host)
-    return {"format": format, "result": _maybe_parse_json(result.stdout, format), "raw": result.to_dict()}
+    return _formatted_reply(result, format)
 
 
 @tool()
@@ -179,17 +199,17 @@ def scout_quickview(image: str, platform: str | None = None, host: str | None = 
     Does not raise on a non-zero CLI exit - inspect `raw.stderr`.
 
     Args:
-        platform: Platform of the image to analyze, e.g. "linux/amd64"
+        platform: Platform of the image to analyse, e.g. "linux/amd64"
 
     Returns:
-        dict: {"result": <rendered text>, "raw": <CliResult dict>}
+        dict: {"result": <rendered text>, "raw": {"returncode", "stderr", "truncated"}}
     """
     args: list[str] = ["quickview"]
     if platform is not None:
         args.extend(["--platform", platform])
     args.append(safe_positional(image, "image"))
     result = _run_scout(args, host=host)
-    return {"result": result.stdout, "raw": result.to_dict()}
+    return {"result": result.stdout, "raw": result.to_dict(include_stdout=False)}
 
 
 @tool()
@@ -217,7 +237,7 @@ def scout_recommendations(  # noqa: DOC101,DOC103
         platform: Which platform of a multi-platform image to analyse, e.g. "linux/arm64"
 
     Returns:
-        dict: {"result": <rendered text>, "raw": <CliResult dict>}
+        dict: {"result": <rendered text>, "raw": {"returncode", "stderr", "truncated"}}
     """
     args: list[str] = ["recommendations"]
     if only_refresh:
@@ -230,7 +250,7 @@ def scout_recommendations(  # noqa: DOC101,DOC103
         args.extend(["--platform", platform])
     args.append(safe_positional(image, "image"))
     result = _run_scout(args, host=host)
-    return {"result": result.stdout, "raw": result.to_dict()}
+    return {"result": result.stdout, "raw": result.to_dict(include_stdout=False)}
 
 
 @tool()
@@ -266,7 +286,7 @@ def scout_compare(  # noqa: DOC101,DOC103,DOC501,DOC503
         platform: Which platform of a multi-platform image to analyse, e.g. "linux/arm64"
 
     Returns:
-        dict: {"format": <format>, "result": <parsed-json-or-raw-text>, "raw": <CliResult dict>}
+        dict: {"format": <format>, "result": <parsed-json-or-raw-text>, "raw": {"returncode", "stderr", "truncated"}}
     """
     targets = [bool(to), bool(to_env), bool(to_latest)]
     if sum(targets) != 1:
@@ -286,7 +306,7 @@ def scout_compare(  # noqa: DOC101,DOC103,DOC501,DOC503
         args.extend(["--platform", platform])
     args.append(safe_positional(image, "image"))
     result = _run_scout(args, host=host, local_path_args={"to": to})
-    return {"format": format, "result": _maybe_parse_json(result.stdout, format), "raw": result.to_dict()}
+    return _formatted_reply(result, format)
 
 
 @tool()
@@ -312,8 +332,9 @@ def scout_sbom(  # noqa: DOC101,DOC103
         platform: Which platform of a multi-platform image to analyse, e.g. "linux/arm64"
 
     Returns:
-        dict: {"format", "result", "raw": <CliResult dict>}. `result` is a parsed dict when `format` is
-            "spdx"/"cyclonedx"/"json" and stdout parses cleanly; for "list" or a parse failure it's the raw text.
+        dict: {"format", "result", "raw": {"returncode", "stderr", "truncated"}}. `result` is a parsed dict when
+            `format` is "spdx"/"cyclonedx"/"json" and stdout parses cleanly; for "list" or a parse failure it's the
+            raw text.
     """
     args: list[str] = ["sbom", "--format", format]
     if platform is not None:
@@ -322,4 +343,4 @@ def scout_sbom(  # noqa: DOC101,DOC103
     result = _run_scout(args, host=host)
     # "spdx", "cyclonedx" and "json" are all JSON documents and are parsed; "list" is plain text.
     # `_JSON_FORMATS` is the single place that distinction lives, shared with the other scout tools.
-    return {"format": format, "result": _maybe_parse_json(result.stdout, format), "raw": result.to_dict()}
+    return _formatted_reply(result, format)

@@ -406,8 +406,8 @@ def container_inspect(id_or_name: str, host: str | None = None) -> dict:  # noqa
 
     Use this when you need complete information about one container - config, state,
     network settings, mounts, environment variables, and resource limits. To enumerate many
-    containers use `container_list` instead (same payload per container by default; abridged
-    with sparse=True). For just logs or stats use `container_logs` / `container_stats`.
+    containers use `container_list`, which returns this same payload per container only with
+    verbose=True. For just logs or stats use `container_logs` / `container_stats`.
 
     Returns:
         dict: Full container inspect attrs (equivalent to `docker inspect`)
@@ -422,7 +422,7 @@ def container_list(  # noqa: DOC101,DOC103,DOC501,DOC503
     before: str | None = None,
     limit: int | None = None,
     filters: dict | None = None,
-    sparse: bool = False,
+    verbose: bool = False,
     ignore_removed: bool = False,
     managed_only: bool = False,
     host: str | None = None,
@@ -430,8 +430,9 @@ def container_list(  # noqa: DOC101,DOC103,DOC501,DOC503
     """
     List containers on the daemon (running only by default).
 
-    Pass all=True to include stopped containers. For a compose project `compose_ps` groups
-    containers by service; for swarm services use `service_ps` (tasks may live on other nodes).
+    Pass all=True to include stopped containers. For environment and full config pass verbose=True, or
+    use `container_inspect` for one container. For a compose project `compose_ps` groups containers by
+    service; for swarm services use `service_ps` (tasks may live on other nodes).
 
     Args:
         all: Show all containers, including stopped ones (default False: running only)
@@ -439,16 +440,15 @@ def container_list(  # noqa: DOC101,DOC103,DOC501,DOC503
         before: Only show containers created before this id or name
         limit: Maximum number of results
         filters: Filter by attributes (e.g. status, label)
-        sparse: Skip inspect calls and return less detail
-        ignore_removed: Ignore containers removed during listing; inert when `sparse=True`, which
-            skips the inspect calls that would fail
+        verbose: Return each container's full inspect payload instead of its list entry (one inspect call each)
+        ignore_removed: With verbose=True, skip a container removed before it was inspected instead of failing
         managed_only: Only return containers created by this MCP server (filters on the docker-mcp-server.managed
             label); combines with any `filters` given
 
     Returns:
-        list: One dict per container: full inspect payloads by default (each match is inspected, like
-            `container_inspect`); sparse=True skips the per-container inspect calls and returns the daemon's abridged
-            list entries instead
+        list: One dict per container: the daemon's list entry by default ({"Id", "Names", "Image", "State",
+            "Status", "Ports", "Labels", ...}; a `Status` such as "Exited (3) 2 minutes ago" carries the exit code);
+            with verbose=True the full inspect payload
     """
     if managed_only:
         filters = managed_filter(filters)
@@ -473,7 +473,8 @@ def container_list(  # noqa: DOC101,DOC103,DOC501,DOC503
         filters = {**(filters or {}), key: value}
     kwargs: dict = {
         "all": all,
-        "sparse": sparse,
+        # docker-py's `sparse` is the inverse of `verbose`: it skips the per-container inspect.
+        "sparse": not verbose,
         "ignore_removed": ignore_removed,
         **drop_none(limit=limit, filters=filters),
     }

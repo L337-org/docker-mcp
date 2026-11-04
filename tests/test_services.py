@@ -77,12 +77,86 @@ def test_service_inspect():
     mock_client.return_value.services.get.assert_called_once_with("svc1", insert_defaults=True)
 
 
-def test_service_list():
-    service = MagicMock()
-    service.attrs = {"ID": "svc1"}
+# Trimmed from real documents read from a Docker Engine API v1.56 swarm manager: a
+# replicated service listed with `status=True`, and one of its tasks, failed.
+_SERVICE_DOC = {
+    "ID": "svc1",
+    "Spec": {
+        "Name": "web",
+        "Mode": {"Replicated": {"Replicas": 3}},
+        "TaskTemplate": {"ContainerSpec": {"Image": "nginx:alpine@sha256:7858", "Env": ["APP_MODE=demo"]}},
+    },
+    "Endpoint": {"Ports": [{"Protocol": "tcp", "TargetPort": 80, "PublishedPort": 18080}]},
+    "ServiceStatus": {"RunningTasks": 2, "DesiredTasks": 3, "CompletedTasks": 0},
+}
+_TASK_DOC = {
+    "ID": "task1",
+    "ServiceID": "svc1",
+    "NodeID": "node1",
+    "Slot": 2,
+    "Spec": {"ContainerSpec": {"Image": "nginx:alpine@sha256:7858", "Env": ["APP_MODE=demo"]}},
+    "Status": {
+        "Timestamp": "2026-11-04T14:25:51.9Z",
+        "State": "failed",
+        "Message": "started",
+        "Err": "task: non-zero exit (1)",
+        "ContainerStatus": {"ContainerID": "c1", "ExitCode": 1},
+    },
+    "DesiredState": "shutdown",
+}
+
+
+def _named(name, attrs=None, id_=None):
+    model = MagicMock()
+    model.name, model.id, model.attrs = name, id_, attrs or {}
+    return model
+
+
+def test_service_list_returns_one_summary_row_per_service():
     with _patch() as mock_client:
-        mock_client.return_value.services.list.return_value = [service]
-        assert service_list() == [{"ID": "svc1"}]
+        mock_client.return_value.services.list.return_value = [_named("web", _SERVICE_DOC)]
+        assert service_list(status=True) == [
+            {
+                "id": "svc1",
+                "name": "web",
+                "mode": "replicated",
+                "running_tasks": 2,
+                "desired_tasks": 3,
+                "image": "nginx:alpine@sha256:7858",
+                "ports": ["18080:80/tcp"],
+                "update_state": None,
+            }
+        ]
+
+
+def test_service_list_sorts_its_rows_by_service_name():
+    later = {**_SERVICE_DOC, "ID": "svc2", "Spec": {**_SERVICE_DOC["Spec"], "Name": "worker"}}
+    with _patch() as mock_client:
+        mock_client.return_value.services.list.return_value = [_named("worker", later), _named("web", _SERVICE_DOC)]
+        assert [row["name"] for row in service_list()] == ["web", "worker"]
+
+
+def test_service_ps_sorts_its_rows_by_task_name():
+    second = {**_TASK_DOC, "ID": "task2", "Slot": 1}
+    with _patch() as mock_client:
+        mock_client.return_value.api.tasks.return_value = [_TASK_DOC, second]
+        mock_client.return_value.services.list.return_value = [_named("web", id_="svc1")]
+        mock_client.return_value.nodes.list.return_value = []
+        assert [row["name"] for row in service_ps()] == ["web.1", "web.2"]
+
+
+def test_service_list_counts_are_null_unless_status_was_asked_for():
+    doc = {key: value for key, value in _SERVICE_DOC.items() if key != "ServiceStatus"}
+    with _patch() as mock_client:
+        mock_client.return_value.services.list.return_value = [_named("web", doc)]
+        (row,) = service_list()
+    assert (row["running_tasks"], row["desired_tasks"]) == (None, None)
+
+
+def test_service_list_verbose_returns_the_full_documents():
+    with _patch() as mock_client:
+        mock_client.return_value.services.list.return_value = [_named("web", _SERVICE_DOC)]
+        assert service_list(verbose=True) == [_SERVICE_DOC]
 
 
 def test_service_list_omits_status_unless_asked():
@@ -101,7 +175,7 @@ def test_service_list_forwards_status_and_returns_the_task_counts():
         mock_client.return_value.services.list.return_value = [service]
         result = service_list(status=True)
     assert mock_client.return_value.services.list.call_args.kwargs["status"] is True
-    assert result[0]["ServiceStatus"]["DesiredTasks"] == 3
+    assert result[0]["desired_tasks"] == 3
 
 
 def test_list_services_managed_only_injects_label_filter():
@@ -128,13 +202,50 @@ def test_service_remove():
     service.remove.assert_called_once()
 
 
-def test_service_ps():
-    service = MagicMock()
-    service.tasks.return_value = [{"ID": "t1"}]
+_TASK_ROW = {
+    "id": "task1",
+    "name": "web.2",
+    "service": "web",
+    "node": "docker-desktop",
+    "image": "nginx:alpine@sha256:7858",
+    "desired_state": "shutdown",
+    "state": "failed",
+    "error": "task: non-zero exit (1)",
+    "since": "2026-11-04T14:25:51.9Z",
+}
+
+
+def test_service_ps_returns_one_summary_row_per_task_named_as_the_cli_names_it():
+    service = _named("web", id_="svc1")
+    service.tasks.return_value = [_TASK_DOC]
     with _patch() as mock_client:
         mock_client.return_value.services.get.return_value = service
-        assert service_ps("svc1") == [{"ID": "t1"}]
+        mock_client.return_value.nodes.list.return_value = [
+            _named("n", {"Description": {"Hostname": "docker-desktop"}}, "node1")
+        ]
+        assert service_ps("web") == [_TASK_ROW]
     service.tasks.assert_called_once_with(filters=None)
+    # The service was named, so its own name is used rather than listing every service.
+    mock_client.return_value.services.list.assert_not_called()
+
+
+def test_service_ps_verbose_returns_the_full_task_documents():
+    service = _named("web", id_="svc1")
+    service.tasks.return_value = [_TASK_DOC]
+    with _patch() as mock_client:
+        mock_client.return_value.services.get.return_value = service
+        assert service_ps("web", verbose=True) == [_TASK_DOC]
+    mock_client.return_value.nodes.list.assert_not_called()
+
+
+def test_service_ps_keeps_an_unknown_service_or_node_as_its_id():
+    # A task can outlive its service or node; the row still names something rather than null.
+    with _patch() as mock_client:
+        mock_client.return_value.api.tasks.return_value = [_TASK_DOC]
+        mock_client.return_value.services.list.return_value = []
+        mock_client.return_value.nodes.list.return_value = []
+        (row,) = service_ps()
+    assert (row["service"], row["node"], row["name"]) == ("svc1", "node1", "svc1.2")
 
 
 def test_service_logs_decodes_chunks():
@@ -613,7 +724,7 @@ def test_wait_service_accepts_zero_replicas():
 def test_service_ps_without_a_service_asks_the_daemon_for_every_task():
     with _patch() as mock_client:
         mock_client.return_value.api.tasks.return_value = [{"ID": "t1"}, {"ID": "t2"}]
-        assert service_ps() == [{"ID": "t1"}, {"ID": "t2"}]
+        assert service_ps(verbose=True) == [{"ID": "t1"}, {"ID": "t2"}]
     # No service lookup: with no service named, this is the cluster-wide read.
     mock_client.return_value.services.get.assert_not_called()
     mock_client.return_value.api.tasks.assert_called_once_with(filters=None)
@@ -632,7 +743,7 @@ def test_service_ps_finds_one_task_by_forwarding_the_filter_unmodified():
     # reach it as given rather than being parsed or expanded here.
     with _patch() as mock_client:
         mock_client.return_value.api.tasks.return_value = [{"ID": "t1"}]
-        assert service_ps(filters={"name": "web.1.abc123"}) == [{"ID": "t1"}]
+        assert service_ps(filters={"name": "web.1.abc123"}, verbose=True) == [{"ID": "t1"}]
     mock_client.return_value.api.tasks.assert_called_once_with(filters={"name": "web.1.abc123"})
 
 

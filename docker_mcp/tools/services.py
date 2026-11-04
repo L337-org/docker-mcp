@@ -190,6 +190,86 @@ def _awaiting_global_tasks(summary: dict) -> bool:
     return summary["mode"] == "global" and summary["desired_tasks"] == 0
 
 
+# --- summary rows: the shape `service_list`/`service_ps` return by default, shared with `stack_services`/`stack_ps` ---
+
+
+def _service_mode(spec: dict) -> str | None:
+    """A service's scheduling mode as the CLI prints it, e.g. "replicated" or "global job".
+
+    Args:
+        spec: the service's `Spec`
+
+    Returns:
+        str or None: the mode, or None when the spec names none
+    """
+    mode = next(iter(spec.get("Mode") or {}), None)
+    return {"ReplicatedJob": "replicated job", "GlobalJob": "global job"}.get(mode, mode.lower()) if mode else None
+
+
+def _service_row(service: dict) -> dict:
+    """One service document reduced to what `docker service ls` shows.
+
+    Args:
+        service: the service's full document; its task counts come from `ServiceStatus`, which the daemon
+            sends only when the list asked for `status`
+
+    Returns:
+        dict: {"id", "name", "mode", "running_tasks", "desired_tasks", "image", "ports", "update_state"}
+    """
+    spec = service.get("Spec") or {}
+    status = service.get("ServiceStatus") or {}
+    return {
+        "id": service.get("ID"),
+        "name": spec.get("Name"),
+        "mode": _service_mode(spec),
+        "running_tasks": status.get("RunningTasks"),
+        "desired_tasks": status.get("DesiredTasks"),
+        "image": ((spec.get("TaskTemplate") or {}).get("ContainerSpec") or {}).get("Image"),
+        "ports": [
+            f"{port.get('PublishedPort')}:{port.get('TargetPort')}/{port.get('Protocol')}"
+            for port in (service.get("Endpoint") or {}).get("Ports") or []
+        ],
+        "update_state": (service.get("UpdateStatus") or {}).get("State"),
+    }
+
+
+def _task_rows(client: docker.DockerClient, tasks: list[dict], service_names: dict[str, str] | None = None) -> list:
+    """Task documents reduced to what `docker service ps` shows, sorted by task name.
+
+    Args:
+        client: the client the tasks came from, used to name their services and nodes
+        tasks: full task documents
+        service_names: service id to name, when the caller already has them; otherwise every service is listed
+
+    Returns:
+        list: One {"id", "name", "service", "node", "image", "desired_state", "state", "error", "since"} per task
+    """
+    if service_names is None:
+        service_names = {s.id: s.name for s in client.services.list()}
+    nodes = {n.id: (n.attrs.get("Description") or {}).get("Hostname") for n in client.nodes.list()}
+    rows = []
+    for task in tasks:
+        service_id = task.get("ServiceID")
+        service = service_names.get(service_id, service_id) if service_id is not None else None
+        status = task.get("Status") or {}
+        # How the CLI names a task: its slot for a replicated service, its node for a global one.
+        suffix = task.get("Slot") or task.get("NodeID")
+        rows.append(
+            {
+                "id": task.get("ID"),
+                "name": f"{service}.{suffix}" if suffix else service,
+                "service": service,
+                "node": nodes.get(task.get("NodeID"), task.get("NodeID")),
+                "image": (((task.get("Spec") or {}).get("ContainerSpec") or {}).get("Image")),
+                "desired_state": task.get("DesiredState"),
+                "state": status.get("State"),
+                "error": status.get("Err"),
+                "since": status.get("Timestamp"),
+            }
+        )
+    return sorted(rows, key=lambda row: (row["name"] or "", row["since"] or ""))
+
+
 @tool()
 def service_create(  # noqa: DOC101,DOC103
     image: str, command: str | list | None = None, extra_kwargs: dict | None = None, host: str | None = None
@@ -251,35 +331,41 @@ def service_list(  # noqa: DOC101,DOC103
     filters: dict | None = None,
     status: bool | None = None,
     managed_only: bool = False,
+    verbose: bool = False,
     host: str | None = None,
 ) -> list:
     """
-    List swarm services.
+    List swarm services, one row per service as `docker service ls` shows it.
 
     Must run against a swarm manager. One entry per service (the desired state); `service_ps`
-    lists a service's tasks, and `stack_services` groups services by stack. Pass `status=True`
-    for a whole-swarm health sweep: it adds each service's running-versus-desired task counts in
-    the one call, where the alternative is a `service_ps` per service. It is a count, not a
-    diagnosis - when a service comes back short, `service_ps` on that one name is what names the
-    failing task and its error.
+    lists a service's tasks, `stack_services` the services of one stack, and `service_inspect` or
+    verbose=True gives the full spec. Pass `status=True` for a whole-swarm health sweep: it fills in
+    each service's running-versus-desired task counts in the one call, where the alternative is a
+    `service_ps` per service. It is a count, not a diagnosis - when a service comes back short,
+    `service_ps` on that one name is what names the failing task and its error.
 
     Args:
         filters: Filter by attributes (id, name, label, mode)
-        status: Add a `ServiceStatus` entry with the running, desired and completed task counts (needs daemon API
-            v1.41+); omit when only the specs are wanted
+        status: Fill in the running and desired task counts (needs daemon API v1.41+); without it they are null
         managed_only: Only return services created by this MCP server (filters on the docker-mcp-server.managed label);
             combines with any `filters` given
+        verbose: Return each service's full document instead of its summary row
 
     Returns:
-        list: One full service document ({"ID", "Spec", ...}) per service; with `status` each also carries
-            "ServiceStatus" ({"RunningTasks", "DesiredTasks", "CompletedTasks"})
+        list: One {"id", "name", "mode", "running_tasks", "desired_tasks", "image", "ports", "update_state"} per
+            service, sorted by name; `ports` lists published ports as "published:target/protocol". With
+            verbose=True, the full service document ({"ID", "Spec", "Endpoint", ...}) instead, plus "ServiceStatus"
+            ({"RunningTasks", "DesiredTasks", "CompletedTasks"}) with `status`
     """
     if managed_only:
         filters = managed_filter(filters)
     # `status` is passed only when set: docker-py version-checks it on `is not None`, so a literal
     # status=False would newly raise InvalidVersion against a pre-v1.41 daemon that the default
     # call has always worked on.
-    return [s.attrs for s in _get_client(host).services.list(**drop_none(filters=filters, status=status))]
+    models = _get_client(host).services.list(**drop_none(filters=filters, status=status))
+    if verbose:
+        return [s.attrs for s in models]
+    return sorted((_service_row(s.attrs) for s in models), key=lambda row: row["name"] or "")
 
 
 @tool()
@@ -333,6 +419,7 @@ def service_remove(id_or_name: str, host: str | None = None) -> bool:  # noqa: D
 def service_ps(  # noqa: DOC101,DOC103
     id_or_name: str | None = None,
     filters: dict | None = None,
+    verbose: bool = False,
     host: str | None = None,
 ) -> list:
     """
@@ -344,24 +431,35 @@ def service_ps(  # noqa: DOC101,DOC103
     `name` (the full `<service>.<slot>.<taskid>`, or `<service>.<slot>` for every task that slot has
     run). Both match by prefix, so an ambiguous prefix returns several tasks rather than an error, and
     `web.1` also matches `web.10`. Only container tasks come back unless `runtime` is filtered (e.g.
-    `attachment`). Each task carries `Status` (State/Message/ContainerStatus), `DesiredState`,
-    `NodeID`, `Slot` and its full `Spec`; `service_logs(task=...)` reads what one printed. Prefer this
-    over `container_list` for services, whose tasks may run on other nodes. Read-only. Requires a swarm
+    `attachment`). `service_logs(task=...)` reads what one task printed. Prefer this over
+    `container_list` for services, whose tasks may run on other nodes. Read-only. Requires a swarm
     manager: on any other node the daemon refuses, and its refusal is what comes back.
 
     Args:
         id_or_name: The service whose tasks to list; omit for every task in the swarm
         filters: Filter dict; keys: id, name, service, node, label, desired-state (running|shutdown|accepted), runtime
+        verbose: Return each task's full document (adds `Spec`, `Status.Message`, the container's exit code)
+            instead of its summary row
 
     Returns:
-        list: One full task document per task (ID, ServiceID, NodeID, Slot, Spec, Status, DesiredState)
+        list: One {"id", "name", "service", "node", "image", "desired_state", "state", "error", "since"} per task,
+            sorted by name; `node` is the hostname, `error` is null unless the task failed, and `since` is when it
+            entered its state. With verbose=True, the full task document ({"ID", "ServiceID", "NodeID", "Slot",
+            "Spec", "Status", "DesiredState", ...}) instead
     """
     client = _get_client(host)
     if id_or_name is None:
         # docker-py has no task collection (no `client.tasks`), so the swarm-wide list is the
         # documented low-level call; `Service.tasks` below is the same call with a service filter.
-        return client.api.tasks(filters=filters)
-    return client.services.get(id_or_name).tasks(filters=filters)
+        tasks = client.api.tasks(filters=filters)
+        service_names = None
+    else:
+        service = client.services.get(id_or_name)
+        tasks = service.tasks(filters=filters)
+        service_names = {service.id: service.name}
+    if verbose:
+        return tasks
+    return _task_rows(client, tasks, service_names)
 
 
 @tool()

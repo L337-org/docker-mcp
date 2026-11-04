@@ -93,8 +93,20 @@ class CliResult:
     stderr: str
     truncated: bool
 
-    def to_dict(self) -> dict:
-        return asdict(self)
+    def to_dict(self, *, include_stdout: bool = True) -> dict:
+        """The result as a plain dict, for a tool to return.
+
+        Args:
+            include_stdout: False for a tool that already returns stdout's content in a parsed or
+                otherwise derived form, so the same output does not reach the caller twice
+
+        Returns:
+            dict: {"returncode", "stdout", "stderr", "truncated"}, without "stdout" when it is excluded
+        """
+        result = asdict(self)
+        if not include_stdout:
+            del result["stdout"]
+        return result
 
 
 def _resolve(binary: str) -> str:

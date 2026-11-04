@@ -50,9 +50,9 @@ def test_service_ps_without_a_service_sees_every_task_and_agrees_with_the_per_se
     # The cluster-wide read is a superset of the per-service one, and the `service` filter narrows
     # it back down to exactly what naming the service returns.
     cluster_wide = service_ps()
-    assert {t["ID"] for t in per_service} <= {t["ID"] for t in cluster_wide}
+    assert {t["id"] for t in per_service} <= {t["id"] for t in cluster_wide}
     filtered = service_ps(filters={"service": running_service})
-    assert {t["ID"] for t in filtered} == {t["ID"] for t in per_service}
+    assert {t["id"] for t in filtered} == {t["id"] for t in per_service}
 
 
 def test_service_ps_finds_one_task_by_id_prefix_full_name_and_slot_name(running_service):
@@ -64,14 +64,26 @@ def test_service_ps_finds_one_task_by_id_prefix_full_name_and_slot_name(running_
     is wrong and this fails rather than it quietly becoming so.
     """
     system_wait(kind="service", target=running_service, until="running", timeout_seconds=30, poll_interval=1.0)
-    task = service_ps(running_service)[0]
+    task = service_ps(running_service, verbose=True)[0]
 
-    assert [t["ID"] for t in service_ps(filters={"id": task["ID"]})] == [task["ID"]]
-    assert task["ID"] in {t["ID"] for t in service_ps(filters={"id": task["ID"][:8]})}
+    assert [t["id"] for t in service_ps(filters={"id": task["ID"]})] == [task["ID"]]
+    assert task["ID"] in {t["id"] for t in service_ps(filters={"id": task["ID"][:8]})}
 
     full_name = f"{running_service}.{task['Slot']}.{task['ID']}"
-    assert [t["ID"] for t in service_ps(filters={"name": full_name})] == [task["ID"]]
-    assert task["ID"] in {t["ID"] for t in service_ps(filters={"name": f"{running_service}.{task['Slot']}"})}
+    assert [t["id"] for t in service_ps(filters={"name": full_name})] == [task["ID"]]
+    assert task["ID"] in {t["id"] for t in service_ps(filters={"name": f"{running_service}.{task['Slot']}"})}
+
+
+def test_service_ps_summary_row_agrees_with_the_full_task_document(running_service):
+    system_wait(kind="service", target=running_service, until="running", timeout_seconds=30, poll_interval=1.0)
+    (full,) = service_ps(running_service, filters={"desired-state": "running"}, verbose=True)
+    (row,) = service_ps(running_service, filters={"desired-state": "running"})
+    assert row["id"] == full["ID"]
+    # Named as `docker service ps` names it, from the service's name and the task's slot.
+    assert row["name"] == f"{running_service}.{full['Slot']}"
+    assert row["service"] == running_service
+    assert (row["state"], row["desired_state"]) == (full["Status"]["State"], full["DesiredState"])
+    assert "Spec" not in row
 
 
 def test_service_logs_reads_a_real_task_through_the_hand_built_route(running_service):
@@ -90,7 +102,7 @@ def test_service_logs_reads_a_real_task_through_the_hand_built_route(running_ser
     tasks = service_ps(running_service)
     assert tasks, "expected the service to have produced a task"
 
-    logs = service_logs(task=tasks[0]["ID"], tail=10)
+    logs = service_logs(task=tasks[0]["id"], tail=10)
 
     assert isinstance(logs, str)
     # `sleep 120` prints nothing, so an empty string is the correct result. What matters is that the
