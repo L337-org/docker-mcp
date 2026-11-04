@@ -203,22 +203,19 @@ def image_list(  # noqa: DOC101,DOC103
 
     Local only - for a registry's contents use `registry_tags` / `hub_tags`, and `image_search`
     to find images on Docker Hub. Dangling (untagged) build leftovers show with
-    filters={"dangling": True}. The default entries are the daemon's own image list, as
-    `docker image ls` shows it; pass verbose=True, or call `image_inspect` for one image, for the
-    config (env, entrypoint, ports), platform and layers.
+    filters={"dangling": True}. For an image's config, platform and layers pass verbose=True, or use
+    `image_inspect` for one image.
 
     Args:
         repository: Only show images of this repository
         all: Show intermediate image layers
         filters: Filter by attributes (label, dangling, before, since, etc.)
-        verbose: Inspect every image and return its full inspect payload instead of its list entry; one
-            extra daemon call per image
+        verbose: Return each image's full inspect payload instead of its list entry (one inspect call each)
 
     Returns:
-        list: One dict per image: by default the daemon's list entry ({"Id", "RepoTags", "RepoDigests", "Created",
-            "Size", "SharedSize", "Labels", "Containers", "ParentId"}; `Created` is Unix seconds, and -1 in
-            `SharedSize` or `Containers` means not computed); with verbose=True the full inspect payload, as
-            `image_inspect` returns
+        list: One dict per image: the daemon's list entry by default ({"Id", "RepoTags", "RepoDigests", "Created"
+            in Unix seconds, "Size", "Labels", "Containers", ...}; -1 means not computed); with verbose=True the
+            full inspect payload
     """
     client = _get_client(host)
     if verbose:

@@ -430,10 +430,9 @@ def container_list(  # noqa: DOC101,DOC103,DOC501,DOC503
     """
     List containers on the daemon (running only by default).
 
-    Pass all=True to include stopped containers. The default entries are the daemon's own list, as
-    `docker ps` shows it; pass verbose=True, or call `container_inspect` for one container, for the
-    environment, full config and detailed state. For a compose project `compose_ps` groups containers
-    by service; for swarm services use `service_ps` (tasks may live on other nodes).
+    Pass all=True to include stopped containers. For environment and full config pass verbose=True, or
+    use `container_inspect` for one container. For a compose project `compose_ps` groups containers by
+    service; for swarm services use `service_ps` (tasks may live on other nodes).
 
     Args:
         all: Show all containers, including stopped ones (default False: running only)
@@ -441,17 +440,15 @@ def container_list(  # noqa: DOC101,DOC103,DOC501,DOC503
         before: Only show containers created before this id or name
         limit: Maximum number of results
         filters: Filter by attributes (e.g. status, label)
-        verbose: Inspect every container and return its full inspect payload instead of its list entry;
-            one extra daemon call per container
-        ignore_removed: With verbose=True, skip a container removed between listing and inspecting it rather
-            than failing; inert otherwise
+        verbose: Return each container's full inspect payload instead of its list entry (one inspect call each)
+        ignore_removed: With verbose=True, skip a container removed before it was inspected instead of failing
         managed_only: Only return containers created by this MCP server (filters on the docker-mcp-server.managed
             label); combines with any `filters` given
 
     Returns:
-        list: One dict per container: by default the daemon's list entry ({"Id", "Names", "Image", "State",
-            "Status", "Ports", "Labels", "Mounts", ...}; a `Status` such as "Exited (3) 2 minutes ago" carries the
-            exit code); with verbose=True the full inspect payload, as `container_inspect` returns
+        list: One dict per container: the daemon's list entry by default ({"Id", "Names", "Image", "State",
+            "Status", "Ports", "Labels", ...}; a `Status` such as "Exited (3) 2 minutes ago" carries the exit code);
+            with verbose=True the full inspect payload
     """
     if managed_only:
         filters = managed_filter(filters)
