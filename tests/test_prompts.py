@@ -452,12 +452,12 @@ def test_survey_hosts_registered_only_in_multi_host_end_to_end():
 def test_no_prompt_reads_a_field_the_list_tools_stopped_returning_by_default():
     """`container_list`, `service_list`, `service_ps` and `system_df` return list rows by default.
 
-    The full documents they used to return carried these fields, and a prompt that still tells the model to
-    read one sends it looking for something that is not there: the `survey_hosts` prompt read
-    `State.ExitCode` from `container_list` after the change, and nothing failed. A prompt that genuinely
-    needs one of these must get it from an inspect tool or `verbose=True`, and should say so in its text;
-    add the field to the exemption here with the prompt that justifies it.
+    The full documents they return with `verbose=True` carry fields the rows do not, and a prompt that tells
+    the model to read one of those from a default call sends it looking for something that is not there.
+    A prompt that genuinely needs one must ask for `verbose=True` (or use an inspect tool) in the same
+    breath; a field read only that way goes in `_VERBOSE_ONLY` below.
     """
+    import re
     from pathlib import Path
 
     import docker_mcp.tools.prompts as prompts_module
@@ -465,5 +465,12 @@ def test_no_prompt_reads_a_field_the_list_tools_stopped_returning_by_default():
     source = Path(prompts_module.__file__).read_text(encoding="utf-8")
     for field in ("State.ExitCode", "State.Status", "Status.Err", "Spec.Mode", "ServiceStatus"):
         assert field not in source, f"a prompt still reads {field!r}, which the list tools no longer return"
-    # Named once, deliberately: the swarm audit says `service_ps(..., verbose=True)` adds it.
-    assert source.count("Status.Message") == 1
+    # Fields a prompt may name only right after asking for them with `verbose=True`.
+    _VERBOSE_ONLY = ("Status.Message",)
+    for field in _VERBOSE_ONLY:
+        for match in re.finditer(re.escape(field), source):
+            preceding = source[max(0, match.start() - 120) : match.start()]
+            assert "verbose=True" in preceding, (
+                f"a prompt names {field!r} without asking for verbose=True just before it; the default rows "
+                f"do not carry it"
+            )
