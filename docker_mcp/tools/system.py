@@ -514,7 +514,7 @@ def _legacy_df_totals(category: str, items: list[dict], layers_size: int) -> dic
                 used += size
             if size > 0:
                 total_size += size
-        else:  # BuildCache: a shared record is counted once, by whatever else holds it
+        else:  # BuildCache: moby leaves a shared record out of both sizes, though it still counts as active
             size = 0 if item.get("Shared") else item.get("Size") or 0
             total_size += size
             if item.get("InUse"):
