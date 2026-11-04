@@ -34,6 +34,8 @@ from docker_mcp.tools.services import (
     _awaiting_global_tasks,
     _read_service_task_summary,
     _runs_current_spec,
+    _service_row,
+    _task_rows,
 )
 from docker_mcp.tools.system import _get_client
 
@@ -181,19 +183,6 @@ def stack_list(host: str | None = None) -> list:  # noqa: DOC101,DOC103
     return [{"name": stack, "services": counts[stack]} for stack in sorted(counts)]
 
 
-def _service_mode(spec: dict) -> str | None:
-    """A service's scheduling mode as the CLI prints it, e.g. "replicated" or "global job".
-
-    Args:
-        spec: the service's `Spec`
-
-    Returns:
-        str or None: the mode, or None when the spec names none
-    """
-    mode = next(iter(spec.get("Mode") or {}), None)
-    return {"ReplicatedJob": "replicated job", "GlobalJob": "global job"}.get(mode, mode.lower()) if mode else None
-
-
 @tool()
 def stack_services(name: str, filters: dict | None = None, host: str | None = None) -> list:  # noqa: DOC101,DOC103
     """
@@ -213,27 +202,8 @@ def stack_services(name: str, filters: dict | None = None, host: str | None = No
             service, sorted by name; `ports` lists published ports as "published:target/protocol", and
             `update_state` is a rolling update's state, or null when there has been none
     """
-    rows = []
-    for model in _get_client(host).services.list(filters=_label_filters(name, filters), status=True):
-        service = model.attrs
-        spec = service.get("Spec") or {}
-        status = service.get("ServiceStatus") or {}
-        rows.append(
-            {
-                "id": service.get("ID"),
-                "name": spec.get("Name"),
-                "mode": _service_mode(spec),
-                "running_tasks": status.get("RunningTasks"),
-                "desired_tasks": status.get("DesiredTasks"),
-                "image": ((spec.get("TaskTemplate") or {}).get("ContainerSpec") or {}).get("Image"),
-                "ports": [
-                    f"{port.get('PublishedPort')}:{port.get('TargetPort')}/{port.get('Protocol')}"
-                    for port in (service.get("Endpoint") or {}).get("Ports") or []
-                ],
-                "update_state": (service.get("UpdateStatus") or {}).get("State"),
-            }
-        )
-    return sorted(rows, key=lambda row: row["name"] or "")
+    models = _get_client(host).services.list(filters=_label_filters(name, filters), status=True)
+    return sorted((_service_row(model.attrs) for model in models), key=lambda row: row["name"] or "")
 
 
 @tool()
@@ -257,27 +227,7 @@ def stack_ps(name: str, filters: dict | None = None, host: str | None = None) ->
     """
     client = _get_client(host)
     services = {s.id: s.name for s in client.services.list(filters=_label_filters(name))}
-    nodes = {n.id: (n.attrs.get("Description") or {}).get("Hostname") for n in client.nodes.list()}
-    rows = []
-    for task in client.api.tasks(filters=_label_filters(name, filters)):
-        service = services.get(task.get("ServiceID"), task.get("ServiceID"))
-        status = task.get("Status") or {}
-        # How the CLI names a task: its slot for a replicated service, its node for a global one.
-        suffix = task.get("Slot") or task.get("NodeID")
-        rows.append(
-            {
-                "id": task.get("ID"),
-                "name": f"{service}.{suffix}" if suffix else service,
-                "service": service,
-                "node": nodes.get(task.get("NodeID"), task.get("NodeID")),
-                "image": (((task.get("Spec") or {}).get("ContainerSpec") or {}).get("Image")),
-                "desired_state": task.get("DesiredState"),
-                "state": status.get("State"),
-                "error": status.get("Err"),
-                "since": status.get("Timestamp"),
-            }
-        )
-    return sorted(rows, key=lambda row: (row["name"] or "", row["since"] or ""))
+    return _task_rows(client, client.api.tasks(filters=_label_filters(name, filters)), services)
 
 
 @tool()
