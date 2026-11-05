@@ -101,7 +101,7 @@ roughly level, with the server ahead on unusual or easily-confused operations an
 the common ones.
 
 **Getting the arguments right is where the server is properly ahead**, and this is the substantial
-half. Across 579 parameters, every one carries a declared type, 80% carry an explicit default and
+half. Across 583 parameters, every one carries a declared type, 80% carry an explicit default and
 115 are marked required. That schema is enforced by the client before the call reaches the server,
 so a wrong argument name or type is rejected as a validation error with nothing executed. The skill
 composes a shell string, and a wrong flag is caught by Docker itself at execution, which may be
@@ -113,7 +113,7 @@ macOS, `status` fatal as a variable name in zsh, `jq -s` applied to something th
 array. A JSON Schema makes that entire class of mistake unrepresentable. Nothing in the skill can,
 because the CLI has no machine-readable description of its own flags.
 
-One honest qualification: only 13 of those 579 parameters carry an `enum`. The other 98% have their
+One honest qualification: only 13 of those 583 parameters carry an `enum`. The other 98% have their
 legal values documented in prose on both sides, so the server's advantage is mostly over argument
 names, types and requiredness rather than over the set of legal values.
 
@@ -300,9 +300,9 @@ change available.
 
 So the honest summary is:
 
-- **Eager-loading client** -> the skill is dramatically cheaper: ~4.6-6.6x on a real task at full
-  surface, ~1.9-2.4x even against a trimmed server, and ~140-340x at idle.
-- **Lazy-loading client** -> the server is cheaper in use, by ~3.0-5.9x at full surface and ~5.1-10x
+- **Eager-loading client** -> the skill is dramatically cheaper: ~4.6-6.7x on a real task at full
+  surface, ~1.9-2.4x even against a trimmed server, and ~140-350x at idle.
+- **Lazy-loading client** -> the server is cheaper in use, by ~2.9-5.7x at full surface and ~5.0-9.5x
   when trimmed, and both are cheap at idle.
 - **Docker rarely comes up in your work** -> the skill, decisively; it costs ~140 tokens to have
   installed and you may never pay more.
