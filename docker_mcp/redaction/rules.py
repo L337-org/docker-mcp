@@ -5,18 +5,7 @@ value: it is redacted, and stored within the discovered limits so its other form
 on.  Every rule is a row in `_RULES`, so adding one is a row plus its cases in
 tests/test_redaction_rules.py; the public field names and the flag pattern are tables too.
 
-The rules, from the redaction design:
-
-- known token formats: PEM private keys, GitHub, Stripe and Slack tokens, AWS access key IDs, JWTs
-  with a valid header;
-- credentials in headers: `Authorization`, `Proxy-Authorization`, cookies, `X-Api-Key` and alike;
-- passwords in URL user info and in a connection string's password field;
-- an assignment to a credential name, `NAME=value` or `"name": "value"`, when the value is 8 or more
-  characters with 4.0 or more bits of entropy per character;
-- the value after a credential-named command-line flag, `--password X` or `--api-key=X`;
-- any other run of 32 or more base64 characters with 4.5 or more bits per character, never hex alone,
-  never longer than `store.MAX_DISCOVERED_MATCH_LENGTH`, with base64 lines wrapped by `base64` joined
-  into one run first.
+REDACTION.md describes each rule for users; `_RULES` below is the list.
 """
 
 import base64
@@ -117,25 +106,27 @@ _AUTH_HEADER = re.compile(
 )
 _API_KEY_HEADER = re.compile(r"(?i)\bx-(?:api|auth|access)-(?:key|token)\s*[:=]\s*\"?([^\s\",;]+)")
 _COOKIE = re.compile(r"(?i)\b(?:set-)?cookie\s*[:=]\s*\"?([^\r\n\"]+)")
-_URL_USERINFO = re.compile(r"\b[a-z][a-z0-9+.-]*://[^/\s:@]+:([^@\s/]+)@", re.IGNORECASE)
+# A pattern that opens with a repeated class must neither start inside a run of that class nor backtrack
+# out of it, or a long run of base64 or hex is scanned again from every position: quadratic in its length.
+# So each starts only where the run begins (the look-behind) and repeats possessively (`*+`), which finds
+# the same matches here because the class cannot contain the character that must follow it.
+_URL_USERINFO = re.compile(r"(?<![a-z0-9+.-])[a-z][a-z0-9+.-]*+://[^/\s:@]++:([^@\s/]+)@", re.IGNORECASE)
 _CONNECTION_PASSWORD = re.compile(r"(?i)\b(?:password|pwd)\s*=\s*([^;'\"\s]+)")
 
 # --- credential-named assignments and command-line flags -------------------------------------------
 
 _ASSIGNMENT = re.compile(
-    r"(?P<name>[A-Za-z_][A-Za-z0-9_.-]*)[\"']?\s*(?:=|:)\s*[\"']?(?P<value>[^\s\"',;}\]]+)",
+    r"(?<![A-Za-z0-9_.-])(?P<name>[A-Za-z_][A-Za-z0-9_.-]*+)[\"']?\s*(?:=|:)\s*[\"']?(?P<value>[^\s\"',;}\]]+)",
 )
 # Only the flag itself is matched, so scanning never consumes the next flag (`-p --secret x` must see
 # `--secret`); its value is read from where the flag ends.
 _FLAG = re.compile(r"(?<![\w-])--?(?P<name>[A-Za-z][A-Za-z0-9-]*)(?:=|[ \t]+)")
 _FLAG_VALUE = re.compile(r"\"(?P<dq>[^\"]*)\"|'(?P<sq>[^']*)'|(?P<bare>[^\s\"']+)")
-# Extra credential words for flags and assignments beyond the harvest's name pattern, from #300's list.
-_CREDENTIAL_KEYS = frozenset({"PASSWORD", "APIKEY", "API_KEY", "SECRET", "TOKEN"})
 
 
 def _is_credential_name(name: str) -> bool:
     normalised = name.upper().replace("-", "_").replace(".", "_")
-    return settings.names().matches(normalised) or normalised in _CREDENTIAL_KEYS
+    return settings.names().matches(normalised)
 
 
 def _assignments(text: str) -> Iterator[Span]:
@@ -190,6 +181,8 @@ def _flags(text: str) -> Iterator[Span]:
 _RUN = re.compile(r"[A-Za-z0-9+/_-]{4,}={0,2}")
 _HEX = re.compile(r"[0-9A-Fa-f]+")
 _LINE_BREAK = re.compile(r"\r?\n")
+# How far back from a run to look for the `://` that would make it part of a URL.
+_URL_LOOKBACK = 2048
 # The shortest line width `base64`-style wrapping uses (PEM uses 64, coreutils `base64` 76).
 _MIN_WRAP_WIDTH = 60
 
@@ -199,8 +192,8 @@ def _runs(text: str) -> Iterator[tuple[int, int, str]]:
 
     Wrapped output is lines of one width followed by one shorter final line, so a run continues onto the
     next line only while every line so far has the same width of at least `_MIN_WRAP_WIDTH`, and the
-    first shorter line ends it.  Without the joining, each line is a separate value: 30 KB of wrapped
-    random data gave 464 markers in the spike.
+    first shorter line ends it.  Without the joining, each line of a wrapped blob would be a separate
+    value, and a large blob would fill the store with hundreds of them.
 
     Args:
         text: the text to search
@@ -226,8 +219,7 @@ def _runs(text: str) -> Iterator[tuple[int, int, str]]:
 
 def _looks_like_path(joined: str) -> bool:
     # Rooted, at least two segments, and none of base64's other symbols.  Not "contains //": random base64
-    # holds a `//` about one time in five at 800 characters, and treating that as a path left whole
-    # random blobs unredacted.
+    # holds a `//` about one time in five at 800 characters, so that test would skip whole random blobs.
     return (
         joined.startswith(("/", "./", "~/"))
         and "+" not in joined
@@ -240,8 +232,11 @@ def _in_url_or_path(text: str, start: int, joined: str) -> bool:
     if _looks_like_path(joined):
         return True
     # Back to the start of the whitespace-delimited token: a `://` there makes this part of a URL.
-    token_start = max(text.rfind(c, 0, start) for c in " \t\r\n\"'=") + 1
-    return "://" in text[token_start:start]
+    # A bounded look-back: a URL's scheme is close to its path, and searching back to the start of a long
+    # text for every run would make this quadratic in the text's length.
+    window = max(0, start - _URL_LOOKBACK)
+    token_start = max(text.rfind(c, window, start) for c in " \t\r\n\"'=") + 1
+    return "://" in text[max(token_start, window) : start]
 
 
 def _generic(text: str) -> Iterator[Span]:
@@ -291,12 +286,3 @@ def find(text: str) -> list[Span]:
             if 0 < span.end - span.start <= MAX_DISCOVERED_MATCH_LENGTH:
                 found.append(span)
     return found
-
-
-def rule_names() -> list[str]:
-    """The names of the rules, for tests and documentation.
-
-    Returns:
-        list: the rule names
-    """
-    return list(_RULES)

@@ -16,12 +16,13 @@ from dataclasses import dataclass
 from typing import Any
 
 from docker_mcp import _hosts
+from docker_mcp.exceptions import RedactionBudgetError, RedactionResetError
 from docker_mcp.redaction import forms, rules
 from docker_mcp.redaction.markers import MARKER_PATTERN, CounterExhaustedError, MarkerCodec, MarkerFault
 from docker_mcp.redaction.matcher import Matcher
 from docker_mcp.redaction.store import (
+    BUDGET_MESSAGE,
     UNSTORED_VALUE_ID,
-    BudgetReachedError,
     Entry,
     IdentifiersExhaustedError,
     Tier,
@@ -29,12 +30,10 @@ from docker_mcp.redaction.store import (
 )
 
 
-class StateResetError(Exception):
-    """The redactor rotated its key and emptied its store partway through a call.
-
-    Raised rather than finishing the call against the empty store, where a harvested value the rules
-    cannot see would come back unredacted.  The call is refused; the next one re-reads the values.
-    """
+_RESET_MESSAGE = (
+    "redaction started a new generation partway through this call (its identifiers or marker counter ran "
+    "out), so the call was refused rather than finished without the values it had stored; retry it as it is"
+)
 
 
 class Refusal(enum.Enum):
@@ -105,7 +104,7 @@ class Redactor:
 
     # --- storing ----------------------------------------------------------------------------------
 
-    def remember(self, value: str, host: str, tier: Tier = Tier.HARVESTED) -> None:  # noqa: DOC502
+    def remember(self, value: str, host: str, tier: Tier = Tier.HARVESTED) -> None:  # noqa: DOC503
         """Store a value read directly from where the daemon reports it, so it is redacted everywhere.
 
         Args:
@@ -114,16 +113,17 @@ class Redactor:
             tier: how it was found; harvested unless a rule found it
 
         Raises:
-            BudgetReachedError: storing it would pass the overall budget
+            RedactionBudgetError: storing it would pass the overall budget, or already did
+            RedactionResetError: storing it started a new generation, which forgets every value this call
+                stored before it, so the call must not go on to redact
         """
         index = self._host_index(host)
         state = self._state
         try:
             state.store.add(value, index, tier, host_label=host)
-        except IdentifiersExhaustedError:
-            # Storing only adds, so it is safe to do again in the new generation.
+        except IdentifiersExhaustedError as exc:
             self._rotate(state)
-            self._state.store.add(value, index, tier, host_label=host)
+            raise RedactionResetError(_RESET_MESSAGE) from exc
 
     def budget_reached(self) -> bool:
         """Whether the overall budget is reached, so every call on a redacted host must be refused.
@@ -161,19 +161,19 @@ class Redactor:
             Any: the same shape with credentials replaced
 
         Raises:
-            BudgetReachedError: the overall budget is reached
-            StateResetError: the redactor rotated partway through, so this call is refused rather than
-                finished against an empty store
+            RedactionBudgetError: the overall budget is reached
+            RedactionResetError: the redactor started a new generation partway through, so this call is
+                refused rather than finished against an empty store
         """
         if self.budget_reached():
-            raise BudgetReachedError
+            raise RedactionBudgetError(BUDGET_MESSAGE)
         index = self._host_index(host)
         state = self._state
         try:
             return self._walk(state, value, index, shape_rules=True)
         except IdentifiersExhaustedError, CounterExhaustedError:
             self._rotate(state)
-            raise StateResetError from None
+            raise RedactionResetError(_RESET_MESSAGE) from None
 
     def _walk(self, state: _State, value: Any, index: int, *, shape_rules: bool) -> Any:
         if isinstance(value, str):
@@ -281,14 +281,35 @@ def find_markers(text: str) -> list[str]:
 
 
 def _choose(candidates: list[_Candidate]) -> list[_Candidate]:
-    # Longest wins where two overlap, and a known value wins a tie, since its form is exact.
-    candidates.sort(key=lambda c: (c.start, -(c.end - c.start), c.known is None))
-    chosen: list[_Candidate] = []
+    """Resolve overlapping candidates so every character any of them covers is replaced.
+
+    Candidates that overlap form one cluster.  Where a single candidate covers the whole cluster it is
+    kept, a known value in preference to a rule's find, since its form is exact; otherwise the cluster's
+    whole span becomes one discovered value, so no part of either credential is left in the text and
+    swapping back restores exactly the text that was there.
+
+    Args:
+        candidates: every known hit and rule find, overlapping or not
+
+    Returns:
+        list: non-overlapping candidates, in order of position
+    """
+    candidates.sort(key=lambda c: (c.start, -c.end))
+    clusters: list[list[_Candidate]] = []
+    end = -1
     for candidate in candidates:
-        if chosen and candidate.start < chosen[-1].end:
-            previous = chosen[-1]
-            if candidate.end - candidate.start > previous.end - previous.start:
-                chosen[-1] = candidate
-            continue
-        chosen.append(candidate)
+        if clusters and candidate.start < end:
+            clusters[-1].append(candidate)
+            end = max(end, candidate.end)
+        else:
+            clusters.append([candidate])
+            end = candidate.end
+    chosen: list[_Candidate] = []
+    for cluster in clusters:
+        start, stop = cluster[0].start, max(c.end for c in cluster)
+        covering = [c for c in cluster if c.start == start and c.end == stop]
+        if covering:
+            chosen.append(min(covering, key=lambda c: c.known is None))
+        else:
+            chosen.append(_Candidate(start, stop, None, forms.RAW))
     return chosen

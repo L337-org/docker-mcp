@@ -1,12 +1,11 @@
-"""The index that finds every stored value's forms in a piece of text in one pass.
+"""The index that finds every stored value's forms in a piece of text in one pass per automaton.
 
-An Aho-Corasick automaton (`pyahocorasick`), because Python's `re` with thousands of literal
-alternatives took seconds per 100 KB of output where an automaton takes milliseconds.  Building one is
-not cheap - about 19 seconds for the 700,000 forms of 100,000 values - so it is not rebuilt on every
-new value: new forms go into a small automaton that is rebuilt quickly, and are merged into the large
-one once the small one holds a quarter as many, so total rebuild work stays proportional to the store.
-A merge near the limits stalls the call that triggers it; that is an accepted cost of a store that
-size, which only an abnormal harvest or flood reaches.
+An Aho-Corasick automaton (`pyahocorasick`), because Python's `re` with thousands of literal alternatives
+takes seconds per 100 KB of output where an automaton takes milliseconds.  Building an automaton costs
+time in proportion to its forms, so the index is a few automata of geometrically falling size rather than
+one: a new value's forms become a small automaton of their own, and whenever an automaton reaches a
+quarter of the size of the one before it, the two are merged and rebuilt as one.  Each form is rebuilt
+about log4(n) times over the life of the store, and a search scans at most about ten automata.
 
 The index is replaced whole, never changed in place, so a reader holding the old one is never given a
 half-built one.
@@ -17,9 +16,12 @@ from dataclasses import dataclass
 
 import ahocorasick
 
-# Below this many pending forms the small automaton is simply rebuilt; above it, and above a quarter of
-# the large one, everything is merged into the large one.
-_MIN_MERGE_THRESHOLD = 2_000
+# An automaton is merged into the one before it once it holds at least this fraction of that one's forms.
+_MERGE_RATIO = 4
+
+# Each form's payload: (value identifier, form identifier, length).  The length is there because the
+# automaton reports where a match ends, not where it starts.
+_Payload = tuple[int, int, int]
 
 
 @dataclass(frozen=True)
@@ -39,25 +41,18 @@ class Hit:
     form_id: int
 
 
-# Each form's payload: (value identifier, form identifier, length).  The length is there because
-# `iter_long` reports only where a match ends.
-_Payload = tuple[int, int, int]
+@dataclass(frozen=True)
+class _Level:
+    forms: dict[str, _Payload]
+    automaton: ahocorasick.Automaton
 
 
-def _build(forms: dict[str, _Payload]) -> ahocorasick.Automaton | None:
-    if not forms:
-        return None
+def _build(forms: dict[str, _Payload]) -> _Level:
     automaton = ahocorasick.Automaton()
     for text, payload in forms.items():
         automaton.add_word(text, payload)
     automaton.make_automaton()
-    return automaton
-
-
-@dataclass(frozen=True)
-class _Index:
-    large: ahocorasick.Automaton | None
-    small: ahocorasick.Automaton | None
+    return _Level(forms, automaton)
 
 
 class Matcher:
@@ -66,37 +61,42 @@ class Matcher:
     def __init__(self) -> None:
         """Start empty."""
         self._lock = threading.Lock()
-        self._large_forms: dict[str, _Payload] = {}
-        self._small_forms: dict[str, _Payload] = {}
-        self._index = _Index(None, None)
+        self._levels: tuple[_Level, ...] = ()
 
     def add(self, forms: dict[str, int], value_id: int) -> None:
         """Index one stored value's forms.
+
+        A form already indexed keeps the value it was first indexed for, and adding nothing new does not
+        rebuild anything.
 
         Args:
             forms: text -> form identifier
             value_id: the stored value's identifier
         """
         with self._lock:
-            for text, form_id in forms.items():
-                if text not in self._large_forms:
-                    self._small_forms.setdefault(text, (value_id, form_id, len(text)))
-            if len(self._small_forms) > max(_MIN_MERGE_THRESHOLD, len(self._large_forms) // 4):
-                self._large_forms.update(self._small_forms)
-                self._small_forms = {}
-                self._index = _Index(_build(self._large_forms), None)
-            else:
-                self._index = _Index(self._index.large, _build(self._small_forms))
+            new = {
+                text: (value_id, form_id, len(text))
+                for text, form_id in forms.items()
+                if not any(text in level.forms for level in self._levels)
+            }
+            if not new:
+                return
+            levels = [*self._levels, _build(new)]
+            while len(levels) >= 2 and len(levels[-1].forms) * _MERGE_RATIO >= len(levels[-2].forms):
+                merged = {**levels[-1].forms, **levels[-2].forms}
+                levels[-2:] = [_build(merged)]
+            self._levels = tuple(levels)
 
     def clear(self) -> None:
         """Forget every value, for a rotation that empties the store."""
         with self._lock:
-            self._large_forms = {}
-            self._small_forms = {}
-            self._index = _Index(None, None)
+            self._levels = ()
 
     def find(self, text: str) -> list[Hit]:
-        """Every non-overlapping occurrence of a stored form, longest first where two overlap.
+        """Every occurrence of a stored form, overlapping ones included.
+
+        Overlaps are resolved by the caller, which needs to see them all: where two stored values
+        partly overlap, reporting only the first would leave the second's tail in the text.
 
         Args:
             text: the text to search
@@ -104,24 +104,18 @@ class Matcher:
         Returns:
             list: the hits, in order of position
         """
-        index = self._index
-        hits: list[Hit] = []
-        for automaton in (index.large, index.small):
-            if automaton is None:
-                continue
-            for end, (value_id, form_id, length) in automaton.iter_long(text):
-                hits.append(Hit(end + 1 - length, end + 1, value_id, form_id))
-        return _longest_non_overlapping(hits)
+        hits = [
+            Hit(end + 1 - length, end + 1, value_id, form_id)
+            for level in self._levels
+            for end, (value_id, form_id, length) in level.automaton.iter(text)
+        ]
+        hits.sort(key=lambda hit: (hit.start, hit.end))
+        return hits
 
+    def levels(self) -> int:
+        """How many automata a search scans.
 
-def _longest_non_overlapping(hits: list[Hit]) -> list[Hit]:
-    hits.sort(key=lambda hit: (hit.start, -(hit.end - hit.start)))
-    chosen: list[Hit] = []
-    for hit in hits:
-        if chosen and hit.start < chosen[-1].end:
-            previous = chosen[-1]
-            if hit.end - hit.start > previous.end - previous.start:
-                chosen[-1] = hit
-            continue
-        chosen.append(hit)
-    return chosen
+        Returns:
+            int: the number of levels
+        """
+        return len(self._levels)

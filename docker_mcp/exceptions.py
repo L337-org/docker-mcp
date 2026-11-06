@@ -96,3 +96,19 @@ class RedactionConfigError(DockerMcpError):
     `redaction.settings.load()` turns this into a stderr line and `exit(1)`, like `HostConfigError`
     and for the same reason: it is raised before any tool is registered, so it never reaches a client.
     """
+
+
+class RedactionBudgetError(ToolRefusalError):
+    """The credential store reached its overall budget, so every call to a redacted host is refused.
+
+    Only a restart clears it, which also makes every marker issued so far invalid; the message says so.
+    """
+
+
+class RedactionResetError(DockerMcpError):
+    """The redactor started a new generation partway through this call, so the call was refused.
+
+    Unlike a refusal, the same call may be retried as it is: the next attempt runs against the new
+    generation and reads its values again.  Raised rather than finishing the call against an emptied
+    store, where a value no shape rule recognises would come back unredacted.
+    """

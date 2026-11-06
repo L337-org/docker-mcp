@@ -22,12 +22,12 @@ module per concern:
   names value fails fast with `SystemExit(1)`, like a malformed `DOCKER_MCP_SERVER_HOSTS`.
 
 - **`store.py`** - `ValueStore`, every value redacted, once per host, with its tier (harvested or
-  discovered), and **every limit as a named constant at the top**, each with its reason. Values are held
-  in `Secret`, whose text form is a placeholder and which refuses to be pickled. Nothing is evicted.
+  discovered), and **every limit as a named constant at the top**, each with its reason.  Values are held
+  in `Secret`, whose text form is a placeholder and which refuses to be pickled.  Nothing is evicted.
 - **`forms.py`** - the encoded forms of a value the matcher looks for, each with a one-byte identifier
   a marker records, and `render(value, form_id)` to restore exactly the replaced text.
 - **`markers.py`** - `MarkerCodec`: one AES block per marker under a per-process key, holding value
-  identifier, form, host, a 5-byte counter and a check field. `read` cannot tell an altered marker from
+  identifier, form, host, a 5-byte counter and a check field.  `read` cannot tell an altered marker from
   one issued by an earlier process; both fail the check field.
 - **`rules.py`** - the shape rules as a table, `PUBLIC_FIELDS`, and the credential-named flag rule.
 - **`matcher.py`** - the Aho-Corasick index (`pyahocorasick`) over every stored value's forms.
@@ -37,28 +37,39 @@ module per concern:
 ### Concurrency
 
 The MCP SDK runs each request as its own task and sync tools on worker threads, so calls genuinely
-overlap (checked on mcp 2.3: four calls on four threads at once). The store and the marker counter each
-take a lock; the matcher builds a new index and swaps it in whole, so a reader never sees a half-built
-one. `tests/test_redaction_store.py`, `test_redaction_markers.py` and `test_redaction_redactor.py`
-each run their part from eight threads.
+overlap.  The store and the marker counter each take a lock, and the matcher builds a new index and
+swaps it in whole, so a reader never sees a half-built one.  A value is indexed outside the store's lock,
+since indexing can take a while; a concurrent `add` of the same value waits until it is indexed, so no
+call redacts against an index that does not hold a value it has just stored, and a value that fails to
+index is removed again.
 
 ### Matching
 
-Python's `re` cannot do this job: with 3,500 literal alternatives (500 values) it took 3.2 seconds to
-scan 120 KB, where an Aho-Corasick automaton takes milliseconds. Building an automaton is still not cheap
-(about 19 seconds for the 700,000 forms of 100,000 values), so new forms go into a small automaton that
-is rebuilt on each addition and merged into the large one when it reaches a quarter of its size, keeping
-total rebuild work proportional to the store. A merge near the limits stalls the call that triggers it;
-accepted, since only an abnormal store reaches that size. A known value found in another host's output is
-stored for that host too, so its marker can be swapped back there.
+Python's `re` cannot do this job: with thousands of literal alternatives it takes seconds per 100 KB,
+where an Aho-Corasick automaton takes milliseconds.  Building an automaton costs time in proportion to
+its forms, so the index is a few automata of geometrically falling size: a new value's forms become an
+automaton of their own, and one is merged into the one before it whenever it reaches a quarter of that
+one's size.  Each form is rebuilt about log4(n) times over the store's life, a search scans at most about
+ten automata, and adding forms already indexed rebuilds nothing.  The occasional merge of the largest
+levels stalls the call that triggers it, for seconds near the limits; accepted, since only an abnormal
+store reaches that size.
+
+The matcher reports every match, overlapping ones included, and the redactor resolves them: candidates
+that overlap form one cluster, kept as one candidate where one covers it all and otherwise replaced
+whole as one discovered value, so no part of a credential is left in the text.  A known value found in
+another host's output is stored for that host too, so its marker can be swapped back there.
+
+Every rule pattern that opens with a repeated class starts only where a run of that class starts and
+repeats possessively, so a long run of base64 or hex is scanned once rather than from every position.
+`test_the_rules_take_linear_time_on_long_runs` holds that.
 
 ### Running out of identifiers
 
-Value identifiers (4 bytes) and the marker counter (5 bytes) are never reused. If either runs out, the
-redactor starts a new generation - new key, empty store - so every outstanding marker is refused. A
-`redact` call in which that happens is refused with `StateResetError` rather than finished against the
-empty store, where a value the rules cannot see would come back unredacted. Neither is reachable before
-the overall budget in practice.
+Value identifiers (4 bytes) and the marker counter (5 bytes) are never reused.  If either runs out, the
+redactor starts a new generation - new key, empty store - so every outstanding marker is refused.  The
+call in which that happens, whether storing or redacting, is refused with `RedactionResetError`, which
+the caller may retry as it is, rather than finished against the empty store, where a value the rules
+cannot see would come back unredacted.  Neither is reachable before the overall budget in practice.
 
 ## Where the settings surface
 
@@ -90,29 +101,29 @@ Each is a single table, so adding a case is a one-line change plus its test.
 
 ### Adding an encoded form
 
-1. Add a renderer to `_FORMS` in `docker_mcp/redaction/forms.py` under the next unused identifier.
+1.  Add a renderer to `_FORMS` in `docker_mcp/redaction/forms.py` under the next unused identifier.
    Identifiers are recorded in markers, so never reuse or renumber one.
-2. Extend `test_form_identifiers_are_fixed` and add the encoding to
+2.  Extend `test_form_identifiers_are_fixed` and add the encoding to
    `test_the_common_encodings_are_all_matched` in `tests/test_redaction_forms.py`.
-3. Add it to the list of forms in `REDACTION.md`.
+3.  Add it to the list of forms in `REDACTION.md`.
 
 ### Adding a shape rule
 
-1. Add a finder to `_RULES` in `docker_mcp/redaction/rules.py`.
-2. Add a case it must find to `test_each_rule_finds_its_credential`, and anything it must not to
+1.  Add a finder to `_RULES` in `docker_mcp/redaction/rules.py`.
+2.  Add a case it must find to `test_each_rule_finds_its_credential`, and anything it must not to
    `test_what_is_not_a_credential_is_left_alone`, in `tests/test_redaction_rules.py`.
-3. Add it to the list of rules in `REDACTION.md` and in the module docstring.
+3.  Add it to the list of rules in `REDACTION.md` and in the module docstring.
 
 ### Adding a public field
 
-1. Add it to `PUBLIC_FIELDS` in `docker_mcp/redaction/rules.py`, and to the list in `REDACTION.md`;
-   `test_redaction_md_lists_exactly_the_public_fields` fails until the two agree. Keep the list short: a
+1.  Add it to `PUBLIC_FIELDS` in `docker_mcp/redaction/rules.py`, and to the list in `REDACTION.md`;
+   `test_redaction_md_lists_exactly_the_public_fields` fails until the two agree.  Keep the list short: a
    field on it is never redacted by a rule, even if a credential ends up in it.
 
 ### Changing a limit
 
-1. Change the constant at the top of `docker_mcp/redaction/store.py`, and its reason if that changed.
-2. Update the table in `REDACTION.md`.
+1.  Change the constant at the top of `docker_mcp/redaction/store.py`, and its reason if that changed.
+2.  Update the table in `REDACTION.md`.
 
 ### Adding a built-in credential name pattern
 

@@ -413,8 +413,9 @@ re-proposes these; it has no memory of last time.
   guard instead, and needs no cap remembered in advance. Flag only a change that silently narrows that
   guard. The same question - cap or guard? - applies to any new direct dependency whose import surface
   this project touches.
-- **No `cryptography` pin.** It is transitive, and a wheels-only Intel-macOS resolve landing on a
-  vulnerable version is accepted. Do not propose pinning it or asserting it in CI.
+- **No `cryptography` pin.** It is a direct dependency, declared without a bound, because redaction's
+  markers import it (it also comes in through paramiko), and a wheels-only Intel-macOS resolve landing
+  on a vulnerable version is accepted. Do not propose pinning it or asserting it in CI.
 - **`scripts/measure-comparison-figures.py` is deliberately not a CI gate.** Token figures move a few
   tokens on any docstring edit, so asserting them would fail constantly and signal nothing. A weekly
   routine watches for drift instead. Do not propose promoting it.

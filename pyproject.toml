@@ -57,10 +57,9 @@ dependencies = [
     # which the matcher relies on for longest non-overlapping matches;
     # tests/test_pyproject_pins.py guards that it is still there.
     "pyahocorasick>=2.3.1",
-    # Transitive (through paramiko), but redaction imports it directly to encrypt its markers with AES.
-    # Deliberately unbounded, as AGENTS.md records for this package: a floor or cap could force a
-    # wheels-only resolve onto a release with no wheel for a supported platform. The guard in
-    # tests/test_pyproject_pins.py fails instead if the AES primitive the code uses goes away.
+    # Also transitive (through paramiko), but redaction imports it directly to encrypt its markers with
+    # AES. Deliberately unbounded and unasserted in CI, as AGENTS.md records for this package: a floor or
+    # cap could force a wheels-only resolve onto a release with no wheel for a supported platform.
     "cryptography",
 ]
 

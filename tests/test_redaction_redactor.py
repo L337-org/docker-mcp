@@ -6,9 +6,10 @@ import pytest
 
 from docker_mcp.redaction import forms, markers, rules, settings
 from docker_mcp.redaction import store as store_module
-from docker_mcp.redaction.redactor import Redactor, Refusal, StateResetError, find_markers
+from docker_mcp.redaction.redactor import Redactor, Refusal, find_markers
 from docker_mcp.redaction.settings import NameRules
-from docker_mcp.redaction.store import BudgetReachedError, Tier
+from docker_mcp.exceptions import DockerMcpError, RedactionBudgetError, RedactionResetError, ToolRefusalError
+from docker_mcp.redaction.store import Tier
 
 _HOSTS = ["local", "prod"]
 _SECRET = "correct-horse-battery-staple-42"
@@ -130,25 +131,30 @@ def test_a_public_field_is_left_to_known_values_only(redactor):
     redacted = redactor.redact({"SandboxKey": random_looking, "TrustRoot": f"x {_SECRET}"}, "prod")
     assert redacted["SandboxKey"] == random_looking
     assert _SECRET not in redacted["TrustRoot"]
-    assert next(iter(rules.PUBLIC_FIELDS)) in rules.PUBLIC_FIELDS
 
 
 def test_at_the_overall_budget_every_call_is_refused(redactor, monkeypatch):
     monkeypatch.setattr(store_module, "OVERALL_BUDGET_BYTES", 400)
     redactor.remember("first-harvested-value", "prod")
-    with pytest.raises(BudgetReachedError):
+    with pytest.raises(RedactionBudgetError):
         redactor.remember("y" * 300, "prod")
     assert redactor.budget_reached()
-    with pytest.raises(BudgetReachedError):
+    with pytest.raises(RedactionBudgetError):
         redactor.redact("anything", "local")
 
 
-def test_running_out_of_identifiers_rotates_so_old_markers_are_refused(redactor, monkeypatch):
+def test_running_out_of_identifiers_refuses_the_call_and_old_markers(redactor, monkeypatch):
     redactor.remember(_SECRET, "prod")
     [old] = find_markers(redactor.redact(_SECRET, "prod"))
     monkeypatch.setattr(store_module, "_MAX_VALUE_ID", 0)
-    redactor.remember("a-second-harvested-value", "prod")  # rotates, then stores in the new generation
+    # The call that runs out is refused, since the values it stored before are in the old generation.
+    with pytest.raises(RedactionResetError) as caught:
+        redactor.remember("a-second-harvested-value", "prod")
+    assert isinstance(caught.value, DockerMcpError) and not isinstance(caught.value, ToolRefusalError)
+    assert "retry it as it is" in str(caught.value)
     assert redactor.resolve(old, "prod") is Refusal.NOT_THIS_PROCESS
+    # The retried call works in the new generation.
+    redactor.remember("a-second-harvested-value", "prod")
     [new] = find_markers(redactor.redact("a-second-harvested-value", "prod"))
     assert redactor.resolve(new, "prod") == "a-second-harvested-value"
 
@@ -157,7 +163,7 @@ def test_running_out_of_marker_counter_refuses_the_call_rather_than_repeating_or
     redactor.remember(_SECRET, "prod")
     [old] = find_markers(redactor.redact(_SECRET, "prod"))
     monkeypatch.setattr(redactor._state.codec, "_counter", markers._MAX_COUNTER + 1)
-    with pytest.raises(StateResetError):
+    with pytest.raises(RedactionResetError):
         redactor.redact(f"x {_SECRET}", "prod")
     # The next call works under a new key once the value is stored again; old markers are refused.
     redactor.remember(_SECRET, "prod")
@@ -214,3 +220,33 @@ def test_a_flag_and_its_value_in_separate_elements_of_a_command_list(redactor, f
 def test_a_flag_followed_by_another_flag_or_a_non_credential_flag_leaves_the_list_alone(redactor):
     result = ["app", "--password", "--verbose", "--name", "plainword"]
     assert redactor.redact(result, "prod") == result
+
+
+def test_partly_overlapping_credentials_leave_nothing_in_clear(redactor):
+    # A known value immediately followed by a random run the generic rule finds: the run starts inside
+    # the known value's text, so replacing either alone would leave part of the other.
+    redactor.remember("pass:word123", "prod")
+    tail = "Zq8xT2mR9vLk4WnB7yHc3PdF6sJg1QaE5uXo0Itb"
+    text = f"x pass:word123{tail} y"
+    redacted = redactor.redact(text, "prod")
+    assert "pass:" not in redacted and "word123" not in redacted and tail[:10] not in redacted
+    assert _swap_back(redactor, redacted, "prod") == text
+
+
+def test_two_stored_values_that_partly_overlap_are_both_covered(redactor):
+    redactor.remember("alpha-bravo-charlie", "prod")
+    redactor.remember("charlie-delta-echo", "prod")
+    text = "x alpha-bravo-charlie-delta-echo y"
+    redacted = redactor.redact(text, "prod")
+    assert "alpha" not in redacted and "echo" not in redacted
+    assert _swap_back(redactor, redacted, "prod") == text
+
+
+def test_the_budget_refusal_tells_the_client_what_to_do(redactor, monkeypatch):
+    monkeypatch.setattr(store_module, "OVERALL_BUDGET_BYTES", 400)
+    redactor.remember("first-harvested-value", "prod")
+    with pytest.raises(RedactionBudgetError):
+        redactor.remember("y" * 300, "prod")
+    with pytest.raises(RedactionBudgetError) as caught:
+        redactor.redact("anything", "local")
+    assert isinstance(caught.value, ToolRefusalError) and "restart the server" in str(caught.value)

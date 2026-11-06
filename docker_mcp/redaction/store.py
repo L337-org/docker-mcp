@@ -16,6 +16,7 @@ import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from docker_mcp.exceptions import RedactionBudgetError
 from docker_mcp.redaction import forms
 
 logger = logging.getLogger("docker_mcp.redaction")
@@ -145,8 +146,10 @@ class IdentifiersExhaustedError(Exception):
     """Every value identifier has been issued; the redactor rotates the key and empties the store."""
 
 
-class BudgetReachedError(Exception):
-    """The overall budget is reached; every call on a redacted host is refused until a restart."""
+BUDGET_MESSAGE = (
+    "the credential store used by redaction is full, so calls to redacted hosts are refused; restart the "
+    "server to clear it (every marker issued so far will then stop working)"
+)
 
 
 @dataclass
@@ -172,9 +175,13 @@ class ValueStore:
         self._host_usage: dict[int, dict[Tier, _Usage]] = {}
         self._budget_reached = False
         self._warned_hosts: set[int] = set()
+        # Values stored but still being indexed, so a concurrent add of the same value can wait for them.
+        self._indexing: dict[tuple[int, str], threading.Event] = {}
         self._on_add = on_add
 
-    def add(self, value: str, host_index: int, tier: Tier, *, host_label: str = "") -> Entry | None:
+    def add(  # noqa: DOC503 - raised by the helper that stores, re-raised after indexing fails
+        self, value: str, host_index: int, tier: Tier, *, host_label: str = ""
+    ) -> Entry | None:
         """Store a value for a host, or return the entry already holding it.
 
         A discovered value later harvested becomes harvested.  A discovered value past its kind's
@@ -191,57 +198,91 @@ class ValueStore:
             Entry | None: the entry, or None for a discovered value that was not stored
 
         Raises:
-            BudgetReachedError: storing a harvested value would pass the overall budget
+            RedactionBudgetError: storing a harvested value would pass the overall budget, or already did
             IdentifiersExhaustedError: every identifier has been issued
         """
         if not value:
             return None
+        key = (host_index, value)
+        # One lock block both checks for the value and stores it: a gap between the two lets a concurrent
+        # call store the same value a second time.
         with self._lock:
-            key = (host_index, value)
             existing = self._by_key.get(key)
             if existing is not None:
-                if existing.tier is Tier.DISCOVERED and tier is Tier.HARVESTED:
-                    return self._promote(existing)
-                return existing
-            if self._budget_reached:
-                raise BudgetReachedError
-            value_forms = forms.forms_of(value)
-            cost = sum(len(text.encode("utf-8", errors="surrogateescape")) for text in value_forms)
-            total = self._usage[Tier.HARVESTED].bytes + self._usage[Tier.DISCOVERED].bytes
-            if tier is Tier.DISCOVERED:
-                discovered = self._usage[Tier.DISCOVERED]
-                if (
-                    len(value) > MAX_DISCOVERED_MATCH_LENGTH
-                    or discovered.values >= MAX_DISCOVERED_VALUES
-                    or discovered.bytes + cost > MAX_DISCOVERED_BYTES
-                    or total + cost > OVERALL_BUDGET_BYTES
-                ):
-                    self._warn_discovered_full(host_index, host_label)
-                    return None
-            elif total + cost > OVERALL_BUDGET_BYTES:
-                self._budget_reached = True
-                logger.error(
-                    "credential store reached its overall budget of %d bytes (harvested: %d values, %d bytes; "
-                    "discovered: %d values, %d bytes); every call on a redacted host is refused until restart",
-                    OVERALL_BUDGET_BYTES,
-                    self._usage[Tier.HARVESTED].values,
-                    self._usage[Tier.HARVESTED].bytes,
-                    self._usage[Tier.DISCOVERED].values,
-                    self._usage[Tier.DISCOVERED].bytes,
+                result = (
+                    self._promote(existing) if existing.tier is Tier.DISCOVERED and tier is Tier.HARVESTED else existing
                 )
-                raise BudgetReachedError
-            if self._next_id > _MAX_VALUE_ID:
-                raise IdentifiersExhaustedError
-            entry = Entry(self._next_id, host_index, tier, Secret(value), cost)
-            self._next_id += 1
-            self._by_key[key] = entry
-            self._by_id[entry.value_id] = entry
-            self._account(entry, +1)
-        if self._on_add is not None:
-            # Outside the store's lock: indexing can take a while near the limits, and must not hold up
-            # lookups.  The matcher has its own lock.
-            self._on_add(entry, value_forms)
+                pending = self._indexing.get(key)
+            else:
+                stored = self._store_new(key, value, host_index, tier, host_label)
+        if existing is not None:
+            # Another call stored this value and is still indexing it.  Returning now would let this call
+            # redact against an index that does not hold it yet, and show it in clear.
+            if pending is not None:
+                pending.wait()
+            return result
+        if stored is None:
+            return None
+        entry, value_forms, indexed = stored
+        try:
+            if self._on_add is not None:
+                # Outside the store's lock: indexing can take a while near the limits, and must not hold up
+                # every other lookup.  A concurrent add of the same value waits on `indexed` instead.
+                self._on_add(entry, value_forms)
+        except BaseException:
+            # Not indexed means not redacted, so the value must not look stored: the next add retries.
+            with self._lock:
+                self._by_key.pop(key, None)
+                self._by_id.pop(entry.value_id, None)
+                self._account(entry, -1)
+            raise
+        finally:
+            with self._lock:
+                self._indexing.pop(key, None)
+            indexed.set()
         return entry
+
+    def _store_new(
+        self, key: tuple[int, str], value: str, host_index: int, tier: Tier, host_label: str
+    ) -> tuple[Entry, dict[str, int], threading.Event] | None:
+        # Called with the lock held.  None for a discovered value past its limits.
+        if self._budget_reached:
+            raise RedactionBudgetError(BUDGET_MESSAGE)
+        value_forms = forms.forms_of(value)
+        cost = sum(len(text.encode("utf-8", errors="surrogateescape")) for text in value_forms)
+        total = self._usage[Tier.HARVESTED].bytes + self._usage[Tier.DISCOVERED].bytes
+        if tier is Tier.DISCOVERED:
+            discovered = self._usage[Tier.DISCOVERED]
+            if (
+                len(value) > MAX_DISCOVERED_MATCH_LENGTH
+                or discovered.values >= MAX_DISCOVERED_VALUES
+                or discovered.bytes + cost > MAX_DISCOVERED_BYTES
+                or total + cost > OVERALL_BUDGET_BYTES
+            ):
+                self._warn_discovered_full(host_index, host_label)
+                return None
+        elif total + cost > OVERALL_BUDGET_BYTES:
+            self._budget_reached = True
+            logger.error(
+                "credential store reached its overall budget of %d bytes (harvested: %d values, %d bytes; "
+                "discovered: %d values, %d bytes); every call on a redacted host is refused until restart",
+                OVERALL_BUDGET_BYTES,
+                self._usage[Tier.HARVESTED].values,
+                self._usage[Tier.HARVESTED].bytes,
+                self._usage[Tier.DISCOVERED].values,
+                self._usage[Tier.DISCOVERED].bytes,
+            )
+            raise RedactionBudgetError(BUDGET_MESSAGE)
+        if self._next_id > _MAX_VALUE_ID:
+            raise IdentifiersExhaustedError
+        entry = Entry(self._next_id, host_index, tier, Secret(value), cost)
+        self._next_id += 1
+        self._by_key[key] = entry
+        self._by_id[entry.value_id] = entry
+        self._account(entry, +1)
+        indexed = threading.Event()
+        self._indexing[key] = indexed
+        return entry, value_forms, indexed
 
     def _promote(self, entry: Entry) -> Entry:
         promoted = Entry(entry.value_id, entry.host_index, Tier.HARVESTED, entry.secret, entry.cost)

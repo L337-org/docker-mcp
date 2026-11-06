@@ -151,7 +151,7 @@ def test_redaction_md_lists_exactly_the_public_fields():
 
 
 def test_random_base64_containing_slashes_is_not_mistaken_for_a_path():
-    # A run holding `//` used to be skipped as a path, leaving about one random blob in five unredacted.
+    # Random base64 holds `//` about one time in five at 800 characters, so `//` cannot mean "a path".
     token = "Zq8xT2mR9vLk//4WnB7yHc3PdF6sJg1QaE5uXo0Itb"
     assert token in _found(f"blob {token}")
     rooted = "/Zq8xT2mR9vLk//4WnB7+yHc3PdF6sJg1QaE5uXo0Itb"
@@ -160,3 +160,21 @@ def test_random_base64_containing_slashes_is_not_mistaken_for_a_path():
 
 def test_a_real_path_with_a_random_looking_segment_is_left_alone():
     assert _found("/var/lib/docker/overlay2/Zq8xT2mR9vLk4WnB7yHc3PdF6sJg1QaE/diff") == []
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        secrets.token_urlsafe(150_000),  # one long base64url run
+        secrets.token_hex(100_000),
+        "a.b-c_d" * 30_000,
+    ],
+)
+def test_the_rules_take_linear_time_on_long_runs(text):
+    # An unanchored pattern opening with a repeated class is retried from every position in a run, which
+    # is quadratic in its length; in linear time 200 KB takes well under the bound.
+    import time
+
+    started = time.perf_counter()
+    rules.find(text)
+    assert time.perf_counter() - started < 2.0

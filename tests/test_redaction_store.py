@@ -1,4 +1,5 @@
 import logging
+from pathlib import Path
 import pickle
 import threading
 import traceback
@@ -6,8 +7,8 @@ import traceback
 import pytest
 
 from docker_mcp.redaction import store as store_module
+from docker_mcp.exceptions import RedactionBudgetError, ToolRefusalError
 from docker_mcp.redaction.store import (
-    BudgetReachedError,
     IdentifiersExhaustedError,
     Secret,
     Tier,
@@ -88,11 +89,14 @@ def test_the_overall_budget_refuses_a_harvested_value_and_stays_reached(monkeypa
     monkeypatch.setattr(store_module, "OVERALL_BUDGET_BYTES", 300)
     store = ValueStore()
     assert store.add("first-harvested", 0, Tier.HARVESTED) is not None
-    with caplog.at_level(logging.ERROR, logger="docker_mcp.redaction"), pytest.raises(BudgetReachedError):
+    with caplog.at_level(logging.ERROR, logger="docker_mcp.redaction"), pytest.raises(RedactionBudgetError) as caught:
         store.add("z" * 200, 0, Tier.HARVESTED)
+    # A refusal the client is told about, with what to do.
+    assert isinstance(caught.value, ToolRefusalError)
+    assert "restart the server" in str(caught.value) and "stop working" in str(caught.value)
     assert store.budget_reached and store.report(0)["budget_reached"]
     assert "z" * 20 not in caplog.text
-    with pytest.raises(BudgetReachedError):
+    with pytest.raises(RedactionBudgetError):
         store.add("anything-else", 0, Tier.HARVESTED)
     # A value already stored is still found, so its markers keep working until the restart.
     assert store.get_for("first-harvested", 0) is not None
@@ -164,3 +168,53 @@ def test_concurrent_adds_lose_nothing_and_never_share_an_identifier():
     assert len({entry.value_id for entry in entries}) == len(entries)
     report = store.report(0)
     assert (report["harvested_values"], report["discovered_values"]) == (500, 4_000)
+
+
+def test_a_concurrent_add_of_the_same_value_waits_until_it_is_indexed():
+    indexing = threading.Event()
+    release = threading.Event()
+    indexed: list[int] = []
+
+    def slow_index(entry, value_forms):
+        del value_forms
+        indexing.set()
+        release.wait(5)
+        indexed.append(entry.value_id)
+
+    store = ValueStore(on_add=slow_index)
+    first = threading.Thread(target=store.add, args=(_VALUE, 0, Tier.HARVESTED))
+    first.start()
+    assert indexing.wait(5)
+    second_done = threading.Event()
+    second = threading.Thread(target=lambda: (store.add(_VALUE, 0, Tier.HARVESTED), second_done.set()))
+    second.start()
+    # The second add must not report the value stored while the first is still indexing it.
+    assert not second_done.wait(0.3)
+    release.set()
+    first.join(5)
+    second.join(5)
+    assert second_done.is_set() and len(indexed) == 1
+
+
+def test_a_value_that_fails_to_index_is_not_left_looking_stored():
+    def broken(entry, value_forms):
+        del entry, value_forms
+        raise RuntimeError("index failed")
+
+    store = ValueStore(on_add=broken)
+    with pytest.raises(RuntimeError, match="index failed"):
+        store.add(_VALUE, 0, Tier.HARVESTED)
+    assert store.get_for(_VALUE, 0) is None
+    assert store.report(0)["harvested_values"] == 0
+
+
+def test_redaction_md_states_the_limits_the_code_enforces():
+    text = (Path(__file__).parent.parent / "REDACTION.md").read_text(encoding="utf-8")
+    table = text.split("## Limits", 1)[1].split("\n## ", 1)[0]
+    for stated in (
+        f"{store_module.MAX_DISCOVERED_MATCH_LENGTH // 1024} KB",
+        f"{store_module.MAX_DISCOVERED_VALUES:,}",
+        f"{store_module.MAX_DISCOVERED_BYTES // 2**20} MB",
+        f"{store_module.OVERALL_BUDGET_BYTES // 2**20} MB",
+    ):
+        assert stated in table, f"REDACTION.md's limits table does not state {stated}"

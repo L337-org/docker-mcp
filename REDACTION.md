@@ -69,8 +69,9 @@ Two things are replaced, wherever they appear in a redacted host's output, dict 
   access key IDs and JWTs; `Authorization`, `Proxy-Authorization`, cookie and API-key header values;
   passwords in a URL's user info or a connection string; the value assigned to a credential name, when
   it is 8 or more characters and looks random; the value after a credential-named command-line flag,
-  such as `--password`, whatever it looks like, including where Docker reports a command as a list; and any other run of 32 or more base64 characters that
-  looks random.  Hex alone is never treated as a credential by these rules, nor is a run longer than
+  such as `--password`, whatever it looks like, including where Docker reports a command as a list; and
+  any other run of 32 or more base64 characters that looks random.  Where two of these overlap, the
+  whole of both is replaced as one.  Hex alone is never treated as a credential by these rules, nor is a run longer than
   16 KB, and lines wrapped by a base64 encoder count as one run.  A value found this way is remembered,
   so its encoded forms are matched from then on.
 

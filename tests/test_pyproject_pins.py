@@ -363,20 +363,3 @@ def test_the_installed_pyahocorasick_still_provides_what_the_matcher_relies_on()
         automaton.add_word(word, word)
     automaton.make_automaton()
     assert list(automaton.iter_long("xabcdefx")) == [(6, "abcdef")]
-
-
-def test_the_installed_cryptography_still_provides_single_block_aes():
-    """Redaction markers are one AES block under a per-process key (`docker_mcp/redaction/markers.py`).
-
-    cryptography is deliberately unbounded (see pyproject.toml); this is the guard that replaces a bound.
-    """
-    import os
-
-    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-
-    cipher = Cipher(algorithms.AES(os.urandom(32)), modes.ECB())  # noqa: S305 - the primitive the markers use
-    block = bytes(range(16))
-    encryptor, decryptor = cipher.encryptor(), cipher.decryptor()
-    ciphertext = encryptor.update(block) + encryptor.finalize()
-    assert len(ciphertext) == 16
-    assert decryptor.update(ciphertext) + decryptor.finalize() == block
