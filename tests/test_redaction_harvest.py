@@ -263,6 +263,8 @@ def test_checked_ids_are_forgotten_when_the_daemon_changes_and_never_grow_past_t
     assert len(h._checked_ids) == 2
     h.harvest_if_unseen(["c" * 64, "d" * 64])
     assert len(h._checked_ids) == 2  # the bound cleared the earlier two first
+    h.harvest_if_unseen([c * 64 for c in "56789"])
+    assert len(h._checked_ids) == 3  # one result naming more than the bound still stays within it
     client.containers_map["c2"] = _container("c2", [])
     h.ensure_fresh()
     assert h._checked_ids == set()

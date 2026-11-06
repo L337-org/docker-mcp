@@ -85,8 +85,8 @@ characters is redacted only where no letter, digit or underscore adjoins it, so 
 While redaction is on anywhere, the server's instructions say so in one line and point the agent to
 `host_list`, whose `redaction` notes give each redacted host's rules: that a marker must not be passed to
 a tool or written to a file; the tools whose bytes in band are refused; and, on a host that accepts
-writes, the tools whose files written to disk are not redacted.  The notes name only the tools that are registered and allowed on that
-host.
+writes, the tools whose files written to disk are not redacted.  The notes name only the tools that are
+registered and allowed on that host.
 
 ## What is redacted, and how
 
@@ -103,9 +103,9 @@ Two things are replaced, wherever they appear in a redacted host's output, dict 
   it is 8 or more characters and looks random; the value after a credential-named command-line flag,
   such as `--password`, whatever it looks like, including where Docker reports a command as a list; and
   any other run of 32 or more base64 characters that looks random.  Where two of these overlap, the
-  whole of both is replaced as one.  Hex alone is never treated as a credential by these rules, nor is a run longer than
-  16 KB, and lines wrapped by a base64 encoder count as one run.  A value found this way is remembered,
-  so its encoded forms are matched from then on.
+  whole of both is replaced as one.  Hex alone is never treated as a credential by these rules, nor is a
+  run longer than 16 KB, and lines wrapped by a base64 encoder count as one run.  A value found this way
+  is remembered, so its encoded forms are matched from then on.
 
 Each replacement is a marker, `[REDACTED:<token>]`, where the token is 22 characters.  Every marker is
 different, even for the same credential in the same result, so nothing in the output shows that two

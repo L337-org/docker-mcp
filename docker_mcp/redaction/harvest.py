@@ -128,7 +128,8 @@ class HostHarvest:
                 return False
             if len(self._checked_ids) + len(unseen) > _MAX_CHECKED_IDS:
                 self._checked_ids.clear()
-            self._checked_ids.update(unseen)
+            # One result can name more IDs than the bound; those beyond it are simply checked again later.
+            self._checked_ids.update(unseen[:_MAX_CHECKED_IDS])
             return self._refresh()
 
     def _refresh(self) -> bool:
