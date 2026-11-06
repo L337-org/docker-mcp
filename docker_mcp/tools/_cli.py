@@ -22,10 +22,10 @@ from docker_mcp._hosts import is_multi as _is_multi, is_ssh_url, resolve as _res
 from docker_mcp.tools._ssh_proxy import (
     RemoteExecResult,
     RemoteStagingSession,
+    is_shell_assignable,
     remote_staging_session,
     run_remote_exec,
     ssh_proxy_for_docker_host,
-    is_shell_assignable,
 )
 
 DEFAULT_TIMEOUT_SECONDS = 60.0
