@@ -25,6 +25,7 @@ from docker_mcp.exceptions import CapabilityError, ToolInputError
 from docker_mcp.server import tool
 from docker_mcp.tools._cli import (
     CliResult,
+    cli_variables,
     filter_args,
     has_plugin,
     parse_json_or_ndjson,
@@ -39,6 +40,7 @@ from docker_mcp.tools._cli import (
     run_in_session,
     safe_positional,
     should_remote_exec,
+    values_by_name,
 )
 from docker_mcp.tools._utils import drop_none
 from docker_mcp.tools.system import _get_client
@@ -60,6 +62,7 @@ def _run_buildx(
     host: str | None = None,
     path_values: list[str] | None = None,
     stage_cwd: bool = False,
+    cli_env: dict[str, str] | None = None,
 ) -> CliResult:
     """Run `docker buildx <args...>`, locally or - with no local buildx plugin - on the ssh:// host.
 
@@ -74,6 +77,7 @@ def _run_buildx(
         host: configured host label, or None for the default host
         path_values: values in `args` naming local paths to reconcile with the remote host
         stage_cwd: True when the subcommand reads files from `cwd` (bake), so it is copied over
+        cli_env: variables for the CLI's own environment (`vars`), kept off every command line
 
     Returns:
         CliResult: the same shape from either backend
@@ -87,10 +91,11 @@ def _run_buildx(
                 timeout=timeout,
                 path_values=path_values or (),
                 stage_cwd=stage_cwd,
+                extra_env=cli_env,
             )
-        return remote_exec_cli(host, ["buildx", *args], timeout=timeout)
+        return remote_exec_cli(host, ["buildx", *args], timeout=timeout, extra_env=cli_env)
     require_plugin("buildx")
-    return run_docker(["buildx", *args], cwd=cwd, timeout=timeout, host=host)
+    return run_docker(["buildx", *args], cwd=cwd, timeout=timeout, host=host, extra_env=cli_env)
 
 
 # --- buildx_build's own staging -------------------------------------------------------------------
@@ -353,6 +358,7 @@ def buildx_build(  # noqa: DOC101,DOC103,DOC501,DOC503
     attest: list[str] | None = None,
     secret: list[str] | None = None,
     ssh: list[str] | None = None,
+    vars: dict[str, str] | None = None,
     timeout_seconds: float = _TIMEOUT_BUILD,
     host: str | None = None,
 ) -> dict:
@@ -377,7 +383,8 @@ def buildx_build(  # noqa: DOC101,DOC103,DOC501,DOC503
         file: Dockerfile path; a leading `~` is expanded. A relative path resolves against this server's working
             directory (buildx's own rule), NOT against `context` - pass e.g. "ctx/Dockerfile" for a Dockerfile inside
             the context directory "ctx".
-        build_args: Build-time variables (each becomes `--build-arg KEY=VALUE`)
+        build_args: Build-time variables, kept off the command line unless reserved (PATH) but recorded in image
+            history; for a credential use `secret` with `env=`
         build_contexts: Additional named build contexts (e.g. {"deps": "./vendor"}); a leading `~` is expanded
         labels: Labels to set on the resulting image (each becomes `--label KEY=VALUE`)
         annotations: OCI manifest annotations (passed verbatim, repeatable)
@@ -395,10 +402,12 @@ def buildx_build(  # noqa: DOC101,DOC103,DOC501,DOC503
         attest: Custom attestation specs (repeatable)
         secret: Secret specs (e.g. ["id=npmrc,src=~/.npmrc"] or ["id=npmrc,env=NPM_TOKEN"]); `~` in `src=` is expanded
         ssh: SSH agent socket/key specs (e.g. ["default"], using $SSH_AUTH_SOCK)
+        vars: CLI variables kept off the command line, e.g. the one a secret's `env=` names
 
     Returns:
         dict: {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
     """
+    cli_env = cli_variables(vars)
     if context == "-":
         raise ToolInputError(
             "buildx_build: context='-' (read a tarball from stdin) is not supported by this "
@@ -426,8 +435,7 @@ def buildx_build(  # noqa: DOC101,DOC103,DOC501,DOC503
         args.extend(["--platform", ",".join(platforms)])
     if file is not None:
         args.extend(["--file", file])
-    for key, value in (build_args or {}).items():
-        args.extend(["--build-arg", f"{key}={value}"])
+    args.extend(values_by_name(build_args, flag="--build-arg", argument="build_args", cli_env=cli_env))
     for key, value in (build_contexts or {}).items():
         args.extend(["--build-context", f"{key}={_expand_home(value)}"])
     for key, value in (labels or {}).items():
@@ -479,9 +487,10 @@ def buildx_build(  # noqa: DOC101,DOC103,DOC501,DOC503
             ssh=ssh,
             timeout=timeout_seconds,
             host=host,
+            cli_env=cli_env,
         ).to_dict()
     require_plugin("buildx")
-    return run_docker(["buildx", *args], timeout=timeout_seconds, host=host).to_dict()
+    return run_docker(["buildx", *args], timeout=timeout_seconds, host=host, extra_env=cli_env).to_dict()
 
 
 def _run_buildx_build_remotely(  # noqa: DOC502
@@ -495,6 +504,7 @@ def _run_buildx_build_remotely(  # noqa: DOC502
     ssh: list[str] | None,
     timeout: float,
     host: str | None,
+    cli_env: dict[str, str],
 ) -> CliResult:
     """Stage a build's local inputs on the ssh:// host and run the build there.
 
@@ -520,6 +530,7 @@ def _run_buildx_build_remotely(  # noqa: DOC502
         ssh: checked for effects that would land on the wrong machine.
         timeout: seconds allowed for the build
         host: configured host label, or None for the default host
+        cli_env: variables for the remote CLI's environment, sent on the channel's stdin
 
     Returns:
         CliResult: the build's outcome, in `run_docker`'s shape
@@ -561,7 +572,7 @@ def _run_buildx_build_remotely(  # noqa: DOC502
             _replace_flag_value(staged_args, "--file", session.stage_file(dockerfile))
         _stage_composite_paths(session, staged_args, "--build-context", "")
         _stage_composite_paths(session, staged_args, "--secret", "src")
-        return run_in_session(session, ["buildx", *staged_args], timeout=timeout)
+        return run_in_session(session, ["buildx", *staged_args], timeout=timeout, extra_env=cli_env)
 
 
 @tool()
@@ -575,6 +586,7 @@ def buildx_bake(  # noqa: DOC101,DOC103
     pull: bool = False,
     builder: str | None = None,
     cwd: str | None = None,
+    vars: dict[str, str] | None = None,
     timeout_seconds: float = _TIMEOUT_BAKE,
     host: str | None = None,
 ) -> dict:
@@ -588,16 +600,19 @@ def buildx_bake(  # noqa: DOC101,DOC103
     Args:
         targets: Bake targets to build (default: the `default` group)
         files: Bake file paths (`-f`, repeatable)
-        set_overrides: Per-target overrides, e.g. ["app.platform=linux/amd64"]
+        set_overrides: Per-target overrides, e.g. ["app.platform=linux/amd64"]; on the command line, so put a
+            credential in `vars`
         load: Load results into the local image store
         no_cache: Do not use cache when building
         pull: Always pull a newer base image
         cwd: Working directory containing the bake file (defaults to the server's cwd; copied to the target host if no
             local plugin)
+        vars: Bake file variable values, kept off the command line
 
     Returns:
         dict: {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
     """
+    cli_env = cli_variables(vars)
     args: list[str] = ["bake", "--progress=plain"]
     for f in files or []:
         args.extend(["-f", f])
@@ -626,6 +641,7 @@ def buildx_bake(  # noqa: DOC101,DOC103
         host=host,
         stage_cwd=True,
         path_values=list(files or []),
+        cli_env=cli_env,
     ).to_dict()
 
 

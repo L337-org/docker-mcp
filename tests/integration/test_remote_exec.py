@@ -88,3 +88,19 @@ def test_staged_build_context_honours_dockerignore(ssh_host, tmp_path):
         names = set(listing.stdout.decode().split())
     assert {"Dockerfile", "keep.txt"} <= names
     assert "secret.env" not in names  # an excluded file must never reach the remote disk
+
+
+def test_variables_reach_the_remote_command_without_its_command_line(ssh_host):
+    value = 's3 cret\nline2 "q" $(nope) \\'
+    result = run_remote_exec(
+        ssh_host,
+        # The command checks its own process list while it runs, on the remote host itself.
+        ["sh", "-c", 'printf "%s" "$PROBE_VALUE"; ps -A -o args 2>/dev/null | grep -c "s3 cret" >&2 || true'],
+        max_output_bytes=_CAP,
+        timeout=60,
+        env={"PROBE_VALUE": value},
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.decode() == value
+    # Only the grep itself may match: its own argv holds the pattern, never the value line.
+    assert result.stderr.strip() in (b"0", b"1"), result.stderr

@@ -329,9 +329,10 @@ def test_compose_run_with_env_workdir_user_name():
     assert args[args.index("--workdir") + 1] == "/srv"
     assert args[args.index("--user") + 1] == "1000:1000"
     assert args[args.index("--name") + 1] == "oneoff"
-    # env entries get one --env per key=value
+    # One --env per name, with the values in the CLI's environment rather than its command line.
     env_values = [args[i + 1] for i, a in enumerate(args) if a == "--env"]
-    assert set(env_values) == {"FOO=1", "BAR=two"}
+    assert set(env_values) == {"FOO", "BAR"}
+    assert run.call_args.kwargs["extra_env"] == {"FOO": "1", "BAR": "two"}
 
 
 def test_compose_exec_uses_no_tty_and_passes_argv():
@@ -358,7 +359,8 @@ def test_compose_exec_with_index_workdir_user_env():
     assert args[args.index("--index") + 1] == "3"
     assert args[args.index("--workdir") + 1] == "/app"
     assert args[args.index("--user") + 1] == "root"
-    assert args[args.index("--env") + 1] == "DEBUG=1"
+    assert args[args.index("--env") + 1] == "DEBUG"
+    assert run.call_args.kwargs["extra_env"] == {"DEBUG": "1"}
 
 
 # ---------- compose_list ----------
@@ -1059,3 +1061,49 @@ def test_compose_cp_docstring_now_carries_the_staging_clause_like_every_other_pr
     assert compose_cp.__doc__ is not None
     assert "copied to the target host" in compose_cp.__doc__
     assert "copied to the target host" in (compose_up.__doc__ or "")
+
+
+# ---------- vars: values for the compose CLI's own environment ----------
+
+_VARS_TOOLS = [
+    pytest.param(lambda **kw: compose_up(**kw), id="compose_up"),
+    pytest.param(lambda **kw: compose_build(**kw), id="compose_build"),
+    pytest.param(lambda **kw: compose_run(service="web", **kw), id="compose_run"),
+]
+
+
+@pytest.mark.parametrize("call", _VARS_TOOLS)
+def test_vars_reach_the_cli_environment_and_never_its_command_line(call):
+    with patch("docker_mcp.tools.compose.run_docker", return_value=_ok()) as run:
+        call(vars={"DB_PASS": "s3 cret", "TAG": "v1"})
+    assert run.call_args.kwargs["extra_env"] == {"DB_PASS": "s3 cret", "TAG": "v1"}
+    assert not any("s3 cret" in token for token in run.call_args.args[0])
+
+
+@pytest.mark.parametrize("call", _VARS_TOOLS)
+def test_a_reserved_name_in_vars_is_refused_before_anything_runs(call):
+    with (
+        patch("docker_mcp.tools.compose.run_docker") as run,
+        pytest.raises(ToolInputError, match="'DOCKER_HOST' is reserved"),
+    ):
+        call(vars={"DOCKER_HOST": "tcp://elsewhere:2375"})
+    run.assert_not_called()
+
+
+def test_compose_run_carries_vars_and_env_together_and_refuses_one_name_with_two_values():
+    with patch("docker_mcp.tools.compose.run_docker", return_value=_ok()) as run:
+        compose_run(service="web", env={"MODE": "x"}, vars={"TAG": "v1"})
+    assert run.call_args.kwargs["extra_env"] == {"TAG": "v1", "MODE": "x"}
+    with patch("docker_mcp.tools.compose.run_docker") as run, pytest.raises(ToolInputError, match="also set in `vars`"):
+        compose_run(service="web", env={"TAG": "other"}, vars={"TAG": "v1"})
+    run.assert_not_called()
+
+
+def test_compose_values_reach_the_remote_backend_as_extra_env():
+    with (
+        patch("docker_mcp.tools.compose.should_remote_exec", return_value=True),
+        patch("docker_mcp.tools.compose.remote_stage_and_exec", return_value=_ok()) as staged,
+    ):
+        compose_run(service="web", env={"MODE": "x"}, vars={"TAG": "v1"})
+    assert staged.call_args.kwargs["extra_env"] == {"TAG": "v1", "MODE": "x"}
+    assert not any("=" in token for token in staged.call_args.args[1] if token.startswith(("MODE", "TAG")))

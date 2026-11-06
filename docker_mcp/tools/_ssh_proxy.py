@@ -22,6 +22,7 @@ import logging
 import math
 import os
 import posixpath
+import re
 import shlex
 import socket
 import subprocess
@@ -30,7 +31,7 @@ import tempfile
 import threading
 import time
 import urllib.parse
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from types import TracebackType
@@ -493,6 +494,48 @@ _REMOTE_TIMEOUT_EXIT_CODE = 124
 _TIMEOUT_ATTRIBUTION_SLACK_SECONDS = 0.25
 
 
+# A variable name the remote script may assign.  Checked again here, though callers validate first,
+# because the name is written into the script text and must never carry shell syntax.
+_ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
+def encode_env_value(value: str) -> str:
+    r"""Encode a value as one line the remote script decodes with POSIX `printf %b`.
+
+    Every byte of its UTF-8 form becomes a `\0ddd` octal escape, which `printf %b` is specified to
+    decode, so newlines, quotes and shell metacharacters all survive and the line contains no newline
+    of its own.  `base64` is not used because it is not POSIX and its decode flag differs between
+    GNU, macOS and the BSDs.  A NUL byte cannot be held in an environment variable at all, so callers
+    refuse one before it gets here.
+
+    Args:
+        value: the value to encode
+
+    Returns:
+        str: the encoded line, without its terminating newline
+    """
+    return "".join(f"\\0{byte:03o}" for byte in value.encode("utf-8"))
+
+
+def _validate_env_names(env: Mapping[str, str]) -> None:
+    """Refuse a variable name or value the remote script cannot carry safely.
+
+    Callers validate first, with errors worded for the tool's argument; this is the last guard before
+    a name is written into script text.
+
+    Args:
+        env: the variables about to be sent
+
+    Raises:
+        ValueError: a name is not a plain variable name, or a value holds a NUL byte
+    """
+    for name, value in env.items():
+        if not _ENV_NAME.fullmatch(name) or name.upper().startswith("DOCKER_MCP_SERVER_"):
+            raise ValueError(f"cannot send variable {name!r} to a remote command: not a plain variable name")
+        if "\x00" in value:
+            raise ValueError(f"cannot send variable {name!r} to a remote command: its value holds a NUL byte")
+
+
 def _validate_exec_args(argv: Sequence[str], timeout: float, max_output_bytes: int) -> None:
     """Reject arguments the remote path cannot honour, before anything connects or runs.
 
@@ -656,7 +699,9 @@ class RemoteDialect(Protocol):
     quoting; only `temp_dir_argv` needs a shell of its own, for the `${TMPDIR}` expansion.
     """
 
-    def wrap_with_timeout(self, argv: Sequence[str], *, timeout: float, cwd: str | None = None) -> str: ...
+    def wrap_with_timeout(
+        self, argv: Sequence[str], *, timeout: float, cwd: str | None = None, env_names: Sequence[str] = ()
+    ) -> str: ...
 
     def temp_dir_argv(self) -> list[str]: ...
 
@@ -677,7 +722,9 @@ class PosixDialect:
     channel does not portably kill what it started.
     """
 
-    def wrap_with_timeout(self, argv: Sequence[str], *, timeout: float, cwd: str | None = None) -> str:
+    def wrap_with_timeout(
+        self, argv: Sequence[str], *, timeout: float, cwd: str | None = None, env_names: Sequence[str] = ()
+    ) -> str:
         """Build the remote `sh -c` command that runs `argv` under a self-killing watchdog.
 
         Two things here are load-bearing and easy to get wrong:
@@ -730,10 +777,17 @@ class PosixDialect:
         A command that exits on its own at the exact instant the watchdog fires may be attributed
         either way; the window is microseconds wide.
 
+        `env_names` are set in the command's environment from values read off the channel's stdin,
+        one `encode_env_value` line each, in order, before the command starts.  Only the names are in
+        the script, so the values never appear in any process's command line on the remote host and
+        never touch its disk; only the same user and root can read a process's environment.  Stdin
+        ending early exits 125 without running argv, like the wrapper's other own failures.
+
         Args:
             argv: the remote command as an argv list; joined with shell quoting, never concatenated
             timeout: seconds before the remote watchdog kills the command (rounded up, floor 1s)
             cwd: remote directory to run in; a failure to enter it exits 127 without running argv
+            env_names: variables to read from stdin and export to the command, in the order sent
 
         Returns:
             str: a complete `sh -c '...'` command string for `Channel.exec_command`
@@ -760,9 +814,30 @@ class PosixDialect:
         ]
         if cwd is not None:
             lines.append(f"cd {shlex.quote(cwd)} || exit 127")
+        # Values are read in the foreground, because POSIX gives an asynchronous list /dev/null as its
+        # stdin, into variables under the reserved DOCKER_MCP_SERVER_ prefix, so no caller's name can
+        # collide with them or with this script's own `m`, `pid`, `ec` and `i`.  The caller's names
+        # are assigned only inside the subshell that then `exec`s the command, so `$!` is still the
+        # command itself and nothing a caller names can change this script's own variables (a `m`
+        # would otherwise redirect the trap's `rm -f`).  `printf '%bx'` then stripping the `x` keeps a
+        # trailing newline that command substitution would otherwise drop.
+        for index, _name in enumerate(env_names):
+            held = f"DOCKER_MCP_SERVER_VALUE_{index}"
+            lines.append(
+                "IFS= read -r DOCKER_MCP_SERVER_LINE || { echo 'docker-mcp-server: the remote host did not"
+                " receive every variable' >&2; exit 125; }; "
+                f"{held}=$(printf '%bx' \"$DOCKER_MCP_SERVER_LINE\"); {held}=${{{held}%x}}"
+            )
+        if env_names:
+            exports = "".join(
+                f'{name}="$DOCKER_MCP_SERVER_VALUE_{index}"; export {name}; ' for index, name in enumerate(env_names)
+            )
+            launch = f"({exports}exec {shlex.join(argv)}) & pid=$!"
+        else:
+            launch = f"{shlex.join(argv)} & pid=$!"
         lines.extend(
             [
-                f"{shlex.join(argv)} & pid=$!",
+                launch,
                 # The watchdog counts in one-second sleeps and gives up as soon as the command is gone,
                 # so nobody has to kill it: it self-terminates within a second of the command finishing.
                 # A single `sleep <timeout>` cannot be cleaned up portably - killing the subshell that
@@ -1117,6 +1192,7 @@ def exec_remote(  # noqa: DOC503
     timeout: float,
     cwd: str | None = None,
     dialect: RemoteDialectKind = RemoteDialectKind.POSIX,
+    env: Mapping[str, str] | None = None,
 ) -> RemoteExecResult:
     """Run one command on an already-connected host, under the dialect's own timeout watchdog.
 
@@ -1135,6 +1211,8 @@ def exec_remote(  # noqa: DOC503
         timeout: seconds the remote watchdog allows the command before killing it
         cwd: remote directory to run in; entering it is part of the wrapped command
         dialect: the host's detected dialect; a non-POSIX one is refused by `get_dialect`
+        env: variables to set in the command's environment.  Sent encoded on the channel's stdin,
+            never in the command line, so other users of the remote host cannot see the values.
 
     Returns:
         RemoteExecResult: exit status plus captured (possibly truncated) stdout/stderr bytes
@@ -1145,7 +1223,9 @@ def exec_remote(  # noqa: DOC503
         subprocess.TimeoutExpired: the command exceeded `timeout`
     """
     _validate_exec_args(argv, timeout, max_output_bytes)
-    command = get_dialect(dialect).wrap_with_timeout(argv, timeout=timeout, cwd=cwd)
+    env = dict(env or {})
+    _validate_env_names(env)
+    command = get_dialect(dialect).wrap_with_timeout(argv, timeout=timeout, cwd=cwd, env_names=list(env))
     transport = ssh_client.get_transport()
     if transport is None:
         raise RuntimeError("SSH transport is not connected.")
@@ -1153,6 +1233,12 @@ def exec_remote(  # noqa: DOC503
     started = time.monotonic()
     try:
         channel.exec_command(command)
+        if env:
+            # Sent before draining: the script reads every line before it starts the command, so the
+            # command's output cannot fill the window first, and the payload is small.  Closing our
+            # side gives the command EOF on stdin, as it would get locally with nothing piped in.
+            channel.sendall("".join(f"{encode_env_value(value)}\n" for value in env.values()).encode("ascii"))
+            channel.shutdown_write()
         stdout, stderr, truncated = _drain_exec_channel(
             channel,
             max_output_bytes=max_output_bytes,
@@ -1178,6 +1264,7 @@ def run_remote_exec(  # noqa: DOC502
     max_output_bytes: int,
     timeout: float,
     cwd: str | None = None,
+    env: Mapping[str, str] | None = None,
 ) -> RemoteExecResult:
     """Connect to an ssh:// host, run one command on it, and close the connection.
 
@@ -1191,6 +1278,7 @@ def run_remote_exec(  # noqa: DOC502
         max_output_bytes: per-stream cap on retained output
         timeout: seconds the remote watchdog allows the command; also bounds the SSH handshake
         cwd: remote directory to run in
+        env: variables to set in the command's environment, sent on stdin (see `exec_remote`)
 
     Returns:
         RemoteExecResult: exit status plus captured (possibly truncated) stdout/stderr bytes
@@ -1203,6 +1291,7 @@ def run_remote_exec(  # noqa: DOC502
     # Validate before connecting: opening (and authenticating) an SSH session only to reject the
     # caller's own arguments wastes a handshake against a possibly-remote host.
     _validate_exec_args(argv, timeout, max_output_bytes)
+    _validate_env_names(env or {})
     ssh_client = connect_ssh_client(docker_host, timeout=timeout)
     try:
         dialect = detect_remote_dialect(ssh_client, docker_host, timeout=timeout)
@@ -1213,6 +1302,7 @@ def run_remote_exec(  # noqa: DOC502
             timeout=timeout,
             cwd=cwd,
             dialect=dialect,
+            env=env,
         )
     finally:
         ssh_client.close()
@@ -1794,6 +1884,7 @@ class RemoteStagingSession:
         timeout: float,
         max_output_bytes: int,
         cwd: str | None = None,
+        env: Mapping[str, str] | None = None,
     ) -> RemoteExecResult:
         """Run a command on the session's host, reusing its connection.
 
@@ -1806,6 +1897,7 @@ class RemoteStagingSession:
             timeout: seconds the remote watchdog allows the command
             max_output_bytes: per-stream cap on retained output
             cwd: remote directory to run in
+            env: variables to set in the command's environment, sent on stdin (see `exec_remote`)
 
         Returns:
             RemoteExecResult: exit status plus captured (possibly truncated) output
@@ -1821,6 +1913,7 @@ class RemoteStagingSession:
             timeout=timeout,
             cwd=cwd,
             dialect=self._dialect_kind,
+            env=env,
         )
 
 

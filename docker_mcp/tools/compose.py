@@ -28,6 +28,7 @@ from docker_mcp.exceptions import ToolInputError
 from docker_mcp.server import tool
 from docker_mcp.tools._cli import (
     CliResult,
+    cli_variables,
     parse_json_or_ndjson,
     raise_on_cli_failure,
     remote_cli_session,
@@ -38,6 +39,7 @@ from docker_mcp.tools._cli import (
     run_in_session,
     safe_positional,
     should_remote_exec,
+    values_by_name,
 )
 from docker_mcp.tools.system import _get_client
 
@@ -98,7 +100,14 @@ def _global_file_values(subcommand_args: list[str]) -> list[str]:
     return values
 
 
-def _run_compose(subcommand_args: list[str], *, cwd: str | None, timeout: float, host: str | None = None) -> CliResult:
+def _run_compose(
+    subcommand_args: list[str],
+    *,
+    cwd: str | None,
+    timeout: float,
+    host: str | None = None,
+    cli_env: dict[str, str] | None = None,
+) -> CliResult:
     """Run `docker compose <args...>`, staging the working directory when the CLI has to run remotely.
 
     Args:
@@ -107,6 +116,8 @@ def _run_compose(subcommand_args: list[str], *, cwd: str | None, timeout: float,
               gets staged in the remote case, matching what the local subprocess would use)
         timeout: seconds allowed for the command
         host: configured host label, or None for the default host
+        cli_env: variables for the compose CLI's own environment (`vars`, and `env` values passed by
+            name), kept off every command line on both backends
 
     Returns:
         CliResult: the same shape from either backend
@@ -118,9 +129,10 @@ def _run_compose(subcommand_args: list[str], *, cwd: str | None, timeout: float,
             cwd=cwd,
             timeout=timeout,
             path_values=_global_file_values(subcommand_args),
+            extra_env=cli_env,
         )
     require_plugin("compose")
-    return run_docker(["compose", *subcommand_args], cwd=cwd, timeout=timeout, host=host)
+    return run_docker(["compose", *subcommand_args], cwd=cwd, timeout=timeout, host=host, extra_env=cli_env)
 
 
 @tool()
@@ -133,6 +145,7 @@ def compose_up(  # noqa: DOC101,DOC103
     build: bool = False,
     pull: Literal["always", "missing", "never"] | None = None,
     remove_orphans: bool = False,
+    vars: dict[str, str] | None = None,
     timeout_seconds: float = _TIMEOUT_UP,
     host: str | None = None,
 ) -> dict:
@@ -152,10 +165,12 @@ def compose_up(  # noqa: DOC101,DOC103
         build: Build images before starting
         pull: Pull strategy; omit to use each service's own `pull_policy`
         remove_orphans: Remove containers for services not in the compose file
+        vars: `${VAR}` values for the compose file, kept off the command line (use for credentials)
 
     Returns:
         dict: {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
     """
+    cli_env = cli_variables(vars)
     args = [*_global_args(files, project_name, profiles), "up", "-d"]
     if build:
         args.append("--build")
@@ -165,7 +180,7 @@ def compose_up(  # noqa: DOC101,DOC103
         args.append("--remove-orphans")
     if services:
         args.extend(safe_positional(s, "service") for s in services)
-    return _run_compose(args, cwd=project_dir, timeout=timeout_seconds, host=host).to_dict()
+    return _run_compose(args, cwd=project_dir, timeout=timeout_seconds, host=host, cli_env=cli_env).to_dict()
 
 
 @tool()
@@ -351,6 +366,7 @@ def compose_build(  # noqa: DOC101,DOC103
     services: list[str] | None = None,
     pull: bool = False,
     no_cache: bool = False,
+    vars: dict[str, str] | None = None,
     timeout_seconds: float = _TIMEOUT_BUILD,
     host: str | None = None,
 ) -> dict:
@@ -367,10 +383,12 @@ def compose_build(  # noqa: DOC101,DOC103
         services: Specific services to build (default: all)
         pull: Always attempt to pull a newer base image
         no_cache: Do not use cache when building
+        vars: `${VAR}` values for the compose file, kept off the command line (use for credentials)
 
     Returns:
         dict: {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
     """
+    cli_env = cli_variables(vars)
     args = [*_global_args(files, project_name, None), "build"]
     if pull:
         args.append("--pull")
@@ -378,7 +396,7 @@ def compose_build(  # noqa: DOC101,DOC103
         args.append("--no-cache")
     if services:
         args.extend(safe_positional(s, "service") for s in services)
-    return _run_compose(args, cwd=project_dir, timeout=timeout_seconds, host=host).to_dict()
+    return _run_compose(args, cwd=project_dir, timeout=timeout_seconds, host=host, cli_env=cli_env).to_dict()
 
 
 @tool()
@@ -530,6 +548,7 @@ def compose_run(  # noqa: DOC101,DOC103
     user: str | None = None,
     env: dict | None = None,
     name: str | None = None,
+    vars: dict[str, str] | None = None,
     timeout_seconds: float = _TIMEOUT_RUN,
     host: str | None = None,
 ) -> dict:
@@ -552,11 +571,13 @@ def compose_run(  # noqa: DOC101,DOC103
         no_deps: Don't start linked services
         workdir: Working directory inside the container
         user: User to run as inside the container (uid or name)
-        env: Environment variables to set inside the container
+        env: Environment variables to set inside the container; values kept off the command line unless reserved (PATH)
+        vars: `${VAR}` values for the compose file, kept off the command line (use for credentials)
 
     Returns:
         dict: {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
     """
+    cli_env = cli_variables(vars)
     # Detached and kept: a foreground run blocks for as long as the command runs, and `--rm` would delete
     # the logs and exit code before `system_wait` and `container_logs` could read them.
     args = [*_global_args(files, project_name, None), "run", "-T", "-d"]
@@ -568,12 +589,11 @@ def compose_run(  # noqa: DOC101,DOC103
         args.extend(["--user", user])
     if name:
         args.extend(["--name", name])
-    for key, value in (env or {}).items():
-        args.extend(["--env", f"{key}={value}"])
+    args.extend(values_by_name(env, flag="--env", argument="env", cli_env=cli_env))
     args.append(safe_positional(service, "service"))
     if command:
         args.extend(command)
-    return _run_compose(args, cwd=project_dir, timeout=timeout_seconds, host=host).to_dict()
+    return _run_compose(args, cwd=project_dir, timeout=timeout_seconds, host=host, cli_env=cli_env).to_dict()
 
 
 @tool()
@@ -605,7 +625,7 @@ def compose_exec(  # noqa: DOC101,DOC103
         index: Container index when the service has multiple replicas
         workdir: Working directory inside the container
         user: User to run as inside the container (uid or name)
-        env: Environment variables to set for the exec session
+        env: Environment variables to set for the exec session; values kept off the command line unless reserved (PATH)
 
     Returns:
         dict: {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
@@ -617,11 +637,11 @@ def compose_exec(  # noqa: DOC101,DOC103
         args.extend(["--workdir", workdir])
     if user:
         args.extend(["--user", user])
-    for key, value in (env or {}).items():
-        args.extend(["--env", f"{key}={value}"])
+    cli_env: dict[str, str] = {}
+    args.extend(values_by_name(env, flag="--env", argument="env", cli_env=cli_env))
     args.append(safe_positional(service, "service"))
     args.extend(command)
-    return _run_compose(args, cwd=project_dir, timeout=timeout_seconds, host=host).to_dict()
+    return _run_compose(args, cwd=project_dir, timeout=timeout_seconds, host=host, cli_env=cli_env).to_dict()
 
 
 @tool()

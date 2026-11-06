@@ -39,6 +39,7 @@ from docker_mcp.tools._ssh_proxy import (
     _REMOTE_TIMEOUT_EXIT_CODE,
     _tar_local_tree,
     detect_remote_dialect,
+    encode_env_value,
     exec_remote,
     get_dialect,
     parse_ssh_url,
@@ -73,12 +74,21 @@ class FakeChannel:
         self.executed: str | None = None
         self.closed = False
         self.timeout: float | None = None
+        # `Channel.sendall(s)` and `Channel.shutdown_write()`, as in the installed paramiko.
+        self.sent = b""
+        self.write_shut = False
 
     def settimeout(self, value):
         self.timeout = value
 
     def exec_command(self, command):
         self.executed = command
+
+    def sendall(self, data):
+        self.sent += data
+
+    def shutdown_write(self):
+        self.write_shut = True
 
     def recv_ready(self):
         return bool(self.stdout_chunks)
@@ -1706,3 +1716,88 @@ def test_fetch_path_refuses_an_archive_member_that_escapes_the_destination(tmp_p
     assert not (tmp_path / "escaped.txt").exists()
     # Cleaned up remotely even though extraction failed.
     assert host.ran("rm -rf")
+
+
+# --- variables sent on stdin ---------------------------------------------------------------------
+
+# Values a shell or `printf %b` could mangle: newlines (including a trailing one), quotes, expansions,
+# backslashes, a literal octal escape and printf directives, non-ASCII, and empty.
+_TRICKY_VALUES = {
+    "MULTI": "line1\nline2\n\n",
+    "QUOTED": 'it\'s "q" $(x) `y` ;&| \\ \\0101 %s %b',
+    "UNICODE": "caf\u00e9 \u2603",
+    "EMPTY": "",
+}
+
+
+def _run_wrapped_locally(env, *, stdin=None):
+    """Run the real wrapper script under this machine's /bin/sh, feeding `env` the way exec_remote does."""
+    names = list(env)
+    printer = 'for n in "$@"; do eval "printf \'%s\\\\0\' \\"\\${$n}\\""; done'
+    script = PosixDialect().wrap_with_timeout(["sh", "-c", printer, "sh", *names], timeout=20, env_names=names)
+    payload = stdin if stdin is not None else "".join(f"{encode_env_value(v)}\n" for v in env.values()).encode()
+    body = shlex.split(script)[2]
+    return subprocess.run(["/bin/sh", "-c", body], input=payload, capture_output=True, timeout=60)  # noqa: S603
+
+
+def test_values_sent_on_stdin_reach_the_command_exactly():
+    result = _run_wrapped_locally(_TRICKY_VALUES)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == b"".join(v.encode() + b"\0" for v in _TRICKY_VALUES.values())
+
+
+def test_a_callers_variable_cannot_change_the_wrappers_own(tmp_path):
+    # The wrapper's trap removes the file named by its own `m`; a caller's `m` must not redirect it.
+    victim = tmp_path / "keep-me"
+    victim.write_text("x")
+    result = _run_wrapped_locally({"m": str(victim), "pid": "1", "ec": "9", "i": "5"})
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == f"{victim}\0".encode() + b"1\0" + b"9\0" + b"5\0"
+    assert victim.exists()
+
+
+def test_values_never_appear_in_the_script():
+    script = PosixDialect().wrap_with_timeout(["docker", "ps"], timeout=5, env_names=["DB_PASS"])
+    assert "DB_PASS" in script and "s3cret" not in script
+
+
+def test_stdin_ending_early_exits_125_without_running_the_command():
+    result = _run_wrapped_locally({"A": "1", "B": "2"}, stdin=f"{encode_env_value('1')}\n".encode())
+    assert result.returncode == 125
+    assert b"did not receive every variable" in result.stderr
+    assert result.stdout == b""
+
+
+def test_without_variables_the_wrapper_launches_the_command_as_before():
+    body = shlex.split(PosixDialect().wrap_with_timeout(["docker", "ps"], timeout=5))[2]
+    assert "docker ps & pid=$!" in body.splitlines()
+    assert "read" not in body
+
+
+def test_exec_remote_sends_the_values_on_stdin_and_closes_it():
+    channel = FakeChannel(stdout=[b"ok"])
+    exec_remote(fake_client(channel), ["docker", "ps"], max_output_bytes=_CAP, timeout=5, env={"TOKEN": "s3 cret"})
+    assert channel.sent == f"{encode_env_value('s3 cret')}\n".encode()
+    assert channel.write_shut
+    assert channel.executed is not None and "s3 cret" not in channel.executed
+
+
+def test_exec_remote_sends_nothing_without_variables():
+    channel = FakeChannel(stdout=[b"ok"])
+    exec_remote(fake_client(channel), ["docker", "ps"], max_output_bytes=_CAP, timeout=5)
+    assert (channel.sent, channel.write_shut) == (b"", False)
+
+
+@pytest.mark.parametrize("name", ["1ABC", "A-B", "A B", "A;rm", "DOCKER_MCP_SERVER_LINE", "docker_mcp_server_value_0"])
+def test_exec_remote_refuses_a_name_that_could_break_or_reach_into_the_script(name):
+    channel = FakeChannel()
+    with pytest.raises(ValueError, match="not a plain variable name"):
+        exec_remote(fake_client(channel), ["docker", "ps"], max_output_bytes=_CAP, timeout=5, env={name: "x"})
+    assert channel.executed is None
+
+
+def test_exec_remote_refuses_a_nul_byte_without_repeating_the_value():
+    channel = FakeChannel()
+    with pytest.raises(ValueError, match="'TOKEN'.*NUL") as caught:
+        exec_remote(fake_client(channel), ["docker", "ps"], max_output_bytes=_CAP, timeout=5, env={"TOKEN": "a\0b"})
+    assert "a\0b" not in str(caught.value)

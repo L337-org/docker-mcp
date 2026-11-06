@@ -7,6 +7,7 @@
 import contextlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -75,6 +76,120 @@ _WINDOWS_EXTRA_ENV_KEYS = (
     "TEMP",
     "TMP",
 )
+
+
+# --- values passed to the docker CLI through its environment --------------------------------------
+#
+# `vars`, and the values of `env` and `build_args`, reach the docker CLI in its environment rather than
+# on its command line, where any user of the machine can read them in the process list.  A name there
+# can change what the CLI itself does, so these are refused in `vars`: the names the server already
+# controls in `_safe_env`, the prefixes the docker CLI, Compose, buildx and BuildKit read, the dynamic
+# loader's (`LD_PRELOAD`, `DYLD_INSERT_LIBRARIES` would run code in the CLI process), git's
+# (`GIT_SSH_COMMAND` runs a command when a build fetches a Git context), SSH's, and proxies, which
+# redirect the CLI's own traffic.  Compared upper-cased, since Windows names are case-insensitive.
+# Adding one is a one-line change plus its case in tests/test_cli.py.
+_RESERVED_ENV_NAMES = frozenset(name.upper() for name in (*_BASE_ENV_KEYS, *_WINDOWS_EXTRA_ENV_KEYS))
+_RESERVED_ENV_PREFIXES = ("DOCKER_", "COMPOSE_", "BUILDX_", "BUILDKIT_", "LD_", "DYLD_", "GIT_", "SSH_")
+_RESERVED_ENV_SUFFIXES = ("_PROXY",)
+
+# A name a POSIX shell can assign, which the remote backend needs (see `_ssh_proxy.encode_env_value`).
+_PLAIN_ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
+def is_reserved_env_name(name: str) -> bool:
+    """Whether a name, set in the docker CLI's environment, could change what the CLI itself does.
+
+    Args:
+        name: a variable name
+
+    Returns:
+        bool: True for a name a caller may not set there
+    """
+    upper = name.upper()
+    return (
+        upper in _RESERVED_ENV_NAMES
+        or upper.startswith(_RESERVED_ENV_PREFIXES)
+        or upper.endswith(_RESERVED_ENV_SUFFIXES)
+    )
+
+
+def cli_variables(values: dict[str, str] | None, *, argument: str = "vars") -> dict[str, str]:
+    """Validate the variables a `vars` argument sets in the docker CLI's own environment.
+
+    Errors name the variable and never its value, since the value is often a credential.
+
+    Args:
+        values: the caller's `vars`, or None
+        argument: the parameter name, for error messages
+
+    Returns:
+        dict: the variables, unchanged, ready for `run_docker`'s `extra_env`
+
+    Raises:
+        ToolInputError: a name is not a plain variable name or is reserved, or a value holds a NUL byte
+    """
+    checked: dict[str, str] = {}
+    for name, value in (values or {}).items():
+        if not _PLAIN_ENV_NAME.fullmatch(name):
+            raise ToolInputError(
+                f"{argument}: {name!r} is not a variable name; use letters, digits and '_', not starting with a digit."
+            )
+        if is_reserved_env_name(name):
+            raise ToolInputError(
+                f"{argument}: {name!r} is reserved, because in the docker CLI's own environment it would change "
+                "what the CLI itself does (which daemon it reaches, what code it loads, where its traffic goes). "
+                "Rename the variable in the Compose or bake file."
+            )
+        if "\x00" in value:
+            raise ToolInputError(f"{argument}: the value of {name!r} holds a NUL byte, which no variable can hold.")
+        checked[name] = value
+    return checked
+
+
+def values_by_name(
+    values: dict | None,
+    *,
+    flag: str,
+    argument: str,
+    cli_env: dict[str, str],
+) -> list[str]:
+    """Build `flag NAME` tokens whose values travel in the docker CLI's environment, not its command line.
+
+    Both `--env NAME` (`docker compose run`/`exec`) and `--build-arg NAME` (`docker buildx build`) take
+    the value of a bare name from the CLI's own environment.  Each value is added to `cli_env`, which
+    the caller passes as `extra_env`, so it never appears in any process's command line.  A name that
+    is reserved (see `is_reserved_env_name`) or that a POSIX shell cannot assign is passed as
+    `flag NAME=VALUE` instead, as before, because setting it in the CLI's environment would change the
+    CLI or could not reach a remote host; its value is then visible in the process list.
+
+    Args:
+        values: the caller's mapping, or None; values are converted with `str()`, as before
+        flag: the CLI flag, e.g. "--env"
+        argument: the parameter name, for error messages
+        cli_env: the CLI environment being built, updated in place
+
+    Returns:
+        list: the argv tokens
+
+    Raises:
+        ToolInputError: a name is already in `cli_env` with a different value, or a value holds a NUL byte
+    """
+    tokens: list[str] = []
+    for name, raw in (values or {}).items():
+        value = str(raw)
+        if not _PLAIN_ENV_NAME.fullmatch(str(name)) or is_reserved_env_name(str(name)):
+            tokens.extend([flag, f"{name}={value}"])
+            continue
+        if "\x00" in value:
+            raise ToolInputError(f"{argument}: the value of {name!r} holds a NUL byte, which no variable can hold.")
+        if name in cli_env and cli_env[name] != value:
+            raise ToolInputError(
+                f"{argument}: {name!r} is also set in `vars` with a different value, and both reach the docker "
+                "CLI's environment, which holds one value per name. Use the same value or a different name."
+            )
+        cli_env[name] = value
+        tokens.extend([flag, name])
+    return tokens
 
 
 @dataclass(frozen=True)
@@ -393,8 +508,9 @@ def remote_exec_cli(  # noqa: DOC502
 
     Nothing is forwarded from the local environment and no DOCKER_HOST rewriting happens (the command
     runs on the daemon's own host, against its own socket), so registry credentials, `~/.docker`
-    config and the filesystem are the *remote* user's. `stdin`/`extra_env` are rejected rather than
-    dropped, so a tool that starts needing either fails loudly here instead of silently diverging
+    config and the filesystem are the *remote* user's. `extra_env` is sent on the channel's stdin and
+    set in the remote command's environment, never on its command line.  `stdin` is rejected rather
+    than dropped, so a tool that starts needing it fails loudly here instead of silently diverging
     from its local path.
 
     Args:
@@ -402,23 +518,25 @@ def remote_exec_cli(  # noqa: DOC502
         args: the docker argv *without* the binary, exactly as passed to `run_docker`
         timeout: seconds the remote watchdog allows the command; also bounds the SSH handshake. Total
                   wall clock can exceed it by the connect time plus a short kill grace.
-        stdin: must be None/empty: the remote channel carries no input
-        extra_env: must be None/empty: the child's environment is the remote login shell's
+        stdin: must be None/empty: the remote channel carries the variables, not input
+        extra_env: variables to set in the remote command's environment, on top of the remote login shell's
 
     Returns:
         CliResult: exit status, decoded stdout/stderr, and whether the byte cap truncated them
 
     Raises:
-        ValueError: `stdin` or `extra_env` was supplied (an internal guard: no caller needs either, so its text stays in
-            the log rather than reaching the model)
+        ValueError: `stdin` was supplied (an internal guard: no caller needs it, so its text stays in the log rather
+            than reaching the model)
         CapabilityError: `host` is not an ssh:// host, or the remote is not POSIX
         RemoteFailureError: the SSH connection could not be opened
         subprocess.TimeoutExpired: the command exceeded `timeout`
     """
-    _reject_unforwardable(stdin, extra_env)
+    _reject_stdin(stdin)
     url = _ssh_url_for(host, args)
     return _as_cli_result(
-        run_remote_exec(url, ["docker", *args], max_output_bytes=MAX_CLI_OUTPUT_BYTES, timeout=timeout)
+        run_remote_exec(
+            url, ["docker", *args], max_output_bytes=MAX_CLI_OUTPUT_BYTES, timeout=timeout, env=extra_env
+        )
     )
 
 
@@ -466,21 +584,21 @@ def remote_stage_and_exec(  # noqa: DOC503
                     remote command gets no cwd, and every `path_values` entry that exists locally is
                     staged individually. `cwd` is then used only to resolve relative ones, matching
                     where the local subprocess would have resolved them.
-        stdin: must be None/empty: the remote channel carries no input
-        extra_env: must be None/empty: the child's environment is the remote login shell's
+        stdin: must be None/empty: the remote channel carries the variables, not input
+        extra_env: variables to set in the remote command's environment (see `remote_exec_cli`)
 
     Returns:
         CliResult: exit status, decoded stdout/stderr, and whether the byte cap truncated them
 
     Raises:
         ToolInputError: `cwd` is not a directory (when `stage_cwd`), or the payload exceeds the staging limits
-        ValueError: `stdin`/`extra_env` was supplied (an internal guard; see `remote_exec_cli`)
+        ValueError: `stdin` was supplied (an internal guard; see `remote_exec_cli`)
         CapabilityError: `host` is not an ssh:// host, this server's own working directory is gone, the remote is not
             POSIX, or its SFTP subsystem sees a different filesystem
         RemoteFailureError: the SSH connection could not be opened, or staging failed remotely
         subprocess.TimeoutExpired: the command exceeded `timeout`
     """
-    _reject_unforwardable(stdin, extra_env)
+    _reject_stdin(stdin)
     url = _ssh_url_for(host, args)
     if cwd is not None:
         # Verbatim, deliberately: `subprocess.run(cwd=...)` does not expand `~` (verified - it raises
@@ -527,7 +645,7 @@ def remote_stage_and_exec(  # noqa: DOC503
         # not (a Windows sshd shelling into `wsl.exe`) has to keep serving calls that stage nothing;
         # scoping that guard to staging is pointless if merely *maybe* staging trips it. Reached when a
         # declared path names something only the remote has, e.g. `buildx_create --config /etc/...`.
-        return remote_exec_cli(host, args, timeout=timeout)
+        return remote_exec_cli(host, args, timeout=timeout, extra_env=extra_env)
     with remote_staging_session(url, timeout=timeout) as session:
         staged_tree = session.stage_tree(local_cwd) if stage_cwd else None
         staged_args = _reconcile_path_tokens(session, args, path_values, base=local_cwd, staged_tree=staged_tree)
@@ -536,6 +654,7 @@ def remote_stage_and_exec(  # noqa: DOC503
             cwd=staged_tree,
             timeout=timeout,
             max_output_bytes=MAX_CLI_OUTPUT_BYTES,
+            env=extra_env,
         )
     return _as_cli_result(result)
 
@@ -570,7 +689,12 @@ def remote_cli_session(host: str | None, *, timeout: float) -> Iterator[RemoteSt
 
 
 def run_in_session(  # noqa: DOC502
-    session: RemoteStagingSession, args: list[str], *, timeout: float, cwd: str | None = None
+    session: RemoteStagingSession,
+    args: list[str],
+    *,
+    timeout: float,
+    cwd: str | None = None,
+    extra_env: dict[str, str] | None = None,
 ) -> CliResult:
     """Run `docker <args...>` in an open staging session, in `run_docker`'s result shape.
 
@@ -579,6 +703,7 @@ def run_in_session(  # noqa: DOC502
         args: the docker argv *without* the binary
         timeout: seconds the remote watchdog allows the command
         cwd: remote directory to run in, typically one a `stage_*` call returned
+        extra_env: variables to set in the remote command's environment (see `remote_exec_cli`)
 
     Returns:
         CliResult: exit status, decoded stdout/stderr, and whether the byte cap truncated them
@@ -587,30 +712,27 @@ def run_in_session(  # noqa: DOC502
         subprocess.TimeoutExpired: the command exceeded `timeout`
     """
     return _as_cli_result(
-        session.exec(["docker", *args], cwd=cwd, timeout=timeout, max_output_bytes=MAX_CLI_OUTPUT_BYTES)
+        session.exec(
+            ["docker", *args], cwd=cwd, timeout=timeout, max_output_bytes=MAX_CLI_OUTPUT_BYTES, env=extra_env
+        )
     )
 
 
-def _reject_unforwardable(stdin: bytes | None, extra_env: dict[str, str] | None) -> None:
-    """Refuse the two `run_docker` inputs the remote backends cannot honour.
+def _reject_stdin(stdin: bytes | None) -> None:
+    """Refuse the one `run_docker` input the remote backends cannot honour.
 
-    Rejected rather than dropped: no in-scope tool passes either today, and one that starts to should
-    fail loudly here instead of silently diverging from its local path.
+    Rejected rather than dropped: no in-scope tool passes it today, and one that starts to should fail
+    loudly here instead of silently diverging from its local path.  The remote channel's stdin carries
+    `extra_env` instead.
 
     Args:
         stdin: must be None/empty
-        extra_env: must be None/empty
 
     Raises:
-        ValueError: either was supplied
+        ValueError: it was supplied
     """
     if stdin:
         raise ValueError("remote-exec cannot send stdin to a remote docker command (no consumer needs it today).")
-    if extra_env:
-        raise ValueError(
-            f"remote-exec cannot forward extra_env {sorted(extra_env)} to a remote docker command: the "
-            f"environment is the remote login shell's, not this server's."
-        )
 
 
 def _ssh_url_for(host: str | None, args: list[str]) -> str:

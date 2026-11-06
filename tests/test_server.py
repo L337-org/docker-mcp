@@ -335,6 +335,29 @@ def test_list_hosts_reports_every_host_redacted_under_the_global_switch(monkeypa
     assert [r["redact"] for r in host_list()] == [True, True]
 
 
+_VARS_TOOLS = {"compose_up", "compose_run", "compose_build", "stack_deploy", "buildx_build", "buildx_bake"}
+
+
+def _tools_taking_vars_in_child(env_vars: list[str]) -> set[str]:
+    code = (
+        "import asyncio, docker_mcp; from docker_mcp.server import mcp; "
+        "print(','.join(t.name for t in asyncio.run(mcp.list_tools())"
+        " if 'vars' in t.input_schema.get('properties', {})))"
+    )
+    result = subprocess.run(  # noqa: S603 - fixed argv, sys.executable, no shell; trusted test input
+        [sys.executable, "-c", code], capture_output=True, text=True, env=_env_with(env_vars), check=True
+    )
+    return set(filter(None, result.stdout.strip().split(",")))
+
+
+def test_vars_is_offered_by_exactly_the_cli_tools_that_take_a_credential_and_never_under_readonly():
+    # `vars` puts values in the docker CLI's environment for the tools that turn a compose or bake file
+    # into containers or images. Each of them is a write, so READONLY drops every one; a read-only
+    # tool gaining `vars` would survive READONLY and fail here.
+    assert _tools_taking_vars_in_child([]) == _VARS_TOOLS
+    assert _tools_taking_vars_in_child(["DOCKER_MCP_SERVER_READONLY=1"]) == set()
+
+
 def _registered_tools() -> dict:
     return mcp._tool_manager._tools
 
@@ -1746,7 +1769,11 @@ def test_every_registered_tool_translates_its_anticipated_failures():
 DELIBERATE_CRASHES = {
     # An internal guard, not an answer to a caller: the comment at the site reads "no consumer needs
     # it today", so reaching it means an internal caller passed something unforwardable.
-    ("tools/_cli.py", "_reject_unforwardable"): 2,
+    ("tools/_cli.py", "_reject_stdin"): 1,
+    # The last guard before a variable is written into the remote script. Every tool validates its
+    # `vars`, `env` and `build_args` first with a ToolInputError worded for the argument, so reaching
+    # this means an internal caller skipped that.
+    ("tools/_ssh_proxy.py", "_validate_env_names"): 2,
     # The docker CLI emitted something this server cannot parse - our bug or a format change.
     ("tools/_cli.py", "parse_ndjson"): 1,
     # Empty argv, negative max_output_bytes: internal misuse of the helper.
