@@ -1144,10 +1144,10 @@ def test_system_wait_description_fits_what_claude_code_shows():
     assert len((tool.description or "").encode("utf-16-le")) // 2 <= 2048
 
 
-def test_startup_preflight_prints_each_disable_switch_warning_even_when_the_daemon_is_down(capsys):
-    warnings = ["DOCKER_MCP_SERVER_DISABLE names 'swram', ...", "DOCKER_MCP_SERVER_DISABLE names 'system', ..."]
+def test_startup_preflight_prints_each_configuration_warning_even_when_the_daemon_is_down(capsys):
+    warnings = ["DOCKER_MCP_SERVER_DISABLE names 'swram', ...", "host 'prod' is redacted without ro ..."]
     with (
-        patch.object(system_module, "disable_switch_warnings", return_value=warnings),
+        patch.object(system_module, "configuration_warnings", return_value=warnings),
         patch.object(system_module, "_get_client", side_effect=DockerException("connection refused")),
     ):
         system_module.startup_preflight()
@@ -1155,21 +1155,9 @@ def test_startup_preflight_prints_each_disable_switch_warning_even_when_the_daem
     assert lines[:2] == [f"docker-mcp-server: WARNING: {w}" for w in warnings]
 
 
-def test_startup_preflight_prints_each_redaction_warning_with_the_readonly_switch_it_was_judged_by(capsys):
-    warnings = ["DOCKER_MCP_SERVER_REDACT is on without ...", "host 'prod' is marked redact without ro: ..."]
+def test_startup_preflight_prints_no_warning_for_a_sound_configuration(capsys):
     with (
-        patch.object(system_module.redaction_settings, "startup_warnings", return_value=warnings) as judged,
-        patch.object(system_module, "_get_client", side_effect=DockerException("connection refused")),
-    ):
-        system_module.startup_preflight()
-    judged.assert_called_once_with(readonly=system_module.READONLY)
-    lines = capsys.readouterr().err.splitlines()
-    assert lines[:2] == [f"docker-mcp-server: WARNING: {w}" for w in warnings]
-
-
-def test_startup_preflight_prints_no_warning_for_a_sound_disable_switch(capsys):
-    with (
-        patch.object(system_module, "disable_switch_warnings", return_value=[]),
+        patch.object(system_module, "configuration_warnings", return_value=[]),
         patch.object(system_module, "_get_client", side_effect=DockerException("connection refused")),
     ):
         system_module.startup_preflight()

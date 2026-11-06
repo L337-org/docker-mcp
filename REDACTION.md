@@ -9,7 +9,7 @@ routes.
 
 > **Status: not yet functional.**  This build reads and reports the settings below, but does not
 > redact anything yet: output from every host is returned unredacted, and the server says so in a
-> warning at startup.  This note is removed when output redaction is in place.
+> configuration warning.
 
 ## Turning it on
 
@@ -64,13 +64,17 @@ at startup and changes nothing.
 - **`host_list`** and the `docker-mcp://hosts` resource give each host a `redact` field: whether
   its output is redacted, by its own option or by the global switch.
 
-## Startup warnings
+## Configuration warnings
 
-The server writes a `WARNING` line to stderr at startup:
+The server warns:
 
-- when `DOCKER_MCP_SERVER_REDACT` is on without `DOCKER_MCP_SERVER_READONLY`;
-- for each host marked `redact` without `ro`, unless `DOCKER_MCP_SERVER_READONLY` is on;
+- for each redacted host that is neither marked `ro` nor covered by `DOCKER_MCP_SERVER_READONLY`,
+  whether it is redacted by its own option or by `DOCKER_MCP_SERVER_REDACT`.  On such a host exec and
+  the tools that write daemon data to files stay available, and either can show an agent a credential
+  that redaction cannot catch;
 - when `DOCKER_MCP_SERVER_REDACT_NAMES` is set but redaction is on for no host.
 
-Each of the first two leaves exec and the tools that write daemon data to files available, and
-either can show an agent a credential that redaction cannot catch.
+Because an MCP client rarely shows a server's stderr to anyone, each warning goes three places, as
+`DOCKER_MCP_SERVER_DISABLE` mistakes do: a `WARNING` line on stderr at startup, an entry in
+`tool_list`'s `configuration_warnings`, and a line at the top of the server instructions telling the
+agent to check `tool_list` and tell the user.

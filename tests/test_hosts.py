@@ -1,4 +1,5 @@
 import hashlib
+import re
 import json
 import sys
 from unittest.mock import patch
@@ -231,14 +232,14 @@ def test_an_unknown_option_in_a_list_is_refused_naming_the_host_and_the_option()
 @pytest.mark.parametrize(
     ("value", "message"),
     [
-        ("prod=ssh://h(ro", "never closed"),
-        ("prod=ssh://h)ro", "has no matching"),
-        ("prod=ssh://h((ro))", "inside another bracket"),
-        ("ssh://h(ro,redact", "never closed"),
+        ("dev=local, prod=ssh://h(ro", "host 'prod': '(' is never closed"),
+        ("dev=local, prod=ssh://h)ro, stage=local", "host 'prod': ')' has no matching '('"),
+        ("prod=ssh://h((ro)), dev=local", "host 'prod': a bracket opens inside another bracket"),
+        ("ssh://h(ro,redact", "host 'default': '(' is never closed"),
     ],
 )
-def test_an_unbalanced_bracket_is_refused(value, message):
-    with pytest.raises(HostConfigError, match=message):
+def test_an_unbalanced_bracket_is_refused_naming_the_host_it_is_in(value, message):
+    with pytest.raises(HostConfigError, match=re.escape(message)):
         parse_registry(value)
 
 

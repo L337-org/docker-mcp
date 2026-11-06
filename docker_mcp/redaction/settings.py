@@ -36,6 +36,10 @@ BUILTIN_NAME_PATTERNS: tuple[str, ...] = (
     "*CREDENTIAL*",
 )
 
+# Whether this build redacts output at all.  While it does not, configuring redaction warns that it
+# does nothing, and REDACTION.md carries a status note saying so.
+OUTPUT_REDACTED = False
+
 # A names entry: a variable name, optionally a glob, optionally preceded by `!`.  Deliberately narrow,
 # because anything else is more likely a value pasted by mistake than a name.
 _NAME_ENTRY = re.compile(r"[A-Za-z0-9_.*?\[\]-]+")
@@ -225,6 +229,10 @@ def report() -> dict[str, Any]:
 def startup_warnings(*, readonly: bool) -> list[str]:
     """What the redaction settings leave weaker than they look, worded for the operator who set them.
 
+    Judged per redacted host: exec and the tools that write daemon data to files are writes, so a
+    host is covered if it is `ro` or READONLY is on, whether it is redacted by its own option or by
+    the global switch.
+
     Args:
         readonly: whether DOCKER_MCP_SERVER_READONLY is on, which the recommended setup pairs with redaction
 
@@ -232,29 +240,23 @@ def startup_warnings(*, readonly: bool) -> list[str]:
         list: one sentence per problem; empty when there is none
     """
     warnings: list[str] = []
-    if _global and not readonly:
-        warnings.append(
-            f"{REDACT_VAR} is on without DOCKER_MCP_SERVER_READONLY: exec and the tools that write daemon "
-            "data to files stay available, and either can show an agent a credential redaction cannot "
-            "catch. See REDACTION.md."
-        )
-    if not _global and not readonly:
+    if not readonly:
         for label, host in _hosts.registry().items():
-            if host.redact and not host.read_only:
+            if redacts(host) and not host.read_only:
                 warnings.append(
-                    f"host {label!r} is marked redact without ro: exec and the tools that write daemon "
-                    f"data to files stay available on it, and either can show an agent a credential "
-                    f"redaction cannot catch. Mark it (ro,redact). See REDACTION.md."
+                    f"host {label!r} is redacted without ro or DOCKER_MCP_SERVER_READONLY: exec and the tools "
+                    "that write daemon data to files stay available on it, and either can show an agent a "
+                    "credential redaction cannot catch. Mark it (ro,redact) or set DOCKER_MCP_SERVER_READONLY=1. "
+                    "See REDACTION.md."
                 )
     if _names_set and not any_redacted():
         warnings.append(
             f"{NAMES_VAR} is set but redaction is not on for any host, so it does nothing. Set {REDACT_VAR}=1 "
             "or mark a host redact in DOCKER_MCP_SERVER_HOSTS."
         )
-    # The settings are read before anything uses them: until output redaction is wired in on this
-    # feature branch, a redacted host's output is not redacted, and the operator must not believe it is.
-    # This warning and its test are removed by the change that wires it in.
-    if any_redacted():
+    # Configuring redaction must never read as protection while nothing redacts output.  REDACTION.md
+    # carries a matching status note, and a test holds the two together through this flag.
+    if not OUTPUT_REDACTED and any_redacted():
         warnings.append(
             "redaction is configured, but this build does not redact anything yet: output from every "
             "host is returned unredacted."

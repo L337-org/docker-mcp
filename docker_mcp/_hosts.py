@@ -194,15 +194,18 @@ def _fail(message: str) -> NoReturn:
     raise HostConfigError(message)
 
 
-def _split_top_level(text: str, context: str) -> list[str]:
+def _split_top_level(text: str, *, labelled: bool) -> list[str]:
     """Split on commas outside brackets, so options inside one bracket stay with their endpoint.
 
     `a=ssh://x(ro,redact),b=local` is two entries, not three.  An unbalanced bracket is refused rather
-    than guessed at: a misread bracket could drop `ro` or `redact` from a host without any error.
+    than guessed at: a misread bracket could drop `ro` or `redact` from a host without any error.  The
+    error names the host whose entry holds the bad bracket, so that with several hosts the operator is
+    pointed at the right one.
 
     Args:
         text: the value to split
-        context: what is being parsed, for the error message
+        labelled: whether entries are `label=endpoint`, so the error can name the label; otherwise the
+            value is one bare endpoint, reported as the default host
 
     Returns:
         list: the pieces, unstripped, in order
@@ -210,20 +213,25 @@ def _split_top_level(text: str, context: str) -> list[str]:
     pieces: list[str] = []
     depth = 0
     start = 0
+
+    def where() -> str:
+        label = text[start:].partition("=")[0].strip() if labelled else _DEFAULT_LABEL
+        return f"host {label!r}"
+
     for index, char in enumerate(text):
         if char == "(":
             if depth:
-                _fail(f"{context!r}: a bracket opens inside another bracket")
+                _fail(f"{where()}: a bracket opens inside another bracket")
             depth = 1
         elif char == ")":
             if not depth:
-                _fail(f"{context!r}: ')' has no matching '('")
+                _fail(f"{where()}: ')' has no matching '('")
             depth = 0
         elif char == "," and not depth:
             pieces.append(text[start:index])
             start = index + 1
     if depth:
-        _fail(f"{context!r}: '(' is never closed")
+        _fail(f"{where()}: '(' is never closed")
     pieces.append(text[start:])
     return pieces
 
@@ -449,10 +457,10 @@ def parse_registry(raw: str | None) -> dict[str, Host]:
     if not text:
         return {_DEFAULT_LABEL: _legacy_host()}
     if not _has_top_level_equals(text):
-        _split_top_level(text, text)  # bracket balance only; the bare form is one endpoint
+        _split_top_level(text, labelled=False)  # bracket balance only; the bare form is one endpoint
         return {_DEFAULT_LABEL: _make_host(_DEFAULT_LABEL, text)}
     registry: dict[str, Host] = {}
-    for entry in _split_top_level(text, "DOCKER_MCP_SERVER_HOSTS"):
+    for entry in _split_top_level(text, labelled=True):
         entry = entry.strip()
         if not entry:
             continue

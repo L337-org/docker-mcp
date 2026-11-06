@@ -26,11 +26,16 @@ module per concern:
 - `server._switch_report()` merges `settings.report()` into the `switches` that `tool_list` and the
   tool catalog return, so both show the same thing.
 - `host_list` and the startup roster of other hosts report `redact` per host from `settings.redacts`,
-  the global switch or the host's own option.  `Host.redact` is the per-host option only; never read it directly to decide whether a
-  call is redacted.
-- `startup_preflight` prints `settings.startup_warnings(readonly=READONLY)` next to the
-  `DOCKER_MCP_SERVER_DISABLE` warnings.  READONLY is passed in rather than read, so the settings
-  module never imports `server.py`.
+  the global switch or the host's own option.  `Host.redact` is the per-host option only; never read
+  it directly to decide whether a call is redacted.
+- `server.configuration_warnings()` joins `settings.startup_warnings(readonly=READONLY)` to the
+  `DOCKER_MCP_SERVER_DISABLE` warnings, so they reach stderr at startup, `tool_list` and the
+  instructions pointer together.  READONLY is passed in rather than read, so the settings module never
+  imports `server.py`.  The warnings are judged per redacted host, because per-host `ro` removes exec
+  and the file-writing tools just as READONLY does.
+- `settings.OUTPUT_REDACTED` says whether the build redacts output at all.  While it is False,
+  configuring redaction warns that nothing is redacted, and a test holds the status note at the top of
+  `REDACTION.md` to the same flag.
 
 ## The host option grammar
 
@@ -59,4 +64,6 @@ Each is a single table, so adding a case is a one-line change plus its test.
 1. Add the option to `_apply_bracket` in `docker_mcp/_hosts.py`, and a field to `_Options` and `Host`.
 2. Pass it through in `_make_host`, and add it to the unknown-option message.
 3. Add parsing cases to `tests/test_hosts.py`, in both the one-bracket and one-per-bracket forms.
-4. Report it in `host_list` and update the grammar in [hosts.md](hosts.md) and the README.
+4. Report it in `host_list`, and add it to the flag list in the `docker-mcp://hosts` resource's
+   description (`get_hosts_resource` in `docker_mcp/tools/resources.py`), which repeats the field set.
+5. Update the grammar in [hosts.md](hosts.md) and the README.

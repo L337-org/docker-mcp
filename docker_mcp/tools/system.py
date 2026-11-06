@@ -37,7 +37,7 @@ from docker_mcp._hosts import (
     resolve_auto,
 )
 from docker_mcp.redaction import settings as redaction_settings
-from docker_mcp.server import READONLY, disable_switch_warnings, is_domain_disabled, tool
+from docker_mcp.server import configuration_warnings, is_domain_disabled, tool
 from docker_mcp.tools._ssh_proxy import _CONNECT_TIMEOUT_CAP_SECONDS, connect_socket_with_family_fallback, parse_ssh_url
 from docker_mcp.tools._utils import classify_host_kernel, close_stream_quietly, env_flag, in_container
 
@@ -1178,7 +1178,7 @@ def startup_preflight() -> None:
     """
     global _self_container_id, _self_host_label
     # Before the ping, so it is shown even when the daemon cannot be reached.
-    for warning in (*disable_switch_warnings(), *redaction_settings.startup_warnings(readonly=READONLY)):
+    for warning in configuration_warnings():
         print(f"docker-mcp-server: WARNING: {warning}", file=sys.stderr, flush=True)
     scrub_unresolved_env()
     default = _default_host()

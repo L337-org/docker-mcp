@@ -182,12 +182,20 @@ def test_no_warning_when_nothing_is_configured():
     assert settings.startup_warnings(readonly=False) == []
 
 
-def test_the_global_switch_without_readonly_warns(monkeypatch):
+def test_the_global_switch_without_readonly_warns_for_each_host_that_is_not_ro(monkeypatch):
+    _hosts(monkeypatch, "dev=ssh://dev, prod=ssh://prod(ro), stage=ssh://stage")
     monkeypatch.setattr(settings, "_global", True)
     warnings = _without_interim(settings.startup_warnings(readonly=False))
-    assert len(warnings) == 1
-    assert warnings[0].startswith(f"{settings.REDACT_VAR} is on without DOCKER_MCP_SERVER_READONLY")
-    assert "REDACTION.md" in warnings[0]
+    assert [w.split(" is redacted")[0] for w in warnings] == ["host 'dev'", "host 'stage'"]
+    assert all("Mark it (ro,redact) or set DOCKER_MCP_SERVER_READONLY=1" in w for w in warnings)
+    assert all("REDACTION.md" in w for w in warnings)
+
+
+def test_the_global_switch_does_not_warn_when_every_host_is_ro(monkeypatch):
+    # Exec and the file-writing tools are writes, so per-host ro removes them as READONLY does.
+    _hosts(monkeypatch, "dev=ssh://dev(ro), prod=ssh://prod(ro)")
+    monkeypatch.setattr(settings, "_global", True)
+    assert _without_interim(settings.startup_warnings(readonly=False)) == []
 
 
 def test_the_global_switch_with_readonly_does_not_warn(monkeypatch):
@@ -196,10 +204,9 @@ def test_the_global_switch_with_readonly_does_not_warn(monkeypatch):
 
 
 def test_each_host_marked_redact_without_ro_warns_by_name(monkeypatch):
-    _hosts(monkeypatch, "a=ssh://a(redact), b=ssh://b(ro,redact), c=ssh://c(redact)(nd)")
+    _hosts(monkeypatch, "a=ssh://a(redact), b=ssh://b(ro,redact), c=ssh://c(redact)(nd), d=ssh://d")
     warnings = _without_interim(settings.startup_warnings(readonly=False))
-    assert [w.split(" is marked")[0] for w in warnings] == ["host 'a'", "host 'c'"]
-    assert all("Mark it (ro,redact)" in w for w in warnings)
+    assert [w.split(" is redacted")[0] for w in warnings] == ["host 'a'", "host 'c'"]
 
 
 def test_readonly_covers_a_host_marked_redact_without_ro(monkeypatch):
@@ -224,10 +231,18 @@ def test_names_with_a_redacted_host_do_not_warn(monkeypatch):
 
 def test_until_output_is_redacted_configuring_it_warns_that_it_is_not(monkeypatch):
     _hosts(monkeypatch, "a=ssh://a(ro,redact)")
+    monkeypatch.setattr(settings, "OUTPUT_REDACTED", False)
     assert any(_NOT_YET in w for w in settings.startup_warnings(readonly=True))
+    monkeypatch.setattr(settings, "OUTPUT_REDACTED", True)
+    assert not any(_NOT_YET in w for w in settings.startup_warnings(readonly=True))
 
 
 # --- documentation -------------------------------------------------------------------------------
+
+
+def test_redaction_md_says_it_is_not_yet_functional_exactly_while_output_is_not_redacted():
+    text = (Path(__file__).parent.parent / "REDACTION.md").read_text(encoding="utf-8")
+    assert ("**Status: not yet functional.**" in text) is (not settings.OUTPUT_REDACTED)
 
 
 def test_redaction_md_lists_exactly_the_built_in_patterns():
