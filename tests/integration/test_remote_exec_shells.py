@@ -21,11 +21,20 @@ _VALUES = {
 }
 
 
+# bash as `sh` is POSIX mode, the default /bin/sh on the Fedora family and macOS, and the one that ends
+# a script on a failed assignment to a read-only name such as `UID`; plain `bash` is not.
 @pytest.mark.parametrize(
     ("image", "shell"),
-    [("debian:bookworm-slim", "sh"), ("alpine:3", "sh"), ("busybox:1.36", "sh"), ("bash:5", "bash")],
+    [
+        ("debian:bookworm-slim", ["sh"]),
+        ("alpine:3", ["sh"]),
+        ("busybox:1.36", ["sh"]),
+        ("bash:5", ["bash"]),
+        ("bash:5", ["bash", "--posix"]),
+        ("fedora:41", ["sh"]),
+    ],
 )
-def test_variables_arrive_intact_under_each_shell(image: str, shell: str):
+def test_variables_arrive_intact_under_each_shell(image: str, shell: list[str]):
     names = list(_VALUES)
     printer = 'for n in "$@"; do eval "printf \'%s\\\\0\' \\"\\${$n}\\""; done'
     body = shlex.split(
@@ -33,7 +42,7 @@ def test_variables_arrive_intact_under_each_shell(image: str, shell: str):
     )[2]
     script = f"touch /tmp/victim; {body}; e=$?; [ -e /tmp/victim ] || echo VICTIM-REMOVED >&2; exit $e"
     payload = "".join(f"{encode_env_value(v)}\n" for v in _VALUES.values()).encode()
-    argv = ["docker", "run", "--rm", "-i", image, shell, "-c", script]
+    argv = ["docker", "run", "--rm", "-i", image, *shell, "-c", script]
     # S603/S607: a fixed argv with no shell, and the docker CLI on PATH is what this suite targets.
     result = subprocess.run(argv, input=payload, capture_output=True, timeout=180)  # noqa: S603, S607
     assert result.returncode == 0, result.stderr

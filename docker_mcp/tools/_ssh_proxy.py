@@ -498,6 +498,39 @@ _TIMEOUT_ATTRIBUTION_SLACK_SECONDS = 0.25
 # because the name is written into the script text and must never carry shell syntax.
 _ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
+# Names a POSIX shell treats specially, so assigning one in the remote script either fails or does not
+# reach the command with the caller's value.  bash running as `sh` (the default /bin/sh on the Fedora
+# family and macOS) makes `UID`, `EUID` and `PPID` read-only, and in POSIX mode a failed assignment to
+# one ends the script before the command runs; `RANDOM`, `SECONDS`, `LINENO` and the rest are replaced
+# by the shell's own values; and the shell itself reads the rest.  Every `BASH_*` and `COMP_*` name is
+# included rather than listing bash's own, which grows between releases.  Case matters: shell variables
+# are case-sensitive, so `uid` is an ordinary name.
+SHELL_SPECIAL_NAMES = frozenset(
+    {
+        "UID", "EUID", "PPID", "GROUPS", "SHELLOPTS", "BASHOPTS", "BASHPID",
+        "RANDOM", "SRANDOM", "SECONDS", "LINENO", "HISTCMD", "FUNCNAME", "DIRSTACK",
+        "EPOCHSECONDS", "EPOCHREALTIME", "OPTIND", "OPTARG", "IFS", "PS1", "PS2", "PS4", "ENV",
+    }
+)  # fmt: skip
+_SHELL_SPECIAL_PREFIXES = ("BASH_", "COMP_")
+
+
+def is_shell_assignable(name: str) -> bool:
+    """Whether the remote script can set this name in the command's environment with the caller's value.
+
+    Args:
+        name: a variable name
+
+    Returns:
+        bool: True for a plain variable name no POSIX shell treats specially
+    """
+    return (
+        bool(_ENV_NAME.fullmatch(name))
+        and name not in SHELL_SPECIAL_NAMES
+        and not name.startswith(_SHELL_SPECIAL_PREFIXES)
+        and not name.upper().startswith("DOCKER_MCP_SERVER_")
+    )
+
 
 def encode_env_value(value: str) -> str:
     r"""Encode a value as one line the remote script decodes with POSIX `printf %b`.
@@ -530,8 +563,10 @@ def _validate_env_names(env: Mapping[str, str]) -> None:
         ValueError: a name is not a plain variable name, or a value holds a NUL byte
     """
     for name, value in env.items():
-        if not _ENV_NAME.fullmatch(name) or name.upper().startswith("DOCKER_MCP_SERVER_"):
-            raise ValueError(f"cannot send variable {name!r} to a remote command: not a plain variable name")
+        if not is_shell_assignable(name):
+            raise ValueError(
+                f"cannot send variable {name!r} to a remote command: not a plain variable name a shell can assign"
+            )
         if "\x00" in value:
             raise ValueError(f"cannot send variable {name!r} to a remote command: its value holds a NUL byte")
 

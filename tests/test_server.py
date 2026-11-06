@@ -350,6 +350,20 @@ def _tools_taking_vars_in_child(env_vars: list[str]) -> set[str]:
     return set(filter(None, result.stdout.strip().split(",")))
 
 
+@pytest.mark.parametrize(
+    ("document", "start", "end"),
+    [
+        ("README.md", "- **Credentials for the CLI-backed tools", "take `vars`"),
+        ("architecture/cli-shell-out.md", "## Values in the CLI's environment", "(Compose substitution"),
+    ],
+)
+def test_the_docs_name_exactly_the_tools_that_take_vars(document, start, end):
+    # The prose lists the set rather than describing it, so it is held to `_VARS_TOOLS` here.
+    text = (Path(__file__).parent.parent / document).read_text(encoding="utf-8")
+    passage = text.split(start, 1)[1].split(end, 1)[0]
+    assert set(re.findall(r"`([a-z_]+)`", passage)) & set(TOOL_CATEGORIES) == _VARS_TOOLS
+
+
 def test_vars_is_offered_by_exactly_the_cli_tools_that_take_a_credential_and_never_under_readonly():
     # `vars` puts values in the docker CLI's environment for the tools that turn a compose or bake file
     # into containers or images. Each of them is a write, so READONLY drops every one; a read-only

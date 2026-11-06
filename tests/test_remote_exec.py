@@ -1756,11 +1756,6 @@ def test_a_callers_variable_cannot_change_the_wrappers_own(tmp_path):
     assert victim.exists()
 
 
-def test_values_never_appear_in_the_script():
-    script = PosixDialect().wrap_with_timeout(["docker", "ps"], timeout=5, env_names=["DB_PASS"])
-    assert "DB_PASS" in script and "s3cret" not in script
-
-
 def test_stdin_ending_early_exits_125_without_running_the_command():
     result = _run_wrapped_locally({"A": "1", "B": "2"}, stdin=f"{encode_env_value('1')}\n".encode())
     assert result.returncode == 125
@@ -1788,10 +1783,12 @@ def test_exec_remote_sends_nothing_without_variables():
     assert (channel.sent, channel.write_shut) == (b"", False)
 
 
-@pytest.mark.parametrize("name", ["1ABC", "A-B", "A B", "A;rm", "DOCKER_MCP_SERVER_LINE", "docker_mcp_server_value_0"])
+@pytest.mark.parametrize(
+    "name", ["1ABC", "A-B", "A B", "A;rm", "DOCKER_MCP_SERVER_LINE", "docker_mcp_server_value_0", "UID", "BASH_ENV"]
+)
 def test_exec_remote_refuses_a_name_that_could_break_or_reach_into_the_script(name):
     channel = FakeChannel()
-    with pytest.raises(ValueError, match="not a plain variable name"):
+    with pytest.raises(ValueError, match="not a plain variable name a shell can assign"):
         exec_remote(fake_client(channel), ["docker", "ps"], max_output_bytes=_CAP, timeout=5, env={name: "x"})
     assert channel.executed is None
 

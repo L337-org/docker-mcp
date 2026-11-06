@@ -1093,6 +1093,9 @@ def test_remote_stage_and_exec_skips_the_session_entirely_when_nothing_will_be_s
         "LANG",
         "XDG_RUNTIME_DIR",
         "SYSTEMROOT",
+        "BASH_ENV",
+        "ENV",
+        "XDG_CONFIG_HOME",
     ],
 )
 def test_names_that_would_change_the_cli_itself_are_reserved(name):
@@ -1155,3 +1158,24 @@ def test_values_by_name_accepts_the_same_value_as_vars_and_refuses_a_different_o
     with pytest.raises(ToolInputError, match="'TAG' is also set in `vars`") as caught:
         cli_module.values_by_name({"TAG": "v2-secret"}, flag="--env", argument="env", cli_env=cli_env)
     assert "v2-secret" not in str(caught.value) and "v1" not in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    "name", ["UID", "EUID", "PPID", "RANDOM", "SECONDS", "LINENO", "IFS", "BASH_ARGV0", "COMP_LINE"]
+)
+def test_shell_special_names_are_not_sent_by_name(name):
+    # bash running as `sh` makes some read-only, and a failed assignment ends the remote script; others are
+    # replaced by the shell's own values. Inline for env/build_args, on both backends alike.
+    cli_env: dict[str, str] = {}
+    tokens = cli_module.values_by_name({name: "1000"}, flag="--env", argument="env", cli_env=cli_env)
+    assert tokens == ["--env", f"{name}=1000"]
+    assert cli_env == {}
+
+
+def test_a_shell_special_name_in_vars_is_refused_with_the_reason():
+    with pytest.raises(ToolInputError, match="vars: 'UID' cannot be passed this way, because POSIX shells treat it"):
+        cli_module.cli_variables({"UID": "1000"})
+
+
+def test_shell_special_names_are_case_sensitive_like_the_shell():
+    assert cli_module.cli_variables({"uid": "1000"}) == {"uid": "1000"}

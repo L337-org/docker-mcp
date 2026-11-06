@@ -25,6 +25,7 @@ from docker_mcp.tools._ssh_proxy import (
     remote_staging_session,
     run_remote_exec,
     ssh_proxy_for_docker_host,
+    is_shell_assignable,
 )
 
 DEFAULT_TIMEOUT_SECONDS = 60.0
@@ -85,14 +86,19 @@ _WINDOWS_EXTRA_ENV_KEYS = (
 # can change what the CLI itself does, so these are refused in `vars`: the names the server already
 # controls in `_safe_env`, the prefixes the docker CLI, Compose, buildx and BuildKit read, the dynamic
 # loader's (`LD_PRELOAD`, `DYLD_INSERT_LIBRARIES` would run code in the CLI process), git's
-# (`GIT_SSH_COMMAND` runs a command when a build fetches a Git context), SSH's, and proxies, which
-# redirect the CLI's own traffic.  Compared upper-cased, since Windows names are case-insensitive.
-# Adding one is a one-line change plus its case in tests/test_cli.py.
-_RESERVED_ENV_NAMES = frozenset(name.upper() for name in (*_BASE_ENV_KEYS, *_WINDOWS_EXTRA_ENV_KEYS))
+# (`GIT_SSH_COMMAND` runs a command when a build fetches a Git context), SSH's, proxies, which redirect
+# the CLI's own traffic, the shell start-up files `BASH_ENV` and `ENV`, which run code in any shell
+# script the CLI starts (a credential helper, say), and `XDG_CONFIG_HOME`, which moves git's config.
+# A best-effort denylist, not a guarantee: the agent already controls the daemon, so this is defence in
+# depth against an argument that would subvert the CLI, not a boundary.  Compared upper-cased, since
+# Windows names are case-insensitive.  Adding one is a one-line change plus its case in tests/test_cli.py.
+_RESERVED_ENV_NAMES = frozenset(
+    name.upper() for name in (*_BASE_ENV_KEYS, *_WINDOWS_EXTRA_ENV_KEYS, "BASH_ENV", "ENV", "XDG_CONFIG_HOME")
+)
 _RESERVED_ENV_PREFIXES = ("DOCKER_", "COMPOSE_", "BUILDX_", "BUILDKIT_", "LD_", "DYLD_", "GIT_", "SSH_")
 _RESERVED_ENV_SUFFIXES = ("_PROXY",)
 
-# A name a POSIX shell can assign, which the remote backend needs (see `_ssh_proxy.encode_env_value`).
+# A plain variable name: letters, digits and '_', not starting with a digit.
 _PLAIN_ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 
@@ -140,6 +146,13 @@ def cli_variables(values: dict[str, str] | None, *, argument: str = "vars") -> d
                 "what the CLI itself does (which daemon it reaches, what code it loads, where its traffic goes). "
                 "Rename the variable in the Compose or bake file."
             )
+        if not is_shell_assignable(name):
+            # Refused on both backends, so a call never works locally and fails over the SSH fallback.
+            raise ToolInputError(
+                f"{argument}: {name!r} cannot be passed this way, because POSIX shells treat it specially (bash "
+                "makes some such names read-only), so it could not reach the CLI on a remote host. Rename the "
+                "variable in the Compose or bake file."
+            )
         if "\x00" in value:
             raise ToolInputError(f"{argument}: the value of {name!r} holds a NUL byte, which no variable can hold.")
         checked[name] = value
@@ -158,12 +171,13 @@ def values_by_name(
     Both `--env NAME` (`docker compose run`/`exec`) and `--build-arg NAME` (`docker buildx build`) take
     the value of a bare name from the CLI's own environment.  Each value is added to `cli_env`, which
     the caller passes as `extra_env`, so it never appears in any process's command line.  A name that
-    is reserved (see `is_reserved_env_name`) or that a POSIX shell cannot assign is passed as
-    `flag NAME=VALUE` instead, as before, because setting it in the CLI's environment would change the
-    CLI or could not reach a remote host; its value is then visible in the process list.
+    is reserved (see `is_reserved_env_name`), or that a POSIX shell cannot assign with the caller's
+    value (`_ssh_proxy.is_shell_assignable`: a dotted name, `UID`, `RANDOM`), is passed on the command
+    line as `flag NAME=VALUE` instead, on both backends, because setting it in the CLI's environment
+    would change the CLI or could not reach a remote host; its value is then visible in the process list.
 
     Args:
-        values: the caller's mapping, or None; values are converted with `str()`, as before
+        values: the caller's mapping, or None; non-string values are converted with `str()`
         flag: the CLI flag, e.g. "--env"
         argument: the parameter name, for error messages
         cli_env: the CLI environment being built, updated in place
@@ -177,7 +191,7 @@ def values_by_name(
     tokens: list[str] = []
     for name, raw in (values or {}).items():
         value = str(raw)
-        if not _PLAIN_ENV_NAME.fullmatch(str(name)) or is_reserved_env_name(str(name)):
+        if not is_shell_assignable(str(name)) or is_reserved_env_name(str(name)):
             tokens.extend([flag, f"{name}={value}"])
             continue
         if "\x00" in value:
@@ -525,7 +539,7 @@ def remote_exec_cli(  # noqa: DOC502
         CliResult: exit status, decoded stdout/stderr, and whether the byte cap truncated them
 
     Raises:
-        ValueError: `stdin` was supplied (an internal guard: no caller needs it, so its text stays in the log rather
+        ValueError: `stdin` was supplied (an internal guard against a caller bug, so its text stays in the log rather
             than reaching the model)
         CapabilityError: `host` is not an ssh:// host, or the remote is not POSIX
         RemoteFailureError: the SSH connection could not be opened
@@ -534,9 +548,7 @@ def remote_exec_cli(  # noqa: DOC502
     _reject_stdin(stdin)
     url = _ssh_url_for(host, args)
     return _as_cli_result(
-        run_remote_exec(
-            url, ["docker", *args], max_output_bytes=MAX_CLI_OUTPUT_BYTES, timeout=timeout, env=extra_env
-        )
+        run_remote_exec(url, ["docker", *args], max_output_bytes=MAX_CLI_OUTPUT_BYTES, timeout=timeout, env=extra_env)
     )
 
 
@@ -712,17 +724,15 @@ def run_in_session(  # noqa: DOC502
         subprocess.TimeoutExpired: the command exceeded `timeout`
     """
     return _as_cli_result(
-        session.exec(
-            ["docker", *args], cwd=cwd, timeout=timeout, max_output_bytes=MAX_CLI_OUTPUT_BYTES, env=extra_env
-        )
+        session.exec(["docker", *args], cwd=cwd, timeout=timeout, max_output_bytes=MAX_CLI_OUTPUT_BYTES, env=extra_env)
     )
 
 
 def _reject_stdin(stdin: bytes | None) -> None:
     """Refuse the one `run_docker` input the remote backends cannot honour.
 
-    Rejected rather than dropped: no in-scope tool passes it today, and one that starts to should fail
-    loudly here instead of silently diverging from its local path.  The remote channel's stdin carries
+    Rejected rather than dropped, so a tool that passes it fails loudly here instead of silently diverging
+    from its local path.  The remote channel's stdin carries
     `extra_env` instead.
 
     Args:

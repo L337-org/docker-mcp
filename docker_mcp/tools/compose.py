@@ -571,7 +571,8 @@ def compose_run(  # noqa: DOC101,DOC103
         no_deps: Don't start linked services
         workdir: Working directory inside the container
         user: User to run as inside the container (uid or name)
-        env: Environment variables to set inside the container; values kept off the command line unless reserved (PATH)
+        env: Environment variables to set inside the container; values kept off the command line except for reserved
+            (PATH), shell-special (UID) or dotted names
         vars: `${VAR}` values for the compose file, kept off the command line (use for credentials)
 
     Returns:
@@ -625,7 +626,8 @@ def compose_exec(  # noqa: DOC101,DOC103
         index: Container index when the service has multiple replicas
         workdir: Working directory inside the container
         user: User to run as inside the container (uid or name)
-        env: Environment variables to set for the exec session; values kept off the command line unless reserved (PATH)
+        env: Environment variables to set for the exec session; values kept off the command line except for reserved
+            (PATH), shell-special (UID) or dotted names
 
     Returns:
         dict: {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}

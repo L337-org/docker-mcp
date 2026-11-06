@@ -16,7 +16,7 @@ import pytest
 
 from docker_mcp.tools import _cli
 from docker_mcp.tools.buildx import buildx_bake, buildx_build
-from docker_mcp.tools.compose import compose_down, compose_run
+from docker_mcp.tools.compose import compose_down, compose_exec, compose_run, compose_up
 from docker_mcp.tools.containers import container_logs, container_remove
 from docker_mcp.tools.system import system_wait
 
@@ -112,3 +112,27 @@ def test_buildx_bake_takes_a_variable_from_vars_without_a_command_line(tmp_path:
     assert result["returncode"] == 0, result["stderr"]
     assert "<bake_value>" in result["stdout"] + result["stderr"]
     _assert_never_on_a_command_line(argv_log, "bake value")
+
+
+def test_compose_exec_delivers_env_without_a_command_line(tmp_path: Path, argv_log: Path):
+    if not _cli.has_plugin("compose"):
+        pytest.skip("docker compose plugin not installed")
+    (tmp_path / "compose.yaml").write_text(
+        'services:\n  probe:\n    image: alpine:3\n    init: true\n    command: ["sleep", "300"]\n',
+        encoding="utf-8",
+    )
+    project = f"docker-mcp-it-{uuid.uuid4().hex[:8]}"
+    try:
+        assert compose_up(project_dir=str(tmp_path), project_name=project)["returncode"] == 0
+        result = compose_exec(
+            service="probe",
+            command=["sh", "-c", 'printf "%s" "$FROM_ENV"'],
+            project_dir=str(tmp_path),
+            project_name=project,
+            env={"FROM_ENV": _SECRET},
+        )
+        assert result["returncode"] == 0, result["stderr"]
+        assert result["stdout"] == _SECRET
+        _assert_never_on_a_command_line(argv_log, _SECRET)
+    finally:
+        compose_down(project_dir=str(tmp_path), project_name=project, remove_orphans=True)

@@ -383,8 +383,8 @@ def buildx_build(  # noqa: DOC101,DOC103,DOC501,DOC503
         file: Dockerfile path; a leading `~` is expanded. A relative path resolves against this server's working
             directory (buildx's own rule), NOT against `context` - pass e.g. "ctx/Dockerfile" for a Dockerfile inside
             the context directory "ctx".
-        build_args: Build-time variables, kept off the command line unless reserved (PATH) but recorded in image
-            history; for a credential use `secret` with `env=`
+        build_args: Build-time variables, kept off the command line except for reserved (PATH), shell-special (UID) or
+            dotted names, but recorded in image history; for a credential use `secret` with `env=`
         build_contexts: Additional named build contexts (e.g. {"deps": "./vendor"}); a leading `~` is expanded
         labels: Labels to set on the resulting image (each becomes `--label KEY=VALUE`)
         annotations: OCI manifest annotations (passed verbatim, repeatable)
