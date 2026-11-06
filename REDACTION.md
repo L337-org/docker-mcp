@@ -79,8 +79,9 @@ A value read this way is redacted wherever it appears, however word-like.  One s
 characters is redacted only where it stands as a whole word, so that `pw` is not replaced inside `pwd`,
 which would also give the short value away.
 
-While redaction is on anywhere, the server's instructions tell the agent that markers are valid only as
-tool arguments in the current session, and never to write one to a file.
+While redaction is on anywhere, the server's instructions say so in one line and point the agent to
+`host_list`, whose `redaction` notes give each redacted host's rules: never put a marker in a file,
+bytes in band are refused, and, on a host that accepts writes, files written to disk are not redacted.
 
 ## What is redacted, and how
 
@@ -132,8 +133,9 @@ makes every earlier marker invalid.
 
 ## Checking what is in effect
 
-- **`host_list`** and the `docker-mcp://hosts` resource also give each redacted host's store state:
-  values and bytes held for each kind, and whether the overall budget is reached.  Never a value.
+- **`host_list`** and the `docker-mcp://hosts` resource also give each redacted host a `redaction`
+  field: `notes` on how markers behave on that host, which differ on a read-only one, and the `store`
+  state, values and bytes held for each kind and whether the overall budget is reached.  Never a value.
 - **`tool_list`** and the `docker-mcp://tool-catalog` resource report, under `switches`:
   `DOCKER_MCP_SERVER_REDACT`, `DOCKER_MCP_SERVER_REDACT_NAMES` as the resolved name list (`builtin`,
   `added` and `excluded`), and `redacted_hosts`, the hosts whose output is redacted.

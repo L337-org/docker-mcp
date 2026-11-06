@@ -836,12 +836,10 @@ def build_instructions(registered_domains: set[str] | None = None) -> str:
             "writes need an explicit `host`; `(ro)` hosts refuse writes, `(nd)` destructive calls."
         )
     if redaction_settings.any_redacted():
-        # A marker means something only to this server process, so one written to a file is useless to
-        # Docker and to every later session.
-        caveats.append(
-            "Output from redacted hosts shows credentials as `[REDACTED:...]` markers, valid only as tool "
-            "arguments in this session; never write one to a file."
-        )
+        # A pointer, not the rules: what applies differs per host (a read-only host takes no markers back),
+        # `host_list` says it for each, and every character here is paid by every session that has
+        # redaction on.
+        caveats.append("Credentials show as `[REDACTED:...]`; see `host_list`.")
     cli_present = [d for d in _CLI_DOMAINS if d in present]
     if cli_present:
         # Only worth the tokens when a domain that actually has the fallback is registered.
@@ -858,11 +856,11 @@ def build_instructions(registered_domains: set[str] | None = None) -> str:
             # to agree with a length that varies.
             no_fallback = [d for d in cli_present if d not in fallback_present]
             caveat = (
-                "CLI-backed domains (marked above) use the docker CLI. With the CLI or a required plugin "
-                "missing locally, a host reached over `ssh://` runs the call itself, with local files "
-                f"copied; a usable local CLI always wins. Applies to {', '.join(fallback_present)}"
+                "CLI-backed domains (marked above) use the docker CLI. With it or a needed plugin missing "
+                "locally, an `ssh://` host runs it itself, copying local files; a usable local CLI "
+                f"always wins. Applies to {', '.join(fallback_present)}"
             )
-            caveat += f"; no fallback for {', '.join(no_fallback)}, which raises instead." if no_fallback else "."
+            caveat += f"; no fallback for {', '.join(no_fallback)}." if no_fallback else "."
             caveats.append(caveat)
     # No swarm caveat: every domain in that family carries "manager node only" in its own blurb
     # above, so a group-level restatement is a sixth copy of a fact already on five lines. If the

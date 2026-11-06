@@ -183,7 +183,7 @@ def _redact_result(result: Any, label: str, json_text: bool) -> Any:
     return REDACTOR.redact(result, label)
 
 
-def _prepare(  # noqa: DOC501,DOC503 - raises the caller's error_cls, which no Raises section can name
+def _prepare(  # noqa: DOC501,DOC503 - raises the caller's error_cls, which pydoclint cannot resolve
     name: str, scope: Scope, error_cls: type[Exception], arguments: dict[str, Any]
 ) -> str | None:
     """Everything a redacted call needs before it runs: refusals first, then a fresh harvest.
@@ -196,6 +196,10 @@ def _prepare(  # noqa: DOC501,DOC503 - raises the caller's error_cls, which no R
 
     Returns:
         str | None: the redacted host's label, or None when the call's output is not redacted
+
+    Raises:
+        Exception: an instance of `error_cls`, when the redaction budget is reached, when bytes would be
+            returned in band, or when the harvest is refused
     """
     label = _label_for(scope, arguments)
     if label is None or not settings.host_redacted(label):

@@ -124,7 +124,7 @@ def test_get_hosts_resource_returns_the_configured_hosts():
         "read_only",
         "non_destructive",
         "redact",
-        "redaction_store",
+        "redaction",
         "tls",
         "default",
     }

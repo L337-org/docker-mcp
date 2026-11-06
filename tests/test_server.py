@@ -372,19 +372,33 @@ def test_vars_is_offered_by_exactly_the_cli_tools_that_take_a_credential_and_nev
     assert _tools_taking_vars_in_child(["DOCKER_MCP_SERVER_READONLY=1"]) == set()
 
 
-def test_list_hosts_reports_the_redaction_stores_state_for_a_redacted_host_only(monkeypatch):
+def test_list_hosts_reports_redaction_notes_and_store_for_a_redacted_host_only(monkeypatch):
     from docker_mcp.tools.system import host_list
 
-    _set_multi_host(monkeypatch, spec="local=auto, prod=ssh://h(ro,redact)")
-    local, prod = host_list()
-    assert local["redaction_store"] is None
-    assert set(prod["redaction_store"]) == {
+    _set_multi_host(monkeypatch, spec="local=auto, prod=ssh://h(redact), safe=ssh://s(ro,redact)")
+    local, prod, safe = host_list()
+    assert local["redaction"] is None
+    assert set(prod["redaction"]["store"]) == {
         "harvested_values",
         "harvested_bytes",
         "discovered_values",
         "discovered_bytes",
         "budget_reached",
     }
+    assert any("[REDACTED:...]" in note for note in prod["redaction"]["notes"])
+    assert any("Never put a marker in a file" in note for note in prod["redaction"]["notes"])
+    # The file-writing tools are writes, so on a read-only host their caveat would mislead.
+    assert any("not redacted" in note for note in prod["redaction"]["notes"])
+    assert not any("not redacted" in note for note in safe["redaction"]["notes"])
+
+
+def test_list_hosts_treats_every_host_as_read_only_under_readonly(monkeypatch):
+    import docker_mcp.tools.system as system_module
+
+    _set_multi_host(monkeypatch, spec="local=auto, prod=ssh://h(redact)")
+    monkeypatch.setattr(system_module, "READONLY", True)
+    prod = system_module.host_list()[1]
+    assert not any("not redacted" in note for note in prod["redaction"]["notes"])
 
 
 def _registered_tools() -> dict:
@@ -1085,12 +1099,12 @@ def test_instructions_mention_the_remote_exec_fallback_only_for_domains_that_hav
     assert "Applies to compose, buildx;" in several
     # The condition is both halves — the CLI/plugin missing *and* an ssh:// target — because a client
     # reading only the router would otherwise expect every ssh:// call to execute remotely.
-    assert "With the CLI or a required plugin missing locally" in text
+    assert "With it or a needed plugin missing locally" in text
     # The blanket "those calls raise" is gone where a fallback exists — it contradicted the sentence
     # after it — and the domain without one is named instead.
     assert "those calls raise" not in text
-    assert "no fallback for context, which raises instead." in text
-    assert "reached over `ssh://`" in text
+    assert "no fallback for context." in text
+    assert "an `ssh://` host runs it itself" in text
     assert "a usable local CLI always wins" in text
     assert "Applies to context" not in text  # named only where the fallback exists
 
@@ -2282,7 +2296,7 @@ def test_tool_list_and_the_instructions_carry_the_redaction_warnings_end_to_end(
 
 def test_the_instructions_say_markers_are_only_for_tool_arguments_while_redaction_is_on():
     redacted = _live_instructions(["DOCKER_MCP_SERVER_HOSTS=dev=local, prod=ssh://ops@prod.invalid(ro,redact)"])
-    assert "valid only as tool arguments in this session; never write one to a file" in redacted
+    assert "Credentials show as `[REDACTED:...]`; see `host_list`." in redacted
     assert "Server configuration warnings" not in redacted
     assert "[REDACTED:" not in _live_instructions([])
 

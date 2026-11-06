@@ -38,7 +38,7 @@ from docker_mcp._hosts import (
 )
 from docker_mcp.redaction import settings as redaction_settings
 from docker_mcp.redaction import wire as redaction_wire
-from docker_mcp.server import configuration_warnings, is_domain_disabled, tool
+from docker_mcp.server import READONLY, configuration_warnings, is_domain_disabled, tool
 from docker_mcp.tools._ssh_proxy import _CONNECT_TIMEOUT_CAP_SECONDS, connect_socket_with_family_fallback, parse_ssh_url
 from docker_mcp.tools._utils import classify_host_kernel, close_stream_quietly, env_flag, in_container
 
@@ -572,6 +572,29 @@ def system_df(verbose: bool = False, host: str | None = None) -> dict:  # noqa: 
     return _summarise_df(_get_client(host).df(), verbose)
 
 
+def _redaction_details(host: Host) -> dict:
+    """What an agent needs to know about markers on one redacted host, and the store's state there.
+
+    The server's instructions only point here, because what applies differs by host: a read-only host
+    (its own `ro`, or `DOCKER_MCP_SERVER_READONLY`) takes no writes, so the file-writing tools are refused
+    there and their caveat would mislead.
+
+    Args:
+        host: a redacted host
+
+    Returns:
+        dict: `notes`, the rules that apply on this host, and `store`, its value counts and bytes
+    """
+    notes = [
+        "Credentials in this host's output show as [REDACTED:...] markers.",
+        "Never put a marker in a file, on disk or passed to a tool: it means something only to this server process.",
+        "Bytes in band are refused here: container_archive_get, and container_export or image_save without dest_path.",
+    ]
+    if not (host.read_only or READONLY):
+        notes.append("Files written to disk via dest_path or container_archive_get_to_file are not redacted.")
+    return {"notes": notes, "store": redaction_wire.REDACTOR.report(host.label)}
+
+
 @tool()
 def host_list() -> list[dict]:
     """
@@ -586,8 +609,8 @@ def host_list() -> list[dict]:
     Returns:
         list[dict]: one per host: name; url (resolved daemon URL, null = docker-py platform default); read_only;
             non_destructive (blocks destructive calls only); redact (whether its output is redacted, by its own
-            option or the global switch); redaction_store (for a redacted host, values and bytes held for each kind
-            and whether the budget is reached; else null); tls (whether a per-host cert dir is configured); default
+            option or the global switch); redaction (for a redacted host, `notes` on how markers behave there and
+            the `store` state; else null); tls (whether a per-host cert dir is configured); default
             (the omitted-host fallback)
     """
     hosts = _host_registry()
@@ -599,7 +622,7 @@ def host_list() -> list[dict]:
             "read_only": host.read_only,
             "non_destructive": host.non_destructive,
             "redact": redaction_settings.redacts(host),
-            "redaction_store": redaction_wire.REDACTOR.report(host.label) if redaction_settings.redacts(host) else None,
+            "redaction": _redaction_details(host) if redaction_settings.redacts(host) else None,
             "tls": host.cert_dir is not None,
             "default": host.label == default_label,
         }
