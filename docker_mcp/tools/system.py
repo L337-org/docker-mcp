@@ -37,6 +37,7 @@ from docker_mcp._hosts import (
     resolve_auto,
 )
 from docker_mcp.redaction import settings as redaction_settings
+from docker_mcp.redaction import wire as redaction_wire
 from docker_mcp.server import configuration_warnings, is_domain_disabled, tool
 from docker_mcp.tools._ssh_proxy import _CONNECT_TIMEOUT_CAP_SECONDS, connect_socket_with_family_fallback, parse_ssh_url
 from docker_mcp.tools._utils import classify_host_kernel, close_stream_quietly, env_flag, in_container
@@ -585,8 +586,9 @@ def host_list() -> list[dict]:
     Returns:
         list[dict]: one per host: name; url (resolved daemon URL, null = docker-py platform default); read_only;
             non_destructive (blocks destructive calls only); redact (whether its output is redacted, by its own
-            option or the global switch); tls (whether a per-host cert dir is configured); default (the omitted-host
-            fallback)
+            option or the global switch); redaction_store (for a redacted host, values and bytes held for each kind
+            and whether the budget is reached; else null); tls (whether a per-host cert dir is configured); default
+            (the omitted-host fallback)
     """
     hosts = _host_registry()
     default_label = _default_host().label if hosts else None
@@ -597,6 +599,7 @@ def host_list() -> list[dict]:
             "read_only": host.read_only,
             "non_destructive": host.non_destructive,
             "redact": redaction_settings.redacts(host),
+            "redaction_store": redaction_wire.REDACTOR.report(host.label) if redaction_settings.redacts(host) else None,
             "tls": host.cert_dir is not None,
             "default": host.label == default_label,
         }

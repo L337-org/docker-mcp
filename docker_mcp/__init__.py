@@ -36,5 +36,10 @@ def main() -> None:
 
     from docker_mcp.tools.system import startup_preflight
 
+    if _redaction_settings.any_redacted():
+        # A crash must not write the stored credentials to disk in a core file.
+        from docker_mcp.redaction.wire import disable_core_dumps
+
+        disable_core_dumps()
     startup_preflight()
     mcp.run(transport="stdio")

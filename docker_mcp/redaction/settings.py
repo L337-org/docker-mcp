@@ -38,7 +38,7 @@ BUILTIN_NAME_PATTERNS: tuple[str, ...] = (
 
 # Whether this build redacts output at all.  While it does not, configuring redaction warns that it
 # does nothing, and REDACTION.md carries a status note saying so.
-OUTPUT_REDACTED = False
+OUTPUT_REDACTED = True
 
 # A names entry: a variable name, optionally a glob, optionally preceded by `!`.  Deliberately narrow,
 # because anything else is more likely a value pasted by mistake than a name.

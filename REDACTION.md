@@ -7,10 +7,6 @@ container (`container_exec`, `compose_exec`) can print a credential in a form no
 Run it with `DOCKER_MCP_SERVER_READONLY`, or mark a redacted host `(ro,redact)`, which removes those
 routes.
 
-> **Status: not yet functional.**  This build reads and reports the settings below, but does not
-> redact anything yet: output from every host is returned unredacted, and the server says so in a
-> configuration warning.
-
 ## Turning it on
 
 Redaction is off by default.  There are two ways to turn it on, and they combine.
@@ -55,6 +51,36 @@ DOCKER_MCP_SERVER_REDACT_NAMES=UPSTREAM_*, *_REF, !SORT_KEY
 
 The names setting does nothing on its own.  Setting it with redaction on for no host logs a warning
 at startup and changes nothing.
+
+## Where redaction applies
+
+Every tool result, every resource body and every error message from a redacted host is redacted.  Each
+call is judged by the host it reaches: a tool by its `host` argument, or the default host when it names
+none; a resource by the host in its URI, or the default host for the forms without one.
+
+- **Output from a host that is not redacted is never redacted**, even where it contains a value read
+  from a redacted host.  Redacting it would tell an agent that a credential it can read in full on one
+  host is also used on the redacted one.
+- **Tools that reach no daemon are not redacted:** the registry and Docker Hub tools, `docs_lookup`,
+  the `context_*` tools, `host_list` and `tool_list`.
+- **Raw bytes cannot be redacted** without corrupting the archive they belong to.  With
+  `DOCKER_MCP_SERVER_REDACT` on, `container_archive_get` is not offered at all, and `container_export`
+  and `image_save` require `dest_path`.  On a host marked `redact`, the same calls are refused.  The
+  files these and `container_archive_get_to_file` write are not redacted, and they are written on the
+  machine running the server, even when the daemon is remote.
+
+The server reads the values to redact from the redacted host's daemon: values under a credential name
+in container, image and service environments, in build arguments recorded in image history, and in a
+Compose project's `.env` file; and the content of Swarm configs whose name is a credential name.  On each
+call it asks the daemon whether anything has changed since the last time, and reads again if so, so a
+container created a moment ago is covered.
+
+A value read this way is redacted wherever it appears, however word-like.  One shorter than eight
+characters is redacted only where it stands as a whole word, so that `pw` is not replaced inside `pwd`,
+which would also give the short value away.
+
+While redaction is on anywhere, the server's instructions tell the agent that markers are valid only as
+tool arguments in the current session, and never to write one to a file.
 
 ## What is redacted, and how
 
@@ -106,6 +132,8 @@ makes every earlier marker invalid.
 
 ## Checking what is in effect
 
+- **`host_list`** and the `docker-mcp://hosts` resource also give each redacted host's store state:
+  values and bytes held for each kind, and whether the overall budget is reached.  Never a value.
 - **`tool_list`** and the `docker-mcp://tool-catalog` resource report, under `switches`:
   `DOCKER_MCP_SERVER_REDACT`, `DOCKER_MCP_SERVER_REDACT_NAMES` as the resolved name list (`builtin`,
   `added` and `excluded`), and `redacted_hosts`, the hosts whose output is redacted.
@@ -126,3 +154,13 @@ Because an MCP client rarely shows a server's stderr to anyone, each warning goe
 `DOCKER_MCP_SERVER_DISABLE` mistakes do: a `WARNING` line on stderr at startup, an entry in
 `tool_list`'s `configuration_warnings`, and a line at the top of the server instructions telling the
 agent to check `tool_list` and tell the user.
+
+## The boundary this protects
+
+Redaction keeps credentials from an agent whose only route to Docker is this server.  An agent that can
+also run commands as the same user on the same machine, as a coding agent can, could read the server
+process's memory, though it could as easily use the Docker socket directly; for real separation run the
+server as another user or in its own container, which the published image provides.  While redaction is
+on the server switches core dumps off, so a crash cannot write the stored values to disk.  Two limits
+are accepted: values cannot be reliably wiped from memory on shutdown, because Python strings cannot be
+overwritten in place, and the store cannot be kept out of swap.

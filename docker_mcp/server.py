@@ -30,6 +30,7 @@ from mcp.types import ToolAnnotations
 import docker_mcp._hosts as _hosts
 from docker_mcp._env import env_flag, read_env
 from docker_mcp.redaction import settings as redaction_settings
+from docker_mcp.redaction import wire as redaction_wire
 from docker_mcp.exceptions import DockerMcpError, HostGuardError, RemoteFailureError, ToolInputError
 
 mcp = MCPServer("docker-mcp-server")
@@ -834,6 +835,13 @@ def build_instructions(registered_domains: set[str] | None = None) -> str:
             f"Multiple hosts are configured ({_hosts.labels()}): read-only tools default to the first; "
             "writes need an explicit `host`; `(ro)` hosts refuse writes, `(nd)` destructive calls."
         )
+    if redaction_settings.any_redacted():
+        # A marker means something only to this server process, so one written to a file is useless to
+        # Docker and to every later session.
+        caveats.append(
+            "Output from redacted hosts shows credentials as `[REDACTED:...]` markers, valid only as tool "
+            "arguments in this session; never write one to a file."
+        )
     cli_present = [d for d in _CLI_DOMAINS if d in present]
     if cli_present:
         # Only worth the tokens when a domain that actually has the fallback is registered.
@@ -1383,6 +1391,41 @@ def _translate_failures[F: Callable[..., Any]](func: F, error_cls: type[ToolErro
     return cast(F, wrapper)  # see the note on the async branch
 
 
+def _bytes_only_in_band_under_global_redaction(name: str) -> bool:
+    """Whether a tool returns only raw bytes and redaction is on for every host, so it is not registered.
+
+    A disabled capability is not registered rather than registered-and-refusing.  Per-host redaction
+    cannot do the same, since the tool is still needed for the other hosts; the wire refuses it there.
+
+    Args:
+        name: the tool's name
+
+    Returns:
+        bool: True for a byte tool with no file form while `DOCKER_MCP_SERVER_REDACT` is on
+    """
+    return (
+        redaction_settings.enabled_globally()
+        and name in redaction_wire.BYTE_TOOLS
+        and redaction_wire.BYTE_TOOLS[name] is None
+    )
+
+
+def _require_byte_destination_under_global_redaction(parameters: dict, name: str) -> None:
+    """Advertise a byte tool's file destination as required while every host is redacted.
+
+    Display only, like the other schema surgery: the in-band form is refused at call time by the wire.
+
+    Args:
+        parameters: the tool's advertised input schema, edited in place
+        name: the tool's name
+    """
+    destination = redaction_wire.BYTE_TOOLS.get(name)
+    if destination and redaction_settings.enabled_globally() and destination in parameters.get("properties", {}):
+        required = parameters.setdefault("required", [])
+        if destination not in required:
+            required.append(destination)
+
+
 def tool[F: Callable[..., Any]](**kwargs: Any) -> Callable[[F], F]:
     """Register an @mcp.tool with central classification - the drop-in `@tool()` every tool module uses.
 
@@ -1402,8 +1445,10 @@ def tool[F: Callable[..., Any]](**kwargs: Any) -> Callable[[F], F]:
         name = func.__name__
         domain = _domain_for(func)
         category = TOOL_CATEGORIES.get(name, ToolCategory.MUTATING)
-        registered = _should_register(category, readonly=READONLY, no_destructive=NO_DESTRUCTIVE) and (
-            domain is None or _domain_enabled(domain, DISABLED_DOMAINS)
+        registered = (
+            _should_register(category, readonly=READONLY, no_destructive=NO_DESTRUCTIVE)
+            and (domain is None or _domain_enabled(domain, DISABLED_DOMAINS))
+            and not _bytes_only_in_band_under_global_redaction(name)
         )
         _seen_tool_names.add(name)
         _tool_registry[name] = ToolRecord(
@@ -1429,7 +1474,16 @@ def tool[F: Callable[..., Any]](**kwargs: Any) -> Callable[[F], F]:
         # branch on. `mcp.tool()` returns its argument unchanged, so registering one callable and
         # returning the other is the whole of the difference. Translating outermost carries a
         # host-guard refusal across as well as one raised by the tool body.
-        mcp.tool(annotations=_annotations_for(name, category), **kwargs)(_translate_failures(target, ToolError))
+        # Redaction outermost, outside the translation, because that is where a failure becomes the text a
+        # client sees; it judges each call by the host it reaches.
+        scope = (
+            redaction_wire.Scope.NO_DAEMON
+            if name in redaction_wire.NO_DAEMON_TOOLS
+            else redaction_wire.Scope.HOST_ARGUMENT
+        )
+        mcp.tool(annotations=_annotations_for(name, category), **kwargs)(
+            redaction_wire.wrap(_translate_failures(target, ToolError), name, scope, ToolError)
+        )
         # Slim the advertised input schema (drop information-free titles, nullable-anyOf null branches,
         # and redundant `additionalProperties: true`), then apply the host-param surgery (enum + required
         # in multi-host, or strip it in single-host). Both reach into MCPServer internals
@@ -1443,12 +1497,13 @@ def tool[F: Callable[..., Any]](**kwargs: Any) -> Callable[[F], F]:
         if isinstance(parameters, dict):
             _slim_schema(parameters)
             _apply_host_schema(parameters, name, category)
+            _require_byte_destination_under_global_redaction(parameters, name)
         return target
 
     return decorator
 
 
-def resource[F: Callable[..., Any]](uri: str, **kwargs: Any) -> Callable[[F], F]:
+def resource[F: Callable[..., Any]](uri: str, *, scope: redaction_wire.Scope, **kwargs: Any) -> Callable[[F], F]:
     """Register an `@mcp.resource` whose anticipated failures keep their message.
 
     The `@resource()` every resource registration uses, decorator or call form.
@@ -1466,6 +1521,7 @@ def resource[F: Callable[..., Any]](uri: str, **kwargs: Any) -> Callable[[F], F]
 
     Args:
         uri: the resource URI or URI template, passed straight to `mcp.resource`
+        scope: which host its body belongs to, for redaction; required, so a new resource has to decide
         **kwargs: passed to `mcp.resource` (name, title, description, mime_type, ...)
 
     Returns:
@@ -1473,7 +1529,12 @@ def resource[F: Callable[..., Any]](uri: str, **kwargs: Any) -> Callable[[F], F]
     """
 
     def decorator(func: F) -> F:
-        mcp.resource(uri, **kwargs)(_translate_failures(func, ResourceError))
+        json_text = kwargs.get("mime_type") == "application/json"
+        mcp.resource(uri, **kwargs)(
+            redaction_wire.wrap(
+                _translate_failures(func, ResourceError), uri, scope, ResourceError, json_text=json_text
+            )
+        )
         return func
 
     return decorator

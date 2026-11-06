@@ -372,6 +372,21 @@ def test_vars_is_offered_by_exactly_the_cli_tools_that_take_a_credential_and_nev
     assert _tools_taking_vars_in_child(["DOCKER_MCP_SERVER_READONLY=1"]) == set()
 
 
+def test_list_hosts_reports_the_redaction_stores_state_for_a_redacted_host_only(monkeypatch):
+    from docker_mcp.tools.system import host_list
+
+    _set_multi_host(monkeypatch, spec="local=auto, prod=ssh://h(ro,redact)")
+    local, prod = host_list()
+    assert local["redaction_store"] is None
+    assert set(prod["redaction_store"]) == {
+        "harvested_values",
+        "harvested_bytes",
+        "discovered_values",
+        "discovered_bytes",
+        "budget_reached",
+    }
+
+
 def _registered_tools() -> dict:
     return mcp._tool_manager._tools
 
@@ -1032,12 +1047,13 @@ def test_instructions_fit_claude_codes_cut_off_at_their_longest_end_to_end():
     text = _live_instructions(
         [
             "DOCKER_MCP_SERVER_HOSTS=local=unix:///var/run/docker.sock, "
-            "staging=ssh://deploy@staging.example.org(ro), production=ssh://deploy@production.example.org(nd)",
+            "staging=ssh://deploy@staging.example.org(ro), production=ssh://deploy@production.example.org(nd,redact)",
             # A misconfigured switch adds its pointer line; the operator's names must not lengthen it.
             "DOCKER_MCP_SERVER_DISABLE=system," + ",".join(f"unknown-{i}-{'x' * 40}" for i in range(5)),
         ]
     ).rstrip("\n")
     assert "Multiple hosts are configured" in text, "the longest rendering must include the host caveat"
+    assert "[REDACTED:...]" in text, "the longest rendering must include the redaction caveat"
     assert "Server configuration warnings" in text, "the longest rendering must include the warning"
     units = len(text.encode("utf-16-le")) // 2
     assert units <= INSTRUCTIONS_CHAR_LIMIT, f"instructions are {units} UTF-16 units, over {INSTRUCTIONS_CHAR_LIMIT}"
@@ -2029,6 +2045,55 @@ def test_every_registered_resource_translates_its_anticipated_failures():
     )
 
 
+def test_every_registered_tool_and_resource_is_classified_for_redaction():
+    """Every call is judged by the host it reaches, so every registered callable must say which that is.
+
+    A tool with a `host` argument is judged by it; one without must be in `wire.NO_DAEMON_TOOLS`, which is
+    held here to exactly the tools that take no `host`, so a new one forces the decision.  A resource with
+    `{host}` in its URI is judged by it.
+    """
+    from docker_mcp.redaction import wire
+
+    scopes = {name: getattr(tool.fn, wire.REDACTION_SCOPE, None) for name, tool in _registered_tools().items()}
+    assert None not in scopes.values(), sorted(n for n, s in scopes.items() if s is None)
+    no_host = {
+        name for name, tool in _registered_tools().items() if "host" not in inspect.signature(tool.fn).parameters
+    }
+    assert {n for n, s in scopes.items() if s is wire.Scope.NO_DAEMON} == no_host == wire.NO_DAEMON_TOOLS & set(scopes)
+    registry = mcp._resource_manager
+    entries = [(str(r.uri), getattr(r, "fn", None)) for r in registry._resources.values()]
+    entries += [(uri, getattr(t, "fn", None)) for uri, t in registry._templates.items()]
+    for uri, fn in entries:
+        scope = getattr(fn, wire.REDACTION_SCOPE, None)
+        assert scope is not None, f"resource {uri} is not wrapped for redaction"
+        if "{host}" in uri:
+            assert scope is wire.Scope.HOST_ARGUMENT, uri
+        elif uri.startswith(("docker-logs:", "docker-stats:", "service-logs:", "service-tasks:")):
+            assert scope is wire.Scope.DEFAULT_HOST, uri
+
+
+def test_under_global_redaction_bytes_are_never_offered_in_band():
+    code = (
+        "import asyncio, json, docker_mcp; from docker_mcp.server import mcp; "
+        "tools = {t.name: t for t in asyncio.run(mcp.list_tools())}; "
+        "print(json.dumps({'archive_get': 'container_archive_get' in tools, "
+        "'required': {n: 'dest_path' in tools[n].input_schema.get('required', []) for n in "
+        "('container_export', 'image_save')}}))"
+    )
+
+    def run(env_vars):
+        result = subprocess.run(  # noqa: S603 - fixed argv, sys.executable, no shell; trusted test input
+            [sys.executable, "-c", code], capture_output=True, text=True, env=_env_with(env_vars), check=True
+        )
+        return json.loads(result.stdout)
+
+    assert run(["DOCKER_MCP_SERVER_REDACT=1"]) == {
+        "archive_get": False,
+        "required": {"container_export": True, "image_save": True},
+    }
+    assert run([]) == {"archive_get": True, "required": {"container_export": False, "image_save": False}}
+
+
 def test_the_resource_guard_is_reading_a_full_surface():
     """As above: "no bad entries found" is also what an empty registry says."""
     registry = mcp._resource_manager
@@ -2210,10 +2275,16 @@ def test_tool_list_and_the_instructions_carry_the_redaction_warnings_end_to_end(
     catalog = _catalog_in_child(["DOCKER_MCP_SERVER_HOSTS=dev=local, prod=ssh://ops@prod.invalid(redact)"])
     assert [w.split(":", 1)[0] for w in catalog["configuration_warnings"]] == [
         "host 'prod' is redacted without ro or DOCKER_MCP_SERVER_READONLY",
-        "redaction is configured, but this build does not redact anything yet",
     ]
-    text = _live_instructions(["DOCKER_MCP_SERVER_HOSTS=dev=local, prod=ssh://ops@prod.invalid(ro,redact)"])
+    text = _live_instructions(["DOCKER_MCP_SERVER_HOSTS=dev=local, prod=ssh://ops@prod.invalid(redact)"])
     assert "Server configuration warnings: see `tool_list`, tell the user." in text
+
+
+def test_the_instructions_say_markers_are_only_for_tool_arguments_while_redaction_is_on():
+    redacted = _live_instructions(["DOCKER_MCP_SERVER_HOSTS=dev=local, prod=ssh://ops@prod.invalid(ro,redact)"])
+    assert "valid only as tool arguments in this session; never write one to a file" in redacted
+    assert "Server configuration warnings" not in redacted
+    assert "[REDACTED:" not in _live_instructions([])
 
 
 def test_tool_list_carries_the_disable_switch_warnings_end_to_end():
