@@ -155,6 +155,99 @@ def test_ro_and_nd_markers_combine_in_any_order():
         assert reg["prod"].url == "ssh://h"
 
 
+# --- options in one bracket, and the redact option ------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "spec",
+    [
+        "ssh://h(ro,redact)",
+        "ssh://h(redact,ro)",
+        "ssh://h(ro)(redact)",
+        "ssh://h(RO, Redact)",
+        "ssh://h(ro,redact)(nd)",
+    ],
+)
+def test_options_are_accepted_in_one_bracket_one_per_bracket_or_mixed(spec):
+    host = parse_registry(f"prod={spec}")["prod"]
+    assert (host.url, host.read_only, host.redact) == ("ssh://h", True, True)
+
+
+def test_redact_alone_leaves_the_host_writable():
+    host = parse_registry("prod=ssh://h(redact)")["prod"]
+    assert (host.redact, host.read_only, host.non_destructive) == (True, False, False)
+
+
+def test_a_host_without_redact_is_not_redacted():
+    assert parse_registry("prod=ssh://h(ro)")["prod"].redact is False
+
+
+def test_commas_inside_a_bracket_do_not_split_the_host_list(stub_resolution):
+    reg = parse_registry("prod=ssh://h(ro,redact), dev=local")
+    assert list(reg) == ["prod", "dev"]
+    assert reg["prod"] == Host(label="prod", url="ssh://h", read_only=True, redact=True)
+    assert reg["dev"] == Host(label="dev", url="unix:///local.sock")
+
+
+def test_the_bare_form_takes_options_in_one_bracket():
+    host = parse_registry("ssh://ops@prod(ro,redact)")["default"]
+    assert (host.url, host.read_only, host.redact) == ("ssh://ops@prod", True, True)
+
+
+def test_the_bare_form_takes_a_tls_option(tmp_path):
+    # The `=` inside (tls=...) once made the whole value read as a label=endpoint list, so a bare
+    # endpoint with a certificate directory could not be written at all.
+    _write_certs(tmp_path / "certs")
+    host = parse_registry(f"tcp://prod:2376(tls={tmp_path / 'certs'})")["default"]
+    assert (host.url, host.cert_dir) == ("tcp://prod:2376", str(tmp_path / "certs"))
+
+
+def test_tls_last_in_a_list_takes_the_rest_of_the_bracket_including_commas(tmp_path):
+    certs = tmp_path / "certs,prod"
+    _write_certs(certs)
+    host = parse_registry(f"prod=tcp://prod:2376(ro,redact,tls={certs}), dev=tcp://dev:2375")["prod"]
+    assert (host.read_only, host.redact, host.cert_dir) == (True, True, str(certs))
+
+
+def test_tls_before_other_options_swallows_them_into_the_directory(tmp_path):
+    # Documented as "tls= comes last": an option after it is read as part of the path, which then
+    # fails the certificate check rather than being silently applied or dropped.
+    _write_certs(tmp_path / "certs")
+    with pytest.raises(HostConfigError, match="missing or cannot read ca.pem"):
+        parse_registry(f"prod=tcp://prod:2376(tls={tmp_path / 'certs'},redact)")
+
+
+@pytest.mark.parametrize("bracket", ["(ro,)", "(,ro)", "(ro,,redact)", "()"])
+def test_an_empty_option_is_refused_naming_the_host(bracket):
+    with pytest.raises(HostConfigError, match=r"host 'prod': empty option"):
+        parse_registry(f"prod=ssh://h{bracket}")
+
+
+def test_an_unknown_option_in_a_list_is_refused_naming_the_host_and_the_option():
+    with pytest.raises(HostConfigError, match=r"host 'prod': unknown marker 'redcat' in '\(ro,redcat\)'"):
+        parse_registry("prod=ssh://h(ro,redcat)")
+
+
+@pytest.mark.parametrize(
+    ("value", "message"),
+    [
+        ("prod=ssh://h(ro", "never closed"),
+        ("prod=ssh://h)ro", "has no matching"),
+        ("prod=ssh://h((ro))", "inside another bracket"),
+        ("ssh://h(ro,redact", "never closed"),
+    ],
+)
+def test_an_unbalanced_bracket_is_refused(value, message):
+    with pytest.raises(HostConfigError, match=message):
+        parse_registry(value)
+
+
+def test_an_option_bracket_not_at_the_end_is_refused_rather_than_kept_in_the_url():
+    # Left in the URL, `redact` here would be silently ignored and the host's output not redacted.
+    with pytest.raises(HostConfigError, match="host 'prod': options must be in brackets at the end"):
+        parse_registry("prod=ssh://h(redact)/x")
+
+
 def test_tls_marker_expands_user(tmp_path, monkeypatch):
     _write_certs(tmp_path / ".certs")
     monkeypatch.setenv("HOME", str(tmp_path))  # Path.expanduser() resolves ~ via $HOME on POSIX

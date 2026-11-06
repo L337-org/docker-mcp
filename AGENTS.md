@@ -32,6 +32,7 @@ Read the linked file before judging a substantive change to that area.
 |---|---|---|
 | `server.py`, `docker_mcp/tools/` | [architecture/server.md](architecture/server.md) | `_slim_schema` or `_apply_host_schema` changing validation rather than display; a disabled capability registered-then-refusing instead of absent |
 | `_hosts.py`, host selection | [architecture/hosts.md](architecture/hosts.md) | `use_context=False` dropped; `system_reconnect` gaining the ability to retarget an arbitrary URL; a write path that no longer requires an explicit `host` in multi-host mode |
+| `docker_mcp/redaction/`, the `redact` host option | [architecture/redaction.md](architecture/redaction.md) | `Host.redact` read directly instead of `settings.redacts` / `settings.host_redacted` (misses the global switch); a malformed setting accepted rather than failing at startup; a setting's error message repeating the value it was given |
 | `_cli.py`, `_ssh_proxy.py`, CLI-backed tools | [architecture/cli-shell-out.md](architecture/cli-shell-out.md) | `subprocess.run` called directly; `shell=True`; a missing `timeout=`; the remote-exec fallback preferred over a usable local CLI; staging consequences absent from the docstring |
 | any `@tool()` docstring | [architecture/tool-descriptions.md](architecture/tool-descriptions.md) | the checklist below |
 | code calling `docker` | [architecture/docker-sdk.md](architecture/docker-sdk.md) | an unverified method; a hand-built route that is not in the Engine API spec; a reach-in past the public SDK introduced without recorded sign-off |

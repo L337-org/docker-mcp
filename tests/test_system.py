@@ -468,6 +468,19 @@ def test_host_tag_annotates_nd_when_not_also_ro():
     )
 
 
+def test_host_tag_annotates_a_redacted_host(monkeypatch):
+    _set_multi(monkeypatch, "local=unix:///var/run/docker.sock, prod=tcp://prod:2376(ro,redact)")
+    registry = _hosts_mod.registry()
+    assert system_module._host_tag(registry["prod"]) == "prod (ro, redact, remote)"
+    assert system_module._host_tag(registry["local"]) == "local"
+
+
+def test_host_tag_annotates_every_host_under_the_global_redact_switch(monkeypatch):
+    _set_multi(monkeypatch, "local=unix:///var/run/docker.sock, prod=tcp://prod:2376")
+    monkeypatch.setattr(system_module.redaction_settings, "_global", True)
+    assert system_module._host_tag(_hosts_mod.registry()["local"]) == "local (redact)"
+
+
 def test_close_client_quietly_swallows_close_errors():
     client = MagicMock()
     client.close.side_effect = RuntimeError("already broken")
@@ -1138,6 +1151,18 @@ def test_startup_preflight_prints_each_disable_switch_warning_even_when_the_daem
         patch.object(system_module, "_get_client", side_effect=DockerException("connection refused")),
     ):
         system_module.startup_preflight()
+    lines = capsys.readouterr().err.splitlines()
+    assert lines[:2] == [f"docker-mcp-server: WARNING: {w}" for w in warnings]
+
+
+def test_startup_preflight_prints_each_redaction_warning_with_the_readonly_switch_it_was_judged_by(capsys):
+    warnings = ["DOCKER_MCP_SERVER_REDACT is on without ...", "host 'prod' is marked redact without ro: ..."]
+    with (
+        patch.object(system_module.redaction_settings, "startup_warnings", return_value=warnings) as judged,
+        patch.object(system_module, "_get_client", side_effect=DockerException("connection refused")),
+    ):
+        system_module.startup_preflight()
+    judged.assert_called_once_with(readonly=system_module.READONLY)
     lines = capsys.readouterr().err.splitlines()
     assert lines[:2] == [f"docker-mcp-server: WARNING: {w}" for w in warnings]
 

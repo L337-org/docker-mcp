@@ -1,0 +1,76 @@
+# Credential redaction
+
+**Redaction reduces accidental exposure. It is not access control.**  It keeps credentials out of what
+this server returns to an agent that reaches Docker only through this server, so the agent does not
+see them by accident.  It cannot stop an agent that goes looking: an agent that can run commands in a
+container (`container_exec`, `compose_exec`) can print a credential in a form no filter recognises.
+Run it with `DOCKER_MCP_SERVER_READONLY`, or mark a redacted host `(ro,redact)`, which removes those
+routes.
+
+> **Status: not yet functional.**  This build reads and reports the settings below, but does not
+> redact anything yet: output from every host is returned unredacted, and the server says so in a
+> warning at startup.  This note is removed when output redaction is in place.
+
+## Turning it on
+
+Redaction is off by default.  There are two ways to turn it on, and they combine.
+
+- **Every host:** `DOCKER_MCP_SERVER_REDACT=1` (also `true`, `yes` or `on`).
+- **Chosen hosts:** the `redact` option on a host in `DOCKER_MCP_SERVER_HOSTS`, so that a production
+  daemon is redacted while a local one stays unfiltered:
+
+  ```text
+  DOCKER_MCP_SERVER_HOSTS=dev=local, prod=ssh://ops@prod.example.com(ro,redact)
+  ```
+
+  A host's options go in one comma-separated bracket, `(ro,redact)`, or one per bracket,
+  `(ro)(redact)`, and the two forms mix freely.  They are case-insensitive and may come in any
+  order, except that `tls=<dir>` takes the rest of its bracket, so that a certificate directory
+  containing a comma still works, and therefore has to come last in a list:
+  `(ro,redact,tls=/etc/docker/prod)`.  A malformed bracket, such as `(ro,)` or one that is never
+  closed, stops the server at startup with an error naming the host.
+
+With the global switch on, every host is redacted whatever its own options say.
+
+## Which names are treated as credentials
+
+Values of variables with credential-like names are treated as credentials, in container, image and
+service environments and in Compose `.env` files.  The built-in patterns are case-insensitive globs:
+
+`*PASSWORD*`, `*PASSWD*`, `*PASSPHRASE*`, `*PASS`, `*_PASS_*`, `*SECRET*`, `*TOKEN*`, `*KEY*`,
+`*CERT*` and `*CREDENTIAL*`.
+
+`DOCKER_MCP_SERVER_REDACT_NAMES` changes that list.  It is comma-separated, and each entry is a
+variable name or a glob using `*`, `?` and `[...]`, matched without regard to case:
+
+```text
+DOCKER_MCP_SERVER_REDACT_NAMES=UPSTREAM_*, *_REF, !SORT_KEY
+```
+
+- An entry adds names to the built-in patterns: `UPSTREAM_*` treats `UPSTREAM_URL` as a credential.
+- An entry starting `!` excludes names, whichever pattern would otherwise match them: `!SORT_KEY`
+  stops a harmless `SORT_KEY` being treated as one.  An exclusion also wins over an addition.
+- It takes names only, never values.  An entry containing `=` stops the server at startup, and the
+  error gives the entry's position, not its text, in case it holds a credential.
+
+The names setting does nothing on its own.  Setting it with redaction on for no host logs a warning
+at startup and changes nothing.
+
+## Checking what is in effect
+
+- **`tool_list`** and the `docker-mcp://tool-catalog` resource report, under `switches`:
+  `DOCKER_MCP_SERVER_REDACT`, `DOCKER_MCP_SERVER_REDACT_NAMES` as the resolved name list (`builtin`,
+  `added` and `excluded`), and `redacted_hosts`, the hosts whose output is redacted.
+- **`host_list`** and the `docker-mcp://hosts` resource give each host a `redact` field: whether
+  its output is redacted, by its own option or by the global switch.
+
+## Startup warnings
+
+The server writes a `WARNING` line to stderr at startup:
+
+- when `DOCKER_MCP_SERVER_REDACT` is on without `DOCKER_MCP_SERVER_READONLY`;
+- for each host marked `redact` without `ro`, unless `DOCKER_MCP_SERVER_READONLY` is on;
+- when `DOCKER_MCP_SERVER_REDACT_NAMES` is set but redaction is on for no host.
+
+Each of the first two leaves exec and the tools that write daemon data to files available, and
+either can show an agent a credential that redaction cannot catch.

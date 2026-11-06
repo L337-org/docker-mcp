@@ -319,6 +319,22 @@ def test_list_hosts_reports_non_destructive(monkeypatch):
     assert rows[0]["non_destructive"] is False
 
 
+def test_list_hosts_reports_each_hosts_own_redact_option(monkeypatch):
+    from docker_mcp.tools.system import host_list
+
+    _set_multi_host(monkeypatch, spec="local=auto, prod=ssh://h(ro,redact)")
+    assert [r["redact"] for r in host_list()] == [False, True]
+
+
+def test_list_hosts_reports_every_host_redacted_under_the_global_switch(monkeypatch):
+    from docker_mcp.redaction import settings as redaction_settings
+    from docker_mcp.tools.system import host_list
+
+    _set_multi_host(monkeypatch, spec="local=auto, prod=ssh://h(ro)")
+    monkeypatch.setattr(redaction_settings, "_global", True)
+    assert [r["redact"] for r in host_list()] == [True, True]
+
+
 def _registered_tools() -> dict:
     return mcp._tool_manager._tools
 
@@ -481,6 +497,9 @@ def test_tool_catalog_reports_switch_state_and_domain_counts():
         "DOCKER_MCP_SERVER_READONLY",
         "DOCKER_MCP_SERVER_NO_DESTRUCTIVE",
         "DOCKER_MCP_SERVER_DISABLE",
+        "DOCKER_MCP_SERVER_REDACT",
+        "DOCKER_MCP_SERVER_REDACT_NAMES",
+        "redacted_hosts",
     }
     # Per-domain counts sum to the full tool surface, and by default registered == total.
     assert sum(d["total"] for d in catalog["domains"]) == len(TOOL_CATEGORIES)
@@ -1747,6 +1766,9 @@ DELIBERATE_CRASHES = {
     # `SystemExit` on a malformed DOCKER_MCP_SERVER_HOSTS, raised at import before any tool is
     # registered. It ends the process rather than answering a caller; there is no client to tell.
     ("_hosts.py", "load"): 1,
+    # `SystemExit` on a malformed DOCKER_MCP_SERVER_REDACT_NAMES, for the same reason as the
+    # DOCKER_MCP_SERVER_HOSTS one above: raised at import, before there is a client to tell.
+    ("redaction/settings.py", "load"): 1,
     # Every resolved address failed to connect. `connect_ssh_client` catches OSError from this
     # helper and re-raises it as a RemoteFailureError carrying actionable guidance, so this text
     # never reaches a client on its own.
