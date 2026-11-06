@@ -252,3 +252,17 @@ def test_binary_config_content_is_left_to_the_rules():
     h.ensure_fresh()
     assert remembered == []
     assert harvest._MAX_CONFIG_VALUE > 0
+
+
+def test_checked_ids_are_forgotten_when_the_daemon_changes_and_never_grow_past_their_bound(monkeypatch):
+    monkeypatch.setattr(harvest, "_MAX_CHECKED_IDS", 3)
+    client = _FakeClient(containers=[_container("c1", [])])
+    h, _ = _harvester(client)
+    h.ensure_fresh()
+    h.harvest_if_unseen(["a" * 64, "b" * 64])
+    assert len(h._checked_ids) == 2
+    h.harvest_if_unseen(["c" * 64, "d" * 64])
+    assert len(h._checked_ids) == 2  # the bound cleared the earlier two first
+    client.containers_map["c2"] = _container("c2", [])
+    h.ensure_fresh()
+    assert h._checked_ids == set()

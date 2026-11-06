@@ -258,6 +258,8 @@ def test_a_tool_wrapped_without_harvest_works_when_the_harvest_would_fail(_setup
         ('DB_PASSWORD="quoted value"  # c', "quoted value"),
         ("DB_PASSWORD='single#hash'", "single#hash"),
         ("DB_PASSWORD=has#hash", "has#hash"),  # no whitespace before `#`: part of the value
+        ('DB_PASSWORD="esc\\"aped-value"', 'esc"aped-value'),  # an escaped quote does not end the value
+        ("DB_PASSWORD='single\\'quoted-value'", "single'quoted-value"),
         ("export DB_PASSWORD=exported-value", "exported-value"),
     ],
 )
@@ -309,3 +311,8 @@ def test_redaction_md_names_exactly_the_byte_and_file_tools():
     named = set(re.findall(r"`([a-z]+_[a-z_]+)`", bullet))  # tool and argument names, not the `redact` option
     destinations = {d for d in wire.BYTE_TOOLS.values() if d}
     assert named == set(wire.BYTE_TOOLS) | set(wire.FILE_TOOLS) | destinations
+
+
+def test_an_unterminated_quoted_env_value_is_not_harvested():
+    # Compose refuses the file, so there is no value; harvesting the rest of the line would be a guess.
+    assert wire._env_file_value('"never closed') == ""

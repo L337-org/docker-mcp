@@ -71,7 +71,9 @@ none; a resource by the host in its URI, or the default host for the forms witho
 
 The server reads the values to redact from the redacted host's daemon: values under a credential name
 in container, image and service environments, in build arguments recorded in image history, and in a
-Compose project's `.env` file; and the content of Swarm configs whose name is a credential name.  On each
+Compose project's `.env` file (read by Compose's quoting and comment rules, but without its escape
+sequences in double quotes, variable interpolation or values spanning lines); and the content of Swarm
+configs whose name is a credential name.  On each
 call it compares the IDs of the daemon's containers, images, services (with their versions) and configs
 with the last call's, and reads again if they differ, so a container created a moment ago is covered.  If
 reading fails, the call is refused rather than answered with output that might not be redacted.
@@ -81,9 +83,9 @@ characters is redacted only where no letter, digit or underscore adjoins it, so 
 `[pw]` or `pw.` but not inside `pwd`, which would also give the short value away.
 
 While redaction is on anywhere, the server's instructions say so in one line and point the agent to
-`host_list`, whose `redaction` notes give each redacted host's rules: never pass a marker to a tool or
-write one to a file, which bytes in band are refused, and, on a host that accepts writes, which files
-written to disk are not redacted.  The notes name only the tools that are registered and allowed on that
+`host_list`, whose `redaction` notes give each redacted host's rules: that a marker must not be passed to
+a tool or written to a file; the tools whose bytes in band are refused; and, on a host that accepts
+writes, the tools whose files written to disk are not redacted.  The notes name only the tools that are registered and allowed on that
 host.
 
 ## What is redacted, and how
@@ -108,8 +110,8 @@ Two things are replaced, wherever they appear in a redacted host's output, dict 
 Each replacement is a marker, `[REDACTED:<token>]`, where the token is 22 characters.  Every marker is
 different, even for the same credential in the same result, so nothing in the output shows that two
 places hold the same value; and a marker says nothing about the credential's format or how it was
-found.  Markers are not yet swapped back for their values when passed to a tool: one passed as an
-argument reaches the daemon as literal text.
+found.  A marker passed to a tool as an argument is not swapped back for its value: it reaches the daemon
+as literal text.
 
 ## Fields the rules leave alone
 

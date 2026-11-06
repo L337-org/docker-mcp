@@ -32,6 +32,10 @@ logger = logging.getLogger("docker_mcp.redaction")
 # `|2 NPM_TOKEN=abc BUILD=1 /bin/sh -c ...`: the number of build arguments, then that many assignments.
 _HISTORY_BUILD_ARGS = re.compile(r"\|(\d+)\s+(.*)", re.DOTALL)
 
+# The most result IDs remembered as checked between snapshot changes.  They are external input, so the set
+# is bounded; forgetting them costs only a repeated snapshot comparison.
+_MAX_CHECKED_IDS = 10_000
+
 # Swarm config content larger than this is a configuration file, not a credential value, and is left to
 # the shape rules.
 _MAX_CONFIG_VALUE = 16 * 1024
@@ -122,6 +126,8 @@ class HostHarvest:
             ]
             if not unseen:
                 return False
+            if len(self._checked_ids) + len(unseen) > _MAX_CHECKED_IDS:
+                self._checked_ids.clear()
             self._checked_ids.update(unseen)
             return self._refresh()
 
@@ -135,6 +141,9 @@ class HostHarvest:
         self._harvest(client)
         self._snapshot = snapshot
         self._known_ids = frozenset(entry[1] for entry in snapshot if entry[0] in ("container", "service"))
+        # Each checked ID is now either known or still not a container or service; a later change to the
+        # daemon shows in the snapshot whatever names it.
+        self._checked_ids.clear()
         return True
 
     def _take_snapshot(self, client: Any) -> frozenset[tuple[str, ...]]:

@@ -157,13 +157,25 @@ def _compose_env_file(arguments: dict[str, Any]) -> Path:
 
 
 def _env_file_value(raw: str) -> str:
-    # Compose's `.env` rules: a quoted value runs to its closing quote; an unquoted one ends at a `#`
-    # preceded by whitespace, which starts a comment.
+    # Compose's `.env` rules, as compose-go's dotenv parser applies them: a quoted value runs to its first
+    # unescaped closing quote, a backslash before that quote escaping it and any other backslash kept; an
+    # unquoted value ends at ` #`, which starts a comment.  Not followed: the escape sequences Compose
+    # expands in double quotes, variable interpolation, and quoted values spanning lines.
     raw = raw.strip()
-    if raw[:1] in ("'", '"'):
-        closing = raw.find(raw[0], 1)
-        return raw[1:closing] if closing > 0 else raw[1:]
-    return re.split(r"\s+#", raw, maxsplit=1)[0].strip()
+    if raw[:1] not in ("'", '"'):
+        return raw.split(" #", 1)[0].rstrip()
+    quote, chars, escaped = raw[0], [], False
+    for char in raw[1:]:
+        if escaped:
+            chars.append(char if char == quote else "\\" + char)
+            escaped = False
+        elif char == "\\":
+            escaped = True
+        elif char == quote:
+            return "".join(chars)
+        else:
+            chars.append(char)
+    return ""  # unterminated: Compose refuses the file, so there is no value to harvest
 
 
 def _harvest_compose_env(arguments: dict[str, Any], label: str) -> None:

@@ -34,10 +34,10 @@ module per concern:
 - **`harvest.py`** - `HostHarvest`, one per redacted host: reads credential-named values from container,
   image and service environments, image history build arguments and credential-named Swarm configs.  It
   keeps itself fresh by comparing a snapshot of container, image, service-version and config IDs on every
-  call, rather than a background thread, and harvests again only when the snapshot changes.  The daemon's
-  event history was the first design and was dropped: moby keeps only the last 256 events
-  (`eventsLimit` in `daemon/events/events.go`), so on a busy host a `create` can fall out between two
-  calls, and `since`/`until` are judged by the daemon's clock, not the server's.  A result naming an ID
+  call, rather than a background thread, and harvests again only when the snapshot changes.  Do not use the
+  daemon's event history for this: the daemon keeps only a fixed number of recent events, so on a busy
+  host a `create` can fall out between two calls, and `since`/`until` are judged by the daemon's clock,
+  not the server's.  A result naming an ID
   the snapshot has not seen prompts one more comparison, once per ID, since network and plugin IDs look
   the same.  Each image's history is read once.  A container or image removed mid-harvest is skipped.
 - **`wire.py`** - `wrap`, applied by `server.tool()` and `server.resource()` outermost, outside the

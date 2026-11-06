@@ -589,7 +589,6 @@ def _redaction_details(host: Host) -> dict:
     read_only = host.read_only or READONLY
     notes = [
         "Credentials in this host's output show as [REDACTED:...] markers.",
-        # Until markers in arguments are swapped back, a marker passed to a tool reaches the daemon as text.
         "Never pass a marker to a tool or write one to a file: it is not swapped back, so it would be used "
         "as literal text.",
     ]
