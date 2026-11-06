@@ -215,7 +215,8 @@ def _split_top_level(text: str, *, labelled: bool) -> list[str]:
     start = 0
 
     def where() -> str:
-        label = text[start:].partition("=")[0].strip() if labelled else _DEFAULT_LABEL
+        # Up to the entry's first comma, so an entry with no `=` quotes itself rather than its neighbours.
+        label = text[start:].split(",", 1)[0].partition("=")[0].strip() if labelled else _DEFAULT_LABEL
         return f"host {label!r}"
 
     for index, char in enumerate(text):
