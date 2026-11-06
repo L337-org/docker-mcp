@@ -51,6 +51,17 @@ dependencies = [
     # Also transitive (through mcp), but imported directly: nodes.py configures a TypedDict with
     # `pydantic.with_config`. The floor is mcp's own, which has it.
     "pydantic>=2.12.0",
+    # Credential redaction matches every stored value's forms in one pass. Python's `re` cannot: with a
+    # few thousand literal alternatives it took seconds per 100 KB of output, where an Aho-Corasick
+    # automaton takes milliseconds. Floor is the release verified to provide `Automaton.iter_long`,
+    # which the matcher relies on for longest non-overlapping matches;
+    # tests/test_pyproject_pins.py guards that it is still there.
+    "pyahocorasick>=2.3.1",
+    # Transitive (through paramiko), but redaction imports it directly to encrypt its markers with AES.
+    # Deliberately unbounded, as AGENTS.md records for this package: a floor or cap could force a
+    # wheels-only resolve onto a release with no wheel for a supported platform. The guard in
+    # tests/test_pyproject_pins.py fails instead if the AES primitive the code uses goes away.
+    "cryptography",
 ]
 
 [project.scripts]
