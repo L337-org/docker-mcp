@@ -56,6 +56,54 @@ DOCKER_MCP_SERVER_REDACT_NAMES=UPSTREAM_*, *_REF, !SORT_KEY
 The names setting does nothing on its own.  Setting it with redaction on for no host logs a warning
 at startup and changes nothing.
 
+## What is redacted, and how
+
+Two things are replaced, wherever they appear in a redacted host's output, dict keys included:
+
+- **Values the server knows**, read from where the daemon reports them under a credential name, in
+  their raw form and as base64 (standard and URL-safe, padded or not, and inside a larger base64 blob
+  at any alignment), base32, hex in either case, and URL-encoded.  A value of six characters or fewer,
+  base64-encoded inside a larger blob, can be missed there: the part of its encoding that does not
+  depend on its neighbours is too short to match safely.
+- **Values found by their shape or context**: PEM private keys, GitHub, Stripe and Slack tokens, AWS
+  access key IDs and JWTs; `Authorization`, `Proxy-Authorization`, cookie and API-key header values;
+  passwords in a URL's user info or a connection string; the value assigned to a credential name, when
+  it is 8 or more characters and looks random; the value after a credential-named command-line flag,
+  such as `--password`, whatever it looks like, including where Docker reports a command as a list; and
+  any other run of 32 or more base64 characters that looks random.  Where two of these overlap, the
+  whole of both is replaced as one.  Hex alone is never treated as a credential by these rules, nor is a run longer than
+  16 KB, and lines wrapped by a base64 encoder count as one run.  A value found this way is remembered,
+  so its encoded forms are matched from then on.
+
+Each replacement is a marker, `[REDACTED:<token>]`, where the token is 22 characters.  Every marker is
+different, even for the same credential in the same result, so nothing in the output shows that two
+places hold the same value; and a marker says nothing about the credential's format or how it was
+found.  Markers are valid only in the server process that issued them.
+
+## Fields the rules leave alone
+
+These fields in Docker's own output look random but are public, so the shape rules never replace
+their values; a value the server knows is still replaced in them:
+
+`TrustRoot`, `CertIssuerPublicKey`, `CertIssuerSubject` and `SandboxKey`.
+
+## Limits
+
+The server keeps the values it redacts in memory, and stops growing that store at fixed limits:
+
+| Limit | Values read from the daemon | Values found by the rules |
+| --- | --- | --- |
+| Longest value matched | No limit | 16 KB; a longer run is left alone |
+| Values stored | No limit of their own | 100,000 |
+| Bytes stored, each value and its encoded forms | No limit of their own | 64 MB |
+| Overall budget, both kinds together | 256 MB | |
+
+Past either limit on found values, a new one is still replaced where a rule finds it, but not
+remembered, so its other forms are not matched; this is logged once at `WARNING`, naming the host.  At
+the overall budget, which only an abnormal harvest reaches, every call to a redacted host is refused
+with an error suggesting a restart; it is logged once at `ERROR`.  A restart empties the store and
+makes every earlier marker invalid.
+
 ## Checking what is in effect
 
 - **`tool_list`** and the `docker-mcp://tool-catalog` resource report, under `switches`:

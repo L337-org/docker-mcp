@@ -1810,6 +1810,9 @@ DELIBERATE_CRASHES = {
     # `SystemExit` on a malformed DOCKER_MCP_SERVER_REDACT_NAMES, for the same reason as the
     # DOCKER_MCP_SERVER_HOSTS one above: raised at import, before there is a client to tell.
     ("redaction/settings.py", "load"): 1,
+    # Pickling a stored credential would copy it out of this process's memory; only a programming error
+    # tries, and no caller can act on the refusal, so its text belongs in the log.
+    ("redaction/store.py", "__reduce__"): 1,
     # Every resolved address failed to connect. `connect_ssh_client` catches OSError from this
     # helper and re-raises it as a RemoteFailureError carrying actionable guidance, so this text
     # never reaches a client on its own.
