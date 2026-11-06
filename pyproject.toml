@@ -53,9 +53,9 @@ dependencies = [
     "pydantic>=2.12.0",
     # Credential redaction matches every stored value's forms in one pass. Python's `re` cannot: with a
     # few thousand literal alternatives it took seconds per 100 KB of output, where an Aho-Corasick
-    # automaton takes milliseconds. Floor is the release verified to provide `Automaton.iter_long`,
-    # which the matcher relies on for longest non-overlapping matches;
-    # tests/test_pyproject_pins.py guards that it is still there.
+    # automaton takes milliseconds. Floor is the release verified with the matcher, which relies on
+    # `Automaton.iter` reporting every match, overlapping ones included, with its payload;
+    # tests/test_pyproject_pins.py guards that it still does.
     "pyahocorasick>=2.3.1",
     # Also transitive (through paramiko), but redaction imports it directly to encrypt its markers with
     # AES. Deliberately unbounded and unasserted in CI, as AGENTS.md records for this package: a floor or

@@ -1,13 +1,13 @@
 import logging
-from pathlib import Path
 import pickle
 import threading
 import traceback
+from pathlib import Path
 
 import pytest
 
-from docker_mcp.redaction import store as store_module
 from docker_mcp.exceptions import RedactionBudgetError, ToolRefusalError
+from docker_mcp.redaction import store as store_module
 from docker_mcp.redaction.store import (
     IdentifiersExhaustedError,
     Secret,
@@ -218,3 +218,64 @@ def test_redaction_md_states_the_limits_the_code_enforces():
         f"{store_module.OVERALL_BUDGET_BYTES // 2**20} MB",
     ):
         assert stated in table, f"REDACTION.md's limits table does not state {stated}"
+
+
+def test_a_waiter_on_a_value_that_failed_to_index_stores_it_afresh():
+    started = threading.Event()
+    release = threading.Event()
+    calls: list[int] = []
+
+    def index_once_failing(entry, value_forms):
+        del value_forms
+        calls.append(entry.value_id)
+        if len(calls) == 1:
+            started.set()
+            release.wait(5)
+            raise RuntimeError("index failed")
+
+    store = ValueStore(on_add=index_once_failing)
+    failures: list[BaseException] = []
+
+    def first() -> None:
+        try:
+            store.add(_VALUE, 0, Tier.HARVESTED)
+        except RuntimeError as exc:
+            failures.append(exc)
+
+    thread = threading.Thread(target=first)
+    thread.start()
+    assert started.wait(5)
+    waiter_result: list = []
+    waiter = threading.Thread(target=lambda: waiter_result.append(store.add(_VALUE, 0, Tier.HARVESTED)))
+    waiter.start()
+    release.set()
+    thread.join(5)
+    waiter.join(5)
+    assert len(failures) == 1
+    [entry] = waiter_result
+    # The waiter's value is genuinely stored and was indexed by its own attempt.
+    assert entry is not None and store.get_for(_VALUE, 0) is entry and len(calls) == 2
+
+
+def test_rolling_back_a_promoted_value_undoes_the_right_tier():
+    release = threading.Event()
+    started = threading.Event()
+
+    def slow_failing(entry, value_forms):
+        del entry, value_forms
+        started.set()
+        release.wait(5)
+        raise RuntimeError("index failed")
+
+    store = ValueStore(on_add=slow_failing)
+    thread = threading.Thread(target=lambda: pytest.raises(RuntimeError, store.add, _VALUE, 0, Tier.DISCOVERED))
+    thread.start()
+    assert started.wait(5)
+    with store._lock:
+        # The promotion a concurrent harvested add would make, done directly so the test does not wait.
+        store._promote(store._by_key[(0, _VALUE)])
+    release.set()
+    thread.join(5)
+    report = store.report(0)
+    assert (report["harvested_values"], report["discovered_values"]) == (0, 0)
+    assert (report["harvested_bytes"], report["discovered_bytes"]) == (0, 0)

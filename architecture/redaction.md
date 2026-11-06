@@ -101,29 +101,29 @@ Each is a single table, so adding a case is a one-line change plus its test.
 
 ### Adding an encoded form
 
-1.  Add a renderer to `_FORMS` in `docker_mcp/redaction/forms.py` under the next unused identifier.
+1. Add a renderer to `_FORMS` in `docker_mcp/redaction/forms.py` under the next unused identifier.
    Identifiers are recorded in markers, so never reuse or renumber one.
-2.  Extend `test_form_identifiers_are_fixed` and add the encoding to
+2. Extend `test_form_identifiers_are_fixed` and add the encoding to
    `test_the_common_encodings_are_all_matched` in `tests/test_redaction_forms.py`.
-3.  Add it to the list of forms in `REDACTION.md`.
+3. Add it to the list of forms in `REDACTION.md`.
 
 ### Adding a shape rule
 
-1.  Add a finder to `_RULES` in `docker_mcp/redaction/rules.py`.
-2.  Add a case it must find to `test_each_rule_finds_its_credential`, and anything it must not to
+1. Add a finder to `_RULES` in `docker_mcp/redaction/rules.py`.
+2. Add a case it must find to `test_each_rule_finds_its_credential`, and anything it must not to
    `test_what_is_not_a_credential_is_left_alone`, in `tests/test_redaction_rules.py`.
-3.  Add it to the list of rules in `REDACTION.md` and in the module docstring.
+3. Add it to the list of rules in `REDACTION.md`.
 
 ### Adding a public field
 
-1.  Add it to `PUBLIC_FIELDS` in `docker_mcp/redaction/rules.py`, and to the list in `REDACTION.md`;
+1. Add it to `PUBLIC_FIELDS` in `docker_mcp/redaction/rules.py`, and to the list in `REDACTION.md`;
    `test_redaction_md_lists_exactly_the_public_fields` fails until the two agree.  Keep the list short: a
    field on it is never redacted by a rule, even if a credential ends up in it.
 
 ### Changing a limit
 
-1.  Change the constant at the top of `docker_mcp/redaction/store.py`, and its reason if that changed.
-2.  Update the table in `REDACTION.md`.
+1. Change the constant at the top of `docker_mcp/redaction/store.py`, and its reason if that changed.
+2. Update the table in `REDACTION.md`.
 
 ### Adding a built-in credential name pattern
 

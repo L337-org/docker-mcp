@@ -115,8 +115,10 @@ _CONNECTION_PASSWORD = re.compile(r"(?i)\b(?:password|pwd)\s*=\s*([^;'\"\s]+)")
 
 # --- credential-named assignments and command-line flags -------------------------------------------
 
+# The name is the whole run, so a leading digit stays part of it (`2FA_SECRET`); the credential-name
+# globs match a word anywhere in it, so that is still a credential name.
 _ASSIGNMENT = re.compile(
-    r"(?<![A-Za-z0-9_.-])(?P<name>[A-Za-z_][A-Za-z0-9_.-]*+)[\"']?\s*(?:=|:)\s*[\"']?(?P<value>[^\s\"',;}\]]+)",
+    r"(?<![A-Za-z0-9_.-])(?P<name>[A-Za-z0-9_.-]++)[\"']?\s*(?:=|:)\s*[\"']?(?P<value>[^\s\"',;}\]]+)",
 )
 # Only the flag itself is matched, so scanning never consumes the next flag (`-p --secret x` must see
 # `--secret`); its value is read from where the flag ends.
@@ -251,8 +253,8 @@ def _generic(text: str) -> Iterator[Span]:
             yield Span(start, end)
 
 
-# Rule name -> finder.  Order does not matter: overlapping spans are merged by the redactor, longest
-# first.
+# Rule name -> finder.  Order does not matter: the redactor replaces each cluster of overlapping spans
+# whole.
 _RULES: dict[str, Callable[[str], Iterator[Span]]] = {
     "pem": _pem,
     "github": _group_spans(_GITHUB),

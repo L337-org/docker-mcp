@@ -4,6 +4,7 @@ import re
 import random
 import secrets
 import textwrap
+import time
 import uuid
 from pathlib import Path
 
@@ -163,18 +164,28 @@ def test_a_real_path_with_a_random_looking_segment_is_left_alone():
 
 
 @pytest.mark.parametrize(
-    "text",
+    "make",
     [
-        secrets.token_urlsafe(150_000),  # one long base64url run
-        secrets.token_hex(100_000),
-        "a.b-c_d" * 30_000,
+        pytest.param(secrets.token_urlsafe, id="base64url"),
+        pytest.param(secrets.token_hex, id="hex"),
+        pytest.param(lambda n: "a.b-c_d" * n, id="dotted"),
     ],
 )
-def test_the_rules_take_linear_time_on_long_runs(text):
-    # An unanchored pattern opening with a repeated class is retried from every position in a run, which
-    # is quadratic in its length; in linear time 200 KB takes well under the bound.
-    import time
+def test_the_rules_take_linear_time_on_long_runs(make):
+    # A pattern retried from every position in a run is quadratic in its length: ten times the input would
+    # take about a hundred times as long.  Comparing two sizes rather than asserting a wall-clock bound
+    # keeps this independent of how fast the runner is.
+    def timed(n: int) -> float:
+        text = make(n)
+        started = time.perf_counter()
+        rules.find(text)
+        return time.perf_counter() - started
 
-    started = time.perf_counter()
-    rules.find(text)
-    assert time.perf_counter() - started < 2.0
+    timed(1_000)  # warm up
+    small, large = min(timed(10_000) for _ in range(3)), min(timed(100_000) for _ in range(3))
+    assert large < small * 30, f"10x the input took {large / small:.0f}x as long"
+
+
+def test_a_credential_name_after_a_digit_is_still_found():
+    value = _RANDOM_40[:20]
+    assert value in _found(f"2FA_SECRET={value}")

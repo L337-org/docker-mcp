@@ -218,9 +218,16 @@ class ValueStore:
         if existing is not None:
             # Another call stored this value and is still indexing it.  Returning now would let this call
             # redact against an index that does not hold it yet, and show it in clear.
-            if pending is not None:
-                pending.wait()
-            return result
+            if pending is None:
+                return result
+            pending.wait()
+            with self._lock:
+                still_stored = self._by_key.get(key)
+            # If the other call's indexing failed it removed the value again; store it afresh here rather
+            # than report a value that is neither stored nor indexed.
+            return (
+                still_stored if still_stored is not None else self.add(value, host_index, tier, host_label=host_label)
+            )
         if stored is None:
             return None
         entry, value_forms, indexed = stored
@@ -233,8 +240,9 @@ class ValueStore:
             # Not indexed means not redacted, so the value must not look stored: the next add retries.
             with self._lock:
                 self._by_key.pop(key, None)
-                self._by_id.pop(entry.value_id, None)
-                self._account(entry, -1)
+                # A concurrent add may have promoted it meanwhile; undo the accounting of what is stored now.
+                current = self._by_id.pop(entry.value_id, entry)
+                self._account(current, -1)
             raise
         finally:
             with self._lock:
