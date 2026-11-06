@@ -29,6 +29,10 @@ for _tunable in (
     # Provenance stamping is on by default and the label tests assert it; a shell opt-out would
     # break them.
     "DOCKER_MCP_SERVER_NO_LABELS",
+    # Read at import by `redaction.settings.load()`: a shell value would pin redaction on for every
+    # test, and a malformed names value would abort collection with SystemExit.
+    "DOCKER_MCP_SERVER_REDACT",
+    "DOCKER_MCP_SERVER_REDACT_NAMES",
 ):
     os.environ.pop(_tunable, None)
 

@@ -468,6 +468,19 @@ def test_host_tag_annotates_nd_when_not_also_ro():
     )
 
 
+def test_host_tag_annotates_a_redacted_host(monkeypatch):
+    _set_multi(monkeypatch, "local=unix:///var/run/docker.sock, prod=tcp://prod:2376(ro,redact)")
+    registry = _hosts_mod.registry()
+    assert system_module._host_tag(registry["prod"]) == "prod (ro, redact, remote)"
+    assert system_module._host_tag(registry["local"]) == "local"
+
+
+def test_host_tag_annotates_every_host_under_the_global_redact_switch(monkeypatch):
+    _set_multi(monkeypatch, "local=unix:///var/run/docker.sock, prod=tcp://prod:2376")
+    monkeypatch.setattr(system_module.redaction_settings, "_global", True)
+    assert system_module._host_tag(_hosts_mod.registry()["local"]) == "local (redact)"
+
+
 def test_close_client_quietly_swallows_close_errors():
     client = MagicMock()
     client.close.side_effect = RuntimeError("already broken")
@@ -1131,10 +1144,10 @@ def test_system_wait_description_fits_what_claude_code_shows():
     assert len((tool.description or "").encode("utf-16-le")) // 2 <= 2048
 
 
-def test_startup_preflight_prints_each_disable_switch_warning_even_when_the_daemon_is_down(capsys):
-    warnings = ["DOCKER_MCP_SERVER_DISABLE names 'swram', ...", "DOCKER_MCP_SERVER_DISABLE names 'system', ..."]
+def test_startup_preflight_prints_each_configuration_warning_even_when_the_daemon_is_down(capsys):
+    warnings = ["DOCKER_MCP_SERVER_DISABLE names 'swram', ...", "host 'prod' is redacted without ro ..."]
     with (
-        patch.object(system_module, "disable_switch_warnings", return_value=warnings),
+        patch.object(system_module, "configuration_warnings", return_value=warnings),
         patch.object(system_module, "_get_client", side_effect=DockerException("connection refused")),
     ):
         system_module.startup_preflight()
@@ -1142,9 +1155,9 @@ def test_startup_preflight_prints_each_disable_switch_warning_even_when_the_daem
     assert lines[:2] == [f"docker-mcp-server: WARNING: {w}" for w in warnings]
 
 
-def test_startup_preflight_prints_no_warning_for_a_sound_disable_switch(capsys):
+def test_startup_preflight_prints_no_warning_for_a_sound_configuration(capsys):
     with (
-        patch.object(system_module, "disable_switch_warnings", return_value=[]),
+        patch.object(system_module, "configuration_warnings", return_value=[]),
         patch.object(system_module, "_get_client", side_effect=DockerException("connection refused")),
     ):
         system_module.startup_preflight()

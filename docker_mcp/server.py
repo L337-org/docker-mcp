@@ -29,6 +29,7 @@ from mcp.types import ToolAnnotations
 
 import docker_mcp._hosts as _hosts
 from docker_mcp._env import env_flag, read_env
+from docker_mcp.redaction import settings as redaction_settings
 from docker_mcp.exceptions import DockerMcpError, HostGuardError, RemoteFailureError, ToolInputError
 
 mcp = MCPServer("docker-mcp-server")
@@ -247,6 +248,8 @@ _CONNECTION_CONTROL = frozenset({"system_close", "system_reconnect", "system_log
 # READONLY is the stricter of the two and wins when both are set.
 READONLY = env_flag("DOCKER_MCP_SERVER_READONLY")
 NO_DESTRUCTIVE = env_flag("DOCKER_MCP_SERVER_NO_DESTRUCTIVE")
+
+# The redaction switches live in docker_mcp/redaction/settings.py, since they are also set per host.
 
 
 def _parse_domains(value: str | None) -> frozenset[str]:
@@ -529,8 +532,8 @@ def query_catalog(
             "switches", "filters"}. `domains` and `hidden_by_configuration` are keyed by real domain names only;
             `no_domain` counts the always-registered domain-less tools, whose rows carry `domain: None` and which
             no `domain=` value selects. `configuration_warnings` is a list of sentences about a
-            DOCKER_MCP_SERVER_DISABLE mistake, empty when the switch is sound. `filters` echoes the arguments, plus
-            `keyword_terms`: the words the keyword was actually searched for.
+            DOCKER_MCP_SERVER_DISABLE mistake or a redaction setting weaker than it looks, empty when sound.
+            `filters` echoes the arguments, plus `keyword_terms`: the words the keyword was actually searched for.
     """
     # Any word may match, ranked by how many do: an agent's words for a job rarely all appear in the
     # summary of the tool that does it, so requiring every word would miss more than it filters out.
@@ -591,18 +594,28 @@ def query_catalog(
         "no_domain": no_domain,
         "hidden_by_configuration": dict(sorted(hidden.items())),
         # What the disable switch asked for and did not get; empty when it is fine.
-        "configuration_warnings": disable_switch_warnings(),
-        "switches": {
-            "DOCKER_MCP_SERVER_READONLY": READONLY,
-            "DOCKER_MCP_SERVER_NO_DESTRUCTIVE": NO_DESTRUCTIVE,
-            "DOCKER_MCP_SERVER_DISABLE": sorted(DISABLED_DOMAINS),
-        },
+        "configuration_warnings": configuration_warnings(),
+        "switches": _switch_report(),
         "filters": {
             "domain": domain,
             "category": category,
             "keyword": keyword,
             "keyword_terms": [forms[0] for forms in terms] if terms is not None else None,
         },
+    }
+
+
+def _switch_report() -> dict[str, Any]:
+    """The effective value of every server-wide switch, as tool_list and the tool catalog report them.
+
+    Returns:
+        dict: each switch by its environment variable name, plus the effective redaction settings
+    """
+    return {
+        "DOCKER_MCP_SERVER_READONLY": READONLY,
+        "DOCKER_MCP_SERVER_NO_DESTRUCTIVE": NO_DESTRUCTIVE,
+        "DOCKER_MCP_SERVER_DISABLE": sorted(DISABLED_DOMAINS),
+        **redaction_settings.report(),
     }
 
 
@@ -629,11 +642,7 @@ def tool_catalog() -> dict[str, Any]:
         for d in domains
     ]
     return {
-        "switches": {
-            "DOCKER_MCP_SERVER_READONLY": READONLY,
-            "DOCKER_MCP_SERVER_NO_DESTRUCTIVE": NO_DESTRUCTIVE,
-            "DOCKER_MCP_SERVER_DISABLE": sorted(DISABLED_DOMAINS),
-        },
+        "switches": _switch_report(),
         # Disabled domains that match no known tool - usually a typo in DOCKER_MCP_SERVER_DISABLE.
         "unknown_disabled_domains": _unknown_disabled_domains(),
         # Domains DOCKER_MCP_SERVER_DISABLE named but cannot drop (see ALWAYS_ON_DOMAINS).
@@ -761,6 +770,19 @@ def disable_switch_warnings() -> list[str]:
     return warnings
 
 
+def configuration_warnings() -> list[str]:
+    """Every configuration warning, worded for the operator: the disable switch and the redaction settings.
+
+    The single source for the startup `WARNING` lines, `tool_list`'s `configuration_warnings`, and the
+    pointer at the top of the instructions, because an MCP client rarely shows a server's stderr to
+    anyone and the agent is often the only party who will see a warning this session.
+
+    Returns:
+        list: one sentence per problem; empty when the configuration is sound
+    """
+    return [*disable_switch_warnings(), *redaction_settings.startup_warnings(readonly=READONLY)]
+
+
 def build_instructions(registered_domains: set[str] | None = None) -> str:
     """Render the server `instructions` router from the domains that actually registered tools.
 
@@ -790,8 +812,8 @@ def build_instructions(registered_domains: set[str] | None = None) -> str:
     # A fixed pointer, not the warnings themselves: the operator's own names would make the length
     # unbounded, and the longest rendering, this line included, has to stay under INSTRUCTIONS_CHAR_LIMIT
     # (held by tests/test_server.py). `tool_list` carries the full text in `configuration_warnings`.
-    if disable_switch_warnings():
-        lines += ["DOCKER_MCP_SERVER_DISABLE misconfigured: see `tool_list`, tell the user.", ""]
+    if configuration_warnings():
+        lines += ["Server configuration warnings: see `tool_list`, tell the user.", ""]
     lines += [
         # First because it is the one thing an agent cannot work out for itself: what to do when its
         # client's own search misses. Name each tool by the occasion that should trigger it, not by why

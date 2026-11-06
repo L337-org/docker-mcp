@@ -88,3 +88,11 @@ class HostConfigError(DockerMcpError):
     Raised before any tool is registered, so it never reaches a client; it subclasses the base for
     one exception hierarchy rather than because it is translated.
     """
+
+
+class RedactionConfigError(DockerMcpError):
+    """A malformed redaction setting, such as `DOCKER_MCP_SERVER_REDACT_NAMES`.
+
+    `redaction.settings.load()` turns this into a stderr line and `exit(1)`, like `HostConfigError`
+    and for the same reason: it is raised before any tool is registered, so it never reaches a client.
+    """

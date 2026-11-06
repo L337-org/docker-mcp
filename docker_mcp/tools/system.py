@@ -36,7 +36,8 @@ from docker_mcp._hosts import (
     resolve as _resolve_host,
     resolve_auto,
 )
-from docker_mcp.server import disable_switch_warnings, is_domain_disabled, tool
+from docker_mcp.redaction import settings as redaction_settings
+from docker_mcp.server import configuration_warnings, is_domain_disabled, tool
 from docker_mcp.tools._ssh_proxy import _CONNECT_TIMEOUT_CAP_SECONDS, connect_socket_with_family_fallback, parse_ssh_url
 from docker_mcp.tools._utils import classify_host_kernel, close_stream_quietly, env_flag, in_container
 
@@ -583,8 +584,9 @@ def host_list() -> list[dict]:
 
     Returns:
         list[dict]: one per host: name; url (resolved daemon URL, null = docker-py platform default); read_only;
-            non_destructive (blocks destructive calls only); tls (whether a per-host cert dir is configured); default
-            (the omitted-host fallback)
+            non_destructive (blocks destructive calls only); redact (whether its output is redacted, by its own
+            option or the global switch); tls (whether a per-host cert dir is configured); default (the omitted-host
+            fallback)
     """
     hosts = _host_registry()
     default_label = _default_host().label if hosts else None
@@ -594,6 +596,7 @@ def host_list() -> list[dict]:
             "url": host.url,
             "read_only": host.read_only,
             "non_destructive": host.non_destructive,
+            "redact": redaction_settings.redacts(host),
             "tls": host.cert_dir is not None,
             "default": host.label == default_label,
         }
@@ -1107,22 +1110,25 @@ def _connection_help(exc: BaseException, host: Host | None) -> str:
 
 
 def _host_tag(host: Host) -> str:
-    """A host's label with brief `(ro, remote)` / `(nd, remote)` annotations.
+    """A host's label with brief `(ro, redact, remote)` / `(nd, remote)` annotations.
 
     For the boot roster of the other hosts. `nd` only shows when `ro` is absent, since `ro` already
-    implies it.
+    implies it. `redact` shows when the host's output is redacted, by its own option or the global
+    switch.
 
     Args:
         host: the configured host to label
 
     Returns:
-        str: its label, annotated with ``(ro, remote)`` or ``(nd, remote)`` where they apply
+        str: its label, annotated with ``ro`` or ``nd``, ``redact`` and ``remote`` where they apply
     """
     tags = []
     if host.read_only:
         tags.append("ro")
     elif host.non_destructive:
         tags.append("nd")
+    if redaction_settings.redacts(host):
+        tags.append("redact")
     if host.url and not host.url.startswith(("unix://", "npipe://")):
         tags.append("remote")
     return host.label + (f" ({', '.join(tags)})" if tags else "")
@@ -1172,7 +1178,7 @@ def startup_preflight() -> None:
     """
     global _self_container_id, _self_host_label
     # Before the ping, so it is shown even when the daemon cannot be reached.
-    for warning in disable_switch_warnings():
+    for warning in configuration_warnings():
         print(f"docker-mcp-server: WARNING: {warning}", file=sys.stderr, flush=True)
     scrub_unresolved_env()
     default = _default_host()

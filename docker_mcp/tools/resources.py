@@ -220,7 +220,7 @@ def get_hosts_resource() -> str:
     """The Docker hosts configured via DOCKER_MCP_SERVER_HOSTS.
 
     The same data as the `host_list` tool: each host's name, resolved daemon URL, read_only /
-    non_destructive / tls flags, and which one is the default used when a tool's `host` argument is
+    non_destructive / redact / tls flags, and which one is the default used when a tool's `host` argument is
     omitted. The resolved default is observable here but is not itself a selectable label.
 
     Returns:
@@ -470,7 +470,7 @@ def tool_list(
             "no_domain": int, "hidden_by_configuration": {domain: count}, "configuration_warnings": [sentence],
             "switches", "filters"}, with `tools` best match first. Every `domains` key is a value `domain` accepts;
             `no_domain` counts the domain-less tools, whose rows carry `domain: null` and which no `domain` value
-            selects. `configuration_warnings` explains a DOCKER_MCP_SERVER_DISABLE mistake, empty when the switch
-            is sound. `filters.keyword_terms` lists the words actually searched for.
+            selects. `configuration_warnings` explains a switch that is misconfigured or weaker than it looks, empty
+            when all are sound. `filters.keyword_terms` lists the words actually searched for.
     """
     return query_catalog(domain=domain, category=category, keyword=keyword)
