@@ -22,6 +22,7 @@ from docker_mcp.exceptions import ToolInputError
 from docker_mcp.server import tool
 from docker_mcp.tools._cli import (
     CliResult,
+    cli_variables,
     flag_values,
     remote_stage_and_exec,
     run_docker,
@@ -57,6 +58,7 @@ def _run_stack(
     timeout: float,
     host: str | None = None,
     cwd: str | None = None,
+    cli_env: dict[str, str] | None = None,
 ) -> CliResult:
     """Run `docker stack deploy`, locally or - with no local `docker` binary - on the ssh:// host.
 
@@ -68,6 +70,7 @@ def _run_stack(
         timeout: seconds allowed for the command
         host: configured host label, or None for the default host
         cwd: working directory for resolving relative paths, or None for the server's own
+        cli_env: variables for the CLI's own environment (`vars`), kept off every command line
 
     Returns:
         CliResult: the same shape from either backend
@@ -83,8 +86,9 @@ def _run_stack(
             # `stack deploy` appends no user-supplied argv, and its only other caller-controlled token
             # is the stack name, which `safe_positional` refuses if it starts with '-'.
             path_values=flag_values(args, "-c"),
+            extra_env=cli_env,
         )
-    return run_docker(args, cwd=cwd, timeout=timeout, host=host)
+    return run_docker(args, cwd=cwd, timeout=timeout, host=host, extra_env=cli_env)
 
 
 @tool()
@@ -95,6 +99,7 @@ def stack_deploy(  # noqa: DOC101,DOC103,DOC501,DOC503
     prune: bool = False,
     resolve_image: ResolveImage | None = None,
     cwd: str | None = None,
+    vars: dict[str, str] | None = None,
     timeout_seconds: float = _TIMEOUT_DEPLOY,
     host: str | None = None,
 ) -> dict:
@@ -115,10 +120,12 @@ def stack_deploy(  # noqa: DOC101,DOC103,DOC501,DOC503
         resolve_image: Image-digest resolution; omit for the CLI default ("always")
         cwd: Working directory for resolving relative Compose paths (defaults to the server's cwd; copied to the target
             host if no local docker CLI)
+        vars: `${VAR}` values for the Compose files, kept off the command line (use for credentials)
 
     Returns:
         dict: {"returncode": int, "stdout": str, "stderr": str, "truncated": bool}
     """
+    cli_env = cli_variables(vars)
     if not compose_files:
         raise ToolInputError("stack_deploy requires at least one entry in compose_files.")
     if resolve_image is not None and resolve_image not in _RESOLVE_IMAGE_CHOICES:
@@ -136,7 +143,7 @@ def stack_deploy(  # noqa: DOC101,DOC103,DOC501,DOC503
     # with a timeout and a result.
     args.append("--detach=true")
     args.append(safe_positional(name, "stack name"))
-    return _run_stack(args, cwd=cwd, timeout=timeout_seconds, host=host).to_dict()
+    return _run_stack(args, cwd=cwd, timeout=timeout_seconds, host=host, cli_env=cli_env).to_dict()
 
 
 def _label_filters(name: str | None, filters: dict | None = None) -> dict:

@@ -742,3 +742,31 @@ def test_stack_wait_rejects_a_bad_bound_before_reading(timeout, interval, messag
     with patch("docker_mcp.tools.stack._get_client") as get_client, pytest.raises(ToolInputError, match=message):
         _wait_stack("shop", "removed", timeout, interval)
     get_client.assert_not_called()
+
+
+def test_stack_deploy_vars_reach_the_cli_environment_and_never_its_command_line():
+    with (
+        patch("docker_mcp.tools.stack.should_remote_exec", return_value=False),
+        patch("docker_mcp.tools.stack.run_docker", return_value=_ok("")) as run,
+    ):
+        stack_deploy(name="app", compose_files=["stack.yml"], vars={"DB_PASS": "s3 cret"})
+    assert run.call_args.kwargs["extra_env"] == {"DB_PASS": "s3 cret"}
+    assert not any("s3 cret" in token for token in run.call_args.args[0])
+
+
+def test_stack_deploy_vars_reach_the_remote_backend_as_extra_env():
+    with (
+        patch("docker_mcp.tools.stack.should_remote_exec", return_value=True),
+        patch("docker_mcp.tools.stack.remote_stage_and_exec", return_value=_ok("")) as staged,
+    ):
+        stack_deploy(name="app", compose_files=["stack.yml"], vars={"DB_PASS": "s3 cret"})
+    assert staged.call_args.kwargs["extra_env"] == {"DB_PASS": "s3 cret"}
+
+
+def test_stack_deploy_refuses_a_reserved_name_in_vars_before_anything_runs():
+    with (
+        patch("docker_mcp.tools.stack.run_docker") as run,
+        pytest.raises(ToolInputError, match="'LD_PRELOAD' is reserved"),
+    ):
+        stack_deploy(name="app", compose_files=["stack.yml"], vars={"LD_PRELOAD": "/tmp/x.so"})
+    run.assert_not_called()

@@ -600,7 +600,7 @@ def test_remote_exec_cli_runs_docker_on_the_resolved_ssh_url(monkeypatch):
     ) as remote:
         result = cli_module.remote_exec_cli("prod", ["scout", "cves", "alpine"], timeout=42.0)
     assert remote.call_args.args == ("ssh://ops@prod:2222", ["docker", "scout", "cves", "alpine"])
-    assert remote.call_args.kwargs == {"max_output_bytes": MAX_CLI_OUTPUT_BYTES, "timeout": 42.0}
+    assert remote.call_args.kwargs == {"max_output_bytes": MAX_CLI_OUTPUT_BYTES, "timeout": 42.0, "env": None}
     assert isinstance(result, CliResult)
     assert (result.returncode, result.stdout, result.stderr, result.truncated) == (0, "out\n", "warn\n", False)
 
@@ -650,15 +650,21 @@ def test_remote_exec_cli_refuses_a_non_ssh_host(monkeypatch):
     remote.assert_not_called()
 
 
-def test_remote_exec_cli_refuses_stdin_and_extra_env(monkeypatch):
-    # Silently dropping either would make the remote path diverge from the local one invisibly.
+def test_remote_exec_cli_refuses_stdin(monkeypatch):
+    # Silently dropping it would make the remote path diverge from the local one invisibly.
     _pin_hosts(monkeypatch, "prod=ssh://ops@prod")
     with patch("docker_mcp.tools._cli.run_remote_exec") as remote:
         with pytest.raises(ValueError, match="stdin"):
             cli_module.remote_exec_cli("prod", ["build", "-"], stdin=b"FROM alpine")
-        with pytest.raises(ValueError, match="COMPOSE_PROJECT_NAME"):
-            cli_module.remote_exec_cli("prod", ["compose", "up"], extra_env={"COMPOSE_PROJECT_NAME": "demo"})
     remote.assert_not_called()
+
+
+def test_remote_exec_cli_forwards_extra_env_to_the_remote_command(monkeypatch):
+    _pin_hosts(monkeypatch, "prod=ssh://ops@prod")
+    with patch("docker_mcp.tools._cli.run_remote_exec", return_value=RemoteExecResult(0, b"", b"", False)) as remote:
+        cli_module.remote_exec_cli("prod", ["compose", "up"], extra_env={"DB_PASS": "s3cret"})
+    assert remote.call_args.kwargs["env"] == {"DB_PASS": "s3cret"}
+    assert "s3cret" not in " ".join(remote.call_args.args[1])
 
 
 # ---------- flag_values ----------
@@ -699,8 +705,9 @@ class _FakeSession:
         self.files.append(str(local_file))
         return f"{self.root}/file{len(self.files)}/{pathlib.Path(local_file).name}"
 
-    def exec(self, argv, *, timeout, max_output_bytes, cwd=None):
-        self.calls.append({"argv": list(argv), "timeout": timeout, "cwd": cwd, "cap": max_output_bytes})
+    # Signature mirrors `RemoteStagingSession.exec` in docker_mcp/tools/_ssh_proxy.py.
+    def exec(self, argv, *, timeout, max_output_bytes, cwd=None, env=None):
+        self.calls.append({"argv": list(argv), "timeout": timeout, "cwd": cwd, "cap": max_output_bytes, "env": env})
         return self.result or RemoteExecResult(returncode=0, stdout=b"", stderr=b"", truncated=False)
 
 
@@ -849,21 +856,29 @@ def test_remote_stage_and_exec_refuses_an_unusable_working_directory(monkeypatch
     assert session.trees == []
 
 
-def test_remote_stage_and_exec_refuses_stdin_extra_env_and_a_non_ssh_host(monkeypatch, tmp_path):
+def test_remote_stage_and_exec_refuses_stdin_and_a_non_ssh_host(monkeypatch, tmp_path):
     _pin_hosts(monkeypatch, "prod=ssh://ops@prod, local=unix:///local.sock")
     session = _FakeSession()
     with _stage_patched(session):
-        # stdin and extra_env stay ValueError: `_reject_unforwardable` is an internal guard, not an
-        # answer to a caller, and is on DELIBERATE_CRASHES in tests/test_server.py.
+        # stdin stays ValueError: `_reject_stdin` is an internal guard, not an answer to a caller, and
+        # is on DELIBERATE_CRASHES in tests/test_server.py.
         with pytest.raises(ValueError, match="stdin"):
             cli_module.remote_stage_and_exec("prod", ["compose", "up"], cwd=tmp_path, stdin=b"x", timeout=60.0)
-        with pytest.raises(ValueError, match="COMPOSE_FILE"):
-            cli_module.remote_stage_and_exec(
-                "prod", ["compose", "up"], cwd=tmp_path, extra_env={"COMPOSE_FILE": "x"}, timeout=60.0
-            )
         with pytest.raises(CapabilityError, match="not reached over ssh://"):
             cli_module.remote_stage_and_exec("local", ["compose", "up"], cwd=tmp_path, timeout=60.0)
     assert session.trees == []  # every refusal lands before anything is connected or copied
+
+
+def test_remote_stage_and_exec_forwards_extra_env_to_the_staged_command(monkeypatch, tmp_path):
+    _pin_hosts(monkeypatch, "prod=ssh://ops@prod")
+    session = _FakeSession()
+    with _stage_patched(session):
+        cli_module.remote_stage_and_exec(
+            "prod", ["compose", "up"], cwd=tmp_path, extra_env={"DB_PASS": "s3cret"}, timeout=60.0
+        )
+    [call] = session.calls
+    assert call["env"] == {"DB_PASS": "s3cret"}
+    assert "s3cret" not in " ".join(call["argv"])
 
 
 def test_remote_stage_and_exec_returns_the_commands_own_failure(monkeypatch, tmp_path):
@@ -1051,3 +1066,116 @@ def test_remote_stage_and_exec_skips_the_session_entirely_when_nothing_will_be_s
     # Straight through the exec-only backend, token untouched, same CliResult contract.
     assert remote.call_args.args[1] == ["docker", "buildx", "create", "--config", "/etc/buildkitd.toml"]
     assert result.stdout == "ok\n"
+
+
+# ---------- values passed to the CLI through its environment ----------
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "DOCKER_HOST",
+        "docker_host",
+        "DOCKER_CONFIG",
+        "COMPOSE_FILE",
+        "BUILDX_BUILDER",
+        "BUILDKIT_PROGRESS",
+        "LD_PRELOAD",
+        "DYLD_INSERT_LIBRARIES",
+        "GIT_SSH_COMMAND",
+        "SSH_AUTH_SOCK",
+        "HTTP_PROXY",
+        "https_proxy",
+        "NO_PROXY",
+        "PATH",
+        "Path",
+        "HOME",
+        "LANG",
+        "XDG_RUNTIME_DIR",
+        "SYSTEMROOT",
+        "BASH_ENV",
+        "ENV",
+        "XDG_CONFIG_HOME",
+    ],
+)
+def test_names_that_would_change_the_cli_itself_are_reserved(name):
+    assert cli_module.is_reserved_env_name(name)
+
+
+@pytest.mark.parametrize("name", ["DB_PASS", "NPM_TOKEN", "TAG", "PATHWAY", "MYHOME", "PROXY_HOST", "GITHUB_TOKEN"])
+def test_ordinary_names_are_not_reserved(name):
+    assert not cli_module.is_reserved_env_name(name)
+
+
+def test_cli_variables_passes_valid_variables_through():
+    assert cli_module.cli_variables({"DB_PASS": "s3 cret\n", "_X1": ""}) == {"DB_PASS": "s3 cret\n", "_X1": ""}
+    assert cli_module.cli_variables(None) == {}
+
+
+def test_cli_variables_refuses_a_reserved_name_without_repeating_its_value():
+    with pytest.raises(ToolInputError) as caught:
+        cli_module.cli_variables({"DOCKER_HOST": "tcp://elsewhere:2375"})
+    message = str(caught.value)
+    assert message.startswith("vars: 'DOCKER_HOST' is reserved")
+    assert "elsewhere" not in message
+
+
+@pytest.mark.parametrize("name", ["1X", "A-B", "A.B", "A B", ""])
+def test_cli_variables_refuses_a_name_that_is_not_a_variable_name(name):
+    with pytest.raises(ToolInputError, match="is not a variable name"):
+        cli_module.cli_variables({name: "x"})
+
+
+def test_cli_variables_refuses_a_nul_byte_without_repeating_the_value():
+    with pytest.raises(ToolInputError, match="'TOKEN' holds a NUL byte") as caught:
+        cli_module.cli_variables({"TOKEN": "abc\x00def"})
+    assert "abc" not in str(caught.value)
+
+
+def test_values_by_name_moves_plain_names_into_the_cli_environment():
+    cli_env: dict[str, str] = {}
+    tokens = cli_module.values_by_name({"FOO": "1", "BAR": 2}, flag="--env", argument="env", cli_env=cli_env)
+    assert tokens == ["--env", "FOO", "--env", "BAR"]
+    assert cli_env == {"FOO": "1", "BAR": "2"}
+
+
+def test_values_by_name_keeps_reserved_and_non_plain_names_inline():
+    # A reserved name would change the CLI itself, and a dotted one cannot be assigned by a remote shell.
+    cli_env: dict[str, str] = {}
+    tokens = cli_module.values_by_name(
+        {"PATH": "/opt/bin", "spring.profiles.active": "dev", "OK": "y"},
+        flag="--env",
+        argument="env",
+        cli_env=cli_env,
+    )
+    assert tokens == ["--env", "PATH=/opt/bin", "--env", "spring.profiles.active=dev", "--env", "OK"]
+    assert cli_env == {"OK": "y"}
+
+
+def test_values_by_name_accepts_the_same_value_as_vars_and_refuses_a_different_one():
+    cli_env = {"TAG": "v1"}
+    assert cli_module.values_by_name({"TAG": "v1"}, flag="--env", argument="env", cli_env=cli_env) == ["--env", "TAG"]
+    with pytest.raises(ToolInputError, match="'TAG' is also set in `vars`") as caught:
+        cli_module.values_by_name({"TAG": "v2-secret"}, flag="--env", argument="env", cli_env=cli_env)
+    assert "v2-secret" not in str(caught.value) and "v1" not in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    "name", ["UID", "EUID", "PPID", "RANDOM", "SECONDS", "LINENO", "IFS", "BASH_ARGV0", "COMP_LINE"]
+)
+def test_shell_special_names_are_not_sent_by_name(name):
+    # bash running as `sh` makes some read-only, and a failed assignment ends the remote script; others are
+    # replaced by the shell's own values. Inline for env/build_args, on both backends alike.
+    cli_env: dict[str, str] = {}
+    tokens = cli_module.values_by_name({name: "1000"}, flag="--env", argument="env", cli_env=cli_env)
+    assert tokens == ["--env", f"{name}=1000"]
+    assert cli_env == {}
+
+
+def test_a_shell_special_name_in_vars_is_refused_with_the_reason():
+    with pytest.raises(ToolInputError, match="vars: 'UID' cannot be passed this way, because POSIX shells treat it"):
+        cli_module.cli_variables({"UID": "1000"})
+
+
+def test_shell_special_names_are_case_sensitive_like_the_shell():
+    assert cli_module.cli_variables({"uid": "1000"}) == {"uid": "1000"}

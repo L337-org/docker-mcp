@@ -88,3 +88,33 @@ def test_staged_build_context_honours_dockerignore(ssh_host, tmp_path):
         names = set(listing.stdout.decode().split())
     assert {"Dockerfile", "keep.txt"} <= names
     assert "secret.env" not in names  # an excluded file must never reach the remote disk
+
+
+def test_variables_reach_the_remote_command_without_its_command_line(ssh_host):
+    value = 's3 cret\nline2 "q" $(nope) \\'
+    result = run_remote_exec(
+        ssh_host,
+        # The command lists every process's arguments on the far host while it runs and prints any line
+        # holding the value. The pattern is written `s3[ ]cret` so that it matches the value but not its
+        # own text, which is in several command lines here (the wrapper script, its shell, this `sh`).
+        ["sh", "-c", 'printf "%s" "$PROBE_VALUE"; ps -A -o args 2>/dev/null | grep "s3[ ]cret" >&2 || true'],
+        max_output_bytes=_CAP,
+        timeout=60,
+        env={"PROBE_VALUE": value},
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.decode() == value
+    assert result.stderr == b"", f"the value is in a remote command line: {result.stderr.decode()!r}"
+
+
+def test_the_process_list_check_does_see_a_value_on_a_command_line(ssh_host):
+    # The control for the test above: the same check, with the value deliberately put in an argv, has to
+    # find it, or a pass there would mean nothing.
+    result = run_remote_exec(
+        ssh_host,
+        ["sh", "-c", 'ps -A -o args 2>/dev/null | grep "s3[ ]cret" >&2 || true', "s3 cret"],
+        max_output_bytes=_CAP,
+        timeout=60,
+    )
+    assert result.returncode == 0, result.stderr
+    assert b"s3 cret" in result.stderr, "the process-list check could not see a value that was on a command line"

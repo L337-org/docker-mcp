@@ -83,8 +83,10 @@ def test_buildx_build_dict_args_emit_repeated_flags():
             labels={"org.opencontainers.image.source": "https://example.com"},
         )
     args = run.call_args.args[0]
+    # By name, with the values in the CLI's environment rather than its command line.
     build_arg_values = [args[i + 1] for i, a in enumerate(args) if a == "--build-arg"]
-    assert set(build_arg_values) == {"VERSION=1.0", "DEBUG=1"}
+    assert set(build_arg_values) == {"VERSION", "DEBUG"}
+    assert run.call_args.kwargs["extra_env"] == {"VERSION": "1.0", "DEBUG": "1"}
     assert "--build-context" in args
     assert args[args.index("--build-context") + 1] == "deps=./vendor"
     assert args[args.index("--label") + 1] == "org.opencontainers.image.source=https://example.com"
@@ -620,8 +622,9 @@ class _FakeSession:
     def join(self, *parts):
         return "/".join(parts)
 
-    def exec(self, argv, *, timeout, max_output_bytes, cwd=None):
-        self.calls.append({"argv": list(argv), "cwd": cwd, "timeout": timeout})
+    # Signature mirrors `RemoteStagingSession.exec` in docker_mcp/tools/_ssh_proxy.py.
+    def exec(self, argv, *, timeout, max_output_bytes, cwd=None, env=None):
+        self.calls.append({"argv": list(argv), "cwd": cwd, "timeout": timeout, "env": env})
         from docker_mcp.tools._ssh_proxy import RemoteExecResult
 
         return RemoteExecResult(returncode=0, stdout=b"", stderr=b"", truncated=False)
@@ -1018,3 +1021,51 @@ def test_buildx_build_does_not_let_a_relative_dockerfile_resolve_inside_the_stag
     assert argv[argv.index("--file") + 1] == "Dockerfile"  # verbatim: nothing local to reconcile it with
     assert session.calls[0]["cwd"] is None  # ...and no cwd for it to resolve against remotely
     assert session.files == []
+
+
+# ---------- vars: values for the buildx CLI's own environment ----------
+
+
+def test_buildx_build_vars_and_build_args_reach_the_cli_environment_only():
+    with patch("docker_mcp.tools.buildx.run_docker", return_value=_ok()) as run:
+        buildx_build(
+            context=".",
+            build_args={"VERSION": "1.0"},
+            secret=["id=npm,env=NPM_TOKEN"],
+            vars={"NPM_TOKEN": "s3 cret"},
+        )
+    assert run.call_args.kwargs["extra_env"] == {"NPM_TOKEN": "s3 cret", "VERSION": "1.0"}
+    assert not any("s3 cret" in token for token in run.call_args.args[0])
+
+
+def test_buildx_bake_vars_reach_the_cli_environment_only():
+    with patch("docker_mcp.tools.buildx.run_docker", return_value=_ok()) as run:
+        buildx_bake(targets=["app"], vars={"REGISTRY_TOKEN": "s3 cret"})
+    assert run.call_args.kwargs["extra_env"] == {"REGISTRY_TOKEN": "s3 cret"}
+    assert not any("s3 cret" in token for token in run.call_args.args[0])
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        pytest.param(lambda: buildx_build(context=".", vars={"GIT_SSH_COMMAND": "x"}), id="buildx_build"),
+        pytest.param(lambda: buildx_bake(vars={"BUILDX_BUILDER": "x"}), id="buildx_bake"),
+    ],
+)
+def test_buildx_refuses_a_reserved_name_in_vars_before_anything_runs(call):
+    with patch("docker_mcp.tools.buildx.run_docker") as run, pytest.raises(ToolInputError, match="is reserved"):
+        call()
+    run.assert_not_called()
+
+
+def test_buildx_build_sends_its_values_to_the_remote_session(tmp_path):
+    context = tmp_path / "ctx"
+    context.mkdir()
+    (context / "Dockerfile").write_text("FROM alpine\n", encoding="utf-8")
+    session = _FakeSession()
+    with contextlib.ExitStack() as stack:
+        for patcher in _remote_build(session):
+            stack.enter_context(patcher)
+        buildx_build(str(context), build_args={"VERSION": "1.0"}, vars={"NPM_TOKEN": "s3 cret"}, host="prod")
+    assert session.calls[0]["env"] == {"NPM_TOKEN": "s3 cret", "VERSION": "1.0"}
+    assert "s3 cret" not in " ".join(session.calls[0]["argv"])
