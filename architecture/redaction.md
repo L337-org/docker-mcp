@@ -33,12 +33,20 @@ module per concern:
 - **`matcher.py`** - the Aho-Corasick index (`pyahocorasick`) over every stored value's forms.
 - **`harvest.py`** - `HostHarvest`, one per redacted host: reads credential-named values from container,
   image and service environments, image history build arguments and credential-named Swarm configs.  It
-  keeps itself fresh with a bounded `events(since=, until=)` query on every call rather than a background
-  thread, harvests again when a result names a container or service it has not seen, and reads each
-  image's history once.
+  keeps itself fresh by comparing a snapshot of container, image, service-version and config IDs on every
+  call, rather than a background thread, and harvests again only when the snapshot changes.  The daemon's
+  event history was the first design and was dropped: moby keeps only the last 256 events
+  (`eventsLimit` in `daemon/events/events.go`), so on a busy host a `create` can fall out between two
+  calls, and `since`/`until` are judged by the daemon's clock, not the server's.  A result naming an ID
+  the snapshot has not seen prompts one more comparison, once per ID, since network and plugin IDs look
+  the same.  Each image's history is read once.  A container or image removed mid-harvest is skipped.
 - **`wire.py`** - `wrap`, applied by `server.tool()` and `server.resource()` outermost, outside the
   failure translation, and `REDACTOR`, the process's one `Redactor`.  It also holds `NO_DAEMON_TOOLS`,
-  `BYTE_TOOLS`, the Compose `.env` harvest and `disable_core_dumps` (called from `main()`).
+  `BYTE_TOOLS`, `FILE_TOOLS`, the Compose `.env` harvest and `disable_core_dumps` (called from `main()`).
+  A harvest that fails with a library failure refuses the call, with the error translated as
+  `_LIBRARY_FAILURES` does it: output that might hold a value the harvest could not read is not
+  returned.  The connection-control tools are not held up by a harvest, so `system_reconnect` still
+  recovers a host whose client is wedged.
 - **`redactor.py`** - `Redactor`: `remember` (store a harvested value), `redact` (walk a result and
   replace), `resolve` (a marker back to its text, or a `Refusal`).
 
@@ -103,9 +111,6 @@ Anything else that fails inside redaction propagates: the call fails rather than
   instructions pointer together.  READONLY is passed in rather than read, so the settings module never
   imports `server.py`.  The warnings are judged per redacted host, because per-host `ro` removes exec
   and the file-writing tools just as READONLY does.
-- `settings.OUTPUT_REDACTED` says whether the build redacts output at all.  While it is False,
-  configuring redaction warns that nothing is redacted, and a test holds the status note at the top of
-  `REDACTION.md` to the same flag.
 
 ## The host option grammar
 
@@ -160,13 +165,17 @@ Each is a single table, so adding a case is a one-line change plus its test.
 1. A tool that takes `host` needs nothing more.  A tool that reaches no daemon and takes no `host` goes in
    `NO_DAEMON_TOOLS` in `docker_mcp/redaction/wire.py`; the classification test fails until it is there.
 2. A tool returning raw bytes in band goes in `BYTE_TOOLS`, with the argument that sends them to a file.
+   A tool writing daemon output to a file on the server host goes in `FILE_TOOLS`.  Both feed the
+   `host_list` notes, and the lists in `REDACTION.md` are held to them by tests in
+   `tests/test_redaction_wire.py`.
 3. A resource passes `scope=` to `@resource()`: `HOST_ARGUMENT` for `{host}` in the URI, `DEFAULT_HOST`
    for daemon data with no host in the URI, `NO_DAEMON` otherwise.
 
 ### Adding a harvest source
 
 1. Read it in `HostHarvest._harvest` in `docker_mcp/redaction/harvest.py`, through `credential_values` for
-   `NAME=value` data, and add the (type, action) events that signal a change to `_RELEVANT_EVENTS`.
+   `NAME=value` data, and add whatever identifies a change to it to `HostHarvest._take_snapshot`: an ID,
+   plus a version where the object can change under the same ID.
 2. Extend `test_the_first_call_harvests_every_source` in `tests/test_redaction_harvest.py`, and the
    harvest paragraph in `REDACTION.md`.
 

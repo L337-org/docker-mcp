@@ -36,10 +36,6 @@ BUILTIN_NAME_PATTERNS: tuple[str, ...] = (
     "*CREDENTIAL*",
 )
 
-# Whether this build redacts output at all.  While it does not, configuring redaction warns that it
-# does nothing, and REDACTION.md carries a status note saying so.
-OUTPUT_REDACTED = True
-
 # A names entry: a variable name, optionally a glob, optionally preceded by `!`.  Deliberately narrow,
 # because anything else is more likely a value pasted by mistake than a name.
 _NAME_ENTRY = re.compile(r"[A-Za-z0-9_.*?\[\]-]+")
@@ -253,12 +249,5 @@ def startup_warnings(*, readonly: bool) -> list[str]:
         warnings.append(
             f"{NAMES_VAR} is set but redaction is not on for any host, so it does nothing. Set {REDACT_VAR}=1 "
             "or mark a host redact in DOCKER_MCP_SERVER_HOSTS."
-        )
-    # Configuring redaction must never read as protection while nothing redacts output.  REDACTION.md
-    # carries a matching status note, and a test holds the two together through this flag.
-    if not OUTPUT_REDACTED and any_redacted():
-        warnings.append(
-            "redaction is configured, but this build does not redact anything yet: output from every "
-            "host is returned unredacted."
         )
     return warnings

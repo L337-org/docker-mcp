@@ -195,3 +195,117 @@ def test_core_dumps_are_switched_off():
     posix_resource = pytest.importorskip("resource")  # POSIX only; elsewhere there is nothing to set
     wire.disable_core_dumps()
     assert posix_resource.getrlimit(posix_resource.RLIMIT_CORE)[0] == 0
+
+
+class _FailingHarvest(_NoHarvest):
+    def __init__(self, exc, *, before_the_call=True):
+        super().__init__()
+        self.exc = exc
+        self.before_the_call = before_the_call
+
+    def ensure_fresh(self):
+        if self.before_the_call:
+            raise self.exc
+
+    def harvest_if_unseen(self, ids):
+        raise self.exc
+
+
+def test_a_failed_harvest_refuses_the_call_with_the_daemons_own_message(monkeypatch):
+    import docker.errors
+
+    failing = _FailingHarvest(docker.errors.APIError("500 Server Error: daemon is unhappy"))
+    monkeypatch.setattr(wire, "_harvest_for", lambda label: failing)
+    wrapped, calls = _tool("x")
+    with pytest.raises(ToolError, match="from host 'prod' failed, so the call was not made.*daemon is unhappy"):
+        wrapped(host="prod")
+    assert calls == []
+
+
+def test_a_harvest_failing_after_the_call_withholds_the_output(monkeypatch):
+    import docker.errors
+
+    failing = _FailingHarvest(docker.errors.NotFound("No such container: abc"), before_the_call=False)
+    monkeypatch.setattr(wire, "_harvest_for", lambda label: failing)
+    wrapped, calls = _tool({"Id": "abcdef0123456789"})
+    with pytest.raises(ToolError, match="the call ran, but its output is withheld"):
+        wrapped(host="prod")
+    assert calls == ["prod"]
+
+
+def test_a_harvest_failure_that_is_not_a_library_failure_propagates_as_the_bug_it_is(monkeypatch):
+    failing = _FailingHarvest(RuntimeError("harvest bug"))
+    monkeypatch.setattr(wire, "_harvest_for", lambda label: failing)
+    wrapped, _ = _tool("x")
+    with pytest.raises(RuntimeError, match="harvest bug"):
+        wrapped(host="prod")
+
+
+def test_a_tool_wrapped_without_harvest_works_when_the_harvest_would_fail(_setup, monkeypatch):
+    # system_reconnect must recover a host whose pooled client is wedged, which a harvest would fail on.
+    failing = _FailingHarvest(ConnectionError("wedged"))
+    monkeypatch.setattr(wire, "_harvest_for", lambda label: failing)
+    _setup.redactor.remember(_SECRET, "prod")
+    wrapped, calls = _tool({"Id": "abcdef0123456789", "note": _SECRET}, name="system_reconnect", harvest=False)
+    out = wrapped(host="prod")
+    assert calls == ["prod"] and _SECRET not in json.dumps(out)
+
+
+@pytest.mark.parametrize(
+    ("line", "value"),
+    [
+        ("DB_PASSWORD=s3cr3t-value # prod", "s3cr3t-value"),
+        ('DB_PASSWORD="quoted value"  # c', "quoted value"),
+        ("DB_PASSWORD='single#hash'", "single#hash"),
+        ("DB_PASSWORD=has#hash", "has#hash"),  # no whitespace before `#`: part of the value
+        ("export DB_PASSWORD=exported-value", "exported-value"),
+    ],
+)
+def test_a_compose_env_file_is_read_by_composes_rules(_setup, tmp_path, line, value):
+    (tmp_path / ".env").write_text(line + "\n")
+
+    def compose_config(project_dir: str | None = None, host: str | None = None) -> str:
+        return f"value: {value}"
+
+    wrapped = wire.wrap(compose_config, "compose_config", Scope.HOST_ARGUMENT, ToolError)
+    assert value not in wrapped(project_dir=str(tmp_path), host="prod")
+
+
+def test_a_compose_env_file_is_read_from_the_first_compose_files_directory(_setup, tmp_path):
+    app = tmp_path / "srv" / "app"
+    app.mkdir(parents=True)
+    (app / ".env").write_text("API_TOKEN=from-the-app-dir\n")
+    (tmp_path / ".env").write_text("API_TOKEN=from-the-working-dir\n")
+
+    def compose_config(project_dir: str | None = None, files: list[str] | None = None, host: str | None = None) -> str:
+        return "from-the-app-dir"
+
+    wrapped = wire.wrap(compose_config, "compose_config", Scope.HOST_ARGUMENT, ToolError)
+    assert "from-the-app-dir" not in wrapped(project_dir=str(tmp_path), files=["srv/app/compose.yml"], host="prod")
+
+
+def _redaction_md_section(heading: str, bullet: str) -> str:
+    from pathlib import Path
+
+    text = (Path(__file__).parent.parent / "REDACTION.md").read_text(encoding="utf-8")
+    section = text.split(heading, 1)[1].split("\n## ", 1)[0]
+    return section.split(bullet, 1)[1].split("\n- ", 1)[0].split("\n\n", 1)[0]
+
+
+def test_redaction_md_names_exactly_the_tools_that_reach_no_daemon():
+    import fnmatch
+    import re
+
+    bullet = _redaction_md_section("## Where redaction applies", "**Tools that reach no daemon")
+    patterns = set(re.findall(r"`([a-z_*]+)`", bullet))
+    assert all(any(fnmatch.fnmatch(tool, p) for p in patterns) for tool in wire.NO_DAEMON_TOOLS)
+    assert all(any(fnmatch.fnmatch(tool, p) for tool in wire.NO_DAEMON_TOOLS) for p in patterns)
+
+
+def test_redaction_md_names_exactly_the_byte_and_file_tools():
+    import re
+
+    bullet = _redaction_md_section("## Where redaction applies", "**Raw bytes cannot be redacted**")
+    named = set(re.findall(r"`([a-z]+_[a-z_]+)`", bullet))  # tool and argument names, not the `redact` option
+    destinations = {d for d in wire.BYTE_TOOLS.values() if d}
+    assert named == set(wire.BYTE_TOOLS) | set(wire.FILE_TOOLS) | destinations

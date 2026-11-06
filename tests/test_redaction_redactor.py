@@ -259,8 +259,15 @@ def test_the_budget_refusal_tells_the_client_what_to_do(redactor, monkeypatch):
         ('{"password": "pw"}', True),
         ("login with pw now", True),
         ("pw", True),
+        ("[pw]", True),
+        ("(pw)", True),
+        ("the password is pw.", True),
+        ("a=pw; b=1", True),
+        ("/pw/", True),
+        ("user@pw", True),
         ("cd /home/pwd/x", False),  # inside another word: left alone, and nothing points at the value
         ("pwned", False),
+        ("my_pw", False),  # an underscore joins words in an identifier
     ],
 )
 def test_a_short_harvested_value_is_replaced_only_as_a_whole_token(redactor, text, replaced):

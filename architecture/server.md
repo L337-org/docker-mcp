@@ -40,6 +40,11 @@ logged at ERROR. So `@tool()` wraps each registration in `_translate_failures`, 
 crash it is. The pair is the whole contract: a refusal the model cannot read is one it will retry,
 and a bug dressed as a refusal loses its traceback while putting internals on the wire.
 
+Outside the translation sits one more wrapper, `redaction_wire.wrap` (`docker_mcp/redaction/wire.py`),
+registered outermost because a failure only becomes client-visible text at the translation: it redacts
+results and error text from a redacted host.  `@resource()` therefore takes a required `scope=`, saying
+which host a resource's output belongs to.  `architecture/redaction.md` covers the wire.
+
 The wrapper is registered but **not** returned - `@tool()` hands the module back the untranslated
 callable, because translation is a wire concern. An internal caller wants the project type it can
 branch on; only a client needs the SDK's. It composes outside `_wrap_with_host_guard`, so a `(ro)`

@@ -273,14 +273,19 @@ class Redactor:
 # other words, `pw` would be replaced in `pwd` and `admin` in `administrator`, damaging the output, and
 # the text around each marker would give the short value away, which is the opposite of the point.
 SHORT_VALUE_LENGTH = 8
-# What may stand either side of a short value for it to count as a whole token.
-_TOKEN_BOUNDARY = frozenset(" \t\r\n\"'=:,")
 
 
 def _stands_alone(text: str, hit: Any) -> bool:
+    # A whole token is one with no word character either side, so any punctuation bounds it: `[pw]`,
+    # `pw.` and `user@pw` all count, while `pwd` does not.  Naming the allowed neighbours instead missed
+    # every delimiter the list left out.
     before = text[hit.start - 1] if hit.start > 0 else " "
     after = text[hit.end] if hit.end < len(text) else " "
-    return before in _TOKEN_BOUNDARY and after in _TOKEN_BOUNDARY
+    return not _is_word_character(before) and not _is_word_character(after)
+
+
+def _is_word_character(character: str) -> bool:
+    return character.isalnum() or character == "_"
 
 
 def find_markers(text: str) -> list[str]:

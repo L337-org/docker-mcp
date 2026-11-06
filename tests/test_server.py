@@ -386,10 +386,47 @@ def test_list_hosts_reports_redaction_notes_and_store_for_a_redacted_host_only(m
         "budget_reached",
     }
     assert any("[REDACTED:...]" in note for note in prod["redaction"]["notes"])
-    assert any("Never put a marker in a file" in note for note in prod["redaction"]["notes"])
-    # The file-writing tools are writes, so on a read-only host their caveat would mislead.
-    assert any("not redacted" in note for note in prod["redaction"]["notes"])
+    assert any("Never pass a marker to a tool" in note for note in prod["redaction"]["notes"])
+    assert (
+        "Bytes in band are refused here: container_archive_get, container_export without dest_path, "
+        "image_save without dest_path." in prod["redaction"]["notes"]
+    )
+    assert (
+        "Files written to disk by container_archive_get_to_file, container_export, image_save are not redacted."
+        in prod["redaction"]["notes"]
+    )
+    # The file-writing tools are writes, so a read-only host refuses them and naming them would mislead.
+    assert "Bytes in band are refused here: container_archive_get." in safe["redaction"]["notes"]
     assert not any("not redacted" in note for note in safe["redaction"]["notes"])
+
+
+def test_list_hosts_names_only_the_tools_that_are_registered(monkeypatch):
+    # Global redaction withdraws container_archive_get; DISABLE can withdraw any of them.
+    import docker_mcp.tools.system as system_module
+
+    _set_multi_host(monkeypatch, spec="local=auto, prod=ssh://h(redact)")
+    usable = system_module.tool_usable_on
+    monkeypatch.setattr(
+        system_module,
+        "tool_usable_on",
+        lambda name, read_only: (
+            name not in {"container_archive_get", "image_save"} and usable(name, read_only=read_only)
+        ),
+    )
+    notes = system_module.host_list()[1]["redaction"]["notes"]
+    assert "Bytes in band are refused here: container_export without dest_path." in notes
+    assert "Files written to disk by container_archive_get_to_file, container_export are not redacted." in notes
+
+
+def test_the_file_tools_are_exactly_the_registered_tools_that_write_to_dest_path():
+    from docker_mcp.redaction import wire
+
+    taking_dest_path = {
+        name
+        for name, registered in _registered_tools().items()
+        if "dest_path" in (registered.parameters.get("properties") or {})
+    }
+    assert set(wire.FILE_TOOLS) == taking_dest_path
 
 
 def test_list_hosts_treats_every_host_as_read_only_under_readonly(monkeypatch):
@@ -2294,7 +2331,7 @@ def test_tool_list_and_the_instructions_carry_the_redaction_warnings_end_to_end(
     assert "Server configuration warnings: see `tool_list`, tell the user." in text
 
 
-def test_the_instructions_say_markers_are_only_for_tool_arguments_while_redaction_is_on():
+def test_the_instructions_point_to_host_list_for_redaction_only_while_it_is_on():
     redacted = _live_instructions(["DOCKER_MCP_SERVER_HOSTS=dev=local, prod=ssh://ops@prod.invalid(ro,redact)"])
     assert "Credentials show as `[REDACTED:...]`; see `host_list`." in redacted
     assert "Server configuration warnings" not in redacted
@@ -2308,3 +2345,20 @@ def test_tool_list_carries_the_disable_switch_warnings_end_to_end():
         "DOCKER_MCP_SERVER_DISABLE names 'system'",
     ]
     assert _catalog_in_child([])["configuration_warnings"] == []
+
+
+def test_a_connection_control_tool_still_works_on_a_redacted_host_whose_harvest_would_fail(monkeypatch):
+    # system_reconnect and system_close exist to recover a wedged client, which a harvest run first would
+    # fail on; the registered tool must not run one.
+    from docker_mcp.redaction import wire
+
+    _set_multi_host(monkeypatch, spec="local=auto, prod=ssh://h(redact)")
+
+    class _Wedged:
+        def ensure_fresh(self):
+            raise AssertionError("a connection-control tool ran a harvest")
+
+        harvest_if_unseen = ensure_fresh
+
+    monkeypatch.setattr(wire, "_harvest_for", lambda label: _Wedged())
+    assert _registered_tools()["system_close"].fn(host="prod") is True

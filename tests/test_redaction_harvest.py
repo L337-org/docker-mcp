@@ -16,53 +16,69 @@ def _default_names(monkeypatch):
 
 
 # A stand-in for the docker-py client, shaped after docker-py 7.2.0 as checked against the installed
-# package: `containers.list(all=...)`, `images.list()`, `Image.history()`, `services.list()`,
-# `configs.list()` / `configs.get(id)` with `.attrs`, and `api.events(since=, until=, decode=)` returning a
-# closable stream of dicts.
-class _Stream(list):
-    closed = False
-
-    def close(self):
-        self.closed = True
-
-
+# package: `api.containers(all=, quiet=)` returning `[{"Id": ...}]`, `api.images(quiet=)` returning a list of
+# IDs, `api.services()` and `api.configs()` returning the daemon's dicts, `containers.list(all=,
+# ignore_removed=)`, `images.get(id)` with `.attrs` and `.history()`, `services.list()`, and
+# `configs.list()` / `configs.get(id)` with `.attrs`.
 class _FakeClient:
     def __init__(self, *, containers=(), images=(), services=(), configs=(), swarm=True):
-        self.events: list[dict] = []
-        self.event_queries: list[tuple] = []
-        self.container_lists = 0
-        self._containers = list(containers)
-        self._images = list(images)
-        self._services = list(services)
-        self._configs = {c.id: c for c in configs}
-        self._swarm = swarm
+        self.harvests = 0
+        self.snapshots = 0
+        self.containers_map = {c.id: c for c in containers}
+        self.images_map = {i.id: i for i in images}
+        self.services_list = list(services)
+        self.configs_map = {c.id: c for c in configs}
+        self.swarm = swarm
+        self.removed_during_harvest: set[str] = set()
         self.containers = SimpleNamespace(list=self._list_containers)
-        self.images = SimpleNamespace(list=lambda: list(self._images))
+        self.images = SimpleNamespace(get=self._get_image)
         self.services = SimpleNamespace(list=self._list_services)
-        self.configs = SimpleNamespace(list=self._list_configs, get=lambda config_id: self._configs[config_id])
-        self.api = SimpleNamespace(events=self._events)
+        self.configs = SimpleNamespace(list=self._list_configs, get=lambda config_id: self.configs_map[config_id])
+        self.api = SimpleNamespace(
+            containers=self._api_containers,
+            images=self._api_images,
+            services=self._api_services,
+            configs=self._api_configs,
+        )
 
-    def _list_containers(self, all=False):
-        assert all is True
-        self.container_lists += 1
-        return list(self._containers)
+    def _api_containers(self, all=False, quiet=False):
+        assert all is True and quiet is True
+        self.snapshots += 1
+        return [{"Id": cid} for cid in self.containers_map]
+
+    def _api_images(self, quiet=False):
+        assert quiet is True
+        return list(self.images_map)
 
     def _swarm_only(self):
-        if not self._swarm:
+        if not self.swarm:
             raise docker.errors.APIError("This node is not a swarm manager.")
+
+    def _api_services(self):
+        self._swarm_only()
+        return [{"ID": s.id, "Version": {"Index": s.version}} for s in self.services_list]
+
+    def _api_configs(self):
+        self._swarm_only()
+        return [{"ID": cid} for cid in self.configs_map]
+
+    def _list_containers(self, all=False, ignore_removed=False):
+        assert all is True and ignore_removed is True
+        self.harvests += 1
+        return [c for cid, c in self.containers_map.items() if cid not in self.removed_during_harvest]
+
+    def _get_image(self, image_id):
+        if image_id in self.removed_during_harvest:
+            raise docker.errors.NotFound(f"No such image: {image_id}")
+        return self.images_map[image_id]
 
     def _list_services(self):
         self._swarm_only()
-        return list(self._services)
+        return list(self.services_list)
 
     def _list_configs(self):
         self._swarm_only()
-        return list(self._configs.values())
-
-    def _events(self, since=None, until=None, decode=None):
-        assert decode is True and since is not None and until is not None
-        self.event_queries.append((since, until))
-        return _Stream(self.events)
+        return list(self.configs_map.values())
 
 
 def _container(cid, env):
@@ -71,6 +87,10 @@ def _container(cid, env):
 
 def _image(iid, env, history=()):
     return SimpleNamespace(id=iid, attrs={"Config": {"Env": env}}, history=lambda: list(history))
+
+
+def _service(sid, env, version=1):
+    return SimpleNamespace(id=sid, version=version, attrs={"Spec": {"TaskTemplate": {"ContainerSpec": {"Env": env}}}})
 
 
 def _harvester(client):
@@ -108,9 +128,7 @@ def test_the_first_call_harvests_every_source():
     client = _FakeClient(
         containers=[_container("c1", ["DB_PASSWORD=from-container", "HOME=/root"])],
         images=[_image("i1", ["GPG_TOKEN=from-image"], [{"CreatedBy": "|1 NPM_TOKEN=from-history /bin/sh"}])],
-        services=[
-            SimpleNamespace(id="s1", attrs={"Spec": {"TaskTemplate": {"ContainerSpec": {"Env": ["X_SECRET=svc"]}}}})
-        ],
+        services=[_service("s1", ["X_SECRET=svc"])],
         configs=[
             SimpleNamespace(id="cfg1", attrs={"Spec": {"Name": "db_password", "Data": config_data}}),
             SimpleNamespace(id="cfg2", attrs={"Spec": {"Name": "nginx.conf", "Data": config_data}}),
@@ -124,18 +142,37 @@ def test_the_first_call_harvests_every_source():
     assert {label for _, label in remembered} == {"prod"}
 
 
-def test_later_calls_harvest_again_only_after_a_relevant_event():
+def test_later_calls_harvest_again_only_when_the_snapshot_changes():
     client = _FakeClient(containers=[_container("c1", ["DB_PASSWORD=one"])])
-    h, _ = _harvester(client)
+    h, remembered = _harvester(client)
     h.ensure_fresh()
     h.ensure_fresh()
-    assert client.container_lists == 1 and len(client.event_queries) == 1
-    client.events = [{"Type": "network", "Action": "connect"}]
+    assert client.harvests == 1 and client.snapshots == 2
+    client.containers_map["c2"] = _container("c2", ["DB_PASSWORD=two"])
     h.ensure_fresh()
-    assert client.container_lists == 1
-    client.events = [{"Type": "container", "Action": "create"}]
+    assert client.harvests == 2 and ("two", "prod") in remembered
+
+
+def test_a_new_container_is_harvested_however_busy_the_daemon_and_whatever_its_clock():
+    # Freshness used to hang on the daemon's event history, which holds only the last 256 events and is
+    # filtered by the daemon's clock, so a `create` could be missed.  The snapshot depends on neither.
+    client = _FakeClient(containers=[_container("c1", [])])
+    h, remembered = _harvester(client)
     h.ensure_fresh()
-    assert client.container_lists == 2
+    client.containers_map["late"] = _container("late", ["API_TOKEN=late-value"])
+    h.ensure_fresh()
+    assert ("late-value", "prod") in remembered
+
+
+def test_a_service_updated_under_the_same_id_is_harvested_again():
+    service = _service("s1", ["X_SECRET=old"])
+    client = _FakeClient(services=[service])
+    h, remembered = _harvester(client)
+    h.ensure_fresh()
+    service.attrs["Spec"]["TaskTemplate"]["ContainerSpec"]["Env"] = ["X_SECRET=new"]
+    service.version = 2
+    h.ensure_fresh()
+    assert ("new", "prod") in remembered
 
 
 def test_image_histories_are_read_once_per_image():
@@ -144,9 +181,9 @@ def test_image_histories_are_read_once_per_image():
     client = _FakeClient(images=[image])
     h, _ = _harvester(client)
     h.ensure_fresh()
-    client.events = [{"Type": "image", "Action": "tag"}]
+    client.containers_map["c1"] = _container("c1", [])
     h.ensure_fresh()
-    assert len(reads) == 1
+    assert client.harvests == 2 and len(reads) == 1
 
 
 def test_a_daemon_that_is_not_a_swarm_manager_is_tolerated_and_logged_once(caplog):
@@ -154,30 +191,55 @@ def test_a_daemon_that_is_not_a_swarm_manager_is_tolerated_and_logged_once(caplo
     h, remembered = _harvester(client)
     with caplog.at_level(logging.INFO, logger="docker_mcp.redaction"):
         h.ensure_fresh()
-        client.events = [{"Type": "container"}]
+        client.containers_map["c2"] = _container("c2", [])
         h.ensure_fresh()
-    assert [v for v, _ in remembered].count("x") >= 1
+    assert ("x", "prod") in remembered
     assert sum("no Swarm services or configs" in r.getMessage() for r in caplog.records) == 1
 
 
-def test_an_unseen_container_triggers_a_fresh_harvest_and_a_seen_one_does_not():
+def test_objects_removed_during_the_harvest_are_skipped():
+    client = _FakeClient(
+        containers=[_container("gone", ["DB_PASSWORD=g"]), _container("c1", ["DB_PASSWORD=kept"])],
+        images=[_image("gone-image", ["API_TOKEN=gi"]), _image("i1", ["API_TOKEN=kept-image"])],
+    )
+    client.removed_during_harvest = {"gone", "gone-image"}
+    h, remembered = _harvester(client)
+    h.ensure_fresh()
+    assert {v for v, _ in remembered} == {"kept", "kept-image"}
+
+
+def test_a_failing_daemon_propagates_for_the_caller_to_judge():
+    client = _FakeClient()
+
+    def refuse(**kwargs):
+        raise docker.errors.APIError("500 Server Error: daemon is unhappy")
+
+    client.api.containers = refuse
+    h, _ = _harvester(client)
+    with pytest.raises(docker.errors.APIError, match="daemon is unhappy"):
+        h.ensure_fresh()
+
+
+def test_an_unseen_container_prompts_a_check_and_a_known_one_does_not():
     client = _FakeClient(containers=[_container("abcdef0123456789", ["DB_PASSWORD=x"])])
     h, _ = _harvester(client)
     h.ensure_fresh()
     assert h.harvest_if_unseen(["abcdef012345"]) is False  # an abbreviated ID of a known container
+    assert client.snapshots == 1
+    client.containers_map["99999999aaaa"] = _container("99999999aaaa", [])
     assert h.harvest_if_unseen(["99999999aaaa"]) is True
-    assert client.container_lists == 2
+    assert client.harvests == 2
 
 
-def test_the_event_stream_is_closed_after_each_check():
-    client = _FakeClient()
-    streams = []
-    original = client._events
-    client.api.events = lambda **kw: streams.append(original(**kw)) or streams[-1]
+def test_an_id_that_is_no_container_costs_one_snapshot_and_never_a_harvest():
+    # Network and plugin IDs, and removed containers' IDs in events, look just like container IDs.
+    client = _FakeClient(containers=[_container("c1", [])])
     h, _ = _harvester(client)
     h.ensure_fresh()
-    h.ensure_fresh()
-    assert streams and all(stream.closed for stream in streams)
+    network_id = "f" * 64
+    assert h.harvest_if_unseen([network_id]) is False
+    assert h.harvest_if_unseen([network_id]) is False
+    assert client.harvests == 1 and client.snapshots == 2
 
 
 def test_binary_config_content_is_left_to_the_rules():
@@ -190,13 +252,3 @@ def test_binary_config_content_is_left_to_the_rules():
     h.ensure_fresh()
     assert remembered == []
     assert harvest._MAX_CONFIG_VALUE > 0
-
-
-@pytest.mark.parametrize("action", ["exec_create", "exec_start", "start", "attach", "health_status: healthy", "die"])
-def test_routine_container_events_do_not_cost_a_harvest(action):
-    client = _FakeClient(containers=[_container("c1", ["DB_PASSWORD=one"])])
-    h, _ = _harvester(client)
-    h.ensure_fresh()
-    client.events = [{"Type": "container", "Action": action}]
-    h.ensure_fresh()
-    assert client.container_lists == 1

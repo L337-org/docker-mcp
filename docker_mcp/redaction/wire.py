@@ -87,6 +87,10 @@ BYTE_TOOLS: dict[str, str | None] = {
     "image_save": "dest_path",
 }
 
+# Tools that write daemon output to a file on the server host, which is not redacted.  A test holds this to
+# the registered tools that take a `dest_path`.
+FILE_TOOLS = ("container_archive_get_to_file", "container_export", "image_save")
+
 # A Compose project's `.env` file larger than this is not read for the harvest.
 _MAX_ENV_FILE_BYTES = 1024 * 1024
 # Keys under which a result names a container or service, for asking the harvest about ones it has not
@@ -142,9 +146,28 @@ def _refuse_bytes_in_band(name: str, arguments: dict[str, Any], label: str) -> s
     )
 
 
+def _compose_env_file(arguments: dict[str, Any]) -> Path:
+    # Compose reads `.env` from the project directory, which is the directory of the first compose file
+    # when one is named.  The tools run Compose from `project_dir`, so a relative file is relative to it.
+    working = Path(arguments.get("project_dir") or os.getcwd())
+    files = arguments.get("files") or []
+    if files:
+        return (working / files[0]).parent / ".env"
+    return working / ".env"
+
+
+def _env_file_value(raw: str) -> str:
+    # Compose's `.env` rules: a quoted value runs to its closing quote; an unquoted one ends at a `#`
+    # preceded by whitespace, which starts a comment.
+    raw = raw.strip()
+    if raw[:1] in ("'", '"'):
+        closing = raw.find(raw[0], 1)
+        return raw[1:closing] if closing > 0 else raw[1:]
+    return re.split(r"\s+#", raw, maxsplit=1)[0].strip()
+
+
 def _harvest_compose_env(arguments: dict[str, Any], label: str) -> None:
-    directory = arguments.get("project_dir") or os.getcwd()
-    env_file = Path(directory) / ".env"
+    env_file = _compose_env_file(arguments)
     try:
         if not env_file.is_file() or env_file.stat().st_size > _MAX_ENV_FILE_BYTES:
             return
@@ -154,7 +177,8 @@ def _harvest_compose_env(arguments: dict[str, Any], label: str) -> None:
         return
     assignments = [line.strip().removeprefix("export ").strip() for line in lines if not line.lstrip().startswith("#")]
     for value in credential_values(assignments):
-        REDACTOR.remember(value.strip().strip("'\""), label)
+        if value := _env_file_value(value):
+            REDACTOR.remember(value, label)
 
 
 def _mentioned_ids(value: Any) -> set[str]:
@@ -183,8 +207,24 @@ def _redact_result(result: Any, label: str, json_text: bool) -> Any:
     return REDACTOR.redact(result, label)
 
 
+def _harvest_failure(exc: Exception, label: str, *, ran: bool) -> str | None:
+    # A failed harvest refuses the call: going ahead would return output that a value the harvest could
+    # not read might be in.  Only the library failures the server translates elsewhere are given a
+    # message here; anything else is a bug and propagates as one.
+    from docker_mcp.server import _LIBRARY_FAILURE_TYPES, _as_project_failure
+
+    if not isinstance(exc, _LIBRARY_FAILURE_TYPES):
+        return None
+    reason = REDACTOR.redact(str(_as_project_failure(exc)), label)
+    outcome = "the call ran, but its output is withheld" if ran else "so the call was not made"
+    return (
+        f"Reading the values to redact from host {label!r} failed, {outcome}, since it could not be "
+        f"redacted reliably: {reason}"
+    )
+
+
 def _prepare(  # noqa: DOC501,DOC503 - raises the caller's error_cls, which pydoclint cannot resolve
-    name: str, scope: Scope, error_cls: type[Exception], arguments: dict[str, Any]
+    name: str, scope: Scope, error_cls: type[Exception], arguments: dict[str, Any], harvest: bool
 ) -> str | None:
     """Everything a redacted call needs before it runs: refusals first, then a fresh harvest.
 
@@ -193,13 +233,14 @@ def _prepare(  # noqa: DOC501,DOC503 - raises the caller's error_cls, which pydo
         scope: which host the call's output belongs to
         error_cls: the SDK error to refuse with
         arguments: the call's arguments, by name
+        harvest: False for a tool whose output carries no daemon data, which is not held up by a harvest
 
     Returns:
         str | None: the redacted host's label, or None when the call's output is not redacted
 
     Raises:
         Exception: an instance of `error_cls`, when the redaction budget is reached, when bytes would be
-            returned in band, or when the harvest is refused
+            returned in band, or when the harvest is refused or fails
     """
     label = _label_for(scope, arguments)
     if label is None or not settings.host_redacted(label):
@@ -209,12 +250,17 @@ def _prepare(  # noqa: DOC501,DOC503 - raises the caller's error_cls, which pydo
             raise error_cls(BUDGET_MESSAGE)
         if (refusal := _refuse_bytes_in_band(name, arguments, label)) is not None:
             raise error_cls(refusal)
-        _harvest_for(label).ensure_fresh()
+        if harvest:
+            _harvest_for(label).ensure_fresh()
         if name.startswith("compose_"):
             _harvest_compose_env(arguments, label)
     except DockerMcpError as exc:
         # A redaction refusal: turned into the client-visible type here, outside the translation.
         raise error_cls(str(exc)) from None
+    except Exception as exc:
+        if (message := _harvest_failure(exc, label, ran=False)) is None:
+            raise
+        raise error_cls(message) from exc
     return label
 
 
@@ -227,17 +273,21 @@ def _failed(exc: Exception, label: str, error_cls: type[Exception]) -> Exception
         return error_cls(str(refusal))
 
 
-def _finish(result: Any, name: str, label: str, error_cls: type[Exception], json_text: bool) -> Any:
+def _finish(result: Any, name: str, label: str, error_cls: type[Exception], json_text: bool, harvest: bool) -> Any:
     try:
-        if _harvest_for(label).harvest_if_unseen(_mentioned_ids(result)):
+        if harvest and _harvest_for(label).harvest_if_unseen(_mentioned_ids(result)):
             logger.debug("redaction harvest: refreshed for %s on host %r after an unseen ID", name, label)
         return _redact_result(result, label, json_text)
     except DockerMcpError as exc:
         raise error_cls(str(exc)) from None
+    except Exception as exc:
+        if (message := _harvest_failure(exc, label, ran=True)) is None:
+            raise
+        raise error_cls(message) from exc
 
 
 def wrap[F: Callable[..., Any]](
-    func: F, name: str, scope: Scope, error_cls: type[Exception], *, json_text: bool = False
+    func: F, name: str, scope: Scope, error_cls: type[Exception], *, json_text: bool = False, harvest: bool = True
 ) -> F:
     """Wrap a registered tool or resource so its output and errors are redacted on a redacted host.
 
@@ -251,6 +301,8 @@ def wrap[F: Callable[..., Any]](
         scope: which host the call's output belongs to
         error_cls: the SDK error the translation raises (`ToolError` or `ResourceError`)
         json_text: True for a resource whose body is JSON text, which is redacted as data
+        harvest: False for a connection-control tool, which must work on a host whose client is wedged
+            and returns no daemon data a harvest could add to
 
     Returns:
         F: the wrapped callable, carrying its scope as `REDACTION_SCOPE`
@@ -270,7 +322,7 @@ def wrap[F: Callable[..., Any]](
         async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
             arguments = arguments_of(args, kwargs)
             # Harvesting and redacting block, so they run off the event loop.
-            label = await anyio.to_thread.run_sync(lambda: _prepare(name, scope, error_cls, arguments))
+            label = await anyio.to_thread.run_sync(lambda: _prepare(name, scope, error_cls, arguments, harvest))
             if label is None:
                 return await func(*args, **kwargs)
             try:
@@ -278,7 +330,7 @@ def wrap[F: Callable[..., Any]](
             except error_cls as exc:
                 failure = exc
                 raise await anyio.to_thread.run_sync(lambda: _failed(failure, label, error_cls)) from None
-            return await anyio.to_thread.run_sync(lambda: _finish(result, name, label, error_cls, json_text))
+            return await anyio.to_thread.run_sync(lambda: _finish(result, name, label, error_cls, json_text, harvest))
 
         async_wrapper.__signature__ = signature  # pyright: ignore[reportAttributeAccessIssue]
         setattr(async_wrapper, REDACTION_SCOPE, scope)
@@ -286,14 +338,14 @@ def wrap[F: Callable[..., Any]](
 
     @functools.wraps(func)
     def wrapper(*args: Any, **kwargs: Any) -> Any:
-        label = _prepare(name, scope, error_cls, arguments_of(args, kwargs))
+        label = _prepare(name, scope, error_cls, arguments_of(args, kwargs), harvest)
         if label is None:
             return func(*args, **kwargs)
         try:
             result = func(*args, **kwargs)
         except error_cls as exc:
             raise _failed(exc, label, error_cls) from None
-        return _finish(result, name, label, error_cls, json_text)
+        return _finish(result, name, label, error_cls, json_text, harvest)
 
     wrapper.__signature__ = signature  # pyright: ignore[reportAttributeAccessIssue]
     setattr(wrapper, REDACTION_SCOPE, scope)

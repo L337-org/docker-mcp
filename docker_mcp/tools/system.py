@@ -38,7 +38,7 @@ from docker_mcp._hosts import (
 )
 from docker_mcp.redaction import settings as redaction_settings
 from docker_mcp.redaction import wire as redaction_wire
-from docker_mcp.server import READONLY, configuration_warnings, is_domain_disabled, tool
+from docker_mcp.server import READONLY, configuration_warnings, is_domain_disabled, tool, tool_usable_on
 from docker_mcp.tools._ssh_proxy import _CONNECT_TIMEOUT_CAP_SECONDS, connect_socket_with_family_fallback, parse_ssh_url
 from docker_mcp.tools._utils import classify_host_kernel, close_stream_quietly, env_flag, in_container
 
@@ -575,9 +575,10 @@ def system_df(verbose: bool = False, host: str | None = None) -> dict:  # noqa: 
 def _redaction_details(host: Host) -> dict:
     """What an agent needs to know about markers on one redacted host, and the store's state there.
 
-    The server's instructions only point here, because what applies differs by host: a read-only host
-    (its own `ro`, or `DOCKER_MCP_SERVER_READONLY`) takes no writes, so the file-writing tools are refused
-    there and their caveat would mislead.
+    The server's instructions only point here, because what applies differs by host.  The tools named
+    are only those an agent could call there: a read-only host (its own `ro`, or
+    `DOCKER_MCP_SERVER_READONLY`) refuses the file-writing tools, and global redaction withdraws
+    `container_archive_get`, so naming them would mislead.
 
     Args:
         host: a redacted host
@@ -585,13 +586,23 @@ def _redaction_details(host: Host) -> dict:
     Returns:
         dict: `notes`, the rules that apply on this host, and `store`, its value counts and bytes
     """
+    read_only = host.read_only or READONLY
     notes = [
         "Credentials in this host's output show as [REDACTED:...] markers.",
-        "Never put a marker in a file, on disk or passed to a tool: it means something only to this server process.",
-        "Bytes in band are refused here: container_archive_get, and container_export or image_save without dest_path.",
+        # Until markers in arguments are swapped back, a marker passed to a tool reaches the daemon as text.
+        "Never pass a marker to a tool or write one to a file: it is not swapped back, so it would be used "
+        "as literal text.",
     ]
-    if not (host.read_only or READONLY):
-        notes.append("Files written to disk via dest_path or container_archive_get_to_file are not redacted.")
+    in_band = [
+        name if destination is None else f"{name} without {destination}"
+        for name, destination in redaction_wire.BYTE_TOOLS.items()
+        if tool_usable_on(name, read_only=read_only)
+    ]
+    if in_band:
+        notes.append(f"Bytes in band are refused here: {', '.join(in_band)}.")
+    writers = [name for name in redaction_wire.FILE_TOOLS if tool_usable_on(name, read_only=read_only)]
+    if writers:
+        notes.append(f"Files written to disk by {', '.join(writers)} are not redacted.")
     return {"notes": notes, "store": redaction_wire.REDACTOR.report(host.label)}
 
 

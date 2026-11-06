@@ -836,8 +836,8 @@ def build_instructions(registered_domains: set[str] | None = None) -> str:
             "writes need an explicit `host`; `(ro)` hosts refuse writes, `(nd)` destructive calls."
         )
     if redaction_settings.any_redacted():
-        # A pointer, not the rules: what applies differs per host (a read-only host takes no markers back),
-        # `host_list` says it for each, and every character here is paid by every session that has
+        # A pointer, not the rules: what applies differs per host (a read-only host writes no files), and
+        # `host_list` says it for each, while every character here is paid by every session that has
         # redaction on.
         caveats.append("Credentials show as `[REDACTED:...]`; see `host_list`.")
     cli_present = [d for d in _CLI_DOMAINS if d in present]
@@ -1022,6 +1022,24 @@ def _has_host_param(func: Callable) -> bool:
         bool: True when it takes a ``host`` parameter
     """
     return _HOST_PARAM in inspect.signature(func).parameters
+
+
+def tool_usable_on(name: str, *, read_only: bool) -> bool:
+    """Whether a tool is registered and would be allowed on a host, for describing that host to an agent.
+
+    Registration already reflects `DOCKER_MCP_SERVER_DISABLE`, `DOCKER_MCP_SERVER_READONLY` and the
+    tools withdrawn under global redaction; a read-only host additionally refuses every write.
+
+    Args:
+        name: the tool's name
+        read_only: whether the host is marked `ro`
+
+    Returns:
+        bool: True when a call to the tool on that host would not be refused for what it is
+    """
+    if mcp._tool_manager.get_tool(name) is None:
+        return False
+    return not (read_only and _is_host_write(name, TOOL_CATEGORIES.get(name, ToolCategory.READ_ONLY)))
 
 
 def _is_host_write(name: str, category: ToolCategory) -> bool:
@@ -1480,7 +1498,15 @@ def tool[F: Callable[..., Any]](**kwargs: Any) -> Callable[[F], F]:
             else redaction_wire.Scope.HOST_ARGUMENT
         )
         mcp.tool(annotations=_annotations_for(name, category), **kwargs)(
-            redaction_wire.wrap(_translate_failures(target, ToolError), name, scope, ToolError)
+            redaction_wire.wrap(
+                _translate_failures(target, ToolError),
+                name,
+                scope,
+                ToolError,
+                # A connection-control tool must work on a host whose client is wedged, which a harvest
+                # first would fail on, and returns no daemon data a harvest could add to.
+                harvest=name not in _CONNECTION_CONTROL,
+            )
         )
         # Slim the advertised input schema (drop information-free titles, nullable-anyOf null branches,
         # and redundant `additionalProperties: true`), then apply the host-param surgery (enum + required

@@ -61,27 +61,30 @@ none; a resource by the host in its URI, or the default host for the forms witho
 - **Output from a host that is not redacted is never redacted**, even where it contains a value read
   from a redacted host.  Redacting it would tell an agent that a credential it can read in full on one
   host is also used on the redacted one.
-- **Tools that reach no daemon are not redacted:** the registry and Docker Hub tools, `docs_lookup`,
-  the `context_*` tools, `host_list` and `tool_list`.
+- **Tools that reach no daemon are not redacted:** `registry_*`, `hub_*`, `context_*`, `docs_lookup`,
+  `host_list` and `tool_list`.
 - **Raw bytes cannot be redacted** without corrupting the archive they belong to.  With
   `DOCKER_MCP_SERVER_REDACT` on, `container_archive_get` is not offered at all, and `container_export`
   and `image_save` require `dest_path`.  On a host marked `redact`, the same calls are refused.  The
-  files these and `container_archive_get_to_file` write are not redacted, and they are written on the
-  machine running the server, even when the daemon is remote.
+  files that `container_archive_get_to_file`, `container_export` and `image_save` write are not
+  redacted, and they are written on the machine running the server, even when the daemon is remote.
 
 The server reads the values to redact from the redacted host's daemon: values under a credential name
 in container, image and service environments, in build arguments recorded in image history, and in a
 Compose project's `.env` file; and the content of Swarm configs whose name is a credential name.  On each
-call it asks the daemon whether anything has changed since the last time, and reads again if so, so a
-container created a moment ago is covered.
+call it compares the IDs of the daemon's containers, images, services (with their versions) and configs
+with the last call's, and reads again if they differ, so a container created a moment ago is covered.  If
+reading fails, the call is refused rather than answered with output that might not be redacted.
 
 A value read this way is redacted wherever it appears, however word-like.  One shorter than eight
-characters is redacted only where it stands as a whole word, so that `pw` is not replaced inside `pwd`,
-which would also give the short value away.
+characters is redacted only where no letter, digit or underscore adjoins it, so that `pw` is replaced in
+`[pw]` or `pw.` but not inside `pwd`, which would also give the short value away.
 
 While redaction is on anywhere, the server's instructions say so in one line and point the agent to
-`host_list`, whose `redaction` notes give each redacted host's rules: never put a marker in a file,
-bytes in band are refused, and, on a host that accepts writes, files written to disk are not redacted.
+`host_list`, whose `redaction` notes give each redacted host's rules: never pass a marker to a tool or
+write one to a file, which bytes in band are refused, and, on a host that accepts writes, which files
+written to disk are not redacted.  The notes name only the tools that are registered and allowed on that
+host.
 
 ## What is redacted, and how
 
@@ -105,7 +108,8 @@ Two things are replaced, wherever they appear in a redacted host's output, dict 
 Each replacement is a marker, `[REDACTED:<token>]`, where the token is 22 characters.  Every marker is
 different, even for the same credential in the same result, so nothing in the output shows that two
 places hold the same value; and a marker says nothing about the credential's format or how it was
-found.  Markers are valid only in the server process that issued them.
+found.  Markers are not yet swapped back for their values when passed to a tool: one passed as an
+argument reaches the daemon as literal text.
 
 ## Fields the rules leave alone
 
