@@ -1,0 +1,302 @@
+"""Shape rules: finding credentials the server was never told about, by their form and their context.
+
+Each rule returns the spans of text it judges to be a credential.  A span found here is a discovered
+value: it is redacted, and stored within the discovered limits so its other forms are matched from then
+on.  Every rule is a row in `_RULES`, so adding one is a row plus its cases in
+tests/test_redaction_rules.py; the public field names and the flag pattern are tables too.
+
+The rules, from the redaction design:
+
+- known token formats: PEM private keys, GitHub, Stripe and Slack tokens, AWS access key IDs, JWTs
+  with a valid header;
+- credentials in headers: `Authorization`, `Proxy-Authorization`, cookies, `X-Api-Key` and alike;
+- passwords in URL user info and in a connection string's password field;
+- an assignment to a credential name, `NAME=value` or `"name": "value"`, when the value is 8 or more
+  characters with 4.0 or more bits of entropy per character;
+- the value after a credential-named command-line flag, `--password X` or `--api-key=X`;
+- any other run of 32 or more base64 characters with 4.5 or more bits per character, never hex alone,
+  never longer than `store.MAX_DISCOVERED_MATCH_LENGTH`, with base64 lines wrapped by `base64` joined
+  into one run first.
+"""
+
+import base64
+import binascii
+import json
+import math
+import re
+from collections import Counter
+from collections.abc import Callable, Iterator
+from dataclasses import dataclass
+
+from docker_mcp.redaction import settings
+from docker_mcp.redaction.store import MAX_DISCOVERED_MATCH_LENGTH
+
+# Docker's own public fields whose values look random but are not secret.  The shape rules never
+# replace the value of one of these; known values are still matched in them.  Kept short on purpose: a
+# field listed here is never redacted by a rule even if a credential ends up in it.  REDACTION.md lists
+# it, and a test keeps the two in step.
+PUBLIC_FIELDS = frozenset({"TrustRoot", "CertIssuerPublicKey", "CertIssuerSubject", "SandboxKey"})
+
+_GENERIC_MIN_LENGTH = 32
+_GENERIC_MIN_ENTROPY = 4.5
+_ASSIGNMENT_MIN_LENGTH = 8
+_ASSIGNMENT_MIN_ENTROPY = 4.0
+
+
+@dataclass(frozen=True)
+class Span:
+    """A credential found in text.
+
+    Attributes:
+        start: index of its first character.
+        end: index one past its last character.
+    """
+
+    start: int
+    end: int
+
+
+def entropy(text: str) -> float:
+    """Shannon entropy per character.
+
+    Args:
+        text: the string
+
+    Returns:
+        float: bits per character; 0 for an empty string
+    """
+    if not text:
+        return 0.0
+    counts = Counter(text)
+    length = len(text)
+    return -sum(n / length * math.log2(n / length) for n in counts.values())
+
+
+def _group_spans(pattern: re.Pattern[str], group: int = 1) -> Callable[[str], Iterator[Span]]:
+    def find(text: str) -> Iterator[Span]:
+        for match in pattern.finditer(text):
+            if match.group(group):
+                yield Span(match.start(group), match.end(group))
+
+    return find
+
+
+# --- known formats ---------------------------------------------------------------------------------
+
+_PEM = re.compile(
+    r"-----BEGIN ((?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?)-----.*?-----END \1-----",
+    re.DOTALL,
+)
+_GITHUB = re.compile(r"\b((?:gh[pousr]_[A-Za-z0-9]{36,255})|(?:github_pat_[A-Za-z0-9_]{22,255}))\b")
+_STRIPE = re.compile(r"\b((?:sk|rk|pk)_(?:live|test)_[A-Za-z0-9]{16,}|whsec_[A-Za-z0-9]{16,})\b")
+_SLACK = re.compile(r"\b(xox[abposr]-[A-Za-z0-9-]{10,}|xapp-[A-Za-z0-9-]{10,})\b")
+_AWS_KEY_ID = re.compile(r"\b((?:AKIA|ASIA|AGPA|AIDA|AROA|ANPA|ANVA|AIPA)[A-Z0-9]{16})\b")
+_JWT = re.compile(r"\b(eyJ[A-Za-z0-9_-]{4,}\.eyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{8,})")
+
+
+def _pem(text: str) -> Iterator[Span]:
+    for match in _PEM.finditer(text):
+        yield Span(match.start(), match.end())
+
+
+def _jwt(text: str) -> Iterator[Span]:
+    for match in _JWT.finditer(text):
+        header = match.group(1).split(".", 1)[0]
+        try:
+            decoded = json.loads(base64.urlsafe_b64decode(header + "=" * (-len(header) % 4)))
+        except ValueError, binascii.Error:
+            continue
+        if isinstance(decoded, dict) and "alg" in decoded:
+            yield Span(match.start(1), match.end(1))
+
+
+# --- context: headers, URLs, connection strings ---------------------------------------------------
+
+_AUTH_HEADER = re.compile(
+    r"(?i)\b(?:proxy-)?authorization\s*[:=]\s*\"?(?:(?:basic|bearer|token|digest|negotiate)\s+)?([^\s\",;]+)"
+)
+_API_KEY_HEADER = re.compile(r"(?i)\bx-(?:api|auth|access)-(?:key|token)\s*[:=]\s*\"?([^\s\",;]+)")
+_COOKIE = re.compile(r"(?i)\b(?:set-)?cookie\s*[:=]\s*\"?([^\r\n\"]+)")
+_URL_USERINFO = re.compile(r"\b[a-z][a-z0-9+.-]*://[^/\s:@]+:([^@\s/]+)@", re.IGNORECASE)
+_CONNECTION_PASSWORD = re.compile(r"(?i)\b(?:password|pwd)\s*=\s*([^;'\"\s]+)")
+
+# --- credential-named assignments and command-line flags -------------------------------------------
+
+_ASSIGNMENT = re.compile(
+    r"(?P<name>[A-Za-z_][A-Za-z0-9_.-]*)[\"']?\s*(?:=|:)\s*[\"']?(?P<value>[^\s\"',;}\]]+)",
+)
+# Only the flag itself is matched, so scanning never consumes the next flag (`-p --secret x` must see
+# `--secret`); its value is read from where the flag ends.
+_FLAG = re.compile(r"(?<![\w-])--?(?P<name>[A-Za-z][A-Za-z0-9-]*)(?:=|[ \t]+)")
+_FLAG_VALUE = re.compile(r"\"(?P<dq>[^\"]*)\"|'(?P<sq>[^']*)'|(?P<bare>[^\s\"']+)")
+# Extra credential words for flags and assignments beyond the harvest's name pattern, from #300's list.
+_CREDENTIAL_KEYS = frozenset({"PASSWORD", "APIKEY", "API_KEY", "SECRET", "TOKEN"})
+
+
+def _is_credential_name(name: str) -> bool:
+    normalised = name.upper().replace("-", "_").replace(".", "_")
+    return settings.names().matches(normalised) or normalised in _CREDENTIAL_KEYS
+
+
+def _assignments(text: str) -> Iterator[Span]:
+    for match in _ASSIGNMENT.finditer(text):
+        value = match.group("value")
+        if (
+            _is_credential_name(match.group("name"))
+            and len(value) >= _ASSIGNMENT_MIN_LENGTH
+            and entropy(value) >= _ASSIGNMENT_MIN_ENTROPY
+        ):
+            yield Span(match.start("value"), match.end("value"))
+
+
+_BARE_FLAG = re.compile(r"--?(?P<name>[A-Za-z][A-Za-z0-9-]*)")
+
+
+def is_credential_flag(element: str) -> bool:
+    """Whether one element of an exec-form command is a credential-named flag with no value of its own.
+
+    Docker reports `Cmd`, `Args` and `Entrypoint` as lists, so `["app", "--password", "s3cret"]` puts
+    the flag and its value in separate strings; the redactor uses this to treat the next element as the
+    value, which the text rule alone cannot see.
+
+    Args:
+        element: one string from a list
+
+    Returns:
+        bool: True for a bare `--password`-style flag
+    """
+    match = _BARE_FLAG.fullmatch(element)
+    return match is not None and _is_credential_name(match.group("name"))
+
+
+def _flags(text: str) -> Iterator[Span]:
+    # Unlike an assignment, a value after a credential-named flag is taken whatever its shape: the flag
+    # says what it is, and a word-like password on a command line is exactly the miss this closes.
+    for match in _FLAG.finditer(text):
+        if not _is_credential_name(match.group("name")):
+            continue
+        value = _FLAG_VALUE.match(text, match.end())
+        if value is None:
+            continue
+        group = next(name for name in ("dq", "sq", "bare") if value.group(name) is not None)
+        if group == "bare" and value.group(group).startswith("-"):
+            continue  # the next flag, not a value
+        if value.group(group):
+            yield Span(value.start(group), value.end(group))
+
+
+# --- generic: long random runs ----------------------------------------------------------------------
+
+_RUN = re.compile(r"[A-Za-z0-9+/_-]{4,}={0,2}")
+_HEX = re.compile(r"[0-9A-Fa-f]+")
+_LINE_BREAK = re.compile(r"\r?\n")
+# The shortest line width `base64`-style wrapping uses (PEM uses 64, coreutils `base64` 76).
+_MIN_WRAP_WIDTH = 60
+
+
+def _runs(text: str) -> Iterator[tuple[int, int, str]]:
+    """Runs of base64 characters, with lines wrapped by a base64 encoder joined into one run.
+
+    Wrapped output is lines of one width followed by one shorter final line, so a run continues onto the
+    next line only while every line so far has the same width of at least `_MIN_WRAP_WIDTH`, and the
+    first shorter line ends it.  Without the joining, each line is a separate value: 30 KB of wrapped
+    random data gave 464 markers in the spike.
+
+    Args:
+        text: the text to search
+
+    Yields:
+        tuple: start, end, and the run's characters with the line breaks removed
+    """
+    position = 0
+    while (match := _RUN.search(text, position)) is not None:
+        start, end, joined = match.start(), match.end(), match.group()
+        width = end - start
+        while width >= _MIN_WRAP_WIDTH and len(joined) % width == 0:
+            gap = _LINE_BREAK.match(text, end)
+            following = _RUN.match(text, gap.end()) if gap else None
+            if following is None or following.end() - following.start() > width:
+                break
+            end, joined = following.end(), joined + following.group()
+            if following.end() - following.start() < width:
+                break  # the shorter final line
+        yield start, end, joined
+        position = end
+
+
+def _looks_like_path(joined: str) -> bool:
+    # Rooted, at least two segments, and none of base64's other symbols.  Not "contains //": random base64
+    # holds a `//` about one time in five at 800 characters, and treating that as a path left whole
+    # random blobs unredacted.
+    return (
+        joined.startswith(("/", "./", "~/"))
+        and "+" not in joined
+        and "=" not in joined
+        and sum(1 for segment in joined.split("/") if segment) >= 2
+    )
+
+
+def _in_url_or_path(text: str, start: int, joined: str) -> bool:
+    if _looks_like_path(joined):
+        return True
+    # Back to the start of the whitespace-delimited token: a `://` there makes this part of a URL.
+    token_start = max(text.rfind(c, 0, start) for c in " \t\r\n\"'=") + 1
+    return "://" in text[token_start:start]
+
+
+def _generic(text: str) -> Iterator[Span]:
+    for start, end, joined in _runs(text):
+        if not _GENERIC_MIN_LENGTH <= len(joined) <= MAX_DISCOVERED_MATCH_LENGTH:
+            continue
+        if _HEX.fullmatch(joined.rstrip("=")):
+            continue  # digests and identifiers; hex carries at most 4 bits per character anyway
+        if _in_url_or_path(text, start, joined):
+            continue
+        if entropy(joined) >= _GENERIC_MIN_ENTROPY:
+            yield Span(start, end)
+
+
+# Rule name -> finder.  Order does not matter: overlapping spans are merged by the redactor, longest
+# first.
+_RULES: dict[str, Callable[[str], Iterator[Span]]] = {
+    "pem": _pem,
+    "github": _group_spans(_GITHUB),
+    "stripe": _group_spans(_STRIPE),
+    "slack": _group_spans(_SLACK),
+    "aws_key_id": _group_spans(_AWS_KEY_ID),
+    "jwt": _jwt,
+    "authorization": _group_spans(_AUTH_HEADER),
+    "api_key_header": _group_spans(_API_KEY_HEADER),
+    "cookie": _group_spans(_COOKIE),
+    "url_userinfo": _group_spans(_URL_USERINFO),
+    "connection_password": _group_spans(_CONNECTION_PASSWORD),
+    "assignment": _assignments,
+    "flag": _flags,
+    "generic": _generic,
+}
+
+
+def find(text: str) -> list[Span]:
+    """Every span any rule judges to be a credential, possibly overlapping.
+
+    Args:
+        text: the text to search
+
+    Returns:
+        list: the spans, in no particular order
+    """
+    found = []
+    for rule in _RULES.values():
+        for span in rule(text):
+            if 0 < span.end - span.start <= MAX_DISCOVERED_MATCH_LENGTH:
+                found.append(span)
+    return found
+
+
+def rule_names() -> list[str]:
+    """The names of the rules, for tests and documentation.
+
+    Returns:
+        list: the rule names
+    """
+    return list(_RULES)
