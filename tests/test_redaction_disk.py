@@ -308,3 +308,11 @@ def test_every_write_tool_that_takes_a_path_is_searched_or_says_why_not():
         if name not in disk.FILE_INPUTS and not name.startswith("compose_") and name not in disk.NOT_SEARCHED:
             unaccounted.append(name)
     assert not unaccounted, f"Add these to FILE_INPUTS or NOT_SEARCHED in docker_mcp/redaction/disk.py: {unaccounted}"
+
+
+def test_a_dockerfile_starting_with_a_tilde_is_relative_to_the_context_as_docker_py_reads_it(tmp_path, monkeypatch):
+    # With the home directory at the context, expanding `~` would name a different file from the one
+    # docker-py reads, and the `.dockerignore`d one it reads would go unsearched.
+    monkeypatch.setenv("HOME", str(tmp_path))
+    context = _project(tmp_path, **{"~__Dockerfile": f"FROM alpine\nENV X={_MARKER}\n", ".dockerignore": "~\n"})
+    assert "Dockerfile" in _refused("image_build", path=str(context), dockerfile="~/Dockerfile")

@@ -312,10 +312,23 @@ def test_every_argument_of_every_write_tool_that_can_hold_text_is_classified():
     )
 
 
-def test_every_refused_argument_is_refused_inside_nested_arguments_too():
-    refused = {name for name, kind in swap.ARGUMENTS.items() if kind is not swap.Kind.SWAP}
-    assert refused <= set(swap._NESTED_KEYS)
-    assert all(swap._NESTED_KEYS[name] is swap.ARGUMENTS[name] for name in refused)
+@pytest.mark.parametrize(
+    ("key", "kind"),
+    [
+        # docker-py keyword arguments with no top-level argument of their own.
+        ("container_labels", swap.Kind.LABEL),
+        ("domainname", swap.Kind.NAME),
+        ("networks", swap.Kind.NAME),
+        # The Engine spec's capitalised forms, as `updates` and `conf` take them.
+        ("Labels", swap.Kind.LABEL),
+        ("Name", swap.Kind.NAME),
+        ("Hostname", swap.Kind.NAME),
+        ("Image", swap.Kind.NAME),
+        ("Networks", swap.Kind.NAME),
+    ],
+)
+def test_the_nested_guardrail_covers_the_keys_with_no_top_level_argument(key, kind):
+    assert swap._NESTED_KEYS[key] is kind
 
 
 def test_the_table_names_only_arguments_that_exist():

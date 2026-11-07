@@ -147,10 +147,11 @@ def _image_build_inputs(arguments: dict[str, Any]) -> list[_Input]:
     if context is None or not context.is_dir():
         return []
     # docker-py makes a Dockerfile inside the context relative before excluding paths; the exclusion
-    # pattern that keeps it only matches the relative form.
+    # pattern that keeps it only matches the relative form.  Not expanded: docker-py's
+    # `process_dockerfile` reads `~/x` as relative to the context, and so must this.
     dockerfile = arguments.get("dockerfile")
-    if dockerfile and os.path.isabs(os.path.expanduser(dockerfile)):
-        absolute = Path(os.path.expanduser(dockerfile)).resolve()
+    if dockerfile and os.path.isabs(dockerfile):
+        absolute = Path(dockerfile).resolve()
         if absolute.is_relative_to(context.resolve()):
             dockerfile = absolute.relative_to(context.resolve()).as_posix()
     return [_Input(context, build_context=True, dockerfile=dockerfile)]

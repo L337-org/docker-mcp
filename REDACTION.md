@@ -166,10 +166,12 @@ searched, as a whole, since any file in it can end up in a container or an image
 - every file a call names outside those directories.
 
 Each directory is the one the CLI resolves the call's relative paths against.  The search stops at 50,000
-files or 200 MB read in a call, the limits the SSH fallback copies files to a remote host within, and past
-either the call is refused rather than run with files unsearched.  Not searched: a build context the server cannot read, such as a Git URL;
-anything a compose or bake file refers to outside those directories, such as a build context at
-`../other`; and the tarballs `image_load` and `image_import` read.
+files or 200 MB read in a call, the same limits as the SSH fallback's copying to a remote host, and past
+either the call is refused rather than run with files unsearched.
+
+Not searched: a build context the server cannot read, such as a Git URL; anything a compose or bake file
+refers to outside those directories, such as a build context at `../other`; and the tarballs
+`image_load` and `image_import` read.
 
 An archive passed to `container_archive_put`, in band or from a file, is searched too, and refused naming
 the member that holds the marker.  A gzip, bzip2 or xz archive is refused, because a search cannot see
