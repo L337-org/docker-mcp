@@ -243,6 +243,7 @@ def _prepare(  # noqa: DOC501,DOC503 - raises the caller's error_cls, which pydo
     *,
     harvest: bool,
     writes: bool,
+    guarded: bool,
 ) -> tuple[str | None, dict[str, Any]]:
     """Everything a call needs before it runs: refusals, markers swapped back, files searched, a fresh harvest.
 
@@ -253,6 +254,7 @@ def _prepare(  # noqa: DOC501,DOC503 - raises the caller's error_cls, which pydo
         arguments: the call's arguments, by name; not modified
         harvest: False for a tool whose output carries no daemon data, which is not held up by a harvest
         writes: True for a tool that is not read-only, whose arguments may carry markers to swap back
+        guarded: True for a write the host guard refuses on a read-only host
 
     Returns:
         tuple: the redacted host's label, or None when the call's output is not redacted; and the
@@ -267,7 +269,7 @@ def _prepare(  # noqa: DOC501,DOC503 - raises the caller's error_cls, which pydo
     redacted = label is not None and settings.host_redacted(label)
     try:
         if writes and settings.any_redacted():
-            arguments = _swap(name, scope, arguments, label, redacted=redacted)
+            arguments = _swap(name, scope, arguments, label, redacted=redacted, guarded=guarded)
         if not redacted:
             return None, arguments
         label = cast(str, label)
@@ -294,14 +296,23 @@ def _prepare(  # noqa: DOC501,DOC503 - raises the caller's error_cls, which pydo
     return label, arguments
 
 
-def _swap(name: str, scope: Scope, arguments: dict[str, Any], label: str | None, *, redacted: bool) -> dict[str, Any]:
-    # A write to a host the call does not resolve leaves the refusal to the host guard: an unknown label,
-    # or a read-only host, which refuses every write with its own message.
-    if scope is not Scope.NO_DAEMON and (label is None or _hosts.is_read_only(label)):
+def _swap(
+    name: str, scope: Scope, arguments: dict[str, Any], label: str | None, *, redacted: bool, guarded: bool
+) -> dict[str, Any]:
+    if scope is Scope.NO_DAEMON:
+        # No host to swap a marker back for.
+        return swap.swap_markers(REDACTOR, name, arguments, None, swaps=False)
+    # Left to the host guard, which refuses with its own message: an unknown label, and a guarded write
+    # to a read-only host.  Connection control is not guarded, so it is checked here like any other call.
+    if label is None:
         return arguments
-    # On a host that is not redacted no marker was issued, so every one is refused rather than reaching
-    # the daemon as literal text; a tool that reaches no daemon has no host to swap one back for.
-    return swap.swap_markers(REDACTOR, name, arguments, label, swaps=redacted)
+    read_only = _hosts.is_read_only(label)
+    if guarded and read_only:
+        return arguments
+    # A marker is swapped back only on a redacted host that accepts writes.  Elsewhere every one is
+    # refused rather than reaching the daemon or a registry as literal text: no marker was issued for an
+    # unfiltered host, and a read-only one never swaps back.
+    return swap.swap_markers(REDACTOR, name, arguments, label, swaps=redacted and not read_only)
 
 
 def _failed(exc: Exception, label: str, error_cls: type[Exception]) -> Exception:
@@ -335,6 +346,7 @@ def wrap[F: Callable[..., Any]](
     json_text: bool = False,
     harvest: bool = True,
     writes: bool = False,
+    guarded: bool = False,
 ) -> F:
     """Wrap a registered tool or resource so its output and errors are redacted on a redacted host.
 
@@ -351,6 +363,7 @@ def wrap[F: Callable[..., Any]](
         harvest: False for a connection-control tool, which must work on a host whose client is wedged
             and returns no daemon data a harvest could add to
         writes: True for a tool that is not read-only, whose arguments have markers swapped back
+        guarded: True for a write the host guard refuses on a read-only host, which is left to it
 
     Returns:
         F: the wrapped callable, carrying its scope as `REDACTION_SCOPE`
@@ -365,7 +378,7 @@ def wrap[F: Callable[..., Any]](
 
     def prepare(args: tuple, kwargs: dict) -> tuple[str | None, tuple, dict]:
         arguments = arguments_of(args, kwargs)
-        label, prepared = _prepare(name, scope, error_cls, arguments, harvest=harvest, writes=writes)
+        label, prepared = _prepare(name, scope, error_cls, arguments, harvest=harvest, writes=writes, guarded=guarded)
         # Called by name only when a marker was swapped back, so every other call reaches the function
         # exactly as it arrived.
         return (label, args, kwargs) if prepared is arguments else (label, (), prepared)

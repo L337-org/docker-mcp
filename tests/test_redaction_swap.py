@@ -53,7 +53,7 @@ def _marker(redactor: Redactor, text: str = _SECRET, host: str = "prod") -> str:
     return found.group(0)
 
 
-def _write_tool(name="container_create", scope=Scope.HOST_ARGUMENT, writes=True):
+def _write_tool(name="container_create", scope=Scope.HOST_ARGUMENT, writes=True, guarded=True):
     calls: list[dict[str, Any]] = []
 
     def target(
@@ -82,7 +82,7 @@ def _write_tool(name="container_create", scope=Scope.HOST_ARGUMENT, writes=True)
         )
         return "ok"
 
-    return wire.wrap(target, name, scope, ToolError, writes=writes), calls
+    return wire.wrap(target, name, scope, ToolError, writes=writes, guarded=guarded), calls
 
 
 # ---------- swapping back ----------
@@ -154,7 +154,7 @@ def test_with_redaction_off_everywhere_a_marker_shaped_string_is_left_alone(reda
     assert calls[0]["command"] == [text]
 
 
-def test_a_write_to_a_read_only_redacted_host_is_left_for_the_host_guard_to_refuse(redactor):
+def test_a_guarded_write_to_a_read_only_redacted_host_is_left_for_the_host_guard_to_refuse(redactor):
     # Swapping first would refuse with a marker message, or swap a value into a call the guard then
     # refuses anyway; the guard's own message says why the call cannot run there.
     wrapped, calls = _write_tool()
@@ -219,6 +219,15 @@ def test_a_marker_in_a_write_to_an_unfiltered_host_is_refused(redactor):
     assert "only on a redacted host that accepts writes" in message
 
 
+def test_a_marker_in_connection_control_to_a_read_only_host_is_refused(redactor):
+    # The host guard lets system_login through on a read-only host, so the marker would otherwise reach
+    # the registry as a literal password; a read-only host never swaps one back.
+    redactor.remember(_SECRET, "stage")
+    wrapped, calls = _write_tool(name="system_login", guarded=False)
+    message = _refusal(wrapped, calls, command=[_marker(redactor, host="stage")], host="stage")
+    assert "only on a redacted host that accepts writes" in message
+
+
 def test_a_marker_in_a_tool_that_reaches_no_daemon_is_refused(redactor):
     wrapped, calls = _write_tool(name="context_create", scope=Scope.NO_DAEMON)
     message = _refusal(wrapped, calls, command=[_marker(redactor)])
@@ -234,6 +243,9 @@ def test_a_marker_in_a_tool_that_reaches_no_daemon_is_refused(redactor):
         ({"set_overrides": ["app.args.TOKEN={m}"]}, "`set_overrides[0]`", "passed on the command line"),
         ({"extra_kwargs": {"labels": {"a": "{m}"}}}, "`extra_kwargs['labels']['a']`", "a label"),
         ({"extra_kwargs": {"name": "{m}"}}, "`extra_kwargs['name']`", "a name or identifier"),
+        ({"extra_kwargs": {"network": "{m}"}}, "`extra_kwargs['network']`", "a name or identifier"),
+        ({"extra_kwargs": {"networks": ["{m}"]}}, "`extra_kwargs['networks'][0]`", "a name or identifier"),
+        ({"extra_kwargs": {"Networks": ["{m}"]}}, "`extra_kwargs['Networks'][0]`", "a name or identifier"),
     ],
 )
 def test_the_guardrail_refuses_a_marker_where_a_credential_is_never_legitimate(redactor, arguments, where, reason):
@@ -298,6 +310,12 @@ def test_every_argument_of_every_write_tool_that_can_hold_text_is_classified():
     assert not unclassified, (
         f"Classify these in ARGUMENTS in docker_mcp/redaction/swap.py, as swapped back or refused: {unclassified}"
     )
+
+
+def test_every_refused_argument_is_refused_inside_nested_arguments_too():
+    refused = {name for name, kind in swap.ARGUMENTS.items() if kind is not swap.Kind.SWAP}
+    assert refused <= set(swap._NESTED_KEYS)
+    assert all(swap._NESTED_KEYS[name] is swap.ARGUMENTS[name] for name in refused)
 
 
 def test_the_table_names_only_arguments_that_exist():

@@ -186,10 +186,17 @@ _TOOL_ARGUMENTS: dict[tuple[str, str], Kind] = {
 # Arguments holding docker-py keyword arguments or an Engine spec, whose keys name what they set: a
 # marker under one of these keys is refused as the matching top-level argument would be.
 _NESTED_ARGUMENTS = frozenset({"conf", "extra_kwargs", "updates"})
+# Derived from the refused arguments, so a key refused at the top level is refused inside these too,
+# plus the docker-py keys with no top-level argument of their own and the Engine spec's capitalised
+# forms (`Labels`, `Name`, `Networks`).
+_EXTRA_NESTED_KEYS = {"container_labels": Kind.LABEL, "domainname": Kind.NAME, "networks": Kind.NAME}
 _NESTED_KEYS: dict[str, Kind] = {
-    **dict.fromkeys(("domainname", "Domainname", "hostname", "Hostname", "image", "Image"), Kind.NAME),
-    **dict.fromkeys(("name", "Name"), Kind.NAME),
-    **dict.fromkeys(("container_labels", "labels", "Labels"), Kind.LABEL),
+    spelling: kind
+    for key, kind in {
+        **{key: kind for key, kind in ARGUMENTS.items() if kind is not Kind.SWAP},
+        **_EXTRA_NESTED_KEYS,
+    }.items()
+    for spelling in (key, key.capitalize())
 }
 
 _GUARDRAIL_REASONS = {

@@ -56,9 +56,11 @@ module per concern:
   `_NESTED_KEYS` applies the guardrail inside `extra_kwargs`, `updates` and `conf`.
 - **`disk.py`** - the search of what a write reads from disk (`FILE_INPUTS`, with Compose tools matched
   by prefix) and of `container_archive_put`'s archive, refusing on any marker-shaped text.  The
-  directories searched are the ones the SSH fallback stages for the same calls, and a build context is
-  walked with docker-py's `exclude_paths` and the fallback's `_read_dockerignore`, so what is searched is
-  what is sent.  Limits match the fallback's staging limits; past them the call is refused.
+  directories searched are the ones the CLI resolves the call's relative paths against, which for Compose
+  and a stack is the first compose file's directory, where the fallback stages `project_dir` or `cwd`.  A
+  build context is walked with docker-py's `exclude_paths` and the fallback's `_read_dockerignore`, so what
+  is searched is what is sent.  The limits are the fallback's staging limits, held equal by a test, and
+  are charged on bytes actually read, not reported sizes; past them the call is refused.
 
 ### Concurrency
 
@@ -108,8 +110,10 @@ slip through.
 `server.tool()` passes `writes=True` for every tool that is not `READ_ONLY`, connection control included,
 since logging in with a credential read from the daemon is legitimate.  While redaction is on anywhere,
 a write's markers go through `swap.swap_markers` first, on every host: swapped back on a redacted host
-that accepts writes, refused everywhere else, since no marker was issued for an unfiltered host.  A write
-to an unknown or read-only host is left alone, for the host guard to refuse with its own message.  The
+that accepts writes, refused everywhere else, since no marker was issued for an unfiltered host.  A call
+to an unknown host, and a write the guard refuses on a read-only host (`guarded`, from `_is_host_write`),
+are left alone, for the host guard to refuse with its own message.  Connection control is not guarded, so
+a `system_login` to a read-only host has its markers refused here.  The
 function is then called by name with the swapped arguments, and exactly as it arrived when nothing was
 swapped.
 

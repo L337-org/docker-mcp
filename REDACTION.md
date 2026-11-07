@@ -127,7 +127,8 @@ The whole call is refused before anything runs, with an error naming the argumen
 never a value, when a marker in it:
 
 - was issued for another host.  That includes every marker in a write to a host that is not redacted,
-  and in the `context_*` tools, which reach no daemon;
+  in a `system_login` to a read-only host, which never swaps one back, and in the `context_*` tools,
+  which reach no daemon;
 - was issued before the server last started, or was altered;
 - stands for a value found by the rules that the store had no room to keep (see Limits).  The error says
   that reading it again will not help, and to ask the user what to do.
@@ -164,9 +165,9 @@ searched, as a whole, since any file in it can end up in a container or an image
   Dockerfile; and `buildx_build`'s named contexts and secret files;
 - every file a call names outside those directories.
 
-These are the directories the SSH fallback copies to a remote host for the same calls.  The search stops
-at 50,000 files or 200 MB a call, the fallback's own limits, and past either the call is refused rather
-than run with files unsearched.  Not searched: a build context the server cannot read, such as a Git URL;
+Each directory is the one the CLI resolves the call's relative paths against.  The search stops at 50,000
+files or 200 MB read in a call, the limits the SSH fallback copies files to a remote host within, and past
+either the call is refused rather than run with files unsearched.  Not searched: a build context the server cannot read, such as a Git URL;
 anything a compose or bake file refers to outside those directories, such as a build context at
 `../other`; and the tarballs `image_load` and `image_import` read.
 

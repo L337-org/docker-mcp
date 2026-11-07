@@ -1509,6 +1509,7 @@ def tool[F: Callable[..., Any]](**kwargs: Any) -> Callable[[F], F]:
                 # Every tool that is not read-only has markers in its arguments swapped back, connection
                 # control included: logging in with a credential read from the daemon is legitimate.
                 writes=category is not ToolCategory.READ_ONLY,
+                guarded=_is_host_write(name, category),
             )
         )
         # Slim the advertised input schema (drop information-free titles, nullable-anyOf null branches,

@@ -144,6 +144,19 @@ def test_an_excluded_dockerfile_is_still_searched(tmp_path):
     assert "build.Dockerfile" in _refused("image_build", path=str(context), dockerfile="build.Dockerfile")
 
 
+def test_an_excluded_dockerfile_named_by_absolute_path_is_still_searched(tmp_path):
+    context = _project(
+        tmp_path, **{"build.Dockerfile": f"FROM alpine\nENV X={_MARKER}\n", ".dockerignore": "*.Dockerfile\n"}
+    )
+    message = _refused("image_build", path=str(context), dockerfile=str(context / "build.Dockerfile"))
+    assert "build.Dockerfile" in message
+
+
+def test_an_unknown_home_directory_is_left_for_the_tool_to_report():
+    # pathlib's expanduser raises a bare RuntimeError for an unknown `~user`; the call must reach the tool.
+    _runs("buildx_build", context="~no-such-user-dm42/ctx", file="~no-such-user-dm42/Dockerfile")
+
+
 def test_buildx_build_searches_its_named_contexts_and_secret_files(tmp_path):
     context = _project(tmp_path / "ctx", Dockerfile="FROM alpine\n")
     extra = _project(tmp_path / "extra", **{"data.txt": _MARKER})
@@ -179,6 +192,28 @@ def test_past_the_search_limits_the_call_is_refused_rather_than_run_unsearched(t
     project = _project(tmp_path, **{"compose.yaml": "services: {}\n", "a": "1", "b": "2"})
     message = _refused("compose_up", project_dir=str(project))
     assert "past the limit of the search" in message
+
+
+def test_the_byte_limit_counts_what_is_read_not_the_size_a_file_reports(tmp_path, monkeypatch):
+    # A procfs file reports a size of 0 and a log being written keeps growing; both read past their size.
+    project = _project(tmp_path, **{"compose.yaml": "small"})
+    monkeypatch.setattr(disk, "MAX_SEARCH_BYTES", 1000)
+    monkeypatch.setattr(disk, "_CHUNK", 100)
+    real_open = Path.open
+
+    def open_growing(self, *args, **kwargs):
+        if self.name == "compose.yaml":
+            return io.BytesIO(b"x" * 10_000)
+        return real_open(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", open_growing)
+    assert "past the limit of the search" in _refused("compose_up", project_dir=str(project))
+
+
+def test_the_search_limits_are_the_ssh_fallbacks_staging_limits():
+    from docker_mcp.tools import _ssh_proxy
+
+    assert (disk.MAX_SEARCH_FILES, disk.MAX_SEARCH_BYTES) == (_ssh_proxy._MAX_STAGE_FILES, _ssh_proxy._MAX_STAGE_BYTES)
 
 
 def test_files_are_searched_only_for_a_write_to_a_redacted_host_that_accepts_writes(tmp_path):

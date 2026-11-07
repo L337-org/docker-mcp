@@ -8,8 +8,9 @@ archive member changes its size, which a tar header records.
 
 What a call reads is decided per tool, in `FILE_INPUTS`: the Compose project directory, a stack's or a
 bake's working directory, and a build context with its `.dockerignore` honoured, each searched whole,
-since any file in it can end up in a container or an image; plus every file named outside them.  The
-directories are the ones the SSH fallback copies to the remote host for the same calls.
+since any file in it can end up in a container or an image; plus every file named outside them.  Each
+directory is the one the CLI resolves the call's relative paths against: for Compose and a stack, the
+first compose file's directory where one is named.
 `tests/test_redaction_disk.py` holds the table to the write tools that take a path.
 
 An archive passed to `container_archive_put` is searched as bytes: a plain tar stores each member's
@@ -72,14 +73,16 @@ def _local(value: Any, base: Path) -> Path | None:
     # from disk here, so there is nothing to search.
     if not isinstance(value, str) or not value or value == "-" or "://" in value:
         return None
-    path = Path(value).expanduser()
+    # os.path.expanduser leaves an unknown `~user` alone, for the tool to report, where pathlib's raises a
+    # bare RuntimeError (the reason buildx._expand_home uses it too).
+    path = Path(os.path.expanduser(value))
     if not path.is_absolute():
         path = base / path
     return path if path.exists() else None
 
 
 def _base(directory: Any) -> Path:
-    return Path(directory).expanduser() if directory else Path(os.getcwd())
+    return Path(os.path.expanduser(directory)) if directory else Path(os.getcwd())
 
 
 def _working_tree(files: Any, working: Path) -> list[_Input]:
@@ -143,7 +146,14 @@ def _image_build_inputs(arguments: dict[str, Any]) -> list[_Input]:
     context = _local(arguments.get("path"), Path(os.getcwd()))
     if context is None or not context.is_dir():
         return []
-    return [_Input(context, build_context=True, dockerfile=arguments.get("dockerfile"))]
+    # docker-py makes a Dockerfile inside the context relative before excluding paths; the exclusion
+    # pattern that keeps it only matches the relative form.
+    dockerfile = arguments.get("dockerfile")
+    if dockerfile and os.path.isabs(os.path.expanduser(dockerfile)):
+        absolute = Path(os.path.expanduser(dockerfile)).resolve()
+        if absolute.is_relative_to(context.resolve()):
+            dockerfile = absolute.relative_to(context.resolve()).as_posix()
+    return [_Input(context, build_context=True, dockerfile=dockerfile)]
 
 
 # What each write tool reads from disk.  Compose tools are matched by prefix (see `inputs_for`).
@@ -200,9 +210,17 @@ class _Budget:
         self.files = 0
         self.bytes = 0
 
-    def charge(self, root: Path, size: int) -> None:
+    def count_file(self, root: Path) -> None:
         self.files += 1
+        self._check(root)
+
+    def count_bytes(self, root: Path, size: int) -> None:
+        # Charged as bytes are read, not from the size a file reports: a procfs file reports 0 and a log
+        # being written grows, and either would otherwise be read without limit.
         self.bytes += size
+        self._check(root)
+
+    def _check(self, root: Path) -> None:
         if self.files > MAX_SEARCH_FILES or self.bytes > MAX_SEARCH_BYTES:
             raise MarkerRefusedError(
                 f"{self._tool}: refused before anything ran on host {self._label!r}: what it reads from "
@@ -213,17 +231,20 @@ class _Budget:
             )
 
 
-def _find_marker(stream: IO[bytes]) -> int | None:
+def _find_marker(stream: IO[bytes], on_read: Callable[[int], None] | None = None) -> int | None:
     """The offset of the first marker in a stream, read in chunks.
 
     Args:
         stream: the bytes to search, from its current position
+        on_read: called with each chunk's length as it is read, so a caller can stop the read by raising
 
     Returns:
         int | None: the offset of the marker's first byte, or None when there is none
     """
     carried, offset = b"", 0
     while chunk := stream.read(_CHUNK):
+        if on_read is not None:
+            on_read(len(chunk))
         window = carried + chunk
         start = 0
         while (found := window.find(_PREFIX, start)) != -1:
@@ -280,9 +301,9 @@ def search_files(tool: str, arguments: dict[str, Any], label: str) -> None:
                 continue
             seen.add(path)
             try:
-                budget.charge(item.path, path.stat().st_size)
+                budget.count_file(item.path)
                 with path.open("rb") as handle:
-                    found = _find_marker(handle)
+                    found = _find_marker(handle, lambda size, root=item.path: budget.count_bytes(root, size))
             except OSError as exc:
                 # A file the server cannot read is one the CLI or docker-py reading it as the same user
                 # cannot send either, so the call fails on it by itself.
@@ -343,7 +364,7 @@ def search_archive(tool: str, arguments: dict[str, Any], label: str) -> None:
     if data is not None:
         source, opened = "the archive in `data`", contextlib.nullcontext(io.BytesIO(bytes(data)))
     elif isinstance(from_file, str):
-        path = Path(from_file).expanduser()
+        path = Path(os.path.expanduser(from_file))
         try:
             handle = path.open("rb")
         except OSError:
