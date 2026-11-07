@@ -37,7 +37,8 @@ from docker_mcp._hosts import (
     resolve_auto,
 )
 from docker_mcp.redaction import settings as redaction_settings
-from docker_mcp.server import configuration_warnings, is_domain_disabled, tool
+from docker_mcp.redaction import wire as redaction_wire
+from docker_mcp.server import READONLY, configuration_warnings, is_domain_disabled, tool, tool_usable_on
 from docker_mcp.tools._ssh_proxy import _CONNECT_TIMEOUT_CAP_SECONDS, connect_socket_with_family_fallback, parse_ssh_url
 from docker_mcp.tools._utils import classify_host_kernel, close_stream_quietly, env_flag, in_container
 
@@ -571,6 +572,39 @@ def system_df(verbose: bool = False, host: str | None = None) -> dict:  # noqa: 
     return _summarise_df(_get_client(host).df(), verbose)
 
 
+def _redaction_details(host: Host) -> dict:
+    """What an agent needs to know about markers on one redacted host, and the store's state there.
+
+    The server's instructions only point here, because what applies differs by host.  The tools named
+    are only those an agent could call there: a read-only host (its own `ro`, or
+    `DOCKER_MCP_SERVER_READONLY`) refuses the file-writing tools, and global redaction withdraws
+    `container_archive_get`, so naming them would mislead.
+
+    Args:
+        host: a redacted host
+
+    Returns:
+        dict: `notes`, the rules that apply on this host, and `store`, its value counts and bytes
+    """
+    read_only = host.read_only or READONLY
+    notes = [
+        "Credentials in this host's output show as [REDACTED:...] markers.",
+        "Never pass a marker to a tool or write one to a file: it is not swapped back, so it would be used "
+        "as literal text.",
+    ]
+    in_band = [
+        name if destination is None else f"{name} without {destination}"
+        for name, destination in redaction_wire.BYTE_TOOLS.items()
+        if tool_usable_on(name, read_only=read_only)
+    ]
+    if in_band:
+        notes.append(f"Bytes in band are refused here: {', '.join(in_band)}.")
+    writers = [name for name in redaction_wire.FILE_TOOLS if tool_usable_on(name, read_only=read_only)]
+    if writers:
+        notes.append(f"Files written to disk by {', '.join(writers)} are not redacted.")
+    return {"notes": notes, "store": redaction_wire.REDACTOR.report(host.label)}
+
+
 @tool()
 def host_list() -> list[dict]:
     """
@@ -585,8 +619,9 @@ def host_list() -> list[dict]:
     Returns:
         list[dict]: one per host: name; url (resolved daemon URL, null = docker-py platform default); read_only;
             non_destructive (blocks destructive calls only); redact (whether its output is redacted, by its own
-            option or the global switch); tls (whether a per-host cert dir is configured); default (the omitted-host
-            fallback)
+            option or the global switch); redaction (for a redacted host, `notes` on how markers behave there and
+            the `store` state; else null); tls (whether a per-host cert dir is configured); default
+            (the omitted-host fallback)
     """
     hosts = _host_registry()
     default_label = _default_host().label if hosts else None
@@ -597,6 +632,7 @@ def host_list() -> list[dict]:
             "read_only": host.read_only,
             "non_destructive": host.non_destructive,
             "redact": redaction_settings.redacts(host),
+            "redaction": _redaction_details(host) if redaction_settings.redacts(host) else None,
             "tls": host.cert_dir is not None,
             "default": host.label == default_label,
         }

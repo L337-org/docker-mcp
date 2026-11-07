@@ -214,6 +214,7 @@ class Redactor:
             _Candidate(hit.start, hit.end, entry, hit.form_id)
             for hit in state.matcher.find(text)
             if (entry := state.store.get(hit.value_id)) is not None
+            and (hit.form_id != forms.RAW or hit.end - hit.start >= SHORT_VALUE_LENGTH or _stands_alone(text, hit))
         ]
         if shape_rules:
             candidates.extend(_Candidate(span.start, span.end, None, forms.RAW) for span in rules.find(text))
@@ -266,6 +267,25 @@ class Redactor:
         if entry is None or fields.form_id not in forms.form_ids():
             return Refusal.NOT_THIS_PROCESS
         return forms.render(entry.secret.reveal(), fields.form_id)
+
+
+# A stored value shorter than this is matched raw only where it stands as a whole token.  Matched inside
+# other words, `pw` would be replaced in `pwd` and `admin` in `administrator`, damaging the output, and
+# the text around each marker would give the short value away, which is the opposite of the point.
+SHORT_VALUE_LENGTH = 8
+
+
+def _stands_alone(text: str, hit: Any) -> bool:
+    # A whole token is one with no word character either side, so any punctuation bounds it: `[pw]`,
+    # `pw.` and `user@pw` all count, while `pwd` does not.  Naming the allowed neighbours instead missed
+    # every delimiter the list left out.
+    before = text[hit.start - 1] if hit.start > 0 else " "
+    after = text[hit.end] if hit.end < len(text) else " "
+    return not _is_word_character(before) and not _is_word_character(after)
+
+
+def _is_word_character(character: str) -> bool:
+    return character.isalnum() or character == "_"
 
 
 def find_markers(text: str) -> list[str]:

@@ -9,6 +9,7 @@ import httpx
 
 import docker_mcp._hosts as _hosts
 from docker_mcp.exceptions import CapabilityError, ToolInputError, ToolRefusalError
+from docker_mcp.redaction.wire import Scope
 from docker_mcp.server import is_domain_disabled, query_catalog, register_resource_domains, resource, tool, tool_catalog
 from docker_mcp.tools._utils import package_version
 from docker_mcp.tools.system import host_list
@@ -156,7 +157,7 @@ def _section_url(section: str) -> str:
     )
 
 
-@resource("docker-docs://contents", mime_type="application/json")
+@resource("docker-docs://contents", scope=Scope.NO_DAEMON, mime_type="application/json")
 def list_docs_sections() -> str:
     """List the available documentation sections.
 
@@ -197,7 +198,7 @@ def list_docs_sections() -> str:
     )
 
 
-@resource("docker-mcp://tool-catalog", mime_type="application/json")
+@resource("docker-mcp://tool-catalog", scope=Scope.NO_DAEMON, mime_type="application/json")
 def get_tool_catalog() -> str:
     """List every tool this server knows about.
 
@@ -215,13 +216,14 @@ def get_tool_catalog() -> str:
     return json.dumps(tool_catalog(), indent=2)
 
 
-@resource("docker-mcp://hosts", mime_type="application/json")
+@resource("docker-mcp://hosts", scope=Scope.NO_DAEMON, mime_type="application/json")
 def get_hosts_resource() -> str:
     """The Docker hosts configured via DOCKER_MCP_SERVER_HOSTS.
 
     The same data as the `host_list` tool: each host's name, resolved daemon URL, read_only /
-    non_destructive / redact / tls flags, and which one is the default used when a tool's `host` argument is
-    omitted. The resolved default is observable here but is not itself a selectable label.
+    non_destructive / redact / tls flags, the redaction store's state for a redacted host, and which one
+    is the default used when a tool's `host` argument is omitted. The resolved default is observable
+    here but is not itself a selectable label.
 
     Returns:
         str: JSON list, one object per configured host
@@ -295,13 +297,25 @@ def get_host_container_stats_resource(host: str, id_or_name: str) -> str:
 # (`docker-logs:///...`) for the default host plus host-qualified (`docker-logs://{host}/...`)
 # variants, disambiguated by path-segment count.
 if _hosts.is_multi():
-    resource("docker-logs:///{id_or_name}", mime_type="text/plain")(get_container_logs_resource)
-    resource("docker-logs://{host}/{id_or_name}", mime_type="text/plain")(get_host_container_logs_resource)
-    resource("docker-stats:///{id_or_name}", mime_type="application/json")(get_container_stats_resource)
-    resource("docker-stats://{host}/{id_or_name}", mime_type="application/json")(get_host_container_stats_resource)
+    resource("docker-logs:///{id_or_name}", scope=Scope.DEFAULT_HOST, mime_type="text/plain")(
+        get_container_logs_resource
+    )
+    resource("docker-logs://{host}/{id_or_name}", scope=Scope.HOST_ARGUMENT, mime_type="text/plain")(
+        get_host_container_logs_resource
+    )
+    resource("docker-stats:///{id_or_name}", scope=Scope.DEFAULT_HOST, mime_type="application/json")(
+        get_container_stats_resource
+    )
+    resource("docker-stats://{host}/{id_or_name}", scope=Scope.HOST_ARGUMENT, mime_type="application/json")(
+        get_host_container_stats_resource
+    )
 else:
-    resource("docker-logs://{id_or_name}", mime_type="text/plain")(get_container_logs_resource)
-    resource("docker-stats://{id_or_name}", mime_type="application/json")(get_container_stats_resource)
+    resource("docker-logs://{id_or_name}", scope=Scope.DEFAULT_HOST, mime_type="text/plain")(
+        get_container_logs_resource
+    )
+    resource("docker-stats://{id_or_name}", scope=Scope.DEFAULT_HOST, mime_type="application/json")(
+        get_container_stats_resource
+    )
 
 
 # Service observability resources. Same pattern as the container resources above (domain gate,
@@ -381,16 +395,26 @@ def get_host_service_tasks_resource(host: str, id_or_name: str) -> str:
 
 
 if _hosts.is_multi():
-    resource("service-logs:///{id_or_name}", mime_type="text/plain")(get_service_logs_resource)
-    resource("service-logs://{host}/{id_or_name}", mime_type="text/plain")(get_host_service_logs_resource)
-    resource("service-tasks:///{id_or_name}", mime_type="application/json")(get_service_tasks_resource)
-    resource("service-tasks://{host}/{id_or_name}", mime_type="application/json")(get_host_service_tasks_resource)
+    resource("service-logs:///{id_or_name}", scope=Scope.DEFAULT_HOST, mime_type="text/plain")(
+        get_service_logs_resource
+    )
+    resource("service-logs://{host}/{id_or_name}", scope=Scope.HOST_ARGUMENT, mime_type="text/plain")(
+        get_host_service_logs_resource
+    )
+    resource("service-tasks:///{id_or_name}", scope=Scope.DEFAULT_HOST, mime_type="application/json")(
+        get_service_tasks_resource
+    )
+    resource("service-tasks://{host}/{id_or_name}", scope=Scope.HOST_ARGUMENT, mime_type="application/json")(
+        get_host_service_tasks_resource
+    )
 else:
-    resource("service-logs://{id_or_name}", mime_type="text/plain")(get_service_logs_resource)
-    resource("service-tasks://{id_or_name}", mime_type="application/json")(get_service_tasks_resource)
+    resource("service-logs://{id_or_name}", scope=Scope.DEFAULT_HOST, mime_type="text/plain")(get_service_logs_resource)
+    resource("service-tasks://{id_or_name}", scope=Scope.DEFAULT_HOST, mime_type="application/json")(
+        get_service_tasks_resource
+    )
 
 
-@resource("docker-docs://{section}", mime_type="text/html")
+@resource("docker-docs://{section}", scope=Scope.NO_DAEMON, mime_type="text/html")
 def get_docs_section(section: str) -> str:  # noqa: DOC501,DOC503
     """Fetch the documentation page for a section.
 

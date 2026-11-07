@@ -7,10 +7,6 @@ container (`container_exec`, `compose_exec`) can print a credential in a form no
 Run it with `DOCKER_MCP_SERVER_READONLY`, or mark a redacted host `(ro,redact)`, which removes those
 routes.
 
-> **Status: not yet functional.**  This build reads and reports the settings below, but does not
-> redact anything yet: output from every host is returned unredacted, and the server says so in a
-> configuration warning.
-
 ## Turning it on
 
 Redaction is off by default.  There are two ways to turn it on, and they combine.
@@ -56,6 +52,42 @@ DOCKER_MCP_SERVER_REDACT_NAMES=UPSTREAM_*, *_REF, !SORT_KEY
 The names setting does nothing on its own.  Setting it with redaction on for no host logs a warning
 at startup and changes nothing.
 
+## Where redaction applies
+
+Every tool result, every resource body and every error message from a redacted host is redacted.  Each
+call is judged by the host it reaches: a tool by its `host` argument, or the default host when it names
+none; a resource by the host in its URI, or the default host for the forms without one.
+
+- **Output from a host that is not redacted is never redacted**, even where it contains a value read
+  from a redacted host.  Redacting it would tell an agent that a credential it can read in full on one
+  host is also used on the redacted one.
+- **Tools that reach no daemon are not redacted:** `registry_*`, `hub_*`, `context_*`, `docs_lookup`,
+  `host_list` and `tool_list`.
+- **Raw bytes cannot be redacted** without corrupting the archive they belong to.  With
+  `DOCKER_MCP_SERVER_REDACT` on, `container_archive_get` is not offered at all, and `container_export`
+  and `image_save` require `dest_path`.  On a host marked `redact`, the same calls are refused.  The
+  files that `container_archive_get_to_file`, `container_export` and `image_save` write are not
+  redacted, and they are written on the machine running the server, even when the daemon is remote.
+
+The server reads the values to redact from the redacted host's daemon: values under a credential name
+in container, image and service environments, in build arguments recorded in image history, and in a
+Compose project's `.env` file (read by Compose's quoting and comment rules, but without its escape
+sequences in double quotes, variable interpolation or values spanning lines); and the content of Swarm
+configs whose name is a credential name.  On each
+call it compares the IDs of the daemon's containers, images, services (with their versions) and configs
+with the last call's, and reads again if they differ, so a container created a moment ago is covered.  If
+reading fails, the call is refused rather than answered with output that might not be redacted.
+
+A value read this way is redacted wherever it appears, however word-like.  One shorter than eight
+characters is redacted only where no letter, digit or underscore adjoins it, so that `pw` is replaced in
+`[pw]` or `pw.` but not inside `pwd`, which would also give the short value away.
+
+While redaction is on anywhere, the server's instructions say so in one line and point the agent to
+`host_list`, whose `redaction` notes give each redacted host's rules: that a marker must not be passed to
+a tool or written to a file; the tools whose bytes in band are refused; and, on a host that accepts
+writes, the tools whose files written to disk are not redacted.  The notes name only the tools that are
+registered and allowed on that host.
+
 ## What is redacted, and how
 
 Two things are replaced, wherever they appear in a redacted host's output, dict keys included:
@@ -71,14 +103,15 @@ Two things are replaced, wherever they appear in a redacted host's output, dict 
   it is 8 or more characters and looks random; the value after a credential-named command-line flag,
   such as `--password`, whatever it looks like, including where Docker reports a command as a list; and
   any other run of 32 or more base64 characters that looks random.  Where two of these overlap, the
-  whole of both is replaced as one.  Hex alone is never treated as a credential by these rules, nor is a run longer than
-  16 KB, and lines wrapped by a base64 encoder count as one run.  A value found this way is remembered,
-  so its encoded forms are matched from then on.
+  whole of both is replaced as one.  Hex alone is never treated as a credential by these rules, nor is a
+  run longer than 16 KB, and lines wrapped by a base64 encoder count as one run.  A value found this way
+  is remembered, so its encoded forms are matched from then on.
 
 Each replacement is a marker, `[REDACTED:<token>]`, where the token is 22 characters.  Every marker is
 different, even for the same credential in the same result, so nothing in the output shows that two
 places hold the same value; and a marker says nothing about the credential's format or how it was
-found.  Markers are valid only in the server process that issued them.
+found.  A marker passed to a tool as an argument is not swapped back for its value: it reaches the daemon
+as literal text.
 
 ## Fields the rules leave alone
 
@@ -106,6 +139,9 @@ makes every earlier marker invalid.
 
 ## Checking what is in effect
 
+- **`host_list`** and the `docker-mcp://hosts` resource also give each redacted host a `redaction`
+  field: `notes` on how markers behave on that host, which differ on a read-only one, and the `store`
+  state, values and bytes held for each kind and whether the overall budget is reached.  Never a value.
 - **`tool_list`** and the `docker-mcp://tool-catalog` resource report, under `switches`:
   `DOCKER_MCP_SERVER_REDACT`, `DOCKER_MCP_SERVER_REDACT_NAMES` as the resolved name list (`builtin`,
   `added` and `excluded`), and `redacted_hosts`, the hosts whose output is redacted.
@@ -126,3 +162,13 @@ Because an MCP client rarely shows a server's stderr to anyone, each warning goe
 `DOCKER_MCP_SERVER_DISABLE` mistakes do: a `WARNING` line on stderr at startup, an entry in
 `tool_list`'s `configuration_warnings`, and a line at the top of the server instructions telling the
 agent to check `tool_list` and tell the user.
+
+## The boundary this protects
+
+Redaction keeps credentials from an agent whose only route to Docker is this server.  An agent that can
+also run commands as the same user on the same machine, as a coding agent can, could read the server
+process's memory, though it could as easily use the Docker socket directly; for real separation run the
+server as another user or in its own container, which the published image provides.  While redaction is
+on the server switches core dumps off, so a crash cannot write the stored values to disk.  Two limits
+are accepted: values cannot be reliably wiped from memory on shutdown, because Python strings cannot be
+overwritten in place, and the store cannot be kept out of swap.

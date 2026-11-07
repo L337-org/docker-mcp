@@ -250,3 +250,34 @@ def test_the_budget_refusal_tells_the_client_what_to_do(redactor, monkeypatch):
     with pytest.raises(RedactionBudgetError) as caught:
         redactor.redact("anything", "local")
     assert isinstance(caught.value, ToolRefusalError) and "restart the server" in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    ("text", "replaced"),
+    [
+        ("DB_PASSWORD=pw", True),
+        ('{"password": "pw"}', True),
+        ("login with pw now", True),
+        ("pw", True),
+        ("[pw]", True),
+        ("(pw)", True),
+        ("the password is pw.", True),
+        ("a=pw; b=1", True),
+        ("/pw/", True),
+        ("user@pw", True),
+        ("cd /home/pwd/x", False),  # inside another word: left alone, and nothing points at the value
+        ("pwned", False),
+        ("my_pw", False),  # an underscore joins words in an identifier
+    ],
+)
+def test_a_short_harvested_value_is_replaced_only_as_a_whole_token(redactor, text, replaced):
+    redactor.remember("pw", "prod")
+    out = redactor.redact(text, "prod")
+    assert ("[REDACTED:" in out) is replaced
+    if not replaced:
+        assert out == text
+
+
+def test_a_value_of_the_short_length_or_more_is_still_replaced_inside_words(redactor):
+    redactor.remember("hunter22", "prod")  # eight characters: matched anywhere
+    assert "hunter22" not in redactor.redact("xhunter22x", "prod")
