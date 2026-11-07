@@ -35,6 +35,9 @@ class Kind(enum.Enum):
             by `image_push`.
         BUILD_ARG: refused; recorded in the image's history, which anyone who can pull it can read.
         BAKE_OVERRIDE: refused; passed on the command line, where other users of the machine can read it.
+        COMMAND_LINE: refused; any other argument a CLI-backed tool puts on the docker CLI's command line,
+            where other users of the machine, or of the remote host under the SSH fallback, can read it.
+            A secure route always exists: `vars`, or `env` on `compose_run` and `compose_exec`.
         ARCHIVE: archive bytes, never swapped back, since replacing text would change a member's size;
             `container_archive_put` searches them for markers instead (see `disk.py`).
     """
@@ -44,6 +47,7 @@ class Kind(enum.Enum):
     LABEL = "label"
     BUILD_ARG = "build_arg"
     BAKE_OVERRIDE = "bake_override"
+    COMMAND_LINE = "command_line"
     ARCHIVE = "archive"
 
 
@@ -199,6 +203,21 @@ _NESTED_KEYS: dict[str, Kind] = {
     for spelling in (key, key.capitalize())
 }
 
+# The arguments of a CLI-backed tool whose values reach the docker CLI through its environment rather than
+# its command line, so a marker in them is swapped back.  `vars` always does (reserved names are refused
+# there); `env` does for a name the CLI's environment can carry (see `_env_name_travels_by_environment`).
+ENVIRONMENT_ARGUMENTS = frozenset({"env", "vars"})
+
+
+def _env_name_travels_by_environment(name: Any) -> bool:
+    # The same test `_cli.values_by_name` applies when it decides between `--env NAME` and `--env NAME=VALUE`.
+    # Imported here: docker_mcp.tools imports docker_mcp.server, which imports this package.
+    from docker_mcp.tools._cli import is_reserved_env_name
+    from docker_mcp.tools._ssh_proxy import is_shell_assignable
+
+    return isinstance(name, str) and is_shell_assignable(name) and not is_reserved_env_name(name)
+
+
 _GUARDRAIL_REASONS = {
     Kind.NAME: (
         "a name or identifier, where a credential is never legitimate: names are copied into every listing "
@@ -216,6 +235,12 @@ _GUARDRAIL_REASONS = {
     Kind.BAKE_OVERRIDE: (
         "a bake override, which is passed on the command line, where other users of the machine can read "
         "it. Pass the value in `vars` and reference it as a bake variable instead"
+    ),
+    Kind.COMMAND_LINE: (
+        "passed to the docker CLI on its command line, where other users of the machine, or of the remote host, "
+        "can read it. Pass the value through the CLI's environment instead: in `env` on compose_run and "
+        'compose_exec, referenced from the command as "$NAME" (for example `sh -c \'... "$NAME"\'`), or in '
+        "`vars`, referenced from the compose or bake file"
     ),
 }
 
@@ -256,7 +281,7 @@ def has_marker(value: Any) -> bool:
 class _Swapper:
     """Walks one call's arguments, swapping markers back or raising on the first that cannot be."""
 
-    def __init__(self, redactor: Redactor, tool: str, label: str | None, *, swaps: bool) -> None:
+    def __init__(self, redactor: Redactor, tool: str, label: str | None, *, swaps: bool, command_line: bool) -> None:
         """Set up the walk of one call.
 
         Args:
@@ -264,11 +289,13 @@ class _Swapper:
             tool: the tool's name, for messages
             label: the host the call targets, or None for a tool that reaches no daemon
             swaps: whether a marker may be swapped back on that host
+            command_line: whether the tool passes its arguments on the docker CLI's command line
         """
         self._redactor = redactor
         self._tool = tool
         self._label = label
         self._swaps = swaps
+        self._command_line = command_line
 
     def argument(self, name: str, value: Any) -> Any:
         if not has_marker(value):
@@ -278,7 +305,20 @@ class _Swapper:
             return value
         # An argument the table does not know is swapped back, as the design's default; the test that
         # holds the table to the registered tools keeps this from being reached.
-        return self._walk(value, name, kind or Kind.SWAP, nested=name in _NESTED_ARGUMENTS)
+        kind = kind or Kind.SWAP
+        if self._command_line and kind is Kind.SWAP and name not in ENVIRONMENT_ARGUMENTS:
+            kind = Kind.COMMAND_LINE
+        if self._command_line and name == "env" and isinstance(value, dict):
+            # A name the CLI's environment cannot carry is passed as `--env NAME=VALUE`, on the command line.
+            return {
+                self._walk(key, f"env[{key!r}]", Kind.COMMAND_LINE): self._walk(
+                    item,
+                    f"env[{key!r}]",
+                    Kind.SWAP if _env_name_travels_by_environment(key) else Kind.COMMAND_LINE,
+                )
+                for key, item in value.items()
+            }
+        return self._walk(value, name, kind, nested=name in _NESTED_ARGUMENTS)
 
     def _walk(self, value: Any, where: str, kind: Kind, *, nested: bool = False) -> Any:
         if isinstance(value, str):
@@ -345,7 +385,13 @@ _REFUSALS = {
 
 
 def swap_markers(  # noqa: DOC502 - raised by `_Swapper._resolve`
-    redactor: Redactor, tool: str, arguments: dict[str, Any], label: str | None, *, swaps: bool
+    redactor: Redactor,
+    tool: str,
+    arguments: dict[str, Any],
+    label: str | None,
+    *,
+    swaps: bool,
+    command_line: bool = False,
 ) -> dict[str, Any]:
     """A write's arguments with every marker swapped back, or a refusal naming the first that cannot be.
 
@@ -356,6 +402,8 @@ def swap_markers(  # noqa: DOC502 - raised by `_Swapper._resolve`
         label: the host the call targets, or None for a tool that reaches no daemon
         swaps: True when the host is redacted and accepts writes, the only place a marker is swapped back;
             elsewhere every marker refuses the call
+        command_line: True for a CLI-backed tool, whose arguments other than those in
+            `ENVIRONMENT_ARGUMENTS` go on the docker CLI's command line, where a marker is refused
 
     Returns:
         dict: the arguments, the same object when nothing was swapped
@@ -364,7 +412,7 @@ def swap_markers(  # noqa: DOC502 - raised by `_Swapper._resolve`
         MarkerRefusedError: a marker could not be swapped back, or sat where markers are refused; the
             message names the argument and the reason, never a value
     """
-    swapper = _Swapper(redactor, tool, label, swaps=swaps)
+    swapper = _Swapper(redactor, tool, label, swaps=swaps, command_line=command_line)
     swapped = {name: swapper.argument(name, value) for name, value in arguments.items() if name != "host"}
     if all(swapped[name] is arguments[name] for name in swapped):
         return arguments

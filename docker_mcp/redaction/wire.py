@@ -244,6 +244,7 @@ def _prepare(  # noqa: DOC501,DOC503 - raises the caller's error_cls, which pydo
     harvest: bool,
     writes: bool,
     guarded: bool,
+    command_line: bool = False,
 ) -> tuple[str | None, dict[str, Any]]:
     """Everything a call needs before it runs: refusals, markers swapped back, files searched, a fresh harvest.
 
@@ -255,6 +256,7 @@ def _prepare(  # noqa: DOC501,DOC503 - raises the caller's error_cls, which pydo
         harvest: False for a tool whose output carries no daemon data, which is not held up by a harvest
         writes: True for a tool that is not read-only, whose arguments may carry markers to swap back
         guarded: True for a write the host guard refuses on a read-only host
+        command_line: True for a CLI-backed tool, whose arguments mostly reach the docker CLI's command line
 
     Returns:
         tuple: the redacted host's label, or None when the call's output is not redacted; and the
@@ -269,7 +271,9 @@ def _prepare(  # noqa: DOC501,DOC503 - raises the caller's error_cls, which pydo
     redacted = label is not None and settings.host_redacted(label)
     try:
         if writes and settings.any_redacted():
-            arguments = _swap(name, scope, arguments, label, redacted=redacted, guarded=guarded)
+            arguments = _swap(
+                name, scope, arguments, label, redacted=redacted, guarded=guarded, command_line=command_line
+            )
         if not redacted:
             return None, arguments
         label = cast(str, label)
@@ -297,11 +301,18 @@ def _prepare(  # noqa: DOC501,DOC503 - raises the caller's error_cls, which pydo
 
 
 def _swap(
-    name: str, scope: Scope, arguments: dict[str, Any], label: str | None, *, redacted: bool, guarded: bool
+    name: str,
+    scope: Scope,
+    arguments: dict[str, Any],
+    label: str | None,
+    *,
+    redacted: bool,
+    guarded: bool,
+    command_line: bool,
 ) -> dict[str, Any]:
     if scope is Scope.NO_DAEMON:
         # No host to swap a marker back for.
-        return swap.swap_markers(REDACTOR, name, arguments, None, swaps=False)
+        return swap.swap_markers(REDACTOR, name, arguments, None, swaps=False, command_line=command_line)
     # Left to the host guard, which refuses with its own message: an unknown label, and a guarded write
     # to a read-only host.  Connection control is not guarded, so it is checked here like any other call.
     if label is None:
@@ -312,7 +323,9 @@ def _swap(
     # A marker is swapped back only on a redacted host that accepts writes.  Elsewhere every one is
     # refused rather than reaching the daemon or a registry as literal text: no marker was issued for an
     # unfiltered host, and a read-only one never swaps back.
-    return swap.swap_markers(REDACTOR, name, arguments, label, swaps=redacted and not read_only)
+    return swap.swap_markers(
+        REDACTOR, name, arguments, label, swaps=redacted and not read_only, command_line=command_line
+    )
 
 
 def _failed(exc: Exception, label: str, error_cls: type[Exception]) -> Exception:
@@ -347,6 +360,7 @@ def wrap[F: Callable[..., Any]](
     harvest: bool = True,
     writes: bool = False,
     guarded: bool = False,
+    command_line: bool = False,
 ) -> F:
     """Wrap a registered tool or resource so its output and errors are redacted on a redacted host.
 
@@ -364,6 +378,8 @@ def wrap[F: Callable[..., Any]](
             and returns no daemon data a harvest could add to
         writes: True for a tool that is not read-only, whose arguments have markers swapped back
         guarded: True for a write the host guard refuses on a read-only host, which is left to it
+        command_line: True for a CLI-backed tool, where a marker is swapped back only in an argument that
+            reaches the CLI through its environment
 
     Returns:
         F: the wrapped callable, carrying its scope as `REDACTION_SCOPE`
@@ -378,7 +394,16 @@ def wrap[F: Callable[..., Any]](
 
     def prepare(args: tuple, kwargs: dict) -> tuple[str | None, tuple, dict]:
         arguments = arguments_of(args, kwargs)
-        label, prepared = _prepare(name, scope, error_cls, arguments, harvest=harvest, writes=writes, guarded=guarded)
+        label, prepared = _prepare(
+            name,
+            scope,
+            error_cls,
+            arguments,
+            harvest=harvest,
+            writes=writes,
+            guarded=guarded,
+            command_line=command_line,
+        )
         # Called by name only when a marker was swapped back, so every other call reaches the function
         # exactly as it arrived.
         return (label, args, kwargs) if prepared is arguments else (label, (), prepared)

@@ -598,8 +598,8 @@ def _redaction_details(host: Host) -> dict:
     else:
         notes += [
             "Pass a marker where a write to this host needs its credential: the real value is used. A marker "
-            "from another host or an earlier server run is refused, as is one in a name, label, build argument "
-            "or bake override.",
+            "from another host or an earlier server run is refused, as is one in a name, label, build argument, "
+            "or a CLI tool's command line (use `env` or `vars` there).",
             "Never write a marker to a file: a call reading a file or archive that holds one is refused.",
         ]
     in_band = [

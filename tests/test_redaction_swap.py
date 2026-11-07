@@ -341,3 +341,71 @@ def test_the_table_names_only_arguments_that_exist():
         for parameter in inspect.signature(registered.fn).parameters
     }
     assert set(swap.ARGUMENTS) - present == set()
+
+
+# ---------- CLI-backed tools ----------
+
+
+def _cli_tool(name="buildx_imagetools_create"):
+    # A CLI-backed name that reads no files, so the file search, tested on its own, plays no part.
+    calls: list[dict[str, Any]] = []
+
+    def target(
+        command: list | None = None,
+        env: dict | None = None,
+        vars: dict | None = None,
+        output: list | None = None,
+        host: str | None = None,
+    ) -> str:
+        calls.append({"command": command, "env": env, "vars": vars})
+        return "ok"
+
+    return wire.wrap(target, name, Scope.HOST_ARGUMENT, ToolError, writes=True, guarded=True, command_line=True), calls
+
+
+def test_a_cli_backed_tool_swaps_back_only_what_reaches_the_cli_through_its_environment(redactor):
+    wrapped, calls = _cli_tool()
+    wrapped(env={"DB_PASSWORD": _marker(redactor)}, vars={"TOKEN": _marker(redactor)}, host="prod")
+    assert calls == [{"command": None, "env": {"DB_PASSWORD": _SECRET}, "vars": {"TOKEN": _SECRET}}]
+
+
+@pytest.mark.parametrize(
+    ("arguments", "where"),
+    [
+        ({"command": ["psql", "-p", "{m}"]}, "`command[2]`"),
+        ({"output": ["type=registry,token={m}"]}, "`output[0]`"),
+        # Names the CLI's environment cannot carry go on the command line as `--env NAME=VALUE`.
+        ({"env": {"DOCKER_PASSWORD": "{m}"}}, "`env['DOCKER_PASSWORD']`"),
+        ({"env": {"app.password": "{m}"}}, "`env['app.password']`"),
+    ],
+)
+def test_a_cli_backed_tool_refuses_a_marker_bound_for_the_command_line(redactor, arguments, where):
+    marker = _marker(redactor)
+    wrapped, calls = _cli_tool()
+    filled = {
+        key: (
+            {k: v.replace("{m}", marker) for k, v in value.items()}
+            if isinstance(value, dict)
+            else [v.replace("{m}", marker) for v in value]
+        )
+        for key, value in arguments.items()
+    }
+    message = _refusal(wrapped, calls, host="prod", **filled)
+    assert where in message
+    assert "on its command line" in message
+    assert "`env`" in message and "`vars`" in message
+
+
+def test_a_tool_that_is_not_cli_backed_still_swaps_back_its_command(redactor):
+    wrapped, calls = _write_tool(name="container_exec")
+    wrapped(command=["psql", "-p", _marker(redactor)], host="prod")
+    assert calls[0]["command"] == ["psql", "-p", _SECRET]
+
+
+def test_the_registered_compose_exec_refuses_a_marker_in_its_command(redactor):
+    """The server marks the CLI-backed domains, so the real tool refuses where container_exec swaps."""
+    from docker_mcp.server import mcp
+
+    registered = mcp._tool_manager._tools["compose_exec"]
+    with pytest.raises(ToolError, match="on its command line"):
+        registered.fn(service="db", command=["psql", "-p", _marker(redactor)], host="prod")

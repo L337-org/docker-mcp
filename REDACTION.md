@@ -145,7 +145,14 @@ refused rather than swapped back where a credential is never legitimate:
   in the image's history.  Pass the value in `buildx_build`'s `vars` and use it as a build secret
   (`secret`: `id=NAME,env=VAR`) instead;
 - **bake overrides,** `buildx_bake`'s `set_overrides`, which are passed on the command line.  Pass the
-  value in `vars` and reference it as a bake variable instead.
+  value in `vars` and reference it as a bake variable instead;
+- **the docker CLI's command line,** for the CLI-backed tools (Compose, `stack_deploy` and buildx): every
+  argument except `vars`, and `env` on `compose_run` and `compose_exec`, which reach the CLI through its
+  environment.  Other users of the machine, or of the remote host under the SSH fallback, can read a
+  command line.  So a password goes in `env` and is referenced from the command
+  (`sh -c 'psql -p "$PGPASS"'`), or in `vars` and referenced from the compose or bake file.  An `env`
+  name the CLI's environment cannot carry, one that is reserved (such as `DOCKER_*`) or not a plain shell
+  name (such as `app.password`), goes on the command line, so a marker in its value is refused too.
 
 The same keys inside `extra_kwargs`, `updates` and `container_commit`'s `conf` are refused the same way.
 
