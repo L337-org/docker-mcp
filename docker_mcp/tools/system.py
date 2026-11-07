@@ -575,10 +575,11 @@ def system_df(verbose: bool = False, host: str | None = None) -> dict:  # noqa: 
 def _redaction_details(host: Host) -> dict:
     """What an agent needs to know about markers on one redacted host, and the store's state there.
 
-    The server's instructions only point here, because what applies differs by host.  The tools named
-    are only those an agent could call there: a read-only host (its own `ro`, or
-    `DOCKER_MCP_SERVER_READONLY`) refuses the file-writing tools, and global redaction withdraws
-    `container_archive_get`, so naming them would mislead.
+    The server's instructions only point here, because what applies differs by host.  A host that accepts
+    writes swaps markers back in them; a read-only one (its own `ro`, or `DOCKER_MCP_SERVER_READONLY`)
+    never does.  The tools named are only those an agent could call there: a read-only host refuses the
+    file-writing tools, and global redaction withdraws `container_archive_get`, so naming them would
+    mislead.
 
     Args:
         host: a redacted host
@@ -587,11 +588,20 @@ def _redaction_details(host: Host) -> dict:
         dict: `notes`, the rules that apply on this host, and `store`, its value counts and bytes
     """
     read_only = host.read_only or READONLY
-    notes = [
-        "Credentials in this host's output show as [REDACTED:...] markers.",
-        "Never pass a marker to a tool or write one to a file: it is not swapped back, so it would be used "
-        "as literal text.",
-    ]
+    notes = ["Credentials in this host's output show as [REDACTED:...] markers."]
+    if read_only:
+        # Nothing is written here, so markers are never swapped back: to a read tool one is literal text.
+        notes.append(
+            "Never pass a marker to a tool or write one to a file: it is not swapped back, so it would be used "
+            "as literal text."
+        )
+    else:
+        notes += [
+            "Pass a marker where a write to this host needs its credential: the real value is used. A marker "
+            "from another host or an earlier server run is refused, as is one in a name, label, build argument "
+            "or bake override.",
+            "Never write a marker to a file: a call reading a file or archive that holds one is refused.",
+        ]
     in_band = [
         name if destination is None else f"{name} without {destination}"
         for name, destination in redaction_wire.BYTE_TOOLS.items()

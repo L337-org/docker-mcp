@@ -1506,6 +1506,9 @@ def tool[F: Callable[..., Any]](**kwargs: Any) -> Callable[[F], F]:
                 # A connection-control tool must work on a host whose client is wedged, which a harvest
                 # first would fail on, and returns no daemon data a harvest could add to.
                 harvest=name not in _CONNECTION_CONTROL,
+                # Every tool that is not read-only has markers in its arguments swapped back, connection
+                # control included: logging in with a credential read from the daemon is legitimate.
+                writes=category is not ToolCategory.READ_ONLY,
             )
         )
         # Slim the advertised input schema (drop information-free titles, nullable-anyOf null branches,
