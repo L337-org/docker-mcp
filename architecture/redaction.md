@@ -49,6 +49,22 @@ module per concern:
   recovers a host whose client is wedged.
 - **`redactor.py`** - `Redactor`: `remember` (store a harvested value), `redact` (walk a result and
   replace), `resolve` (a marker back to its text, or a `Refusal`).
+- **`swap.py`** - `swap_markers`: a write's arguments with every marker swapped back through `resolve`,
+  or `MarkerRefusedError` naming the first that cannot be.  `ARGUMENTS` classifies every argument of
+  every write tool that can hold text, by name, as swapped back or refused by the guardrail (names,
+  labels, build arguments, bake overrides); `_TOOL_ARGUMENTS` overrides a name for one tool, and
+  `_NESTED_KEYS` applies the guardrail inside `extra_kwargs`, `updates` and `conf`.  For a tool in a
+  CLI-backed domain (`server.tool()` passes `command_line=domain in _CLI_DOMAINS`), every argument the
+  table swaps back is refused instead (`COMMAND_LINE`), except those in `ENVIRONMENT_ARGUMENTS`, which
+  reach the CLI through its environment; within `env`, a name `_cli.values_by_name` would put on the
+  command line is refused, by the same test.
+- **`disk.py`** - the search of what a write reads from disk (`FILE_INPUTS`, with Compose tools matched
+  by prefix) and of `container_archive_put`'s archive, refusing on any marker-shaped text.  The
+  directories searched are the ones the CLI resolves the call's relative paths against, which for Compose
+  and a stack is the first compose file's directory, where the fallback stages `project_dir` or `cwd`.  A
+  build context is walked with docker-py's `exclude_paths` and the fallback's `_read_dockerignore`, so what
+  is searched is what is sent.  The limits are the fallback's staging limits, held equal by a test, and
+  are charged on bytes actually read, not reported sizes; past them the call is refused.
 
 ### Concurrency
 
@@ -93,9 +109,22 @@ cannot see would come back unredacted.  Neither is reachable before the overall 
 `DEFAULT_HOST` (a resource whose URI names no host) or `NO_DAEMON`.  A tool's scope is derived: it has a
 `host` argument, or it is in `NO_DAEMON_TOOLS`.  A resource's is required by `server.resource(scope=...)`.
 `test_every_registered_tool_and_resource_is_classified_for_redaction` holds both, so a new one cannot
-slip through.  For a call to a redacted host the wrapper refuses first (the budget; bytes in band), then
-refreshes the harvest, runs the call, redacts its result or the text of its translated failure (raised
-without the cause, which holds the same text unredacted), and asks the harvest about IDs in the result.
+slip through.
+
+`server.tool()` passes `writes=True` for every tool that is not `READ_ONLY`, connection control included,
+since logging in with a credential read from the daemon is legitimate.  While redaction is on anywhere,
+a write's markers go through `swap.swap_markers` first, on every host: swapped back on a redacted host
+that accepts writes, refused everywhere else, since no marker was issued for an unfiltered host.  A call
+to an unknown host, and a write the guard refuses on a read-only host (`guarded`, from `_is_host_write`),
+are left alone, for the host guard to refuse with its own message.  Connection control is not guarded, so
+a `system_login` to a read-only host has its markers refused here.  The
+function is then called by name with the swapped arguments, and exactly as it arrived when nothing was
+swapped.
+
+For a call to a redacted host the wrapper refuses first (the budget; bytes in band), then, for a write to
+a host that accepts writes, searches the files or archive it reads (`disk.py`), refreshes the harvest,
+runs the call, redacts its result or the text of its translated failure (raised without the cause, which
+holds the same text unredacted), and asks the harvest about IDs in the result.
 A JSON resource body is parsed, redacted as data and dumped again, so an escaped value is still found.
 Anything else that fails inside redaction propagates: the call fails rather than returning output.
 
@@ -170,6 +199,37 @@ Each is a single table, so adding a case is a one-line change plus its test.
    `tests/test_redaction_wire.py`.
 3. A resource passes `scope=` to `@resource()`: `HOST_ARGUMENT` for `{host}` in the URI, `DEFAULT_HOST`
    for daemon data with no host in the URI, `NO_DAEMON` otherwise.
+
+### Adding an argument to a write tool
+
+1. An argument that can hold text goes in `ARGUMENTS` in `docker_mcp/redaction/swap.py`, unless its name
+   is already there with the right meaning.  Refuse it (`NAME`, `LABEL`, `BUILD_ARG`, `BAKE_OVERRIDE`)
+   only where a credential is never legitimate and would be copied far beyond the host; otherwise
+   `SWAP`.  Where the name means something else in one tool, add the pair to `_TOOL_ARGUMENTS`.
+   `test_every_argument_of_every_write_tool_that_can_hold_text_is_classified` in
+   `tests/test_redaction_swap.py` fails until it is there.
+2. An argument holding docker-py keyword arguments or an Engine spec goes in `_NESTED_ARGUMENTS`, so the
+   guardrail applies to the keys inside it.
+3. Add a refused kind to the guardrail list in `REDACTION.md`.
+4. In a CLI-backed tool, an argument whose value is delivered through the CLI's environment rather than
+   its command line goes in `ENVIRONMENT_ARGUMENTS`; anything else is refused there, whatever the table
+   says.
+
+### Adding a file a write tool reads
+
+1. A tool taking a path argument goes in `FILE_INPUTS` in `docker_mcp/redaction/disk.py`, returning what
+   the call reads, or in `NOT_SEARCHED` with the reason.  Compose tools are matched by prefix.
+   `test_every_write_tool_that_takes_a_path_is_searched_or_says_why_not` in
+   `tests/test_redaction_disk.py` fails until it is one or the other; a new path argument name goes in
+   its `_PATH_ARGUMENTS`.
+2. Search what the SSH fallback stages for the same call, and update the list in `REDACTION.md`.
+
+### Searching inside a compressed archive
+
+1. Give the format's step in `_ARCHIVE_FORMATS` in `docker_mcp/redaction/disk.py` a function that
+   streams the decompressed bytes through the same search, capped on decompressed size.
+2. Replace `test_a_compressed_archive_is_refused` for that format with one that finds a marker inside it,
+   and update the archive paragraph in `REDACTION.md`.
 
 ### Adding a harvest source
 

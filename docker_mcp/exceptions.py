@@ -105,6 +105,16 @@ class RedactionBudgetError(ToolRefusalError):
     """
 
 
+class MarkerRefusedError(ToolRefusalError):
+    """A write refused before it ran because of a redaction marker in its arguments or in a file it reads.
+
+    The marker could not be swapped back (from another host, from an earlier process, altered, or for a
+    value that was not stored), or it sat where a credential is never legitimate, or it was in a file or
+    archive, where it is never swapped back.  The message names the argument or file and the reason, never
+    a value.
+    """
+
+
 class RedactionResetError(DockerMcpError):
     """The redactor started a new generation partway through this call, so the call was refused.
 

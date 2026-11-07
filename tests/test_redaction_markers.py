@@ -43,6 +43,17 @@ def test_a_marker_from_another_process_or_altered_is_not_this_processes():
     assert codec.read(altered) is MarkerFault.NOT_THIS_PROCESS
 
 
+def test_a_marker_altered_only_in_its_last_characters_spare_bits_is_refused():
+    # The last character carries 4 bits the block does not use; the decoder ignores them, so without a
+    # check these spellings read back as the original marker.
+    codec = MarkerCodec()
+    token = _token(codec.issue(1, 0, 0))
+    alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+    base = alphabet.index(token[-1]) & ~0b1111
+    spellings = [token[:-1] + alphabet[base + low] for low in range(16)]
+    assert [codec.read(spelling) is MarkerFault.MALFORMED for spelling in spellings].count(False) == 1
+
+
 @pytest.mark.parametrize("token", ["", "short", "A" * 21, "A" * 23, "!" * 22])
 def test_a_token_that_is_not_a_marker_is_malformed(token):
     assert MarkerCodec().read(token) is MarkerFault.MALFORMED
