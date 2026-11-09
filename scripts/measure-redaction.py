@@ -6,11 +6,12 @@
 # [tool.uv.sources]
 # docker-mcp-server = { path = "../", editable = true }
 # ///
-r"""Regenerate the measured figures in `REDACTION.md`: what redaction catches, misses and costs.
+r"""Regenerate the measured figures in `REDACTION.md`, and check the mode end to end with a real agent.
 
-    uv run scripts/measure-redaction.py sweep              # what is caught, missed, replaced by mistake
-    uv run scripts/measure-redaction.py cost               # time added per call, on a large daemon
+    uv run scripts/measure-redaction.py sweep --configuration all   # caught, missed, replaced by mistake
     uv run scripts/measure-redaction.py sweep --docker-host unix:///var/run/docker.sock
+    uv run scripts/measure-redaction.py cost                        # time added per call, on a large daemon
+    uv run scripts/measure-redaction.py agents                      # everyday requests to a real agent
 
 By default each run starts a throwaway Docker-in-Docker daemon (`--dind-image`, privileged, on a
 loopback port), measures against it and removes it, so nothing is left on the daemon you use.
@@ -24,21 +25,31 @@ Correcting the document stays a reviewed edit informed by this output.
 
 THE METHOD
 ==========
-The server is configured with two labels on the same daemon, one redacted and one not, and every
-call is made on both through the server's own `call_tool`, the path a client takes.  The unfiltered
-output is the reference.
-
-sweep: random credentials of each kind the design names are planted (environments, logs in raw,
-base64 and hex, an image-level variable, a build argument, files in an image, a Compose `.env`
-value, a value after `--password` on a command line, and with `--swarm` a service's environment and
-a Swarm secret printed to its logs), with seven decoys that look like credentials but are not.  A
+sweep: two server processes reach the same daemon, a redacted one configured as `--configuration`
+says (per host or global, writable or read-only) and an unfiltered writable reference, and every call
+is made on both through MCP, the path a client takes.  The reference output is what redaction is
+judged against.  Each run first checks what the agent is told and offered in that configuration: the
+instructions pointer, the host_list notes, and the tools withdrawn.  Random credentials of each kind
+the design names are planted (environments, logs in raw, base64 and hex, an image-level variable, a
+build argument, files in an image, a Compose `.env` value, a value after `--password` on a command
+line, and with `--swarm` a service's environment and a Swarm secret printed to its logs), with seven
+decoys that look like credentials but are not.  A
 value counts as caught only if no raw, base64, hex or URL-encoded form of it appears anywhere in the
 redacted output; each must appear in the unfiltered output, or the report says it never surfaced.
 Each marker is located in the unfiltered output by the text either side of it and classed as a
 planted value, a decoy or other content.  Other content is never printed: on a real daemon it may be
-a real credential, so the report gives its length and the redacted text before it.
+a real credential, so the report gives its length and the redacted text before it.  A value that
+surfaced only through calls the redacted server refused or does not offer (exec, when read-only) is
+reported as not reached rather than caught: redaction never saw it.
 
-cost: `--containers` stopped containers, each with a credential in its environment, and `--images`
+agents: a headless Claude Code with only this server's tools is given the everyday requests in
+`_scenarios`, on a small planted app, once read-only and once writable.  Each is scored on whether it
+was done (or declined, for a write when read-only), any planted value anywhere in its transcript, the
+tool errors it met, and whether it blamed a correct password in triage.  It costs model usage, capped
+per request by `--budget`.
+
+cost (in one process, with a redacted and an unfiltered label on the same daemon): `--containers`
+stopped containers, each with a credential in its environment, and `--images`
 distinct images are created; the first redacted call (which harvests everything) is timed, then the
 median of 15 calls of each tool on each label.
 """
@@ -566,6 +577,9 @@ async def _sweep(daemon: Daemon, run: str, planted: dict[str, str], project: Pat
                 f"[{len(value)} characters, {rules.entropy(value):.2f} bits per character]"
             )
             status = "MISSED"
+        elif surfaced[planted_name] and surfaced[planted_name] <= set(refused):
+            # Only calls the redacted server refused or does not offer showed it, so redaction never saw it.
+            status, where = "NOT REACHED", f"(only {', '.join(sorted(surfaced[planted_name]))}, refused here)"
         elif surfaced[planted_name]:
             status, where = "caught", f"(appeared in {', '.join(sorted(surfaced[planted_name]))})"
         else:
@@ -640,9 +654,6 @@ async def _cost(daemon: Daemon) -> None:
             f"  {name:18} unfiltered {medians['unfiltered'] * 1000:6.0f} ms   redacted "
             f"{medians['redacted'] * 1000:6.0f} ms   added {added * 1000:6.0f} ms"
         )
-
-
-# --- main --------------------------------------------------------------------------------------------
 
 
 # --- agents: everyday requests to a real agent, scored ----------------------------------------------------
@@ -732,8 +743,8 @@ def _scenarios(project: Path) -> list[dict]:
         return lambda daemon, run, secrets_: all(word.lower() in run["answer"].lower() for word in words)
 
     def tool_output_has(*words: str):
-        # A psql role listing in what a tool returned, not a claim in the answer.
-        return lambda daemon, run, secrets_: any(word in run["raw"] for word in words)
+        # A psql role listing in what a tool returned without error, not the agent's own words or input.
+        return lambda daemon, run, secrets_: any(word in run["outputs"] for word in words)
 
     def container_with(name_part: str, env: dict[str, str], ports: str | None = None):
         def judge(daemon: Daemon, run: dict, secrets_: dict[str, str]) -> bool:
@@ -824,36 +835,41 @@ def _run_agent(daemon: Daemon, mode: str, scenario: dict, out: Path, model: str,
     }
     config_path = out / f"mcp-{mode}.json"
     config_path.write_text(json.dumps(config))
-    result = _run(
-        [
-            "claude",
-            "-p",
-            scenario["prompt"],
-            "--mcp-config",
-            str(config_path),
-            "--strict-mcp-config",
-            "--tools",
-            "",
-            "--allowedTools",
-            "mcp__docker",
-            "--output-format",
-            "stream-json",
-            "--verbose",
-            "--model",
-            model,
-            "--max-budget-usd",
-            str(budget),
-            "--no-session-persistence",
-            "--setting-sources",
-            "",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=900,
-    )
+    try:
+        result = _run(
+            [
+                "claude",
+                "-p",
+                scenario["prompt"],
+                "--mcp-config",
+                str(config_path),
+                "--strict-mcp-config",
+                "--tools",
+                "",
+                "--allowedTools",
+                "mcp__docker",
+                "--output-format",
+                "stream-json",
+                "--verbose",
+                "--model",
+                model,
+                "--max-budget-usd",
+                str(budget),
+                "--no-session-persistence",
+                "--setting-sources",
+                "",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=900,
+        )
+    except subprocess.TimeoutExpired as exc:
+        # Recorded rather than raised, so the runs already paid for are still reported.
+        partial = exc.stdout.decode(errors="replace") if isinstance(exc.stdout, bytes) else exc.stdout or ""
+        result = subprocess.CompletedProcess(exc.cmd, -1, partial, "timed out after 900 s")
     transcript = out / f"{mode}-{scenario['name']}.jsonl"
     transcript.write_text(result.stdout)
-    calls, errors, answer, cost, turns = [], [], "", 0.0, 0
+    calls, errors, outputs, answer, cost, turns = [], [], [], "", 0.0, 0
     for line in result.stdout.splitlines():
         try:
             event = json.loads(line)
@@ -864,10 +880,17 @@ def _run_agent(daemon: Daemon, mode: str, scenario: dict, out: Path, model: str,
         for item in content if isinstance(content, list) else []:
             if item.get("type") == "tool_use":
                 calls.append(item.get("name", "").removeprefix("mcp__docker__"))
-            if item.get("type") == "tool_result" and item.get("is_error"):
-                content = item.get("content")
-                text = content if isinstance(content, str) else " ".join(c.get("text", "") for c in content or [])
-                errors.append(text[:300])
+            if item.get("type") == "tool_result":
+                result_content = item.get("content")
+                text = (
+                    result_content
+                    if isinstance(result_content, str)
+                    else " ".join(c.get("text", "") for c in result_content or [])
+                )
+                if item.get("is_error"):
+                    errors.append(text[:300])
+                else:
+                    outputs.append(text)
         if event.get("type") == "result":
             answer, cost, turns = (
                 event.get("result") or "",
@@ -879,6 +902,7 @@ def _run_agent(daemon: Daemon, mode: str, scenario: dict, out: Path, model: str,
         "stderr": result.stderr[-500:],
         "calls": calls,
         "errors": errors,
+        "outputs": "\n".join(outputs),
         "answer": answer,
         "cost": cost,
         "turns": turns,
@@ -900,7 +924,7 @@ def _agents(daemon: Daemon, model: str, budget: float, only: str | None) -> None
         'services:\n  report:\n    image: alpine:3\n    command: ["sleep", "600"]\n'
         "    environment:\n      DB_PASSWORD: ${DB_PASSWORD}\n"
     )
-    rows = []
+    print(f"Transcripts: {out}", flush=True)
     for mode in ("readonly", "writable"):
         for scenario in _scenarios(project):
             if only and scenario["name"] != only:
@@ -919,32 +943,38 @@ def _agents(daemon: Daemon, model: str, budget: float, only: str | None) -> None
                 )
                 and scenario["name"] == "triage"
             )
-            rows.append((mode, scenario, run, leaked, done, misled))
-            subprocess_names = daemon.docker("ps", "-a", "--format", "{{.Names}}").split()
-            compose = [n for n in subprocess_names if n.startswith("report")]
-            if compose:
+            _report_agent_run(mode, scenario, run, leaked, done, misled)
+            names = daemon.docker("ps", "-a", "--format", "{{.Names}}").split()
+            if any(name.startswith("report") for name in names):
                 _run(["docker", "-H", daemon.url, "compose", "-p", "report", "down"], cwd=project, capture_output=True)
-    print(f"\nTranscripts: {out}")
-    for mode, scenario, run, leaked, done, misled in rows:
-        expected = "refused, as read-only" if mode == "readonly" and scenario["write"] else "done"
-        outcome = (
-            "done"
-            if done
-            else ("not done" if not (mode == "readonly" and scenario["write"]) else "not done (expected)")
-        )
-        print(
-            f"\n[{mode}] {scenario['name']}: {outcome} (expected: {expected}); "
-            f"{len(run['calls'])} tool calls, {run['turns']} turns, ${run['cost']:.2f}"
-        )
-        print(f"  leaked: {', '.join(leaked) or 'nothing'}" + ("; BLAMED THE PASSWORD" if misled else ""))
-        if run["errors"]:
-            print(f"  tool errors ({len(run['errors'])}):")
-            for error in run["errors"][:6]:
-                print(f"    - {error}")
-        print(f"  tools: {', '.join(run['calls'][:20])}")
-        print(f"  answer: {' '.join(run['answer'].split())[:600]}")
-        if not run["answer"]:
-            print(f"  stderr: {run['stderr']}")
+
+
+def _report_agent_run(mode: str, scenario: dict, run: dict, leaked: list[str], done: bool, misled: bool) -> None:
+    """Print one scored run as soon as it finishes, so a later failure loses nothing already paid for."""
+    expected = "declined, as read-only" if mode == "readonly" and scenario["write"] else "done"
+    if done:
+        outcome = "done"
+    elif mode == "readonly" and scenario["write"]:
+        outcome = "not done (expected)"
+    else:
+        outcome = "NOT DONE"
+    print(
+        f"\n[{mode}] {scenario['name']}: {outcome} (expected: {expected}); "
+        f"{len(run['calls'])} tool calls, {run['turns']} turns, ${run['cost']:.2f}",
+        flush=True,
+    )
+    print(f"  leaked: {', '.join(leaked) or 'nothing'}" + ("; BLAMED THE PASSWORD" if misled else ""))
+    if run["errors"]:
+        print(f"  tool errors ({len(run['errors'])}):")
+        for error in run["errors"][:6]:
+            print(f"    - {error}")
+    print(f"  tools: {', '.join(run['calls'][:20])}")
+    print(f"  answer: {' '.join(run['answer'].split())[:600]}")
+    if not run["answer"]:
+        print(f"  stderr: {run['stderr']}", flush=True)
+
+
+# --- main --------------------------------------------------------------------------------------------
 
 
 def main() -> None:
@@ -965,7 +995,9 @@ def main() -> None:
     parser.add_argument("--images", type=int, default=500, help="cost: distinct images to create")
     parser.add_argument("--model", default="sonnet", help="agents: the model the headless Claude Code runs")
     parser.add_argument("--budget", type=float, default=1.5, help="agents: dollar cap on each request")
-    parser.add_argument("--only", help="agents: run one scenario by name")
+    parser.add_argument(
+        "--only", choices=[scenario["name"] for scenario in _scenarios(Path())], help="agents: run one scenario"
+    )
     options = parser.parse_args()
     if options.measure in ("cost", "agents") and options.docker_host:
         parser.error(f"{options.measure} fills or rebuilds the daemon it measures, so it runs only on a throwaway one")
