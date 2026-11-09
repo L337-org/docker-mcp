@@ -109,8 +109,11 @@ uv run scripts/measure-comparison-figures.py
 
 # Regenerate the measured figures REDACTION.md quotes: what redaction catches and misses (sweep) and
 # what it costs (cost). Reports only; starts and removes a throwaway privileged dind daemon by default.
-uv run scripts/measure-redaction.py sweep --swarm
+uv run scripts/measure-redaction.py sweep --swarm --configuration all
 uv run scripts/measure-redaction.py cost
+# Everyday requests to a headless Claude Code, read-only and writable, scored for leaks and outcome
+# (costs model usage; see architecture/redaction.md).
+uv run scripts/measure-redaction.py agents
 ```
 
 ## Architecture

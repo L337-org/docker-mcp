@@ -132,12 +132,26 @@ Anything else that fails inside redaction propagates: the call fails rather than
 
 ## Measuring it
 
-`scripts/measure-redaction.py` regenerates the figures `REDACTION.md` quotes: `sweep` plants
-credentials and decoys and compares a redacted host's output with an unfiltered one on the same daemon,
-and `cost` times calls on a daemon filled with containers and images.  Both run against a throwaway
-dind daemon unless given `--docker-host`.  Run it after a change to the rules, the harvest or the wire,
-and correct `REDACTION.md` from its output; it reports only and is not a CI gate.  It never prints a
-replaced value, since on a real daemon one may be a real credential.
+`scripts/measure-redaction.py` regenerates the figures `REDACTION.md` quotes and checks the mode end to
+end:
+
+- `sweep` plants credentials and decoys and compares a redacted server's output with an unfiltered
+  server's on the same daemon.  `--configuration` picks how redaction is switched on (see `--help`),
+  and each run also checks what the agent is told and offered there: the instructions pointer, the
+  `host_list` notes, and the tools withdrawn.  A value only a refused call could show is reported as
+  not reached, not caught.
+- `cost` times calls on a daemon filled with containers and images.
+- `agents` gives a headless Claude Code, with only this server's tools, the everyday requests in
+  `_scenarios` on a small planted app, once read-only and once writable, and scores each: whether the
+  task was done (or declined, for a write under READONLY), any planted value anywhere in the
+  transcript, the tool errors it met, and whether it blamed a correct password in triage.  It costs
+  model usage (`--model`, `--budget` per request), so run it after a change to what the agent is told
+  or refused, not routinely.
+
+All three run against a throwaway dind daemon; `sweep` alone can take `--docker-host`.  Run `sweep` and
+`cost` after a change to the rules, the harvest or the wire, and correct `REDACTION.md` from their
+output; the script reports only and is not a CI gate.  It never prints a replaced value, since on a
+real daemon one may be a real credential.
 
 ## Where the settings surface
 
