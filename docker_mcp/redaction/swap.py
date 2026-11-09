@@ -380,15 +380,17 @@ class _Swapper:
         )
 
     def _resolve(self, token: str, where: str, kind: Kind, subject: str | None = None) -> str:
+        # A tool that reaches no daemon has no host to swap a marker back for, whatever the argument; said
+        # first, so its refusal does not point to `env` or `vars`, which such a tool does not have.
+        if self._label is None:
+            raise self._refuse(
+                where, "cannot be used: a marker is swapped back only in a write to the host it came from"
+            )
         if kind is not Kind.SWAP:
             reason = _GUARDRAIL_REASONS[kind]
             if subject is not None:
                 reason = reason.format(name=subject)
             raise self._refuse(where, f"is not swapped back there: `{where}` is {reason}")
-        if self._label is None:
-            raise self._refuse(
-                where, "cannot be used: a marker is swapped back only in a write to the host it came from"
-            )
         if not self._swaps:
             raise self._refuse(
                 where,

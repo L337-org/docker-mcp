@@ -33,8 +33,8 @@ With the global switch on, every host is redacted whatever its own options say.
 Values of variables with credential-like names are treated as credentials, in container, image and
 service environments and in Compose `.env` files.  The built-in patterns are case-insensitive globs:
 
-`*PASSWORD*`, `*PASSWD*`, `*PASSPHRASE*`, `*PASS`, `*_PASS_*`, `*SECRET*`, `*TOKEN*`, `*KEY*`,
-`*CERT*` and `*CREDENTIAL*`.
+`*PASSWORD*`, `*PASSWD*`, `*PASSPHRASE*`, `PASS`, `*_PASS`, `*_PASS_*`, `*SECRET*`, `*TOKEN*`,
+`*KEY*`, `*CERT*` and `*CREDENTIAL*`.
 
 Some names those patterns match are left alone by default, because what they hold is public: public
 keys, and the signing-key fingerprints official images publish under `GPG_KEY`:
@@ -121,7 +121,8 @@ Two things are replaced, wherever they appear in a redacted host's output, dict 
   public key and the inside of a PEM public key or certificate block, which are public.  Where two of
   these overlap, the whole of both is replaced as one.  Hex alone is never treated as a credential by
   these rules, nor is a run longer than 16 KB, and lines wrapped by a base64 encoder count as one run.
-  A value found this way is remembered, so its encoded forms are matched from then on.
+  A value found this way is remembered, so from then on it and its encoded forms are replaced wherever
+  they appear on that host, even where no rule would find them.
 
 Each replacement is a marker, `[REDACTED:<token>]`, where the token is 22 characters.  Every marker is
 different, even for the same credential in the same result, so nothing in the output shows that two
@@ -164,7 +165,11 @@ and `system_events`), and a Swarm service's environment.
 - a value under a name the patterns match that is not a credential, such as a sort key in `SORT_KEY`.
   `!SORT_KEY` in `DOCKER_MCP_SERVER_REDACT_NAMES` excludes a name like that;
 - a long random-looking value that is not a credential, such as a subresource-integrity hash, by its
-  shape.
+  shape;
+- the value after a flag whose name matches a credential pattern but which carries no credential, such
+  as `--token-ttl 3600`.  It is remembered, so every `3600` standing alone on that host is replaced from
+  then on.  A path after such a flag is left alone, but a number is not, since a password can be one;
+  `!TOKEN_TTL` in `DOCKER_MCP_SERVER_REDACT_NAMES` excludes a flag name like that.
 
 Build IDs, commit hashes, UUIDs and cache busters are left alone, being hex, structured or too short
 for the shape rules, and so are public keys (see above).
@@ -227,10 +232,12 @@ A marker means something only to the server process that issued it, so it is nev
 file: the server will not rewrite a user's file, and replacing text in an archive would change the sizes
 its headers record.  On a redacted host that accepts writes, a call is refused before it runs, naming the
 file, when a file it reads holds anything shaped like a marker, whichever process issued it.  What is
-searched, as a whole, since any file in it can end up in a container or an image:
+searched, as a whole where the call can put any file in it into a container or an image:
 
-- the Compose tools: the project directory, which is the first compose file's directory or, with none
-  named, `project_dir`, by default the server's working directory; and `compose_cp`'s local `source`;
+- `compose_up`, `compose_build` and `compose_run`: the project directory, which is the first compose
+  file's directory or, with none named, `project_dir`, by default the server's working directory.  The
+  other Compose writes, which create nothing from the project, read only the compose files and `.env`,
+  so only those are searched; and `compose_cp`'s local `source`;
 - `stack_deploy`: its first compose file's directory; `buildx_bake`: its `cwd`, by default the server's
   working directory;
 - `image_build` and `buildx_build`: the build context, with its `.dockerignore` honoured, and the
@@ -273,14 +280,15 @@ as low as the design allows; if you do not need it, leave it off.  How the cost 
 - **The first call to a host** reads every credential the daemon reports, so it takes longest, growing
   with the daemon's containers, images and services.
 - **Every call** first checks that nothing has changed since, by listing the daemon's containers,
-  images, services and configs, so it grows with them too.
+  images, services and configs, so it grows with them too.  When something has changed, only what is
+  new is read, such as the one container a call created.
 - **Redacting a result** costs in proportion to its size, so a call returning a lot of data costs most.
 - **A write to a redacted host that accepts writes** also searches the files it reads, in proportion to
   their size.
 - **Memory** grows with the number of distinct credentials, not with the number of calls.
 
 `uv run scripts/measure-redaction.py cost` measures it on a throwaway daemon of 2,000 containers, each
-with a credential, and 500 images.  As it last reported, on a Mac, and with the same calls on Docker
+with a credential, and 500 images of its own (501 with the base image).  As it last reported, on a Mac, and with the same calls on Docker
 Desktop for comparison; the figures move with the code and the machine, so run it again before relying
 on them:
 

@@ -44,9 +44,9 @@ re-files the same rejected candidates forever. Removing an entry is a real decis
   `container_exec` covers scripted one-shot execution.
 - **`service_rollback`'s `api.inspect_service` + `api.update_service`** - stays low-level
   permanently. The high-level `Service`/`ServiceCollection` expose no `rollback`.
-- **`_FamilyFallbackSSHAdapter` in `docker_mcp/tools/system.py`** - a blessed reach-in, approved by the
-  owner when it was introduced.  It subclasses docker-py's `SSHHTTPAdapter`, overrides its private
-  `_connect` and reads its `ssh_params`, and `_ssh_with_family_fallback` rebinds
+- **`_FamilyFallbackSSHAdapter` in `docker_mcp/tools/system.py`** - a reach-in past the public SDK, kept
+  deliberately (the owner's decision is recorded on PR #309).  It subclasses docker-py's
+  `SSHHTTPAdapter`, overrides its private `_connect` and reads its `ssh_params`, and `_ssh_with_family_fallback` rebinds
   `docker.api.client.SSHHTTPAdapter` while `_build_client` runs.  The public paths fail: paramiko's own
   connect gives up on a timed-out address instead of trying the next, and docker-py builds and connects
   its adapter inside `APIClient` with no way to pass a connected socket; splicing the answering address

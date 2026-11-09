@@ -1188,3 +1188,25 @@ def test_no_registered_tool_keeps_an_option_that_makes_it_wait():
         )
     }
     assert offenders == {}
+
+
+def test_only_the_client_builders_construct_a_docker_py_client():
+    # The SSH adapter is swapped in only while `_build_client` runs, so a docker-py client built anywhere
+    # else would bypass the address fallback's hostname check, and could pick up the swapped adapter.
+    import ast
+    from pathlib import Path
+
+    allowed = {
+        ("system.py", "_build_client"),
+        ("system.py", "_build_default_client"),
+        ("system.py", "_from_env_no_context"),
+    }
+    found = []
+    for path in Path(system_module.__file__).resolve().parents[1].rglob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for function in [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)]:
+            for call in [n for n in ast.walk(function) if isinstance(n, ast.Call)]:
+                name = call.func.attr if isinstance(call.func, ast.Attribute) else getattr(call.func, "id", "")
+                if name in {"DockerClient", "APIClient", "from_env"}:
+                    found.append((path.name, function.name))
+    assert found and set(found) <= allowed, sorted(set(found) - allowed)

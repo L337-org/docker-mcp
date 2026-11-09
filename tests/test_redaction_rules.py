@@ -214,3 +214,11 @@ def test_the_rules_take_linear_time_on_long_runs(make):
 def test_a_credential_name_after_a_digit_is_still_found():
     value = _RANDOM_40[:20]
     assert value in _found(f"2FA_SECRET={value}")
+
+
+def test_an_excluded_flag_name_stops_the_flag_rule_taking_its_value(monkeypatch):
+    # `--token-ttl 3600` matches `*TOKEN*`, and the value would then be replaced wherever it stands alone;
+    # REDACTION.md gives the exclusion as the remedy, so it has to reach the flag rule.
+    assert _found("app --token-ttl 3600") == ["3600"]
+    monkeypatch.setattr(settings, "_names", parse_names("!TOKEN_TTL"))
+    assert _found("app --token-ttl 3600") == []

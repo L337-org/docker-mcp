@@ -32,8 +32,8 @@ judged against.  Each run first checks what the agent is told and offered in tha
 instructions pointer, the host_list notes, and the tools withdrawn.  Random credentials of each kind
 the design names are planted (environments, logs in raw, base64 and hex, an image-level variable, a
 build argument, files in an image, a Compose `.env` value, a value after `--password` on a command
-line, and with `--swarm` a service's environment and a Swarm secret printed to its logs), with seven
-decoys that look like credentials but are not.  A
+line, and with `--swarm` a service's environment and a Swarm secret printed to its logs), with the
+decoys in `DECOYS`, which look like credentials but are not.  A
 value counts as caught only if no raw, base64, hex or URL-encoded form of it appears anywhere in the
 redacted output; each must appear in the unfiltered output, or the report says it never surfaced.
 Each marker is located in the unfiltered output by the text either side of it and classed as a
@@ -164,6 +164,16 @@ class Daemon:
                 capture_output=True,
                 check=True,
             )
+        try:
+            self._prepare()
+        except BaseException:
+            # __exit__ does not run when __enter__ raises, so a daemon already started is removed here.
+            self.__exit__()
+            raise
+        return self
+
+    def _prepare(self) -> None:
+        if self.throwaway:
             for _ in range(60):
                 if _run(["docker", "-H", self.url, "version"], capture_output=True).returncode == 0:
                     break
@@ -175,7 +185,6 @@ class Daemon:
             if not self.throwaway:
                 raise SystemExit("--swarm on an existing daemon needs it to be a Swarm manager already")
             self.docker("swarm", "init", "--advertise-addr", "127.0.0.1")
-        return self
 
     def __exit__(self, *_: object) -> None:
         """Remove a throwaway daemon, whatever happened inside the block."""

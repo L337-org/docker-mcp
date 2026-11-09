@@ -63,6 +63,7 @@ def _write_tool(name="container_create", scope=Scope.HOST_ARGUMENT, writes=True,
         labels: dict | None = None,
         extra_kwargs: dict | None = None,
         conf: dict | None = None,
+        updates: dict | None = None,
         buildargs: dict | None = None,
         set_overrides: list | None = None,
         data: bytes | None = None,
@@ -76,6 +77,7 @@ def _write_tool(name="container_create", scope=Scope.HOST_ARGUMENT, writes=True,
                 "labels": labels,
                 "extra_kwargs": extra_kwargs,
                 "conf": conf,
+                "updates": updates,
                 "buildargs": buildargs,
                 "set_overrides": set_overrides,
                 "data": data,
@@ -298,10 +300,13 @@ def test_a_container_or_service_label_is_swapped_back(redactor):
     assert calls[0]["extra_kwargs"] == {"labels": {"a": _SECRET}, "container_labels": {"b": _SECRET}}
 
 
-def test_updates_labels_are_swapped_back(redactor):
+def test_a_label_in_updates_is_swapped_back_and_a_name_there_is_refused(redactor):
     wrapped, calls = _write_tool(name="service_update")
-    wrapped(extra_kwargs={"Labels": {"a": _marker(redactor)}}, host="prod")
-    assert calls[0]["extra_kwargs"] == {"Labels": {"a": _SECRET}}
+    wrapped(updates={"Labels": {"a": _marker(redactor)}, "labels": {"b": _marker(redactor)}}, host="prod")
+    assert calls[0]["updates"] == {"Labels": {"a": _SECRET}, "labels": {"b": _SECRET}}
+    wrapped, calls = _write_tool(name="node_update")
+    message = _refusal(wrapped, calls, updates={"Name": _marker(redactor)}, host="prod")
+    assert "`updates['Name']`" in message and "a name or identifier" in message
 
 
 def test_swapped_arguments_are_never_logged(redactor, caplog):
@@ -445,3 +450,15 @@ def test_the_registered_compose_exec_refuses_a_marker_in_its_command(redactor):
     registered = mcp._tool_manager._tools["compose_exec"]
     with pytest.raises(ToolError, match="on its command line"):
         registered.fn(service="db", command=["psql", "-p", _marker(redactor)], host="prod")
+
+
+def test_a_marker_in_a_context_tool_is_refused_for_having_no_host_not_pointed_at_env_or_vars(redactor):
+    # context_create is CLI-backed, but reaches no daemon: the command-line advice would point to routes
+    # it does not have.
+    wrapped_no_daemon = wire.wrap(
+        lambda description=None: "ok", "context_create", Scope.NO_DAEMON, ToolError, writes=True, command_line=True
+    )
+    with pytest.raises(ToolError) as caught:
+        wrapped_no_daemon(description=_marker(redactor))
+    message = str(caught.value)
+    assert "by a tool that reaches no daemon" in message and "`vars`" not in message
