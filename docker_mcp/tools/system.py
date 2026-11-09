@@ -6,24 +6,25 @@ configured hosts are reachable from here.
 
 # library of mcp tools relating to the system domain: daemon info/auth and client connection control
 
+import contextlib
 import inspect
-import ipaddress
 import math
 import os
 import re
-import socket
 import sys
 import threading
 import urllib.parse
 from pathlib import Path
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from typing import Any, Literal
 
 import docker
+import docker.api.client as docker_api_client
 import requests.exceptions
 from docker.utils import parse_repository_tag
 from docker.errors import DockerException
 from docker.models.containers import Container
+from docker.transport.sshconn import SSHHTTPAdapter
 
 from docker_mcp.exceptions import RemoteFailureError, ToolInputError, ToolRefusalError
 from docker_mcp._env import scrub_unresolved_env
@@ -194,73 +195,54 @@ def _ensure_ssh_port(url: str) -> str:
     return urllib.parse.urlunparse(parsed._replace(netloc=f"{parsed.netloc}:{target.port}"))
 
 
-def _ensure_reachable_family(url: str) -> str:
-    """Work around paramiko's narrow IPv4/IPv6 fallback for an `ssh://` docker-py connection.
+class _FamilyFallbackSSHAdapter(SSHHTTPAdapter):
+    """docker-py's SSH adapter, connecting to whichever resolved address answers while checking the host key by name.
 
-    `paramiko.SSHClient.connect()` (used internally by docker-py's `SSHHTTPAdapter`) resolves both
-    address families but only retries the next one on `ECONNREFUSED`/`EHOSTUNREACH` - a timed-out or
-    black-holed IPv6 route (`ETIMEDOUT`, what a broken IPv6 path actually produces) is never retried,
-    so a host that's perfectly reachable over IPv4 fails outright. `tcp://` doesn't have this problem
-    (`urllib3.util.connection.create_connection` catches any `OSError` per attempt) - only `ssh://`
-    needs this. See `_ssh_proxy.connect_socket_with_family_fallback`'s docstring for the full story.
-
-    Rather than reaching into docker-py's `SSHHTTPAdapter` internals (undocumented, and it always
-    builds its own fresh `paramiko.SSHClient` with no hook to accept a pre-connected socket), this
-    probes every resolved address itself with that same broad-fallback helper, then splices whichever
-    address actually answered into the URL as a literal IP - so docker-py's own (unmodified) connect
-    resolves trivially to the one address already proven reachable, the same trick `_ensure_ssh_port`
-    above already uses to work around a different docker-py quirk. One extra short-lived probe
-    connection per client build; `_get_client`'s pool means that happens once per host, not per call.
-
-    A URL that isn't `ssh://`, has no hostname, or is already a literal address (no family ambiguity
-    to resolve) is returned unchanged, as is one whose first resolved address answers - paramiko would
-    connect there itself, and keeping the hostname keeps its known_hosts lookup by name - and one where
-    every resolved address fails to connect, where the normal (paramiko-native) connection attempt
-    still runs and produces its own error, rather than this helper raising first. Only a fallback past
-    a failed address splices in a literal, and then known_hosts needs an entry for that address.
-
-    Args:
-        url: a DOCKER_HOST/host URL; only `ssh://` URLs are affected
-
-    Returns:
-        str: `url` unchanged, or with its hostname replaced by the literal address that answered after
-            an earlier one failed
+    `paramiko.SSHClient.connect()` resolves both address families but moves to the next address only on
+    `ECONNREFUSED`/`EHOSTUNREACH`; a black-holed IPv6 route times out instead, so a host perfectly
+    reachable over IPv4 failed outright (see `_ssh_proxy.connect_socket_with_family_fallback`).  This
+    connects the socket itself through every address and hands it to paramiko with the original
+    hostname, which is what paramiko checks `known_hosts` against, exactly as `ssh` does.  The earlier
+    workaround spliced the answering address into the URL, which made paramiko check `[address]:port`
+    instead: a host listed in `known_hosts` only by name was refused, and a stale entry for its address
+    from an earlier machine was checked in place of the right one.  A `ProxyCommand` from
+    `~/.ssh/config`, which docker-py turns into the socket itself, is left as it is.
     """
-    if not is_ssh_url(url):
-        return url
-    parsed = urllib.parse.urlparse(url)
-    hostname = parsed.hostname
-    if not hostname:
-        return url
-    try:
-        ipaddress.ip_address(hostname)
-    except ValueError:
-        pass
-    else:
-        return url  # already a literal address; no family ambiguity to resolve
-    port = parsed.port or 22
-    try:
-        sock = connect_socket_with_family_fallback(hostname, port, _CONNECT_TIMEOUT_CAP_SECONDS)
-    except OSError:
-        return url
-    try:
-        peer_host = sock.getpeername()[0]
-    finally:
-        sock.close()
-    # paramiko checks the host key against whatever name the URL carries, so splicing in an address makes
-    # it look up `[address]:port` in known_hosts, where many entries are only by name. Splice only when an
-    # earlier address failed - the case this exists for - and leave the hostname when the first answered.
-    try:
-        first = socket.getaddrinfo(hostname, port, socket.AF_UNSPEC, socket.SOCK_STREAM)[0][4][0]
-    except OSError:
-        # The name resolved a moment ago for the probe; if it fails now, splice as before rather than
-        # hand paramiko a name it may not resolve either.
-        first = None
-    if peer_host == first:
-        return url
-    literal = f"[{peer_host}]" if ":" in peer_host else peer_host
-    userinfo = f"{parsed.username}@" if parsed.username else ""
-    return urllib.parse.urlunparse(parsed._replace(netloc=f"{userinfo}{literal}:{port}"))
+
+    def _connect(self) -> None:
+        if not self.ssh_client:
+            return
+        # `ssh_params` is set by docker-py's `_create_paramiko_client`; the bundled stubs omit it.
+        params = dict(self.ssh_params)  # pyright: ignore[reportAttributeAccessIssue]
+        if "sock" not in params:
+            port = int(params.get("port") or 22)
+            params["sock"] = connect_socket_with_family_fallback(params["hostname"], port, _CONNECT_TIMEOUT_CAP_SECONDS)
+        self.ssh_client.connect(**params)
+
+
+@contextlib.contextmanager
+def _ssh_with_family_fallback() -> Iterator[None]:
+    """Make the docker-py clients built inside this block use `_FamilyFallbackSSHAdapter` for `ssh://`.
+
+    docker-py's `APIClient` builds its SSH adapter itself, from the name its module imported, and connects
+    in the adapter's constructor, so there is no argument to pass one in.  The name is swapped only while
+    a client is built, under a lock; the adapter a client keeps is the subclass, so its reconnects use it
+    too.
+
+    Yields:
+        None: while the swap is in place
+    """
+    # docker-py's own import of the adapter, which the bundled type stubs do not declare.
+    with _ssh_adapter_lock:
+        original = docker_api_client.SSHHTTPAdapter  # pyright: ignore[reportAttributeAccessIssue]
+        docker_api_client.SSHHTTPAdapter = _FamilyFallbackSSHAdapter  # pyright: ignore[reportAttributeAccessIssue]
+        try:
+            yield
+        finally:
+            docker_api_client.SSHHTTPAdapter = original  # pyright: ignore[reportAttributeAccessIssue]
+
+
+_ssh_adapter_lock = threading.Lock()
 
 
 def _from_env_no_context(**kwargs: Any) -> docker.DockerClient:
@@ -303,7 +285,7 @@ def _build_default_client() -> docker.DockerClient:
     """
     docker_host = os.environ.get("DOCKER_HOST")
     if docker_host:
-        fixed = _ensure_reachable_family(_ensure_ssh_port(docker_host))
+        fixed = _ensure_ssh_port(docker_host)
         if fixed != docker_host:
             return _from_env_no_context(environment={**os.environ, "DOCKER_HOST": fixed})
         return _from_env_no_context()
@@ -365,13 +347,14 @@ def _build_client(host: Host) -> docker.DockerClient:
     Returns:
         docker.DockerClient: a client for that host
     """
-    if not _is_multi() and not (os.environ.get("DOCKER_MCP_SERVER_HOSTS") or "").strip():
-        return _build_default_client()
-    tls = _tls_config_for(host)
-    if host.url is None:
-        return docker.DockerClient(tls=tls) if tls is not None else docker.DockerClient()
-    url = _ensure_reachable_family(_ensure_ssh_port(host.url))
-    return docker.DockerClient(base_url=url, tls=tls) if tls is not None else docker.DockerClient(base_url=url)
+    with _ssh_with_family_fallback():
+        if not _is_multi() and not (os.environ.get("DOCKER_MCP_SERVER_HOSTS") or "").strip():
+            return _build_default_client()
+        tls = _tls_config_for(host)
+        if host.url is None:
+            return docker.DockerClient(tls=tls) if tls is not None else docker.DockerClient()
+        url = _ensure_ssh_port(host.url)
+        return docker.DockerClient(base_url=url, tls=tls) if tls is not None else docker.DockerClient(base_url=url)
 
 
 def _get_client(host: str | None = None) -> docker.DockerClient:  # noqa: DOC503

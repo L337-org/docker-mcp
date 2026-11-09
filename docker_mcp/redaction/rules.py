@@ -144,6 +144,26 @@ def _assignments(text: str) -> Iterator[Span]:
 
 _BARE_FLAG = re.compile(r"--?(?P<name>[A-Za-z][A-Za-z0-9-]*)")
 
+# An absolute POSIX path, or one under the home directory: path characters only, so a value with spaces or
+# shell punctuation, which a path rarely has and a password often does, still counts as a credential.
+_ABSOLUTE_PATH = re.compile(r"~?/[\w.@+-]+(?:/[\w.@+-]*)*")
+
+
+def is_absolute_path(value: str) -> bool:
+    """Whether a value under a credential name or flag is a path, which says where a credential is.
+
+    `SSL_CERT_FILE`, `POSTGRES_PASSWORD_FILE=/run/secrets/db`, `--tlscert /certs/cert.pem`: none is a
+    credential, and a value taken as one is replaced wherever it appears, so the path would be lost from
+    mounts, commands and logs too.  Used by the harvest and by the flag rule alike.
+
+    Args:
+        value: the value
+
+    Returns:
+        bool: True for an absolute path made only of path characters
+    """
+    return _ABSOLUTE_PATH.fullmatch(value) is not None
+
 
 def is_credential_flag(element: str) -> bool:
     """Whether one element of an exec-form command is a credential-named flag with no value of its own.
@@ -174,6 +194,8 @@ def _flags(text: str) -> Iterator[Span]:
         group = next(name for name in ("dq", "sq", "bare") if value.group(name) is not None)
         if group == "bare" and value.group(group).startswith("-"):
             continue  # the next flag, not a value
+        if is_absolute_path(value.group(group)):
+            continue  # `--password-file /run/secrets/db` names where the credential is
         if value.group(group):
             yield Span(value.start(group), value.end(group))
 
@@ -241,13 +263,41 @@ def _in_url_or_path(text: str, start: int, joined: str) -> bool:
     return "://" in text[max(token_start, window) : start]
 
 
+# Public keys look random but are public, so the generic rule leaves them alone: the body of an OpenSSH
+# public key, after its key type, and the inside of a PEM public key or certificate block.  A private key
+# is still caught, by the PEM rule above.
+_OPENSSH_KEY_TYPE = re.compile(
+    r"(?:ssh-(?:rsa|dss|ed25519)|ecdsa-sha2-nistp(?:256|384|521)|sk-(?:ssh-ed25519|ecdsa-sha2-nistp256)@openssh\.com)"
+    r" $"
+)
+_PEM_PUBLIC = re.compile(
+    r"-----BEGIN ((?:[A-Z0-9]+ )*(?:PUBLIC KEY|CERTIFICATE))-----.*?-----END \1-----",
+    re.DOTALL,
+)
+
+
+def _public_key_spans(text: str) -> list[tuple[int, int]]:
+    if "-----BEGIN" not in text:
+        return []
+    return [match.span() for match in _PEM_PUBLIC.finditer(text)]
+
+
+def _is_public_key(text: str, start: int, joined: str, public: list[tuple[int, int]]) -> bool:
+    if joined.startswith("AAAA") and _OPENSSH_KEY_TYPE.search(text, max(0, start - 40), start):
+        return True
+    return any(begin <= start < end for begin, end in public)
+
+
 def _generic(text: str) -> Iterator[Span]:
+    public = _public_key_spans(text)
     for start, end, joined in _runs(text):
         if not _GENERIC_MIN_LENGTH <= len(joined) <= MAX_DISCOVERED_MATCH_LENGTH:
             continue
         if _HEX.fullmatch(joined.rstrip("=")):
             continue  # digests and identifiers; hex carries at most 4 bits per character anyway
         if _in_url_or_path(text, start, joined):
+            continue
+        if _is_public_key(text, start, joined, public):
             continue
         if entropy(joined) >= _GENERIC_MIN_ENTROPY:
             yield Span(start, end)

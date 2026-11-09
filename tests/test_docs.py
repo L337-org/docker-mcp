@@ -245,3 +245,70 @@ def test_the_pre_commit_hook_the_docs_tell_contributors_to_install_exists_and_is
     text = config.read_text(encoding="utf-8")
     assert "entry: uv run ruff check --fix" in text
     assert "entry: uv run ruff format" in text
+
+
+# ---------- credential redaction: every mention warns and links to REDACTION.md ----------
+
+_REDACTION_URL = "https://github.com/L337-org/docker-mcp/blob/main/REDACTION.md"
+
+# Each place users or contributors meet redaction outside REDACTION.md itself.  Docker Hub and the
+# settings dialogs render outside the repository, so those need the absolute URL; the rest may link
+# relatively.
+_REDACTION_MENTIONS = {
+    "README.md": False,
+    "SECURITY.md": False,
+    "MCP_VS_SKILLS.md": False,
+    "architecture/server.md": False,
+    "docker_mcp/server.py": False,
+    "DOCKERHUB.md": True,
+    "claude-plugin/README.md": True,
+}
+
+
+@pytest.mark.parametrize(("path", "absolute"), sorted(_REDACTION_MENTIONS.items()))
+def test_every_mention_of_redaction_warns_it_is_not_access_control_and_links_to_redaction_md(path, absolute):
+    text = (_REPO_ROOT / path).read_text(encoding="utf-8")
+    flat = " ".join(text.replace("#", " ").split())
+    assert "not access control" in flat, f"{path} mentions redaction without saying it is not access control"
+    if absolute:
+        assert _REDACTION_URL in text, f"{path} renders outside the repository, so it needs {_REDACTION_URL}"
+    else:
+        assert "REDACTION.md" in text, f"{path} does not link to REDACTION.md"
+
+
+@pytest.mark.parametrize("path", ["manifest.json", "claude-plugin/.claude-plugin/plugin.json"])
+def test_every_redaction_setting_warns_and_links_absolutely(path):
+    import json
+
+    data = json.loads((_REPO_ROOT / path).read_text(encoding="utf-8"))
+    options = data.get("user_config") or data["userConfig"]
+    mentioning = {key: option for key, option in options.items() if "redact" in option["description"].lower()}
+    assert {"docker_hosts", "redact", "redact_names"} <= set(mentioning)
+    for key, option in mentioning.items():
+        assert _REDACTION_URL in option["description"], f"{path} setting {key!r} does not link to REDACTION.md"
+    assert "not access control" in options["redact"]["description"]
+
+
+def test_no_other_shipped_document_mentions_redaction_unwarned():
+    """A new mention of the mode has to be added above, with its warning and link."""
+    # Every shipped markdown file: the root documents, the architecture notes, the plugin and the skill,
+    # which ships as a release asset.
+    candidates = [
+        *_REPO_ROOT.glob("*.md"),
+        *(_REPO_ROOT / "architecture").glob("*.md"),
+        *(_REPO_ROOT / "claude-plugin").rglob("*.md"),
+        *(_REPO_ROOT / "skills").rglob("*.md"),
+    ]
+    assert any("skills" in path.parts for path in candidates), "the skill's files moved; update this scan"
+    # REDACTION.md is the full treatment; architecture/redaction.md and hosts.md are its contributor
+    # notes, which route to it; AGENTS.md and CLAUDE.md are assistant instructions, not documentation a
+    # user reads to decide whether to rely on the mode.
+    exempt = {"REDACTION.md", "AGENTS.md", "CLAUDE.md", "architecture/redaction.md", "architecture/hosts.md"}
+    unlisted = [
+        rel
+        for path in candidates
+        if (rel := path.relative_to(_REPO_ROOT).as_posix()) not in exempt
+        and rel not in _REDACTION_MENTIONS
+        and re.search(r"\bredact", path.read_text(encoding="utf-8"), re.IGNORECASE)
+    ]
+    assert not unlisted, f"These mention redaction; add each to _REDACTION_MENTIONS with its warning: {unlisted}"

@@ -1,5 +1,6 @@
 import base64
 import logging
+import secrets
 from types import SimpleNamespace
 
 import docker.errors
@@ -231,6 +232,20 @@ def test_an_unseen_container_prompts_a_check_and_a_known_one_does_not():
     assert client.harvests == 2
 
 
+def test_known_ids_are_matched_in_full_and_abbreviated_among_many_without_a_check():
+    # Indexed by their first 12 characters, so a list of thousands of containers is not checked by
+    # scanning every known ID for every mentioned one.
+    ids = [secrets.token_hex(32) for _ in range(2000)]
+    client = _FakeClient(containers=[_container(i, []) for i in ids])
+    h, _ = _harvester(client)
+    h.ensure_fresh()
+    mentioned = [*ids, *(i[:12] for i in ids[::7]), *(i[:20] for i in ids[::11])]
+    assert h.harvest_if_unseen(mentioned) is False
+    assert client.snapshots == 1
+    # The lookup scans one bucket, not every known ID: with random IDs no 12-character prefix repeats.
+    assert max(len(bucket) for bucket in h._known_by_prefix.values()) == 1
+
+
 def test_an_id_that_is_no_container_costs_one_snapshot_and_never_a_harvest():
     # Network and plugin IDs, and removed containers' IDs in events, look just like container IDs.
     client = _FakeClient(containers=[_container("c1", [])])
@@ -268,3 +283,17 @@ def test_checked_ids_are_forgotten_when_the_daemon_changes_and_never_grow_past_t
     client.containers_map["c2"] = _container("c2", [])
     h.ensure_fresh()
     assert h._checked_ids == set()
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["/etc/ssl/certs/ca-certificates.crt", "/certs", "/run/secrets/db_password", "~/.ssh/id_ed25519", "/opt/app/"],
+)
+def test_an_absolute_path_under_a_credential_name_is_not_harvested(value):
+    # It says where a credential is; harvested, it would be replaced in every mount and command too.
+    assert list(credential_values([f"SSL_CERT_FILE={value}", f"DB_PASSWORD_FILE={value}"])) == []
+
+
+@pytest.mark.parametrize("value", ["/Summer 2025", "/pa$$word!", "relative/path", "s3cr3t/with/slashes", "//x?y"])
+def test_a_value_that_is_not_a_plain_absolute_path_is_still_harvested(value):
+    assert list(credential_values([f"DB_PASSWORD={value}"])) == [value]

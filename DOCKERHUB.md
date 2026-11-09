@@ -74,6 +74,8 @@ Set these in the client's `env` block. Three switches restrict which tools are r
 - **`DOCKER_MCP_SERVER_NO_DESTRUCTIVE`** - everything except destructive tools (`*_remove`, `*_prune`, `container_kill`, `compose_down`, ...).
 - **`DOCKER_MCP_SERVER_DISABLE`** - comma-separated *domains* to drop wholesale (e.g. `swarm,services,nodes,configs,secrets` for a single-host server).
 
+**`DOCKER_MCP_SERVER_REDACT`** replaces credentials in everything the server returns with `[REDACTED:...]` markers; `(redact)` on a host in `DOCKER_MCP_SERVER_HOSTS` does it for that host alone. **This reduces accidental exposure only; it is not access control, and an agent that can run commands in a container can still read a credential.** Use it with `DOCKER_MCP_SERVER_READONLY`, and read [REDACTION.md](https://github.com/L337-org/docker-mcp/blob/main/REDACTION.md) before relying on it.
+
 `DOCKER_HOST` / `DOCKER_TLS_VERIFY` / `DOCKER_CERT_PATH` retarget the daemon (e.g. `-e DOCKER_HOST=tcp://remote-host:2375`).
 
 See the [full configuration reference](https://github.com/L337-org/docker-mcp#configuration) for the complete list and examples.

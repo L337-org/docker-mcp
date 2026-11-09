@@ -353,6 +353,11 @@ workflow file at once; in practice a task touches one or two.
   154 and ~47,200. The skill has no equivalent lever beyond deleting reference files by hand.
 - Auditable at runtime - one resource reports exactly which tools are registered under the current
   configuration, so you can confirm what a given config actually exposes rather than inferring it.
+- **Credential redaction.** The server can replace credentials in everything it returns with
+  markers, and swap a marker back when a write needs the real value.  The skill cannot: it runs the
+  docker CLI directly, so nothing sits between the daemon's output and the agent.  Redaction reduces
+  accidental exposure only; **it is not access control**, and an agent that can run commands in a
+  container can still read a credential.  See [REDACTION.md](REDACTION.md).
 
 **Reasons that apply to neither as much as you'd think**
 

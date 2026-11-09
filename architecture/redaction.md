@@ -130,6 +130,15 @@ holds the same text unredacted), and asks the harvest about IDs in the result.
 A JSON resource body is parsed, redacted as data and dumped again, so an escaped value is still found.
 Anything else that fails inside redaction propagates: the call fails rather than returning output.
 
+## Measuring it
+
+`scripts/measure-redaction.py` regenerates the figures `REDACTION.md` quotes: `sweep` plants
+credentials and decoys and compares a redacted host's output with an unfiltered one on the same daemon,
+and `cost` times calls on a daemon filled with containers and images.  Both run against a throwaway
+dind daemon unless given `--docker-host`.  Run it after a change to the rules, the harvest or the wire,
+and correct `REDACTION.md` from its output; it reports only and is not a CI gate.  It never prints a
+replaced value, since on a real daemon one may be a real credential.
+
 ## Where the settings surface
 
 - `server._switch_report()` merges `settings.report()` into the `switches` that `tool_list` and the
@@ -190,6 +199,17 @@ Each is a single table, so adding a case is a one-line change plus its test.
    `test_the_built_in_patterns_leave_ordinary_names_alone`.
 3. Add it to the pattern list in `REDACTION.md`, in the same order;
    `test_redaction_md_lists_exactly_the_built_in_patterns` fails until the two agree.
+
+### Leaving a name alone by default
+
+1. A name a built-in pattern matches but whose value is public goes in `BUILTIN_EXCLUDED_PATTERNS` in
+   `docker_mcp/redaction/settings.py`, as narrowly as possible: an exact name where a glob would also
+   catch private material (`GPG_KEY`, not `GPG_KEY*`, which would catch `GPG_KEY_PASSPHRASE`).
+2. Add it to `test_public_keys_are_left_alone_by_default`, and a private name it must not catch to
+   `test_the_public_key_exclusions_leave_private_material_harvested`, in
+   `tests/test_redaction_settings.py`.
+3. Add it to the exclusion list in `REDACTION.md`, in the same order;
+   `test_redaction_md_lists_exactly_the_built_in_exclusions` fails until the two agree.
 
 ### Adding a tool or resource
 

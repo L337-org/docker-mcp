@@ -25,7 +25,7 @@ from typing import Any
 
 import docker.errors
 
-from docker_mcp.redaction import settings
+from docker_mcp.redaction import rules, settings
 
 logger = logging.getLogger("docker_mcp.redaction")
 
@@ -44,18 +44,22 @@ _MAX_CONFIG_VALUE = 16 * 1024
 def credential_values(assignments: Iterable[str]) -> Iterable[str]:
     """The values of `NAME=value` assignments whose name is a credential name.
 
+    A value that is an absolute path is skipped: under a credential name it says where a credential is
+    (`SSL_CERT_FILE`, `POSTGRES_PASSWORD_FILE=/run/secrets/db`), it is not one, and a harvested value is
+    replaced wherever it appears, so the path would be lost from mounts, commands and logs too.
+
     Args:
         assignments: strings of the form `NAME=value`, as Docker reports environments
 
     Yields:
-        str: each non-empty value under a credential name
+        str: each non-empty value under a credential name that is not an absolute path
     """
     names = settings.names()
     for assignment in assignments:
         if not isinstance(assignment, str):
             continue
         name, sep, value = assignment.partition("=")
-        if sep and value and names.matches(name):
+        if sep and value and names.matches(name) and not rules.is_absolute_path(value):
             yield value
 
 
@@ -93,6 +97,9 @@ class HostHarvest:
         self._lock = threading.Lock()
         self._snapshot: frozenset[tuple[str, ...]] | None = None
         self._known_ids: frozenset[str] = frozenset()
+        # The known IDs by their first 12 characters, the shortest form a result abbreviates one to, so an
+        # abbreviated ID is matched without scanning every known one.
+        self._known_by_prefix: dict[str, list[str]] = {}
         self._checked_ids: set[str] = set()
         self._histories_read: set[str] = set()
         self._swarm_refusal_logged = False
@@ -113,17 +120,13 @@ class HostHarvest:
         snapshot comparison rather than a harvest, which runs only if the daemon really changed.
 
         Args:
-            ids: IDs a result mentions, full or abbreviated
+            ids: IDs a result mentions, full or abbreviated to at least 12 characters, as Docker abbreviates them
 
         Returns:
             bool: True if it harvested again
         """
         with self._lock:
-            unseen = [
-                i
-                for i in ids
-                if i not in self._checked_ids and not any(known.startswith(i) for known in self._known_ids)
-            ]
+            unseen = [i for i in ids if i not in self._checked_ids and not self._is_known(i)]
             if not unseen:
                 return False
             if len(self._checked_ids) + len(unseen) > _MAX_CHECKED_IDS:
@@ -131,6 +134,11 @@ class HostHarvest:
             # One result can name more IDs than the bound; those beyond it are simply checked again later.
             self._checked_ids.update(unseen[:_MAX_CHECKED_IDS])
             return self._refresh()
+
+    def _is_known(self, mentioned: str) -> bool:
+        if mentioned in self._known_ids:
+            return True
+        return any(known.startswith(mentioned) for known in self._known_by_prefix.get(mentioned[:12], ()))
 
     def _refresh(self) -> bool:
         client = self._client_for(self._label)
@@ -142,6 +150,9 @@ class HostHarvest:
         self._harvest(client)
         self._snapshot = snapshot
         self._known_ids = frozenset(entry[1] for entry in snapshot if entry[0] in ("container", "service"))
+        self._known_by_prefix = {}
+        for known in self._known_ids:
+            self._known_by_prefix.setdefault(known[:12], []).append(known)
         # Each checked ID is now either known or still not a container or service; a later change to the
         # daemon shows in the snapshot whatever names it.
         self._checked_ids.clear()

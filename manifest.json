@@ -30,7 +30,9 @@
         "DOCKER_MCP_SERVER_HOSTS": "${user_config.docker_hosts}",
         "DOCKER_MCP_SERVER_READONLY": "${user_config.read_only}",
         "DOCKER_MCP_SERVER_NO_DESTRUCTIVE": "${user_config.no_destructive}",
-        "DOCKER_MCP_SERVER_DISABLE": "${user_config.disable_domains}"
+        "DOCKER_MCP_SERVER_DISABLE": "${user_config.disable_domains}",
+        "DOCKER_MCP_SERVER_REDACT": "${user_config.redact}",
+        "DOCKER_MCP_SERVER_REDACT_NAMES": "${user_config.redact_names}"
       }
     }
   },
@@ -38,7 +40,7 @@
     "docker_hosts": {
       "type": "string",
       "title": "Docker host(s)",
-      "description": "Docker daemon(s) to manage. Blank = your default Docker context / socket. One remote: ssh://user@host (recommended; auth via your SSH keys), tcp://host:2375 for a plaintext TCP daemon, or tcp://host:2376(tls=/path/to/certs) for a TLS daemon (the directory needs ca.pem, which verifies the daemon - a self-signed daemon works - plus cert.pem/key.pem only if it requires a client cert). Several: comma-separated name=endpoint pairs, e.g. local=auto, prod=ssh://ops@prod.example.com(ro) - append (ro) to make a host read-only, or (nd) to block only destructive calls (kills/removals/prunes) on it. When set, this replaces DOCKER_HOST.",
+      "description": "Docker daemon(s) to manage. Blank = your default Docker context / socket. One remote: ssh://user@host (recommended; auth via your SSH keys), tcp://host:2375 for a plaintext TCP daemon, or tcp://host:2376(tls=/path/to/certs) for a TLS daemon (the directory needs ca.pem, which verifies the daemon - a self-signed daemon works - plus cert.pem/key.pem only if it requires a client cert). Several: comma-separated name=endpoint pairs, e.g. local=auto, prod=ssh://ops@prod.example.com(ro) - append (ro) to make a host read-only, or (nd) to block only destructive calls (kills/removals/prunes) on it. Append (redact) to redact credentials in that host's output only, which is not access control: see https://github.com/L337-org/docker-mcp/blob/main/REDACTION.md. When set, this replaces DOCKER_HOST.",
       "required": false
     },
     "read_only": {
@@ -58,6 +60,19 @@
       "title": "Disabled domains",
       "description": "Comma-separated tool domains to drop, e.g. swarm,plugins,scout.",
       "required": false
+    },
+    "redact": {
+      "type": "boolean",
+      "title": "Redact credentials",
+      "description": "Replace credentials in everything the server returns with [REDACTED:...] markers, on every host. Reduces accidental exposure only: it is not access control, and an agent that can run commands in a container can still read a credential. Use it with read-only mode. Read https://github.com/L337-org/docker-mcp/blob/main/REDACTION.md first.",
+      "default": false
+    },
+    "redact_names": {
+      "type": "string",
+      "title": "Redacted variable names",
+      "description": "Extra variable names whose values redaction treats as credentials: comma-separated, case-insensitive, * and ? globs, and ! to exclude a built-in name (UPSTREAM_*, !SORT_KEY). Names only, never values. Has no effect unless redaction is on. See https://github.com/L337-org/docker-mcp/blob/main/REDACTION.md.",
+      "required": false,
+      "default": ""
     }
   },
   "compatibility": {

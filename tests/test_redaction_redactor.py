@@ -222,6 +222,20 @@ def test_a_flag_followed_by_another_flag_or_a_non_credential_flag_leaves_the_lis
     assert redactor.redact(result, "prod") == result
 
 
+def test_a_path_after_a_credential_flag_is_left_alone_in_a_list_and_in_text(redactor):
+    # `--tlscert /certs/server/cert.pem` (the dind entrypoint) and `--password-file` name where a credential
+    # is; taken as one, the path would be stored and replaced in every mount and command on the host.
+    result = {
+        "Args": ["dockerd", "--tlscert", "/certs/server/cert.pem", "--tlskey", "/certs/server/key.pem"],
+        "Cmd": 'app --password-file /run/secrets/db --password "/Summer 2025!"',
+    }
+    redacted = redactor.redact(result, "prod")
+    assert redacted["Args"] == result["Args"]
+    assert "--password-file /run/secrets/db" in redacted["Cmd"]
+    assert "Summer" not in redacted["Cmd"]  # not a plain path, so still taken as the flag's value
+    assert redactor.report("prod")["discovered_values"] == 1
+
+
 def test_partly_overlapping_credentials_leave_nothing_in_clear(redactor):
     # A known value immediately followed by a random run the generic rule finds: the run starts inside
     # the known value's text, so replacing either alone would leave part of the other.

@@ -85,6 +85,35 @@ def test_the_built_in_patterns_leave_ordinary_names_alone(name):
     assert not NameRules().matches(name)
 
 
+@pytest.mark.parametrize(
+    "name", ["SSH_PUBLIC_KEY", "JWT_PUBLIC_KEY", "DEPLOY_PUBKEY", "SIGNING_PUB_KEY", "GPG_KEY", "gpg_keys"]
+)
+def test_public_keys_are_left_alone_by_default(name):
+    assert not NameRules().matches(name)
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "GPG_KEY_PASSPHRASE",
+        "GPG_PRIVATE_KEY",
+        "SSH_PRIVATE_KEY",
+        "PUBLISH_KEY",
+        # A credential word after the public-key one: the exclusions are anchored at the end.
+        "SIGNING_PUB_KEY_PASSWORD",
+        "X_PUBLIC_KEY_SECRET",
+        "DEPLOY_PUBKEY_TOKEN",
+    ],
+)
+def test_the_public_key_exclusions_leave_private_material_harvested(name):
+    assert NameRules().matches(name)
+
+
+def test_an_addition_overrides_a_built_in_exclusion_and_a_users_exclusion_still_wins():
+    assert parse_names("GPG_KEY").matches("GPG_KEY")
+    assert not parse_names("GPG_KEY, !GPG_KEY").matches("GPG_KEY")
+
+
 def test_an_addition_extends_the_built_in_patterns_case_insensitively():
     rules = parse_names("upstream_*")
     assert rules.matches("UPSTREAM_URL")
@@ -104,6 +133,7 @@ def test_an_exclusion_wins_over_an_addition():
 def test_the_resolved_name_list_is_reported_in_full():
     assert parse_names("UPSTREAM_*, !SORT_KEY").report() == {
         "builtin": list(settings.BUILTIN_NAME_PATTERNS),
+        "builtin_excluded": list(settings.BUILTIN_EXCLUDED_PATTERNS),
         "added": ["UPSTREAM_*"],
         "excluded": ["SORT_KEY"],
     }
@@ -229,5 +259,12 @@ def test_names_with_a_redacted_host_do_not_warn(monkeypatch):
 def test_redaction_md_lists_exactly_the_built_in_patterns():
     text = (Path(__file__).parent.parent / "REDACTION.md").read_text(encoding="utf-8")
     section = text.split("## Which names are treated as credentials", 1)[1]
-    pattern_list = section.split("globs:", 1)[1].split("`DOCKER_MCP_SERVER_REDACT_NAMES`", 1)[0]
+    pattern_list = section.split("globs:", 1)[1].split("Some names those patterns match", 1)[0]
     assert re.findall(r"`([^`]+)`", pattern_list) == list(settings.BUILTIN_NAME_PATTERNS)
+
+
+def test_redaction_md_lists_exactly_the_built_in_exclusions():
+    text = (Path(__file__).parent.parent / "REDACTION.md").read_text(encoding="utf-8")
+    section = text.split("## Which names are treated as credentials", 1)[1]
+    exclusions = section.split("under `GPG_KEY`:", 1)[1].split("A value that is an absolute path", 1)[0]
+    assert re.findall(r"`([^`]+)`", exclusions) == list(settings.BUILTIN_EXCLUDED_PATTERNS)

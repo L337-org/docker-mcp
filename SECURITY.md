@@ -41,3 +41,10 @@ Docker Desktop, rootless install) rather than a production socket - via
 startup (no runtime retarget to an arbitrary endpoint), and a host listed
 `(ro)` in `DOCKER_MCP_SERVER_HOSTS` makes the agent refuse to mutate it - an
 accident guard, not a substitute for a genuinely scoped daemon.
+
+**Credential redaction** (`DOCKER_MCP_SERVER_REDACT`, or `(redact)` on a host)
+replaces credentials in what the server returns with markers.  **It reduces
+accidental exposure only; it is not access control.**  An agent that can run
+commands in a container can still read a credential, and an agent that can run
+commands as the server's user can read the server's memory.  What it catches,
+what it misses and how to run it are in [REDACTION.md](REDACTION.md).
