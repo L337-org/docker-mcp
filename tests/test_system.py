@@ -855,6 +855,26 @@ def test_the_ssh_adapter_connects_through_the_answering_address_and_checks_the_k
     assert "sock" not in adapter.ssh_params  # a reconnect probes again rather than reusing a closed socket
 
 
+def test_docker_py_still_builds_and_connects_its_ssh_adapter_the_way_the_subclass_relies_on(monkeypatch):
+    # The subclass overrides docker-py's private `_connect` and reads `ssh_params`, which its constructor
+    # sets and then connects through.  Built for real here, with only the network and the user's SSH files
+    # kept out, so a docker-py release that renames either, or stops connecting in the constructor, fails
+    # this rather than quietly bypassing the fallback.
+    import paramiko
+
+    calls = []
+    monkeypatch.setattr(
+        "os.path.expanduser", lambda path: "/nonexistent/ssh-config" if path == "~/.ssh/config" else path
+    )
+    monkeypatch.setattr(paramiko.SSHClient, "load_system_host_keys", lambda self: None)
+    monkeypatch.setattr(paramiko.SSHClient, "connect", lambda self, **kwargs: calls.append(kwargs))
+    sock = MagicMock()
+    monkeypatch.setattr(system_module, "connect_socket_with_family_fallback", MagicMock(return_value=sock))
+    adapter = system_module._FamilyFallbackSSHAdapter("ssh://bob@example.invalid:2222")
+    assert calls == [{"hostname": "example.invalid", "port": 2222, "username": "bob", "sock": sock}]
+    assert vars(adapter)["ssh_params"] == {"hostname": "example.invalid", "port": 2222, "username": "bob"}
+
+
 def test_the_ssh_adapter_defaults_to_port_22(monkeypatch):
     probe = MagicMock(return_value=MagicMock())
     monkeypatch.setattr(system_module, "connect_socket_with_family_fallback", probe)

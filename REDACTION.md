@@ -137,10 +137,8 @@ Measured by planting credentials and decoys on a daemon, then calling the list, 
 exec, image, history, Compose, service, events and disk-usage tools on a redacted host and on an
 unfiltered one pointing at the same daemon, and `container_inspect` and `image_inspect` on everything
 the daemon held.  A value counts as caught only if no raw, base64, hex or URL-encoded form of it
-survives anywhere.  `uv run scripts/measure-redaction.py sweep` repeats it (`--help` for the options),
-and the results below are as it last reported them, on Docker Desktop, on Docker 26.1 and 28 daemons with
-Swarm, and on a Docker 29 daemon reached over SSH; they can move with the code, so run it again before
-relying on them.
+survives anywhere.  `uv run scripts/measure-redaction.py sweep` repeats it (`--help` for the options);
+what it finds can move with the code, so run it again before relying on what follows.
 
 **Caught:** a credential-named environment value (raw, base64 and hex in logs), an AWS key pair, a
 GitHub token, a JWT under an innocuous name, a password in a database URL, a word-like password under a
@@ -155,9 +153,9 @@ and `system_events`), and a Swarm service's environment.
 - sometimes, a random value with no credential name or known format beside it: a credential under an
   innocuous name, a value generated at container start and printed to the logs, or a Swarm secret a
   service prints (a secret's content cannot be read through the API).  Only the shape rules can catch
-  these, and they take a run as random only above a fixed threshold, which a random value falls under
-  by chance: about one time in fifty at 40 characters, and one in three at 32.  Each was missed at
-  least once across the runs;
+  these, and they take a run as random only above a fixed number of bits per character
+  (`_GENERIC_MIN_ENTROPY` in `docker_mcp/redaction/rules.py`), which a random value falls under by
+  chance, more often the shorter it is;
 - anything transformed before it is printed: split, reversed, encrypted, hashed, or encoded some way
   not listed above.  Hashes are not matched at all.
 
@@ -168,8 +166,8 @@ and `system_events`), and a Swarm service's environment.
 - a long random-looking value that is not a credential, such as a subresource-integrity hash, by its
   shape.
 
-Of the decoys planted, a build ID, a commit hash, a UUID, a cache buster and an SSH public key were left
-alone, and nothing else on the daemons measured was replaced.
+Build IDs, commit hashes, UUIDs and cache busters are left alone, being hex, structured or too short
+for the shape rules, and so are public keys (see above).
 
 ## Using a credential without seeing it
 

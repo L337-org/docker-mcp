@@ -1,10 +1,9 @@
 import base64
 import logging
+import secrets
 from types import SimpleNamespace
 
 import docker.errors
-import secrets
-
 import pytest
 
 from docker_mcp.redaction import harvest, settings
