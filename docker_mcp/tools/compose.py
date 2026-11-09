@@ -614,7 +614,9 @@ def compose_exec(  # noqa: DOC101,DOC103
     """
     Run a command inside an already-running compose service container (see also `container_exec`).
 
-    Always passes `-T` (no TTY). Pass an exec-form argv (e.g. `["python", "-V"]`); a
+    Prefer it for a service in a Compose project, which it finds by service name (and `index`);
+    use `container_exec` for a container you know by name or ID, or one outside a project, since
+    that needs no compose file. Always passes `-T` (no TTY). Pass an exec-form argv (e.g. `["python", "-V"]`); a
     `["sh", "-c", "..."]` form interprets shell metacharacters in untrusted substrings.
     Does not raise on a non-zero CLI exit - inspect `returncode`/`stderr`.
 

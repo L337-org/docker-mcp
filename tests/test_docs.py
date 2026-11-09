@@ -301,9 +301,17 @@ def test_no_other_shipped_document_mentions_redaction_unwarned():
     ]
     assert any("skills" in path.parts for path in candidates), "the skill's files moved; update this scan"
     # REDACTION.md is the full treatment; architecture/redaction.md and hosts.md are its contributor
-    # notes, which route to it; AGENTS.md and CLAUDE.md are assistant instructions, not documentation a
-    # user reads to decide whether to rely on the mode.
-    exempt = {"REDACTION.md", "AGENTS.md", "CLAUDE.md", "architecture/redaction.md", "architecture/hosts.md"}
+    # notes, which route to it; docker-sdk.md only names the harvest module among the SDK calls it lists;
+    # AGENTS.md and CLAUDE.md are assistant instructions, not documentation a user reads to decide whether
+    # to rely on the mode.
+    exempt = {
+        "REDACTION.md",
+        "AGENTS.md",
+        "CLAUDE.md",
+        "architecture/redaction.md",
+        "architecture/hosts.md",
+        "architecture/docker-sdk.md",
+    }
     unlisted = [
         rel
         for path in candidates

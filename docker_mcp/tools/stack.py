@@ -346,7 +346,7 @@ def _wait_stack(
                 continue
             try:
                 summary = _read_service_task_summary(service.id, host=host)
-                running = client.api.tasks(filters={"service": service.id, "desired-state": "running"})
+                running = service.tasks(filters={"desired-state": "running"})
             except docker.errors.NotFound:
                 # Removed between the list and this read (a `stack rm` or a pruning deploy elsewhere).
                 continue
