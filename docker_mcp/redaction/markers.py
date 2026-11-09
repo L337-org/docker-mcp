@@ -118,7 +118,10 @@ class MarkerCodec:
             raw = base64.urlsafe_b64decode(token + "==")
         except ValueError:
             return MarkerFault.MALFORMED
-        if len(raw) != 16:
+        # 22 characters carry 132 bits for a 128-bit block, so the last one has 4 spare bits the decoder
+        # ignores.  Only the spelling `issue` writes is accepted, or a marker altered in those bits would
+        # read back as the original.
+        if len(raw) != 16 or base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii") != token:
             return MarkerFault.MALFORMED
         with self._lock:
             decryptor = self._cipher.decryptor()

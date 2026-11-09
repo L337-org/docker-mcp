@@ -386,7 +386,13 @@ def test_list_hosts_reports_redaction_notes_and_store_for_a_redacted_host_only(m
         "budget_reached",
     }
     assert any("[REDACTED:...]" in note for note in prod["redaction"]["notes"])
-    assert any("Never pass a marker to a tool" in note for note in prod["redaction"]["notes"])
+    # A host that accepts writes swaps markers back in them, and refuses a file holding one.
+    assert any("Pass a marker where a write to this host needs its credential" in n for n in prod["redaction"]["notes"])
+    assert (
+        "Never write a marker to a file: a call reading a file or archive that holds one is refused."
+        in (prod["redaction"]["notes"])
+    )
+    assert not any("not swapped back" in note for note in prod["redaction"]["notes"])
     assert (
         "Bytes in band are refused here: container_archive_get, container_export without dest_path, "
         "image_save without dest_path." in prod["redaction"]["notes"]
@@ -398,6 +404,9 @@ def test_list_hosts_reports_redaction_notes_and_store_for_a_redacted_host_only(m
     # The file-writing tools are writes, so a read-only host refuses them and naming them would mislead.
     assert "Bytes in band are refused here: container_archive_get." in safe["redaction"]["notes"]
     assert not any("not redacted" in note for note in safe["redaction"]["notes"])
+    # A read-only host never swaps a marker back, so it is told so and nothing about swapping or files.
+    assert any("it is not swapped back" in note for note in safe["redaction"]["notes"])
+    assert not any("Pass a marker" in note or "is refused." in note for note in safe["redaction"]["notes"])
 
 
 def test_list_hosts_names_only_the_tools_that_are_registered(monkeypatch):

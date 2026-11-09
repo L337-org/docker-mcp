@@ -26,7 +26,7 @@ from typing import Any, cast
 
 from docker_mcp import _hosts
 from docker_mcp.exceptions import DockerMcpError
-from docker_mcp.redaction import settings
+from docker_mcp.redaction import disk, settings, swap
 from docker_mcp.redaction.harvest import HostHarvest, credential_values
 from docker_mcp.redaction.redactor import Redactor
 from docker_mcp.redaction.store import BUDGET_MESSAGE
@@ -236,32 +236,56 @@ def _harvest_failure(exc: Exception, label: str, *, ran: bool) -> str | None:
 
 
 def _prepare(  # noqa: DOC501,DOC503 - raises the caller's error_cls, which pydoclint cannot resolve
-    name: str, scope: Scope, error_cls: type[Exception], arguments: dict[str, Any], harvest: bool
-) -> str | None:
-    """Everything a redacted call needs before it runs: refusals first, then a fresh harvest.
+    name: str,
+    scope: Scope,
+    error_cls: type[Exception],
+    arguments: dict[str, Any],
+    *,
+    harvest: bool,
+    writes: bool,
+    guarded: bool,
+    command_line: bool = False,
+) -> tuple[str | None, dict[str, Any]]:
+    """Everything a call needs before it runs: refusals, markers swapped back, files searched, a fresh harvest.
 
     Args:
         name: the tool's name, or the resource's URI
         scope: which host the call's output belongs to
         error_cls: the SDK error to refuse with
-        arguments: the call's arguments, by name
+        arguments: the call's arguments, by name; not modified
         harvest: False for a tool whose output carries no daemon data, which is not held up by a harvest
+        writes: True for a tool that is not read-only, whose arguments may carry markers to swap back
+        guarded: True for a write the host guard refuses on a read-only host
+        command_line: True for a CLI-backed tool, whose arguments mostly reach the docker CLI's command line
 
     Returns:
-        str | None: the redacted host's label, or None when the call's output is not redacted
+        tuple: the redacted host's label, or None when the call's output is not redacted; and the
+            arguments to call with, the same object when nothing was swapped
 
     Raises:
         Exception: an instance of `error_cls`, when the redaction budget is reached, when bytes would be
-            returned in band, or when the harvest is refused or fails
+            returned in band, when a marker cannot be swapped back or sits in a file the call reads, or
+            when the harvest is refused or fails
     """
     label = _label_for(scope, arguments)
-    if label is None or not settings.host_redacted(label):
-        return None
+    redacted = label is not None and settings.host_redacted(label)
     try:
+        if writes and settings.any_redacted():
+            arguments = _swap(
+                name, scope, arguments, label, redacted=redacted, guarded=guarded, command_line=command_line
+            )
+        if not redacted:
+            return None, arguments
+        label = cast(str, label)
         if REDACTOR.budget_reached():
             raise error_cls(BUDGET_MESSAGE)
         if (refusal := _refuse_bytes_in_band(name, arguments, label)) is not None:
             raise error_cls(refusal)
+        if writes and not _hosts.is_read_only(label):
+            if name == "container_archive_put":
+                disk.search_archive(name, arguments, label)
+            else:
+                disk.search_files(name, arguments, label)
         if harvest:
             _harvest_for(label).ensure_fresh()
         if name.startswith("compose_"):
@@ -270,10 +294,38 @@ def _prepare(  # noqa: DOC501,DOC503 - raises the caller's error_cls, which pydo
         # A redaction refusal: turned into the client-visible type here, outside the translation.
         raise error_cls(str(exc)) from None
     except Exception as exc:
-        if (message := _harvest_failure(exc, label, ran=False)) is None:
+        if label is None or (message := _harvest_failure(exc, label, ran=False)) is None:
             raise
         raise error_cls(message) from exc
-    return label
+    return label, arguments
+
+
+def _swap(
+    name: str,
+    scope: Scope,
+    arguments: dict[str, Any],
+    label: str | None,
+    *,
+    redacted: bool,
+    guarded: bool,
+    command_line: bool,
+) -> dict[str, Any]:
+    if scope is Scope.NO_DAEMON:
+        # No host to swap a marker back for.
+        return swap.swap_markers(REDACTOR, name, arguments, None, swaps=False, command_line=command_line)
+    # Left to the host guard, which refuses with its own message: an unknown label, and a guarded write
+    # to a read-only host.  Connection control is not guarded, so it is checked here like any other call.
+    if label is None:
+        return arguments
+    read_only = _hosts.is_read_only(label)
+    if guarded and read_only:
+        return arguments
+    # A marker is swapped back only on a redacted host that accepts writes.  Elsewhere every one is
+    # refused rather than reaching the daemon or a registry as literal text: no marker was issued for an
+    # unfiltered host, and a read-only one never swaps back.
+    return swap.swap_markers(
+        REDACTOR, name, arguments, label, swaps=redacted and not read_only, command_line=command_line
+    )
 
 
 def _failed(exc: Exception, label: str, error_cls: type[Exception]) -> Exception:
@@ -299,7 +351,16 @@ def _finish(result: Any, name: str, label: str, error_cls: type[Exception], json
 
 
 def wrap[F: Callable[..., Any]](
-    func: F, name: str, scope: Scope, error_cls: type[Exception], *, json_text: bool = False, harvest: bool = True
+    func: F,
+    name: str,
+    scope: Scope,
+    error_cls: type[Exception],
+    *,
+    json_text: bool = False,
+    harvest: bool = True,
+    writes: bool = False,
+    guarded: bool = False,
+    command_line: bool = False,
 ) -> F:
     """Wrap a registered tool or resource so its output and errors are redacted on a redacted host.
 
@@ -315,6 +376,10 @@ def wrap[F: Callable[..., Any]](
         json_text: True for a resource whose body is JSON text, which is redacted as data
         harvest: False for a connection-control tool, which must work on a host whose client is wedged
             and returns no daemon data a harvest could add to
+        writes: True for a tool that is not read-only, whose arguments have markers swapped back
+        guarded: True for a write the host guard refuses on a read-only host, which is left to it
+        command_line: True for a CLI-backed tool, where a marker is swapped back only in an argument that
+            reaches the CLI through its environment
 
     Returns:
         F: the wrapped callable, carrying its scope as `REDACTION_SCOPE`
@@ -327,14 +392,29 @@ def wrap[F: Callable[..., Any]](
         except TypeError:
             return dict(kwargs)
 
+    def prepare(args: tuple, kwargs: dict) -> tuple[str | None, tuple, dict]:
+        arguments = arguments_of(args, kwargs)
+        label, prepared = _prepare(
+            name,
+            scope,
+            error_cls,
+            arguments,
+            harvest=harvest,
+            writes=writes,
+            guarded=guarded,
+            command_line=command_line,
+        )
+        # Called by name only when a marker was swapped back, so every other call reaches the function
+        # exactly as it arrived.
+        return (label, args, kwargs) if prepared is arguments else (label, (), prepared)
+
     if inspect.iscoroutinefunction(func):
         import anyio.to_thread
 
         @functools.wraps(func)
         async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
-            arguments = arguments_of(args, kwargs)
             # Harvesting and redacting block, so they run off the event loop.
-            label = await anyio.to_thread.run_sync(lambda: _prepare(name, scope, error_cls, arguments, harvest))
+            label, args, kwargs = await anyio.to_thread.run_sync(lambda: prepare(args, kwargs))
             if label is None:
                 return await func(*args, **kwargs)
             try:
@@ -350,7 +430,7 @@ def wrap[F: Callable[..., Any]](
 
     @functools.wraps(func)
     def wrapper(*args: Any, **kwargs: Any) -> Any:
-        label = _prepare(name, scope, error_cls, arguments_of(args, kwargs), harvest)
+        label, args, kwargs = prepare(args, kwargs)
         if label is None:
             return func(*args, **kwargs)
         try:
