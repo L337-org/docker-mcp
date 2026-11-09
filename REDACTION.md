@@ -263,6 +263,26 @@ their values; a value the server knows is still replaced in them:
 
 `TrustRoot`, `CertIssuerPublicKey`, `CertIssuerSubject` and `SandboxKey`.
 
+## What it costs
+
+Redaction costs time on every call to a redacted host, and memory for the values it holds.  It is kept
+as low as the design allows; if you do not need it, leave it off.  Measured on a Mac, against Docker
+Desktop (108 images, a handful of containers) and against a Docker 28 daemon filled with 2,000
+containers, each with a credential in its environment, and 501 images:
+
+| | Docker Desktop | 2,000 containers, 501 images |
+| --- | --- | --- |
+| First call to the host, which reads every credential | about 2 s | about 12.5 s |
+| Added to every call, to check nothing has changed since | about 40 ms | about 140 ms |
+| Added to `container_list` of every container (1.4 MB of output) | | about 1.7 s |
+| Values held | 1, 245 bytes | 2,000, 586 KB |
+
+The time added to every call is the check that keeps the harvest fresh: it lists the daemon's
+containers, images, services and configs, so it grows with them.  Redacting a result costs about 1.3 ms
+for each KB of output, so a call returning a lot of data costs most.  A write to a redacted host that
+accepts writes also searches the files it reads, about 3 s for 100 MB on first reading.  The server's
+process grew from about 90 MB to 180 MB on the larger daemon.
+
 ## Limits
 
 The server keeps the values it redacts in memory, and stops growing that store at fixed limits:

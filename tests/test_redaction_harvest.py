@@ -231,6 +231,18 @@ def test_an_unseen_container_prompts_a_check_and_a_known_one_does_not():
     assert client.harvests == 2
 
 
+def test_known_ids_are_matched_in_full_and_abbreviated_among_many_without_a_check():
+    # Indexed by their first 12 characters, so a list of thousands of containers is not checked by
+    # scanning every known ID for every mentioned one.
+    ids = [f"{n:064x}" for n in range(1, 2001)]
+    client = _FakeClient(containers=[_container(i, []) for i in ids])
+    h, _ = _harvester(client)
+    h.ensure_fresh()
+    mentioned = [*ids, *(i[:12] for i in ids[::7]), *(i[:20] for i in ids[::11])]
+    assert h.harvest_if_unseen(mentioned) is False
+    assert client.snapshots == 1
+
+
 def test_an_id_that_is_no_container_costs_one_snapshot_and_never_a_harvest():
     # Network and plugin IDs, and removed containers' IDs in events, look just like container IDs.
     client = _FakeClient(containers=[_container("c1", [])])
