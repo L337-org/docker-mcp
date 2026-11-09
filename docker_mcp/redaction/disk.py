@@ -98,7 +98,17 @@ def _working_tree(files: Any, working: Path) -> list[_Input]:
 # context, a bind mount or a secret's file, can end up there: the whole project directory is searched for
 # them.  The other Compose writes read only the compose files and `.env`.
 _COMPOSE_CREATING = frozenset({"compose_build", "compose_run", "compose_up"})
-_COMPOSE_DEFAULT_FILES = ("compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml")
+# What Compose reads with no `-f`: the first of these it finds, and the matching override file beside it.
+_COMPOSE_DEFAULT_FILES = (
+    "compose.yaml",
+    "compose.yml",
+    "docker-compose.yaml",
+    "docker-compose.yml",
+    "compose.override.yaml",
+    "compose.override.yml",
+    "docker-compose.override.yaml",
+    "docker-compose.override.yml",
+)
 
 
 def _compose_inputs(tool: str, arguments: dict[str, Any]) -> list[_Input]:

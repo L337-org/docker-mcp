@@ -158,7 +158,10 @@ and `system_events`), and a Swarm service's environment.
   (`_GENERIC_MIN_ENTROPY` in `docker_mcp/redaction/rules.py`), which a random value falls under by
   chance, more often the shorter it is;
 - anything transformed before it is printed: split, reversed, encrypted, hashed, or encoded some way
-  not listed above.  Hashes are not matched at all.
+  not listed above.  Hashes are not matched at all;
+- a value under a name the patterns do not reach.  `PASS` is matched only as a whole word, on its own or
+  after an underscore, so `DBPASS` or `SMTPPASS` is not a credential name; add such a name to
+  `DOCKER_MCP_SERVER_REDACT_NAMES`.
 
 **Replaced by mistake:**
 

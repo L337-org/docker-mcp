@@ -322,3 +322,27 @@ def test_an_absolute_path_under_a_credential_name_is_not_harvested(value):
 @pytest.mark.parametrize("value", ["/Summer 2025", "/pa$$word!", "relative/path", "s3cr3t/with/slashes", "//x?y"])
 def test_a_value_that_is_not_a_plain_absolute_path_is_still_harvested(value):
     assert list(credential_values([f"DB_PASSWORD={value}"])) == [value]
+
+
+def test_an_arg_entry_that_disagrees_with_the_run_entry_falls_back_to_the_first_word():
+    # A builder recording the Dockerfile's declaration rather than the value passed would make the `ARG`
+    # entry a different value; the first word of the passed value is then the safer harvest.
+    entries = ["RUN |1 TOKEN=real secret words /bin/sh -c make", "ARG TOKEN=changeme"]
+    assert history_build_args(entries) == ["TOKEN=real"]
+
+
+def test_a_failed_swarm_read_is_not_marked_read_so_the_next_call_retries_it():
+    service = _service("s1", ["X_SECRET=svc"])
+    client = _FakeClient(services=[service])
+    failing = client.services.get
+
+    def flaky(service_id):
+        raise docker.errors.APIError("500 Server Error: temporary failure")
+
+    client.services.get = flaky
+    h, remembered = _harvester(client)
+    with pytest.raises(docker.errors.APIError, match="temporary failure"):
+        h.ensure_fresh()
+    client.services.get = failing
+    h.ensure_fresh()
+    assert ("svc", "prod") in remembered

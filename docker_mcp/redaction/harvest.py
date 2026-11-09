@@ -101,7 +101,11 @@ def history_build_args(created_by: Iterable[str]) -> list[str]:
     for name, first_word in last.items():
         if name in values:
             continue
-        values[name] = _arg_entry_value(entries, name, names - {name}) or first_word
+        # BuildKit's `ARG` entry carries the value passed, as the `RUN` entry does (checked against a real
+        # build, with and without `--build-arg`).  It is trusted only where it begins as the `RUN` entry's
+        # value does, so a builder that recorded a declaration instead falls back to the first word.
+        whole = _arg_entry_value(entries, name, names - {name})
+        values[name] = whole if whole and whole.split(" ", 1)[0] == first_word else first_word
     return [f"{name}={value}" for name, value in values.items() if value]
 
 
@@ -248,19 +252,17 @@ class HostHarvest:
             self._histories_read.add(image.id)
 
     def _harvest_swarm_object(self, client: Any, kind: str, object_id: str) -> None:
-        try:
-            if kind == "service":
-                attrs = client.services.get(object_id).attrs
-                spec = ((attrs.get("Spec") or {}).get("TaskTemplate") or {}).get("ContainerSpec") or {}
-                self._store(credential_values(spec.get("Env") or []))
-            elif kind == "config":
-                attrs = client.configs.get(object_id).attrs
-                if settings.names().matches((attrs.get("Spec") or {}).get("Name") or ""):
-                    self._store_config(attrs)
-        except docker.errors.APIError as exc:
-            if isinstance(exc, docker.errors.NotFound):
-                raise
-            self._log_swarm_refusal(exc)
+        # Any failure but NotFound propagates, as a container's does, so the snapshot is not marked read and
+        # the next call reads the object again; a node that is not a manager lists no services or configs in
+        # the snapshot, so there is no refusal to tolerate here.
+        if kind == "service":
+            attrs = client.services.get(object_id).attrs
+            spec = ((attrs.get("Spec") or {}).get("TaskTemplate") or {}).get("ContainerSpec") or {}
+            self._store(credential_values(spec.get("Env") or []))
+        elif kind == "config":
+            attrs = client.configs.get(object_id).attrs
+            if settings.names().matches((attrs.get("Spec") or {}).get("Name") or ""):
+                self._store_config(attrs)
 
     def _store_config(self, attrs: dict) -> None:
         data = (attrs.get("Spec") or {}).get("Data") or ""
