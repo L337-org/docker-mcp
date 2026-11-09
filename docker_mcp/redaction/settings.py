@@ -20,14 +20,16 @@ NAMES_VAR = "DOCKER_MCP_SERVER_REDACT_NAMES"
 # Variable names whose values are harvested as credentials, as case-insensitive globs.  Kept to the
 # words a credential is usually named with: every pattern here costs false replacements wherever a
 # harmless value under a matching name appears (`*KEY*` harvests `SORT_KEY`), which is why the names
-# setting can exclude one with `!`.  `PASS` is matched only as a whole trailing or inner word, because
-# `*PASS*` would harvest `PASSTHROUGH` and `BYPASS_*`.  Adding a pattern here is a one-line change plus
-# its case in tests/test_redaction_settings.py.
+# setting can exclude one with `!`.  `PASS` is matched only as a whole word, on its own or after an
+# underscore, because `*PASS` alone would harvest `CACHE_BYPASS` and `COMPASS`, and `*PASS*` `PASSTHROUGH`
+# too; a flag such as `CACHE_BYPASS=1` would then make every `1` a marker.  Adding a pattern here is a
+# one-line change plus its case in tests/test_redaction_settings.py.
 BUILTIN_NAME_PATTERNS: tuple[str, ...] = (
     "*PASSWORD*",
     "*PASSWD*",
     "*PASSPHRASE*",
-    "*PASS",
+    "PASS",
+    "*_PASS",
     "*_PASS_*",
     "*SECRET*",
     "*TOKEN*",

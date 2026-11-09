@@ -67,6 +67,7 @@ def test_a_bare_exclamation_mark_is_refused():
         "MYSQL_ROOT_PASSWD",
         "DB_PASS",
         "DB_PASS_FILE",
+        "PASS",
         "SSH_PASSPHRASE",
         "CLIENT_SECRET",
         "GITHUB_TOKEN",
@@ -80,7 +81,9 @@ def test_the_built_in_patterns_harvest_credential_names(name):
     assert NameRules().matches(name)
 
 
-@pytest.mark.parametrize("name", ["PATH", "HOME", "PASSTHROUGH", "BYPASS_CACHE", "COMPASS_URL", "PWD", "LANG"])
+@pytest.mark.parametrize(
+    "name", ["PATH", "HOME", "PASSTHROUGH", "BYPASS_CACHE", "COMPASS_URL", "PWD", "LANG", "CACHE_BYPASS", "COMPASS"]
+)
 def test_the_built_in_patterns_leave_ordinary_names_alone(name):
     assert not NameRules().matches(name)
 
