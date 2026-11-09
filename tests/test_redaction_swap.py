@@ -62,6 +62,7 @@ def _write_tool(name="container_create", scope=Scope.HOST_ARGUMENT, writes=True,
         command: list | None = None,
         labels: dict | None = None,
         extra_kwargs: dict | None = None,
+        conf: dict | None = None,
         buildargs: dict | None = None,
         set_overrides: list | None = None,
         data: bytes | None = None,
@@ -74,6 +75,7 @@ def _write_tool(name="container_create", scope=Scope.HOST_ARGUMENT, writes=True,
                 "command": command,
                 "labels": labels,
                 "extra_kwargs": extra_kwargs,
+                "conf": conf,
                 "buildargs": buildargs,
                 "set_overrides": set_overrides,
                 "data": data,
@@ -238,10 +240,9 @@ def test_a_marker_in_a_tool_that_reaches_no_daemon_is_refused(redactor):
     ("arguments", "where", "reason"),
     [
         ({"image": "{m}"}, "`image`", "a name or identifier"),
-        ({"labels": {"owner": "{m}"}}, "`labels['owner']`", "a label, annotation or commit field"),
         ({"buildargs": {"TOKEN": "{m}"}}, "`buildargs['TOKEN']`", "recorded in the image's history"),
         ({"set_overrides": ["app.args.TOKEN={m}"]}, "`set_overrides[0]`", "passed on the command line"),
-        ({"extra_kwargs": {"labels": {"a": "{m}"}}}, "`extra_kwargs['labels']['a']`", "a label"),
+        ({"conf": {"Labels": {"a": "{m}"}}}, "`conf['Labels']['a']`", "image metadata"),
         ({"extra_kwargs": {"name": "{m}"}}, "`extra_kwargs['name']`", "a name or identifier"),
         ({"extra_kwargs": {"network": "{m}"}}, "`extra_kwargs['network']`", "a name or identifier"),
         ({"extra_kwargs": {"networks": ["{m}"]}}, "`extra_kwargs['networks'][0]`", "a name or identifier"),
@@ -272,7 +273,35 @@ def test_a_build_argument_refusal_points_to_vars_and_a_secret(redactor):
 
 def test_the_guardrail_refuses_even_a_marker_that_would_swap_back(redactor):
     wrapped, calls = _write_tool()
-    _refusal(wrapped, calls, labels={"a": _marker(redactor)}, host="prod")
+    _refusal(wrapped, calls, image=_marker(redactor), host="prod")
+
+
+@pytest.mark.parametrize("tool", ["image_build", "buildx_build"])
+def test_an_image_label_is_refused_as_image_metadata(redactor, tool):
+    wrapped, calls = _write_tool(name=tool)
+    message = _refusal(wrapped, calls, labels={"owner": _marker(redactor)}, host="prod")
+    assert "image metadata" in message
+    assert "Put a label a container needs on the container or service itself" in message
+
+
+def test_a_container_or_service_label_is_swapped_back(redactor):
+    # Some containers read credentials from their own labels (a Traefik basic-auth label), and a
+    # container's labels stay on the host, so they are not refused.
+    marker = _marker(redactor)
+    wrapped, calls = _write_tool(name="container_run")
+    wrapped(
+        labels={"traefik.http.middlewares.auth.basicauth.users": f"admin:{marker}"},
+        extra_kwargs={"labels": {"a": marker}, "container_labels": {"b": marker}},
+        host="prod",
+    )
+    assert calls[0]["labels"] == {"traefik.http.middlewares.auth.basicauth.users": f"admin:{_SECRET}"}
+    assert calls[0]["extra_kwargs"] == {"labels": {"a": _SECRET}, "container_labels": {"b": _SECRET}}
+
+
+def test_updates_labels_are_swapped_back(redactor):
+    wrapped, calls = _write_tool(name="service_update")
+    wrapped(extra_kwargs={"Labels": {"a": _marker(redactor)}}, host="prod")
+    assert calls[0]["extra_kwargs"] == {"Labels": {"a": _SECRET}}
 
 
 def test_swapped_arguments_are_never_logged(redactor, caplog):
@@ -316,11 +345,9 @@ def test_every_argument_of_every_write_tool_that_can_hold_text_is_classified():
     ("key", "kind"),
     [
         # docker-py keyword arguments with no top-level argument of their own.
-        ("container_labels", swap.Kind.LABEL),
         ("domainname", swap.Kind.NAME),
         ("networks", swap.Kind.NAME),
         # The Engine spec's capitalised forms, as `updates` and `conf` take them.
-        ("Labels", swap.Kind.LABEL),
         ("Name", swap.Kind.NAME),
         ("Hostname", swap.Kind.NAME),
         ("Image", swap.Kind.NAME),
@@ -374,9 +401,6 @@ def test_a_cli_backed_tool_swaps_back_only_what_reaches_the_cli_through_its_envi
     [
         ({"command": ["psql", "-p", "{m}"]}, "`command[2]`"),
         ({"output": ["type=registry,token={m}"]}, "`output[0]`"),
-        # Names the CLI's environment cannot carry go on the command line as `--env NAME=VALUE`.
-        ({"env": {"DOCKER_PASSWORD": "{m}"}}, "`env['DOCKER_PASSWORD']`"),
-        ({"env": {"app.password": "{m}"}}, "`env['app.password']`"),
     ],
 )
 def test_a_cli_backed_tool_refuses_a_marker_bound_for_the_command_line(redactor, arguments, where):
@@ -394,6 +418,18 @@ def test_a_cli_backed_tool_refuses_a_marker_bound_for_the_command_line(redactor,
     assert where in message
     assert "on its command line" in message
     assert "`env`" in message and "`vars`" in message
+
+
+@pytest.mark.parametrize("name", ["GIT_TOKEN", "DOCKER_PASSWORD", "app.password"])
+def test_an_env_name_the_cli_cannot_carry_is_refused_with_the_workarounds_for_that_name(redactor, name):
+    # Such a name goes on the command line as `--env NAME=VALUE`; the refusal gives the two routes that
+    # set it inside the container from a plain name, spelled out for this name.
+    wrapped, calls = _cli_tool()
+    message = _refusal(wrapped, calls, env={name: _marker(redactor)}, host="prod")
+    assert f"`env[{name!r}]`" in message
+    assert f'exec env \\"{name}=$VALUE\\" <command>' in message
+    assert f"`{name}: ${{VALUE}}`" in message
+    assert "{name}" not in message
 
 
 def test_a_tool_that_is_not_cli_backed_still_swaps_back_its_command(redactor):

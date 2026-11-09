@@ -31,23 +31,27 @@ class Kind(enum.Enum):
         SWAP: swapped back for its value.
         NAME: refused; a name, identifier, image reference or hostname, copied into every listing and
             event, and into registries when pushed.
-        LABEL: refused; labels, annotations and commit metadata, kept in image metadata and published
-            by `image_push`.
+        IMAGE_LABEL: refused; image labels, annotations and commit metadata, kept in the image and published
+            by `image_push`.  A container's or service's own labels are swapped back, since some containers
+            read credentials from them (a Traefik basic-auth label) and they stay on the host.
         BUILD_ARG: refused; recorded in the image's history, which anyone who can pull it can read.
         BAKE_OVERRIDE: refused; passed on the command line, where other users of the machine can read it.
         COMMAND_LINE: refused; any other argument a CLI-backed tool puts on the docker CLI's command line,
             where other users of the machine, or of the remote host under the SSH fallback, can read it.
             A secure route always exists: `vars`, or `env` on `compose_run` and `compose_exec`.
+        ENV_NAME: refused; the value of an `env` name the CLI's own environment cannot carry, which would
+            go on the command line.  The refusal gives the two routes that set it inside the container.
         ARCHIVE: archive bytes, never swapped back, since replacing text would change a member's size;
             `container_archive_put` searches them for markers instead (see `disk.py`).
     """
 
     SWAP = "swap"
     NAME = "name"
-    LABEL = "label"
+    IMAGE_LABEL = "image_label"
     BUILD_ARG = "build_arg"
     BAKE_OVERRIDE = "bake_override"
     COMMAND_LINE = "command_line"
+    ENV_NAME = "env_name"
     ARCHIVE = "archive"
 
 
@@ -85,7 +89,8 @@ ARGUMENTS: dict[str, Kind] = {
         ),
         Kind.NAME,
     ),
-    **dict.fromkeys(("annotations", "author", "labels", "message"), Kind.LABEL),
+    # Image metadata.  `labels` is image metadata only in the build tools (`_TOOL_ARGUMENTS`).
+    **dict.fromkeys(("annotations", "author", "message"), Kind.IMAGE_LABEL),
     **dict.fromkeys(("build_args", "buildargs"), Kind.BUILD_ARG),
     "set_overrides": Kind.BAKE_OVERRIDE,
     # Everything else is swapped back: environments, commands, `vars`, credentials passed as arguments
@@ -135,6 +140,7 @@ ARGUMENTS: dict[str, Kind] = {
             "isolation",
             "join_token",
             "key",
+            "labels",
             "link_local_ips",
             "listen_addr",
             "log_driver",
@@ -185,15 +191,18 @@ _TOOL_ARGUMENTS: dict[tuple[str, str], Kind] = {
     ("container_archive_put", "data"): Kind.ARCHIVE,
     ("image_import", "data"): Kind.ARCHIVE,
     ("image_load", "data"): Kind.ARCHIVE,
+    ("buildx_build", "labels"): Kind.IMAGE_LABEL,
+    ("image_build", "labels"): Kind.IMAGE_LABEL,
 }
 
 # Arguments holding docker-py keyword arguments or an Engine spec, whose keys name what they set: a
 # marker under one of these keys is refused as the matching top-level argument would be.
-_NESTED_ARGUMENTS = frozenset({"conf", "extra_kwargs", "updates"})
 # Derived from the refused arguments, so a key refused at the top level is refused inside these too,
 # plus the docker-py keys with no top-level argument of their own and the Engine spec's capitalised
-# forms (`Labels`, `Name`, `Networks`).
-_EXTRA_NESTED_KEYS = {"container_labels": Kind.LABEL, "domainname": Kind.NAME, "networks": Kind.NAME}
+# forms (`Name`, `Networks`).  `container_commit`'s `conf` is the committed image's own configuration,
+# so its labels are image metadata; labels in `extra_kwargs` and `updates` are the container's or
+# service's own, and are swapped back.
+_EXTRA_NESTED_KEYS = {"domainname": Kind.NAME, "networks": Kind.NAME}
 _NESTED_KEYS: dict[str, Kind] = {
     spelling: kind
     for key, kind in {
@@ -201,6 +210,11 @@ _NESTED_KEYS: dict[str, Kind] = {
         **_EXTRA_NESTED_KEYS,
     }.items()
     for spelling in (key, key.capitalize())
+}
+_NESTED_KEYS_BY_ARGUMENT: dict[str, dict[str, Kind]] = {
+    "conf": {**_NESTED_KEYS, "labels": Kind.IMAGE_LABEL, "Labels": Kind.IMAGE_LABEL},
+    "extra_kwargs": _NESTED_KEYS,
+    "updates": _NESTED_KEYS,
 }
 
 # The arguments of a CLI-backed tool whose values reach the docker CLI through its environment rather than
@@ -223,9 +237,10 @@ _GUARDRAIL_REASONS = {
         "a name or identifier, where a credential is never legitimate: names are copied into every listing "
         "and event, and into registries when pushed"
     ),
-    Kind.LABEL: (
-        "a label, annotation or commit field, where a credential is never legitimate: they are kept in image "
-        "metadata and published by image_push"
+    Kind.IMAGE_LABEL: (
+        "image metadata (an image label, annotation or commit field), where a credential is never needed: it "
+        "is kept in the image and published by image_push. Put a label a container needs on the container or "
+        "service itself instead"
     ),
     Kind.BUILD_ARG: (
         "a build argument, which is recorded in the image's history, where anyone who can pull the image "
@@ -241,6 +256,15 @@ _GUARDRAIL_REASONS = {
         "can read it. Pass the value through the CLI's environment instead: in `env` on compose_run and "
         'compose_exec, referenced from the command as "$NAME" (for example `sh -c \'... "$NAME"\'`), or in '
         "`vars`, referenced from the compose or bake file"
+    ),
+    Kind.ENV_NAME: (
+        "an `env` name the docker CLI's own environment cannot carry, because the CLI would act on it (a "
+        "reserved name such as DOCKER_*, GIT_* or SSH_*) or it is not a plain shell name, so its value would "
+        "go on the CLI's command line, where other users of the machine, or of the remote host, can read it. "
+        "Pass the value under a plain name and set {name} from it inside the container: `env` "
+        '{{"VALUE": <marker>}} with `command` ["sh", "-c", "exec env \\"{name}=$VALUE\\" <command>"], where the '
+        "image has a shell; or, starting the service with compose_up or compose_run, `vars` "
+        '{{"VALUE": <marker>}} with `{name}: ${{VALUE}}` under the service\'s `environment` in the compose file'
     ),
 }
 
@@ -314,23 +338,33 @@ class _Swapper:
                 self._walk(key, f"env[{key!r}]", Kind.COMMAND_LINE): self._walk(
                     item,
                     f"env[{key!r}]",
-                    Kind.SWAP if _env_name_travels_by_environment(key) else Kind.COMMAND_LINE,
+                    Kind.SWAP if _env_name_travels_by_environment(key) else Kind.ENV_NAME,
+                    subject=str(key),
                 )
                 for key, item in value.items()
             }
-        return self._walk(value, name, kind, nested=name in _NESTED_ARGUMENTS)
+        return self._walk(value, name, kind, nested=_NESTED_KEYS_BY_ARGUMENT.get(name))
 
-    def _walk(self, value: Any, where: str, kind: Kind, *, nested: bool = False) -> Any:
+    def _walk(
+        self,
+        value: Any,
+        where: str,
+        kind: Kind,
+        *,
+        nested: dict[str, Kind] | None = None,
+        subject: str | None = None,
+    ) -> Any:
         if isinstance(value, str):
-            return MARKER_PATTERN.sub(lambda match: self._resolve(match.group(1), where, kind), value)
+            return MARKER_PATTERN.sub(lambda match: self._resolve(match.group(1), where, kind, subject), value)
         if isinstance(value, bytes | bytearray):
             return _MARKER_BYTES.sub(
-                lambda match: self._resolve(match.group(1).decode("ascii"), where, kind).encode("utf-8"), value
+                lambda match: self._resolve(match.group(1).decode("ascii"), where, kind, subject).encode("utf-8"),
+                value,
             )
         if isinstance(value, dict):
             walked = {}
             for key, item in value.items():
-                inner = _NESTED_KEYS.get(key, kind) if nested and isinstance(key, str) else kind
+                inner = nested.get(key, kind) if nested is not None and isinstance(key, str) else kind
                 at = f"{where}[{key!r}]"
                 walked[self._walk(key, at, inner)] = self._walk(item, at, inner)
             return walked
@@ -345,9 +379,12 @@ class _Swapper:
             f"{reason}. See REDACTION.md."
         )
 
-    def _resolve(self, token: str, where: str, kind: Kind) -> str:
+    def _resolve(self, token: str, where: str, kind: Kind, subject: str | None = None) -> str:
         if kind is not Kind.SWAP:
-            raise self._refuse(where, f"is not swapped back there: `{where}` is {_GUARDRAIL_REASONS[kind]}")
+            reason = _GUARDRAIL_REASONS[kind]
+            if subject is not None:
+                reason = reason.format(name=subject)
+            raise self._refuse(where, f"is not swapped back there: `{where}` is {reason}")
         if self._label is None:
             raise self._refuse(
                 where, "cannot be used: a marker is swapped back only in a write to the host it came from"

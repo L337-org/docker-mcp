@@ -52,8 +52,9 @@ module per concern:
 - **`swap.py`** - `swap_markers`: a write's arguments with every marker swapped back through `resolve`,
   or `MarkerRefusedError` naming the first that cannot be.  `ARGUMENTS` classifies every argument of
   every write tool that can hold text, by name, as swapped back or refused by the guardrail (names,
-  labels, build arguments, bake overrides); `_TOOL_ARGUMENTS` overrides a name for one tool, and
-  `_NESTED_KEYS` applies the guardrail inside `extra_kwargs`, `updates` and `conf`.  For a tool in a
+  image metadata, build arguments, bake overrides); `_TOOL_ARGUMENTS` overrides a name for one tool
+  (`labels` is image metadata only in the build tools), and `_NESTED_KEYS_BY_ARGUMENT` applies the
+  guardrail inside `extra_kwargs`, `updates` and `conf`, where `conf`'s labels are the image's own.  For a tool in a
   CLI-backed domain (`server.tool()` passes `command_line=domain in _CLI_DOMAINS`), every argument the
   table swaps back is refused instead (`COMMAND_LINE`), except those in `ENVIRONMENT_ARGUMENTS`, which
   reach the CLI through its environment; within `env`, a name `_cli.values_by_name` would put on the
@@ -203,13 +204,14 @@ Each is a single table, so adding a case is a one-line change plus its test.
 ### Adding an argument to a write tool
 
 1. An argument that can hold text goes in `ARGUMENTS` in `docker_mcp/redaction/swap.py`, unless its name
-   is already there with the right meaning.  Refuse it (`NAME`, `LABEL`, `BUILD_ARG`, `BAKE_OVERRIDE`)
-   only where a credential is never legitimate and would be copied far beyond the host; otherwise
-   `SWAP`.  Where the name means something else in one tool, add the pair to `_TOOL_ARGUMENTS`.
+   is already there with the right meaning.  Refuse it (`NAME`, `IMAGE_LABEL`, `BUILD_ARG`,
+   `BAKE_OVERRIDE`) only where a credential is never needed for a container to run and would leak beyond
+   the host from there; anywhere a container may need one, `SWAP`.  The guardrail stops leakage, never a
+   credential reaching where it has to go.  Where the name means something else in one tool, add the pair to `_TOOL_ARGUMENTS`.
    `test_every_argument_of_every_write_tool_that_can_hold_text_is_classified` in
    `tests/test_redaction_swap.py` fails until it is there.
-2. An argument holding docker-py keyword arguments or an Engine spec goes in `_NESTED_ARGUMENTS`, so the
-   guardrail applies to the keys inside it.
+2. An argument holding docker-py keyword arguments or an Engine spec goes in `_NESTED_KEYS_BY_ARGUMENT`,
+   so the guardrail applies to the keys inside it.
 3. Add a refused kind to the guardrail list in `REDACTION.md`.
 4. In a CLI-backed tool, an argument whose value is delivered through the CLI's environment rather than
    its command line goes in `ENVIRONMENT_ARGUMENTS`; anything else is refused there, whatever the table

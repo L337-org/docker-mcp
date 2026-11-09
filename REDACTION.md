@@ -133,14 +133,18 @@ never a value, when a marker in it:
 - stands for a value found by the rules that the store had no room to keep (see Limits).  The error says
   that reading it again will not help, and to ask the user what to do.
 
-As a guardrail against copying a credential somewhere it would spread far beyond the host, a marker is
-refused rather than swapped back where a credential is never legitimate:
+As a guardrail against a credential leaking beyond the host, a marker is refused rather than swapped back
+where a credential is never needed for a container to run, and would spread from there.  Everywhere a
+credential is needed it is swapped back: environments, commands, container and service labels, volume
+driver options, `auth_config`, `password` and the rest.
 
 - **names and identifiers:** container, service, network, volume, secret, config, builder and project
   names, image references and tags, and hostnames.  They are copied into every listing and event, and
   into registries when pushed;
-- **labels and annotations,** and `container_commit`'s `message` and `author`, which are kept in image
-  metadata and published by `image_push`;
+- **image metadata:** the labels `image_build` and `buildx_build` give an image, annotations,
+  `container_commit`'s `message` and `author`, and the labels in its `conf`, which are kept in the image
+  and published by `image_push`.  A container's or service's own labels are swapped back, since some
+  containers read a credential from them, such as a Traefik basic-auth label, and they stay on the host;
 - **build arguments,** `image_build`'s `buildargs` and `buildx_build`'s `build_args`, which are recorded
   in the image's history.  Pass the value in `buildx_build`'s `vars` and use it as a build secret
   (`secret`: `id=NAME,env=VAR`) instead;
@@ -151,10 +155,17 @@ refused rather than swapped back where a credential is never legitimate:
   environment.  Other users of the machine, or of the remote host under the SSH fallback, can read a
   command line.  So a password goes in `env` and is referenced from the command
   (`sh -c 'psql -p "$PGPASS"'`), or in `vars` and referenced from the compose or bake file.  An `env`
-  name the CLI's environment cannot carry, one that is reserved (such as `DOCKER_*`) or not a plain shell
-  name (such as `app.password`), goes on the command line, so a marker in its value is refused too.
+  name the CLI's environment cannot carry goes on the command line, so a marker in its value is refused
+  too: a reserved name, which the CLI would act on itself (such as `DOCKER_*`, `GIT_*` or `SSH_*`), or one
+  that is not a plain shell name (such as `app.password`).  The refusal gives two routes that set it
+  inside the container from a plain name, `VALUE` here:
+  - `env` `{"VALUE": <marker>}` with `command` `["sh", "-c", "exec env \"GIT_TOKEN=$VALUE\" <command>"]`,
+    where the image has a shell;
+  - when starting the service with `compose_up` or `compose_run`, `vars` `{"VALUE": <marker>}`, with
+    `GIT_TOKEN: ${VALUE}` under the service's `environment` in the compose file.
 
-The same keys inside `extra_kwargs`, `updates` and `container_commit`'s `conf` are refused the same way.
+The same names inside `extra_kwargs`, `updates` and `container_commit`'s `conf` are refused the same way,
+and so are the labels in `conf`, which are the committed image's own.
 
 ### Files and archives
 
