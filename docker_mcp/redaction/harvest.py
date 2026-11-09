@@ -30,7 +30,10 @@ from docker_mcp.redaction import rules, settings
 logger = logging.getLogger("docker_mcp.redaction")
 
 # `|2 NPM_TOKEN=abc BUILD=1 /bin/sh -c ...`: the number of build arguments, then that many assignments.
-_HISTORY_BUILD_ARGS = re.compile(r"\|(\d+)\s+(.*)", re.DOTALL)
+# A `RUN` history entry with build arguments starts its arguments with `|N `, then lists the N of them as
+# `NAME=value` joined by single spaces, unquoted, before the command (`RUN |2 A=x y B=z /bin/sh -c ...`).
+_RUN_BUILD_ARGS = re.compile(r"\|(\d+) ")
+_ARGUMENT_NAME = re.compile(r"(?:^| )([A-Za-z_][A-Za-z0-9_]*)=")
 
 # The most result IDs remembered as checked between snapshot changes.  They are external input, so the set
 # is bounded; forgetting them costs only a repeated snapshot comparison.
@@ -63,21 +66,60 @@ def credential_values(assignments: Iterable[str]) -> Iterable[str]:
             yield value
 
 
-def history_build_args(created_by: str) -> list[str]:
-    """The `NAME=value` build arguments a history entry's `CreatedBy` records.
+def history_build_args(created_by: Iterable[str]) -> list[str]:
+    """The `NAME=value` build arguments an image's history records, values with spaces kept whole.
+
+    A value may hold spaces, and a `RUN` entry joins the arguments with single spaces, unquoted.  Every
+    value but the last ends where the next `NAME=` begins.  The last runs straight into the command, so
+    it is read from the image's own `ARG` entry instead (`ARG PASSPHRASE=correct horse battery staple`),
+    where it ends at the end of the line or where another argument the `RUN` entries name begins
+    (`ARG A=x y B`).  A last argument with no `ARG` entry falls back to its first word.  A value holding
+    ` NAME=` itself is misread; accepted, as the format gives no way to tell.
 
     Args:
-        created_by: one history entry's `CreatedBy` text
+        created_by: every history entry's `CreatedBy` text, for one image
 
     Returns:
         list: the assignments, possibly empty
     """
-    match = _HISTORY_BUILD_ARGS.search(created_by or "")
-    if match is None:
-        return []
-    count = int(match.group(1))
-    tokens = match.group(2).split()
-    return [token for token in tokens[:count] if "=" in token]
+    entries = [text or "" for text in created_by]
+    values: dict[str, str] = {}
+    names: set[str] = set()
+    last: dict[str, str] = {}
+    for text in entries:
+        match = _RUN_BUILD_ARGS.search(text)
+        if match is None:
+            continue
+        rest = text[match.end() :]
+        found = list(_ARGUMENT_NAME.finditer(rest))[: int(match.group(1))]
+        names.update(argument.group(1) for argument in found)
+        for argument, following in zip(found, found[1:], strict=False):
+            values.setdefault(argument.group(1), rest[argument.end() : following.start()])
+        if found:
+            final = found[-1]
+            last.setdefault(final.group(1), rest[final.end() :].split(" ", 1)[0])
+    for name, first_word in last.items():
+        if name in values:
+            continue
+        values[name] = _arg_entry_value(entries, name, names - {name}) or first_word
+    return [f"{name}={value}" for name, value in values.items() if value]
+
+
+def _arg_entry_value(entries: list[str], name: str, others: set[str]) -> str | None:
+    for text in entries:
+        if not text.startswith("ARG "):
+            continue
+        match = re.search(rf"(?:^| ){re.escape(name)}=", text[4:])
+        if match is None:
+            continue
+        tail = text[4:][match.end() :]
+        stops = [
+            other.start()
+            for other_name in others
+            if (other := re.search(rf" {re.escape(other_name)}(?:=| |$)", tail)) is not None
+        ]
+        return tail[: min(stops, default=len(tail))]
+    return None
 
 
 class HostHarvest:
@@ -96,6 +138,8 @@ class HostHarvest:
         self._remember = remember
         self._lock = threading.Lock()
         self._snapshot: frozenset[tuple[str, ...]] | None = None
+        # The snapshot entries already harvested, so a change reads only what is new.
+        self._harvested: frozenset[tuple[str, ...]] = frozenset()
         self._known_ids: frozenset[str] = frozenset()
         # The known IDs by their first 12 characters, the shortest form a result abbreviates one to, so an
         # abbreviated ID is matched without scanning every known one.
@@ -147,7 +191,11 @@ class HostHarvest:
         snapshot = self._take_snapshot(client)
         if snapshot == self._snapshot:
             return False
-        self._harvest(client)
+        # Only what the snapshot shows to be new is read: a container's or image's environment cannot change
+        # under the same ID, and a service's entry carries its version, so an update is a new entry.  A
+        # full read on every change cost seconds a call on a large daemon.
+        self._harvest(client, snapshot - self._harvested)
+        self._harvested = snapshot
         self._snapshot = snapshot
         self._known_ids = frozenset(entry[1] for entry in snapshot if entry[0] in ("container", "service"))
         self._known_by_prefix = {}
@@ -177,37 +225,41 @@ class HostHarvest:
             self._swarm_refusal_logged = True
             logger.info("redaction harvest: no Swarm services or configs read on host %r: %s", self._label, exc)
 
-    def _harvest(self, client: Any) -> None:
-        # A container or image removed while this runs is skipped rather than failing the harvest: what is
-        # gone can no longer produce output.
-        for container in client.containers.list(all=True, ignore_removed=True):
-            self._store(credential_values((container.attrs.get("Config") or {}).get("Env") or []))
-        for image_id in client.api.images(quiet=True):
+    def _harvest(self, client: Any, entries: Iterable[tuple[str, ...]]) -> None:
+        # An object removed since the snapshot is skipped rather than failing the harvest: what is gone can
+        # no longer produce output.
+        for kind, object_id, *_ in sorted(entries):
             try:
-                image = client.images.get(image_id)
-                self._store(credential_values((image.attrs.get("Config") or {}).get("Env") or []))
-                if image.id not in self._histories_read:
-                    for entry in image.history():
-                        self._store(credential_values(history_build_args(entry.get("CreatedBy") or "")))
-                    self._histories_read.add(image.id)
+                if kind == "container":
+                    container = client.containers.get(object_id)
+                    self._store(credential_values((container.attrs.get("Config") or {}).get("Env") or []))
+                elif kind == "image":
+                    self._harvest_image(client.images.get(object_id))
+                else:
+                    self._harvest_swarm_object(client, kind, object_id)
             except docker.errors.NotFound:
                 continue
-        self._harvest_swarm(client)
 
-    def _harvest_swarm(self, client: Any) -> None:
+    def _harvest_image(self, image: Any) -> None:
+        self._store(credential_values((image.attrs.get("Config") or {}).get("Env") or []))
+        if image.id not in self._histories_read:
+            history = [entry.get("CreatedBy") or "" for entry in image.history()]
+            self._store(credential_values(history_build_args(history)))
+            self._histories_read.add(image.id)
+
+    def _harvest_swarm_object(self, client: Any, kind: str, object_id: str) -> None:
         try:
-            for service in client.services.list():
-                spec = ((service.attrs.get("Spec") or {}).get("TaskTemplate") or {}).get("ContainerSpec") or {}
+            if kind == "service":
+                attrs = client.services.get(object_id).attrs
+                spec = ((attrs.get("Spec") or {}).get("TaskTemplate") or {}).get("ContainerSpec") or {}
                 self._store(credential_values(spec.get("Env") or []))
-            names = settings.names()
-            for config in client.configs.list():
-                name = (config.attrs.get("Spec") or {}).get("Name") or ""
-                if names.matches(name):
-                    try:
-                        self._store_config(client.configs.get(config.id).attrs)
-                    except docker.errors.NotFound:
-                        continue
+            elif kind == "config":
+                attrs = client.configs.get(object_id).attrs
+                if settings.names().matches((attrs.get("Spec") or {}).get("Name") or ""):
+                    self._store_config(attrs)
         except docker.errors.APIError as exc:
+            if isinstance(exc, docker.errors.NotFound):
+                raise
             self._log_swarm_refusal(exc)
 
     def _store_config(self, attrs: dict) -> None:

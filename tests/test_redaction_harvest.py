@@ -19,11 +19,12 @@ def _default_names(monkeypatch):
 # A stand-in for the docker-py client, shaped after docker-py 7.2.0 as checked against the installed
 # package: `api.containers(all=, quiet=)` returning `[{"Id": ...}]`, `api.images(quiet=)` returning a list of
 # IDs, `api.services()` and `api.configs()` returning the daemon's dicts, `containers.list(all=,
-# ignore_removed=)`, `images.get(id)` with `.attrs` and `.history()`, `services.list()`, and
-# `configs.list()` / `configs.get(id)` with `.attrs`.
+# ignore_removed=)`, and `containers.get(id)`, `images.get(id)` (with `.history()`), `services.get(id)` and
+# `configs.get(id)`, each with `.attrs`.  `reads` records every object read, so a test can see a change read
+# only what is new.
 class _FakeClient:
     def __init__(self, *, containers=(), images=(), services=(), configs=(), swarm=True):
-        self.harvests = 0
+        self.reads: list[str] = []
         self.snapshots = 0
         self.containers_map = {c.id: c for c in containers}
         self.images_map = {i.id: i for i in images}
@@ -31,10 +32,10 @@ class _FakeClient:
         self.configs_map = {c.id: c for c in configs}
         self.swarm = swarm
         self.removed_during_harvest: set[str] = set()
-        self.containers = SimpleNamespace(list=self._list_containers)
+        self.containers = SimpleNamespace(get=self._get_container)
         self.images = SimpleNamespace(get=self._get_image)
-        self.services = SimpleNamespace(list=self._list_services)
-        self.configs = SimpleNamespace(list=self._list_configs, get=lambda config_id: self.configs_map[config_id])
+        self.services = SimpleNamespace(get=self._get_service)
+        self.configs = SimpleNamespace(get=self._get_config)
         self.api = SimpleNamespace(
             containers=self._api_containers,
             images=self._api_images,
@@ -63,23 +64,25 @@ class _FakeClient:
         self._swarm_only()
         return [{"ID": cid} for cid in self.configs_map]
 
-    def _list_containers(self, all=False, ignore_removed=False):
-        assert all is True and ignore_removed is True
-        self.harvests += 1
-        return [c for cid, c in self.containers_map.items() if cid not in self.removed_during_harvest]
+    def _read(self, object_id, objects):
+        if object_id in self.removed_during_harvest:
+            raise docker.errors.NotFound(f"No such object: {object_id}")
+        self.reads.append(object_id)
+        return objects[object_id]
+
+    def _get_container(self, container_id):
+        return self._read(container_id, self.containers_map)
 
     def _get_image(self, image_id):
-        if image_id in self.removed_during_harvest:
-            raise docker.errors.NotFound(f"No such image: {image_id}")
-        return self.images_map[image_id]
+        return self._read(image_id, self.images_map)
 
-    def _list_services(self):
+    def _get_service(self, service_id):
         self._swarm_only()
-        return list(self.services_list)
+        return self._read(service_id, {s.id: s for s in self.services_list})
 
-    def _list_configs(self):
+    def _get_config(self, config_id):
         self._swarm_only()
-        return list(self.configs_map.values())
+        return self._read(config_id, self.configs_map)
 
 
 def _container(cid, env):
@@ -114,10 +117,31 @@ def test_the_names_setting_widens_and_narrows_the_harvest(monkeypatch):
 @pytest.mark.parametrize(
     ("created_by", "expected"),
     [
-        ("|2 NPM_TOKEN=abc BUILD=1 /bin/sh -c npm ci", ["NPM_TOKEN=abc", "BUILD=1"]),
-        ("RUN |1 SECRET_KEY=xyz /bin/sh -c make", ["SECRET_KEY=xyz"]),
-        ('/bin/sh -c #(nop)  CMD ["sh"]', []),
-        ("", []),
+        (["|2 NPM_TOKEN=abc BUILD=1 /bin/sh -c npm ci"], ["NPM_TOKEN=abc", "BUILD=1"]),
+        (["RUN |1 SECRET_KEY=xyz /bin/sh -c make"], ["SECRET_KEY=xyz"]),
+        (['/bin/sh -c #(nop)  CMD ["sh"]'], []),
+        ([""], []),
+        # As a real BuildKit build records `--build-arg` values with spaces: unquoted, joined by spaces, the
+        # last one running into the command, and each also in its own `ARG` entry.
+        (
+            [
+                "RUN |4 PASSPHRASE=correct horse battery staple OTHER=a=b c A=x y B= sh -c echo two # buildkit",
+                "RUN |4 PASSPHRASE=correct horse battery staple OTHER=a=b c A=x y B= /bin/sh -c echo hi # buildkit",
+                "ARG A=x y B",
+                "ARG OTHER=a=b c",
+                "ARG PASSPHRASE=correct horse battery staple",
+            ],
+            ["PASSPHRASE=correct horse battery staple", "OTHER=a=b c", "A=x y"],
+        ),
+        (
+            [
+                "RUN |1 PASSPHRASE=correct horse battery staple /bin/sh -c make",
+                "ARG PASSPHRASE=correct horse battery staple",
+            ],
+            ["PASSPHRASE=correct horse battery staple"],
+        ),
+        # With no ARG entry to end it, the last value falls back to its first word.
+        (["RUN |1 TOKEN=abc def /bin/sh -c make"], ["TOKEN=abc"]),
     ],
 )
 def test_build_arguments_are_read_from_image_history(created_by, expected):
@@ -148,10 +172,11 @@ def test_later_calls_harvest_again_only_when_the_snapshot_changes():
     h, remembered = _harvester(client)
     h.ensure_fresh()
     h.ensure_fresh()
-    assert client.harvests == 1 and client.snapshots == 2
+    assert client.reads == ["c1"] and client.snapshots == 2
     client.containers_map["c2"] = _container("c2", ["DB_PASSWORD=two"])
     h.ensure_fresh()
-    assert client.harvests == 2 and ("two", "prod") in remembered
+    # Only the new container is read, not every container again.
+    assert client.reads == ["c1", "c2"] and ("two", "prod") in remembered
 
 
 def test_a_new_container_is_harvested_however_busy_the_daemon_and_whatever_its_clock():
@@ -184,7 +209,7 @@ def test_image_histories_are_read_once_per_image():
     h.ensure_fresh()
     client.containers_map["c1"] = _container("c1", [])
     h.ensure_fresh()
-    assert client.harvests == 2 and len(reads) == 1
+    assert client.reads == ["i1", "c1"] and len(reads) == 1
 
 
 def test_a_daemon_that_is_not_a_swarm_manager_is_tolerated_and_logged_once(caplog):
@@ -229,7 +254,7 @@ def test_an_unseen_container_prompts_a_check_and_a_known_one_does_not():
     assert client.snapshots == 1
     client.containers_map["99999999aaaa"] = _container("99999999aaaa", [])
     assert h.harvest_if_unseen(["99999999aaaa"]) is True
-    assert client.harvests == 2
+    assert client.reads == ["abcdef0123456789", "99999999aaaa"]
 
 
 def test_known_ids_are_matched_in_full_and_abbreviated_among_many_without_a_check():
@@ -254,7 +279,7 @@ def test_an_id_that_is_no_container_costs_one_snapshot_and_never_a_harvest():
     network_id = "f" * 64
     assert h.harvest_if_unseen([network_id]) is False
     assert h.harvest_if_unseen([network_id]) is False
-    assert client.harvests == 1 and client.snapshots == 2
+    assert client.reads == ["c1"] and client.snapshots == 2
 
 
 def test_binary_config_content_is_left_to_the_rules():
