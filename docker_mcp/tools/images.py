@@ -283,7 +283,9 @@ def image_push(  # noqa: DOC101,DOC103
             overrides the cached credential for this call only
 
     Returns:
-        str: Push output as a string
+        str: The daemon's raw newline-delimited JSON progress records.  A push the registry refuses
+            (bad credentials, no such repository) still returns: its last record carries `errorDetail`
+            and `error` rather than raising, so check it
     """
     output = _get_client(host).images.push(repository, tag=tag, stream=False, auth_config=auth_config, decode=False)
     if isinstance(output, bytes):
