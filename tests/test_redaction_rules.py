@@ -104,6 +104,31 @@ def test_what_is_not_a_credential_is_left_alone(text):
     assert _found(text) == []
 
 
+def _b64(n: int) -> str:
+    return base64.b64encode(secrets.token_bytes(n)).decode()
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        f"SSH_PUBLIC_KEY=ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI{_b64(32)[:43]} deploy@ci",
+        f"authorized: ssh-rsa AAAAB3NzaC1yc2E{_b64(256)} user@host",
+        f"ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTY{_b64(80)}",
+        "-----BEGIN PUBLIC KEY-----\n" + "\n".join(textwrap.wrap(_b64(270), 64)) + "\n-----END PUBLIC KEY-----",
+        "-----BEGIN CERTIFICATE-----\n" + "\n".join(textwrap.wrap(_b64(700), 64)) + "\n-----END CERTIFICATE-----",
+    ],
+)
+def test_a_public_key_is_left_alone(text):
+    # Public keys look random but are public; the PEM rule still catches a private key.
+    assert _found(text) == []
+
+
+def test_a_random_run_beside_a_public_key_is_still_found():
+    secret = _b64(40)
+    text = f"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI{_b64(32)[:43]} me\ntoken {secret}"
+    assert _found(text) == [secret]
+
+
 @pytest.mark.parametrize(
     ("text", "secret"),
     [

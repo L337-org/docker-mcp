@@ -268,3 +268,17 @@ def test_checked_ids_are_forgotten_when_the_daemon_changes_and_never_grow_past_t
     client.containers_map["c2"] = _container("c2", [])
     h.ensure_fresh()
     assert h._checked_ids == set()
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["/etc/ssl/certs/ca-certificates.crt", "/certs", "/run/secrets/db_password", "~/.ssh/id_ed25519", "/opt/app/"],
+)
+def test_an_absolute_path_under_a_credential_name_is_not_harvested(value):
+    # It says where a credential is; harvested, it would be replaced in every mount and command too.
+    assert list(credential_values([f"SSL_CERT_FILE={value}", f"DB_PASSWORD_FILE={value}"])) == []
+
+
+@pytest.mark.parametrize("value", ["/Summer 2025", "/pa$$word!", "relative/path", "s3cr3t/with/slashes", "//x?y"])
+def test_a_value_that_is_not_a_plain_absolute_path_is_still_harvested(value):
+    assert list(credential_values([f"DB_PASSWORD={value}"])) == [value]

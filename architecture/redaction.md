@@ -191,6 +191,17 @@ Each is a single table, so adding a case is a one-line change plus its test.
 3. Add it to the pattern list in `REDACTION.md`, in the same order;
    `test_redaction_md_lists_exactly_the_built_in_patterns` fails until the two agree.
 
+### Leaving a name alone by default
+
+1. A name a built-in pattern matches but whose value is public goes in `BUILTIN_EXCLUDED_PATTERNS` in
+   `docker_mcp/redaction/settings.py`, as narrowly as possible: an exact name where a glob would also
+   catch private material (`GPG_KEY`, not `GPG_KEY*`, which would catch `GPG_KEY_PASSPHRASE`).
+2. Add it to `test_public_keys_are_left_alone_by_default`, and a private name it must not catch to
+   `test_the_public_key_exclusions_leave_private_material_harvested`, in
+   `tests/test_redaction_settings.py`.
+3. Add it to the exclusion list in `REDACTION.md`, in the same order;
+   `test_redaction_md_lists_exactly_the_built_in_exclusions` fails until the two agree.
+
 ### Adding a tool or resource
 
 1. A tool that takes `host` needs nothing more.  A tool that reaches no daemon and takes no `host` goes in

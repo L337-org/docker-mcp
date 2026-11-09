@@ -41,21 +41,30 @@ _MAX_CHECKED_IDS = 10_000
 _MAX_CONFIG_VALUE = 16 * 1024
 
 
+# An absolute POSIX path, or one under the home directory: path characters only, so a value with spaces or
+# shell punctuation, which a path rarely has and a password often does, is still harvested.
+_ABSOLUTE_PATH = re.compile(r"~?/[\w.@+-]+(?:/[\w.@+-]*)*")
+
+
 def credential_values(assignments: Iterable[str]) -> Iterable[str]:
     """The values of `NAME=value` assignments whose name is a credential name.
+
+    A value that is an absolute path is skipped: under a credential name it says where a credential is
+    (`SSL_CERT_FILE`, `POSTGRES_PASSWORD_FILE=/run/secrets/db`), it is not one, and a harvested value is
+    replaced wherever it appears, so the path would be lost from mounts, commands and logs too.
 
     Args:
         assignments: strings of the form `NAME=value`, as Docker reports environments
 
     Yields:
-        str: each non-empty value under a credential name
+        str: each non-empty value under a credential name that is not an absolute path
     """
     names = settings.names()
     for assignment in assignments:
         if not isinstance(assignment, str):
             continue
         name, sep, value = assignment.partition("=")
-        if sep and value and names.matches(name):
+        if sep and value and names.matches(name) and not _ABSOLUTE_PATH.fullmatch(value):
             yield value
 
 

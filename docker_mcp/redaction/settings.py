@@ -36,6 +36,18 @@ BUILTIN_NAME_PATTERNS: tuple[str, ...] = (
     "*CREDENTIAL*",
 )
 
+# Variable names never harvested, though a pattern above matches them, because what they hold is public:
+# a public key, and the signing-key fingerprints official images publish in `GPG_KEY` (`*KEY*` matched
+# them).  Exact names for GPG, so `GPG_KEY_PASSPHRASE` is still harvested.  A name the names setting adds
+# outright still overrides these, and its `!` entries add to them.
+BUILTIN_EXCLUDED_PATTERNS: tuple[str, ...] = (
+    "*PUBLIC_KEY*",
+    "*PUBKEY*",
+    "*_PUB_KEY*",
+    "GPG_KEY",
+    "GPG_KEYS",
+)
+
 # A names entry: a variable name, optionally a glob, optionally preceded by `!`.  Deliberately narrow,
 # because anything else is more likely a value pasted by mistake than a name.
 _NAME_ENTRY = re.compile(r"[A-Za-z0-9_.*?\[\]-]+")
@@ -57,8 +69,9 @@ class NameRules:
     def matches(self, name: str) -> bool:
         """Whether a variable of this name is harvested.
 
-        An exclusion wins over both the built-in patterns and an addition, so a name both added and
-        excluded is not harvested.
+        An exclusion from the names setting wins over everything, so a name both added and excluded is
+        not harvested.  An addition wins over the built-in exclusions, so a user can harvest a name
+        those leave out; the built-in exclusions win over the built-in patterns.
 
         Args:
             name: a variable name, in any case
@@ -67,17 +80,28 @@ class NameRules:
             bool: True when its value is to be harvested
         """
         upper = name.upper()
-        if any(fnmatch.fnmatchcase(upper, pattern.upper()) for pattern in self.excluded):
+
+        def any_of(patterns: tuple[str, ...]) -> bool:
+            return any(fnmatch.fnmatchcase(upper, pattern.upper()) for pattern in patterns)
+
+        if any_of(self.excluded):
             return False
-        return any(fnmatch.fnmatchcase(upper, pattern.upper()) for pattern in (*BUILTIN_NAME_PATTERNS, *self.added))
+        if any_of(self.added):
+            return True
+        return not any_of(BUILTIN_EXCLUDED_PATTERNS) and any_of(BUILTIN_NAME_PATTERNS)
 
     def report(self) -> dict[str, list[str]]:
         """The resolved name list, as shown wherever the effective settings are.
 
         Returns:
-            dict: ``builtin``, ``added`` and ``excluded`` glob lists
+            dict: ``builtin``, ``builtin_excluded``, ``added`` and ``excluded`` glob lists
         """
-        return {"builtin": list(BUILTIN_NAME_PATTERNS), "added": list(self.added), "excluded": list(self.excluded)}
+        return {
+            "builtin": list(BUILTIN_NAME_PATTERNS),
+            "builtin_excluded": list(BUILTIN_EXCLUDED_PATTERNS),
+            "added": list(self.added),
+            "excluded": list(self.excluded),
+        }
 
 
 def _fail(message: str) -> NoReturn:

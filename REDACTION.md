@@ -36,6 +36,17 @@ service environments and in Compose `.env` files.  The built-in patterns are cas
 `*PASSWORD*`, `*PASSWD*`, `*PASSPHRASE*`, `*PASS`, `*_PASS_*`, `*SECRET*`, `*TOKEN*`, `*KEY*`,
 `*CERT*` and `*CREDENTIAL*`.
 
+Some names those patterns match are left alone by default, because what they hold is public: public
+keys, and the signing-key fingerprints official images publish under `GPG_KEY`:
+
+`*PUBLIC_KEY*`, `*PUBKEY*`, `*_PUB_KEY*`, `GPG_KEY` and `GPG_KEYS`.
+
+A value that is an absolute path, such as `SSL_CERT_FILE=/etc/ssl/cert.pem` or
+`POSTGRES_PASSWORD_FILE=/run/secrets/db`, is not treated as a credential either: it says where one is.
+That covers a value made only of path characters starting `/` or `~/`, so a password that happens to
+look like a path, such as `/Summer2025`, is not harvested; the shape rules still catch it if it looks
+random.
+
 `DOCKER_MCP_SERVER_REDACT_NAMES` changes that list.  It is comma-separated, and each entry is a
 variable name or a glob using `*`, `?` and `[...]`, matched without regard to case:
 
@@ -44,6 +55,7 @@ DOCKER_MCP_SERVER_REDACT_NAMES=UPSTREAM_*, *_REF, !SORT_KEY
 ```
 
 - An entry adds names to the built-in patterns: `UPSTREAM_*` treats `UPSTREAM_URL` as a credential.
+  An entry also overrides the names left alone by default: `GPG_KEY` harvests it again.
 - An entry starting `!` excludes names, whichever pattern would otherwise match them: `!SORT_KEY`
   stops a harmless `SORT_KEY` being treated as one.  An exclusion also wins over an addition.
 - It takes names only, never values.  An entry containing `=` stops the server at startup, and the
@@ -105,10 +117,11 @@ Two things are replaced, wherever they appear in a redacted host's output, dict 
   passwords in a URL's user info or a connection string; the value assigned to a credential name, when
   it is 8 or more characters and looks random; the value after a credential-named command-line flag,
   such as `--password`, whatever it looks like, including where Docker reports a command as a list; and
-  any other run of 32 or more base64 characters that looks random.  Where two of these overlap, the
-  whole of both is replaced as one.  Hex alone is never treated as a credential by these rules, nor is a
-  run longer than 16 KB, and lines wrapped by a base64 encoder count as one run.  A value found this way
-  is remembered, so its encoded forms are matched from then on.
+  any other run of 32 or more base64 characters that looks random, except the body of an OpenSSH
+  public key and the inside of a PEM public key or certificate block, which are public.  Where two of
+  these overlap, the whole of both is replaced as one.  Hex alone is never treated as a credential by
+  these rules, nor is a run longer than 16 KB, and lines wrapped by a base64 encoder count as one run.
+  A value found this way is remembered, so its encoded forms are matched from then on.
 
 Each replacement is a marker, `[REDACTED:<token>]`, where the token is 22 characters.  Every marker is
 different, even for the same credential in the same result, so nothing in the output shows that two
@@ -145,14 +158,14 @@ to the logs, a value after `--password` on a command line (in `container_list`, 
 
 **Replaced by mistake:**
 
-- decoys that look like credentials but are not: a sort key and an SSH public key under names the
-  patterns match (`SORT_KEY`, `SSH_PUBLIC_KEY`), and a subresource-integrity hash, by its shape.  The
-  other decoys tried (a build ID, a commit hash, a UUID and a cache buster) were left alone;
-- on real content, nine places on Docker Desktop and none on the throwaway daemon, all values read
-  under a credential-like name: certificate paths in `SSL_CERT_FILE` and `DOCKER_TLS_CERTDIR`, and the
-  public signing-key fingerprints official images carry in `GPG_KEY`.  A value read this way is replaced
-  wherever it appears, so a path is replaced in other output too.  `DOCKER_MCP_SERVER_REDACT_NAMES`
-  excludes such a name: `!SSL_CERT_FILE, !DOCKER_TLS_CERTDIR, !GPG_KEY*`.
+- of seven decoys that look like credentials but are not, two: a sort key under a name the patterns
+  match (`SORT_KEY`), and a subresource-integrity hash, by its shape.  A build ID, a commit hash, a
+  UUID, a cache buster and an SSH public key were left alone.  `!SORT_KEY` in
+  `DOCKER_MCP_SERVER_REDACT_NAMES` excludes a name like that;
+- on real content, nothing, on either daemon.  The first measurement on Docker Desktop found nine
+  places, all values read under a credential-like name: certificate paths in `SSL_CERT_FILE` and
+  `DOCKER_TLS_CERTDIR` and the public signing-key fingerprints official images carry in `GPG_KEY`.
+  Those are what the public-key exclusions and the absolute-path rule above were added for.
 
 ## Using a credential without seeing it
 
@@ -275,7 +288,7 @@ every call to a redacted host is refused with an error suggesting a restart; it 
   state, values and bytes held for each kind and whether the overall budget is reached.  Never a value.
 - **`tool_list`** and the `docker-mcp://tool-catalog` resource report, under `switches`:
   `DOCKER_MCP_SERVER_REDACT`, `DOCKER_MCP_SERVER_REDACT_NAMES` as the resolved name list (`builtin`,
-  `added` and `excluded`), and `redacted_hosts`, the hosts whose output is redacted.
+  `builtin_excluded`, `added` and `excluded`), and `redacted_hosts`, the hosts whose output is redacted.
 - **`host_list`** and the `docker-mcp://hosts` resource give each host a `redact` field: whether
   its output is redacted, by its own option or by the global switch.
 

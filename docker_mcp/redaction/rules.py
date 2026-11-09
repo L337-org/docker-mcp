@@ -241,13 +241,41 @@ def _in_url_or_path(text: str, start: int, joined: str) -> bool:
     return "://" in text[max(token_start, window) : start]
 
 
+# Public keys look random but are public, so the generic rule leaves them alone: the body of an OpenSSH
+# public key, after its key type, and the inside of a PEM public key or certificate block.  A private key
+# is still caught, by the PEM rule above.
+_OPENSSH_KEY_TYPE = re.compile(
+    r"(?:ssh-(?:rsa|dss|ed25519)|ecdsa-sha2-nistp(?:256|384|521)|sk-(?:ssh-ed25519|ecdsa-sha2-nistp256)@openssh\.com)"
+    r" $"
+)
+_PEM_PUBLIC = re.compile(
+    r"-----BEGIN ((?:[A-Z0-9]+ )*(?:PUBLIC KEY|CERTIFICATE))-----.*?-----END \1-----",
+    re.DOTALL,
+)
+
+
+def _public_key_spans(text: str) -> list[tuple[int, int]]:
+    if "-----BEGIN" not in text:
+        return []
+    return [match.span() for match in _PEM_PUBLIC.finditer(text)]
+
+
+def _is_public_key(text: str, start: int, joined: str, public: list[tuple[int, int]]) -> bool:
+    if joined.startswith("AAAA") and _OPENSSH_KEY_TYPE.search(text, max(0, start - 40), start):
+        return True
+    return any(begin <= start < end for begin, end in public)
+
+
 def _generic(text: str) -> Iterator[Span]:
+    public = _public_key_spans(text)
     for start, end, joined in _runs(text):
         if not _GENERIC_MIN_LENGTH <= len(joined) <= MAX_DISCOVERED_MATCH_LENGTH:
             continue
         if _HEX.fullmatch(joined.rstrip("=")):
             continue  # digests and identifiers; hex carries at most 4 bits per character anyway
         if _in_url_or_path(text, start, joined):
+            continue
+        if _is_public_key(text, start, joined, public):
             continue
         if entropy(joined) >= _GENERIC_MIN_ENTROPY:
             yield Span(start, end)
