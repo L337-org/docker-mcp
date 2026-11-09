@@ -316,3 +316,16 @@ def test_a_dockerfile_starting_with_a_tilde_is_relative_to_the_context_as_docker
     monkeypatch.setenv("HOME", str(tmp_path))
     context = _project(tmp_path, **{"~__Dockerfile": f"FROM alpine\nENV X={_MARKER}\n", ".dockerignore": "~\n"})
     assert "Dockerfile" in _refused("image_build", path=str(context), dockerfile="~/Dockerfile")
+
+
+def test_a_compose_write_that_creates_nothing_searches_only_its_compose_files_and_env(tmp_path):
+    # compose_down and the like put no file into a container or an image, so a large or unrelated working
+    # directory is not walked for them: only what they read is searched.
+    project = _project(
+        tmp_path, **{"compose.yaml": "services: {}\n", ".env": "A=1\n", "node_modules__huge.js": _MARKER}
+    )
+    _runs("compose_down", project_dir=str(project))
+    _runs("compose_stop", project_dir=str(project))
+    assert "huge.js" in _refused("compose_up", project_dir=str(project))  # it creates, so it walks the tree
+    (project / ".env").write_text(f"PW={_MARKER}\n")
+    assert ".env" in _refused("compose_down", project_dir=str(project))

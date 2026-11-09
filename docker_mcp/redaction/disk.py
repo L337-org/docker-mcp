@@ -6,9 +6,11 @@ it.  On a redacted host that accepts writes, a call that reads a file holding on
 anything runs, naming the file.  Markers are never swapped back here: replacing text in a file or an
 archive member changes its size, which a tar header records.
 
-What a call reads is decided per tool, in `FILE_INPUTS`: the Compose project directory, a stack's or a
-bake's working directory, and a build context with its `.dockerignore` honoured, each searched whole,
-since any file in it can end up in a container or an image; plus every file named outside them.  Each
+What a call reads is decided per tool, in `FILE_INPUTS` and `_compose_inputs`: for a tool that creates
+containers or images from it, the Compose project directory, a stack's or a bake's working directory,
+and a build context with its `.dockerignore` honoured, each searched whole, since any file in it can end
+up in a container or an image; for the other Compose writes, only the compose files and `.env` they
+read; plus every file named outside them.  Each
 directory is the one the CLI resolves the call's relative paths against: for Compose and a stack, the
 first compose file's directory where one is named.
 `tests/test_redaction_disk.py` holds the table to the write tools that take a path.
@@ -92,12 +94,25 @@ def _working_tree(files: Any, working: Path) -> list[_Input]:
     return [_Input(working), *(_Input(path) for path in named)]
 
 
-def _compose_inputs(arguments: dict[str, Any]) -> list[_Input]:
+# The Compose tools that create containers or images from the project, so that any file in it, a build
+# context, a bind mount or a secret's file, can end up there: the whole project directory is searched for
+# them.  The other Compose writes read only the compose files and `.env`.
+_COMPOSE_CREATING = frozenset({"compose_build", "compose_run", "compose_up"})
+_COMPOSE_DEFAULT_FILES = ("compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml")
+
+
+def _compose_inputs(tool: str, arguments: dict[str, Any]) -> list[_Input]:
     # Compose's project directory is the first compose file's, or the directory it runs in.
     working = _base(arguments.get("project_dir"))
     files = arguments.get("files") or []
     first = _local(files[0], working) if files else None
-    inputs = _working_tree(files, first.parent if first is not None else working)
+    project = first.parent if first is not None else working
+    if tool in _COMPOSE_CREATING:
+        inputs = _working_tree(files, project)
+    else:
+        named = [path for value in files if (path := _local(value, working)) is not None]
+        named = named or [project / name for name in _COMPOSE_DEFAULT_FILES if (project / name).is_file()]
+        inputs = [_Input(path) for path in [*named, project / ".env"] if path.is_file()]
     if (source := _local(arguments.get("source"), working)) is not None:
         inputs.append(_Input(source))  # compose_cp copying into a container
     return inputs
@@ -193,7 +208,7 @@ def inputs_for(tool: str, arguments: dict[str, Any]) -> list[_Input]:
     if tool in FILE_INPUTS:
         return FILE_INPUTS[tool](arguments)
     if tool.startswith("compose_"):
-        return _compose_inputs(arguments)
+        return _compose_inputs(tool, arguments)
     return []
 
 
