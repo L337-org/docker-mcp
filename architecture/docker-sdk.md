@@ -44,6 +44,17 @@ re-files the same rejected candidates forever. Removing an entry is a real decis
   `container_exec` covers scripted one-shot execution.
 - **`service_rollback`'s `api.inspect_service` + `api.update_service`** - stays low-level
   permanently. The high-level `Service`/`ServiceCollection` expose no `rollback`.
+- **`_FamilyFallbackSSHAdapter` in `docker_mcp/tools/system.py`** - a blessed reach-in, approved by the
+  owner when it was introduced.  It subclasses docker-py's `SSHHTTPAdapter`, overrides its private
+  `_connect` and reads its `ssh_params`, and `_ssh_with_family_fallback` rebinds
+  `docker.api.client.SSHHTTPAdapter` while `_build_client` runs.  The public paths fail: paramiko's own
+  connect gives up on a timed-out address instead of trying the next, and docker-py builds and connects
+  its adapter inside `APIClient` with no way to pass a connected socket; splicing the answering address
+  into the URL instead made paramiko check `known_hosts` by address, not by name.  `use_ssh_client=True`
+  was the public alternative, rejected because it moves every SSH host onto the local `ssh` binary.
+  `test_docker_py_still_builds_and_connects_its_ssh_adapter_the_way_the_subclass_relies_on` builds the
+  adapter against the installed docker-py, so an upgrade that renames either internal fails it.
+  Remove it if docker-py accepts a socket, or paramiko tries every address.
 - **`system_logout`'s `api._auth_configs`** - stays low-level permanently. There is no `logout`
   anywhere in the SDK and no server-side session to end, so there is nothing to migrate to.
 - **`service_ps`'s `api.tasks()` with no service** - stays low-level permanently. docker-py has no
