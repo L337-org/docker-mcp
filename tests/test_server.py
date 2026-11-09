@@ -319,6 +319,134 @@ def test_list_hosts_reports_non_destructive(monkeypatch):
     assert rows[0]["non_destructive"] is False
 
 
+def test_list_hosts_reports_each_hosts_own_redact_option(monkeypatch):
+    from docker_mcp.tools.system import host_list
+
+    _set_multi_host(monkeypatch, spec="local=auto, prod=ssh://h(ro,redact)")
+    assert [r["redact"] for r in host_list()] == [False, True]
+
+
+def test_list_hosts_reports_every_host_redacted_under_the_global_switch(monkeypatch):
+    from docker_mcp.redaction import settings as redaction_settings
+    from docker_mcp.tools.system import host_list
+
+    _set_multi_host(monkeypatch, spec="local=auto, prod=ssh://h(ro)")
+    monkeypatch.setattr(redaction_settings, "_global", True)
+    assert [r["redact"] for r in host_list()] == [True, True]
+
+
+_VARS_TOOLS = {"compose_up", "compose_run", "compose_build", "stack_deploy", "buildx_build", "buildx_bake"}
+
+
+def _tools_taking_vars_in_child(env_vars: list[str]) -> set[str]:
+    code = (
+        "import asyncio, docker_mcp; from docker_mcp.server import mcp; "
+        "print(','.join(t.name for t in asyncio.run(mcp.list_tools())"
+        " if 'vars' in t.input_schema.get('properties', {})))"
+    )
+    result = subprocess.run(  # noqa: S603 - fixed argv, sys.executable, no shell; trusted test input
+        [sys.executable, "-c", code], capture_output=True, text=True, env=_env_with(env_vars), check=True
+    )
+    return set(filter(None, result.stdout.strip().split(",")))
+
+
+@pytest.mark.parametrize(
+    ("document", "start", "end"),
+    [
+        ("README.md", "- **Credentials for the CLI-backed tools", "take `vars`"),
+        ("architecture/cli-shell-out.md", "## Values in the CLI's environment", "(Compose substitution"),
+    ],
+)
+def test_the_docs_name_exactly_the_tools_that_take_vars(document, start, end):
+    # The prose lists the set rather than describing it, so it is held to `_VARS_TOOLS` here.
+    text = (Path(__file__).parent.parent / document).read_text(encoding="utf-8")
+    passage = text.split(start, 1)[1].split(end, 1)[0]
+    assert set(re.findall(r"`([a-z_]+)`", passage)) & set(TOOL_CATEGORIES) == _VARS_TOOLS
+
+
+def test_vars_is_offered_by_exactly_the_cli_tools_that_take_a_credential_and_never_under_readonly():
+    # `vars` puts values in the docker CLI's environment for the tools that turn a compose or bake file
+    # into containers or images. Each of them is a write, so READONLY drops every one; a read-only
+    # tool gaining `vars` would survive READONLY and fail here.
+    assert _tools_taking_vars_in_child([]) == _VARS_TOOLS
+    assert _tools_taking_vars_in_child(["DOCKER_MCP_SERVER_READONLY=1"]) == set()
+
+
+def test_list_hosts_reports_redaction_notes_and_store_for_a_redacted_host_only(monkeypatch):
+    from docker_mcp.tools.system import host_list
+
+    _set_multi_host(monkeypatch, spec="local=auto, prod=ssh://h(redact), safe=ssh://s(ro,redact)")
+    local, prod, safe = host_list()
+    assert local["redaction"] is None
+    assert set(prod["redaction"]["store"]) == {
+        "harvested_values",
+        "harvested_bytes",
+        "discovered_values",
+        "discovered_bytes",
+        "budget_reached",
+    }
+    assert any("[REDACTED:...]" in note for note in prod["redaction"]["notes"])
+    # A host that accepts writes swaps markers back in them, and refuses a file holding one.
+    assert any("Pass a marker where a write to this host needs its credential" in n for n in prod["redaction"]["notes"])
+    assert (
+        "Never write a marker to a file: a call reading a file or archive that holds one is refused."
+        in (prod["redaction"]["notes"])
+    )
+    assert not any("not swapped back" in note for note in prod["redaction"]["notes"])
+    assert (
+        "Bytes in band are refused here: container_archive_get, container_export without dest_path, "
+        "image_save without dest_path." in prod["redaction"]["notes"]
+    )
+    assert (
+        "Files written to disk by container_archive_get_to_file, container_export, image_save are not redacted."
+        in prod["redaction"]["notes"]
+    )
+    # The file-writing tools are writes, so a read-only host refuses them and naming them would mislead.
+    assert "Bytes in band are refused here: container_archive_get." in safe["redaction"]["notes"]
+    assert not any("not redacted" in note for note in safe["redaction"]["notes"])
+    # A read-only host never swaps a marker back, so it is told so and nothing about swapping or files.
+    assert any("it is not swapped back" in note for note in safe["redaction"]["notes"])
+    assert not any("Pass a marker" in note or "is refused." in note for note in safe["redaction"]["notes"])
+
+
+def test_list_hosts_names_only_the_tools_that_are_registered(monkeypatch):
+    # Global redaction withdraws container_archive_get; DISABLE can withdraw any of them.
+    import docker_mcp.tools.system as system_module
+
+    _set_multi_host(monkeypatch, spec="local=auto, prod=ssh://h(redact)")
+    usable = system_module.tool_usable_on
+    monkeypatch.setattr(
+        system_module,
+        "tool_usable_on",
+        lambda name, read_only: (
+            name not in {"container_archive_get", "image_save"} and usable(name, read_only=read_only)
+        ),
+    )
+    notes = system_module.host_list()[1]["redaction"]["notes"]
+    assert "Bytes in band are refused here: container_export without dest_path." in notes
+    assert "Files written to disk by container_archive_get_to_file, container_export are not redacted." in notes
+
+
+def test_the_file_tools_are_exactly_the_registered_tools_that_write_to_dest_path():
+    from docker_mcp.redaction import wire
+
+    taking_dest_path = {
+        name
+        for name, registered in _registered_tools().items()
+        if "dest_path" in (registered.parameters.get("properties") or {})
+    }
+    assert set(wire.FILE_TOOLS) == taking_dest_path
+
+
+def test_list_hosts_treats_every_host_as_read_only_under_readonly(monkeypatch):
+    import docker_mcp.tools.system as system_module
+
+    _set_multi_host(monkeypatch, spec="local=auto, prod=ssh://h(redact)")
+    monkeypatch.setattr(system_module, "READONLY", True)
+    prod = system_module.host_list()[1]
+    assert not any("not redacted" in note for note in prod["redaction"]["notes"])
+
+
 def _registered_tools() -> dict:
     return mcp._tool_manager._tools
 
@@ -481,6 +609,9 @@ def test_tool_catalog_reports_switch_state_and_domain_counts():
         "DOCKER_MCP_SERVER_READONLY",
         "DOCKER_MCP_SERVER_NO_DESTRUCTIVE",
         "DOCKER_MCP_SERVER_DISABLE",
+        "DOCKER_MCP_SERVER_REDACT",
+        "DOCKER_MCP_SERVER_REDACT_NAMES",
+        "redacted_hosts",
     }
     # Per-domain counts sum to the full tool surface, and by default registered == total.
     assert sum(d["total"] for d in catalog["domains"]) == len(TOOL_CATEGORIES)
@@ -976,13 +1107,14 @@ def test_instructions_fit_claude_codes_cut_off_at_their_longest_end_to_end():
     text = _live_instructions(
         [
             "DOCKER_MCP_SERVER_HOSTS=local=unix:///var/run/docker.sock, "
-            "staging=ssh://deploy@staging.example.org(ro), production=ssh://deploy@production.example.org(nd)",
+            "staging=ssh://deploy@staging.example.org(ro), production=ssh://deploy@production.example.org(nd,redact)",
             # A misconfigured switch adds its pointer line; the operator's names must not lengthen it.
             "DOCKER_MCP_SERVER_DISABLE=system," + ",".join(f"unknown-{i}-{'x' * 40}" for i in range(5)),
         ]
     ).rstrip("\n")
     assert "Multiple hosts are configured" in text, "the longest rendering must include the host caveat"
-    assert "DOCKER_MCP_SERVER_DISABLE misconfigured" in text, "the longest rendering must include the warning"
+    assert "[REDACTED:...]" in text, "the longest rendering must include the redaction caveat"
+    assert "Server configuration warnings" in text, "the longest rendering must include the warning"
     units = len(text.encode("utf-16-le")) // 2
     assert units <= INSTRUCTIONS_CHAR_LIMIT, f"instructions are {units} UTF-16 units, over {INSTRUCTIONS_CHAR_LIMIT}"
 
@@ -1013,12 +1145,12 @@ def test_instructions_mention_the_remote_exec_fallback_only_for_domains_that_hav
     assert "Applies to compose, buildx;" in several
     # The condition is both halves — the CLI/plugin missing *and* an ssh:// target — because a client
     # reading only the router would otherwise expect every ssh:// call to execute remotely.
-    assert "With the CLI or a required plugin missing locally" in text
+    assert "With it or a needed plugin missing locally" in text
     # The blanket "those calls raise" is gone where a fallback exists — it contradicted the sentence
     # after it — and the domain without one is named instead.
     assert "those calls raise" not in text
-    assert "no fallback for context, which raises instead." in text
-    assert "reached over `ssh://`" in text
+    assert "no fallback for context." in text
+    assert "an `ssh://` host runs it itself" in text
     assert "a usable local CLI always wins" in text
     assert "Applies to context" not in text  # named only where the fallback exists
 
@@ -1727,7 +1859,11 @@ def test_every_registered_tool_translates_its_anticipated_failures():
 DELIBERATE_CRASHES = {
     # An internal guard, not an answer to a caller: the comment at the site reads "no consumer needs
     # it today", so reaching it means an internal caller passed something unforwardable.
-    ("tools/_cli.py", "_reject_unforwardable"): 2,
+    ("tools/_cli.py", "_reject_stdin"): 1,
+    # The last guard before a variable is written into the remote script. Every tool validates its
+    # `vars`, `env` and `build_args` first with a ToolInputError worded for the argument, so reaching
+    # this means an internal caller skipped that.
+    ("tools/_ssh_proxy.py", "_validate_env_names"): 2,
     # The docker CLI emitted something this server cannot parse - our bug or a format change.
     ("tools/_cli.py", "parse_ndjson"): 1,
     # Empty argv, negative max_output_bytes: internal misuse of the helper.
@@ -1747,6 +1883,12 @@ DELIBERATE_CRASHES = {
     # `SystemExit` on a malformed DOCKER_MCP_SERVER_HOSTS, raised at import before any tool is
     # registered. It ends the process rather than answering a caller; there is no client to tell.
     ("_hosts.py", "load"): 1,
+    # `SystemExit` on a malformed DOCKER_MCP_SERVER_REDACT_NAMES, for the same reason as the
+    # DOCKER_MCP_SERVER_HOSTS one above: raised at import, before there is a client to tell.
+    ("redaction/settings.py", "load"): 1,
+    # Pickling a stored credential would copy it out of this process's memory; only a programming error
+    # tries, and no caller can act on the refusal, so its text belongs in the log.
+    ("redaction/store.py", "__reduce__"): 1,
     # Every resolved address failed to connect. `connect_ssh_client` catches OSError from this
     # helper and re-raises it as a RemoteFailureError carrying actionable guidance, so this text
     # never reaches a client on its own.
@@ -1963,6 +2105,55 @@ def test_every_registered_resource_translates_its_anticipated_failures():
     )
 
 
+def test_every_registered_tool_and_resource_is_classified_for_redaction():
+    """Every call is judged by the host it reaches, so every registered callable must say which that is.
+
+    A tool with a `host` argument is judged by it; one without must be in `wire.NO_DAEMON_TOOLS`, which is
+    held here to exactly the tools that take no `host`, so a new one forces the decision.  A resource with
+    `{host}` in its URI is judged by it.
+    """
+    from docker_mcp.redaction import wire
+
+    scopes = {name: getattr(tool.fn, wire.REDACTION_SCOPE, None) for name, tool in _registered_tools().items()}
+    assert None not in scopes.values(), sorted(n for n, s in scopes.items() if s is None)
+    no_host = {
+        name for name, tool in _registered_tools().items() if "host" not in inspect.signature(tool.fn).parameters
+    }
+    assert {n for n, s in scopes.items() if s is wire.Scope.NO_DAEMON} == no_host == wire.NO_DAEMON_TOOLS & set(scopes)
+    registry = mcp._resource_manager
+    entries = [(str(r.uri), getattr(r, "fn", None)) for r in registry._resources.values()]
+    entries += [(uri, getattr(t, "fn", None)) for uri, t in registry._templates.items()]
+    for uri, fn in entries:
+        scope = getattr(fn, wire.REDACTION_SCOPE, None)
+        assert scope is not None, f"resource {uri} is not wrapped for redaction"
+        if "{host}" in uri:
+            assert scope is wire.Scope.HOST_ARGUMENT, uri
+        elif uri.startswith(("docker-logs:", "docker-stats:", "service-logs:", "service-tasks:")):
+            assert scope is wire.Scope.DEFAULT_HOST, uri
+
+
+def test_under_global_redaction_bytes_are_never_offered_in_band():
+    code = (
+        "import asyncio, json, docker_mcp; from docker_mcp.server import mcp; "
+        "tools = {t.name: t for t in asyncio.run(mcp.list_tools())}; "
+        "print(json.dumps({'archive_get': 'container_archive_get' in tools, "
+        "'required': {n: 'dest_path' in tools[n].input_schema.get('required', []) for n in "
+        "('container_export', 'image_save')}}))"
+    )
+
+    def run(env_vars):
+        result = subprocess.run(  # noqa: S603 - fixed argv, sys.executable, no shell; trusted test input
+            [sys.executable, "-c", code], capture_output=True, text=True, env=_env_with(env_vars), check=True
+        )
+        return json.loads(result.stdout)
+
+    assert run(["DOCKER_MCP_SERVER_REDACT=1"]) == {
+        "archive_get": False,
+        "required": {"container_export": True, "image_save": True},
+    }
+    assert run([]) == {"archive_get": True, "required": {"container_export": False, "image_save": False}}
+
+
 def test_the_resource_guard_is_reading_a_full_surface():
     """As above: "no bad entries found" is also what an empty registry says."""
     registry = mcp._resource_manager
@@ -2120,11 +2311,40 @@ def test_disable_switch_warnings_name_an_always_on_domain_and_the_alternative(mo
 
 
 def test_instructions_point_the_agent_at_a_misconfigured_switch_first(monkeypatch):
-    monkeypatch.setattr("docker_mcp.server.disable_switch_warnings", lambda: ["anything"])
+    monkeypatch.setattr("docker_mcp.server.configuration_warnings", lambda: ["anything"])
     lines = build_instructions().splitlines()
-    assert lines[2] == "DOCKER_MCP_SERVER_DISABLE misconfigured: see `tool_list`, tell the user."
-    monkeypatch.setattr("docker_mcp.server.disable_switch_warnings", lambda: [])
-    assert "misconfigured" not in build_instructions()
+    assert lines[2] == "Server configuration warnings: see `tool_list`, tell the user."
+    monkeypatch.setattr("docker_mcp.server.configuration_warnings", lambda: [])
+    assert "configuration warnings" not in build_instructions()
+
+
+def test_configuration_warnings_carry_the_disable_switch_then_redaction_judged_against_readonly(monkeypatch):
+    import docker_mcp.server as server
+
+    judged = []
+    monkeypatch.setattr(server, "disable_switch_warnings", lambda: ["disable"])
+    monkeypatch.setattr(
+        server.redaction_settings, "startup_warnings", lambda *, readonly: judged.append(readonly) or ["redact"]
+    )
+    monkeypatch.setattr(server, "READONLY", True)
+    assert server.configuration_warnings() == ["disable", "redact"]
+    assert judged == [True]
+
+
+def test_tool_list_and_the_instructions_carry_the_redaction_warnings_end_to_end():
+    catalog = _catalog_in_child(["DOCKER_MCP_SERVER_HOSTS=dev=local, prod=ssh://ops@prod.invalid(redact)"])
+    assert [w.split(":", 1)[0] for w in catalog["configuration_warnings"]] == [
+        "host 'prod' is redacted without ro or DOCKER_MCP_SERVER_READONLY",
+    ]
+    text = _live_instructions(["DOCKER_MCP_SERVER_HOSTS=dev=local, prod=ssh://ops@prod.invalid(redact)"])
+    assert "Server configuration warnings: see `tool_list`, tell the user." in text
+
+
+def test_the_instructions_point_to_host_list_for_redaction_only_while_it_is_on():
+    redacted = _live_instructions(["DOCKER_MCP_SERVER_HOSTS=dev=local, prod=ssh://ops@prod.invalid(ro,redact)"])
+    assert "Credentials show as `[REDACTED:...]`; see `host_list`." in redacted
+    assert "Server configuration warnings" not in redacted
+    assert "[REDACTED:" not in _live_instructions([])
 
 
 def test_tool_list_carries_the_disable_switch_warnings_end_to_end():
@@ -2134,3 +2354,20 @@ def test_tool_list_carries_the_disable_switch_warnings_end_to_end():
         "DOCKER_MCP_SERVER_DISABLE names 'system'",
     ]
     assert _catalog_in_child([])["configuration_warnings"] == []
+
+
+def test_a_connection_control_tool_still_works_on_a_redacted_host_whose_harvest_would_fail(monkeypatch):
+    # system_reconnect and system_close exist to recover a wedged client, which a harvest run first would
+    # fail on; the registered tool must not run one.
+    from docker_mcp.redaction import wire
+
+    _set_multi_host(monkeypatch, spec="local=auto, prod=ssh://h(redact)")
+
+    class _Wedged:
+        def ensure_fresh(self):
+            raise AssertionError("a connection-control tool ran a harvest")
+
+        harvest_if_unseen = ensure_fresh
+
+    monkeypatch.setattr(wire, "_harvest_for", lambda label: _Wedged())
+    assert _registered_tools()["system_close"].fn(host="prod") is True

@@ -477,12 +477,72 @@ def _measure_tasks(server: dict[str, Any], skill: dict[str, Any]) -> dict[str, A
     return tasks
 
 
+def _two_figures(value: float) -> str:
+    """A ratio to two significant figures, as the document writes them: 4.6, 9.5, 140, 350."""
+    rounded = float(f"{value:.2g}")
+    return f"{rounded:,.0f}" if rounded >= 10 else f"{rounded:.1f}"
+
+
+def _summary_ratios(server: dict[str, Any], skill: dict[str, Any], tasks: dict[str, Any]) -> dict[str, Any]:
+    """The ranges the document's "honest summary" bullets quote, so a refresh copies them too.
+
+    Each is the lowest and highest ratio across the chosen tasks: on an eager client the server's
+    floor over the skill's cost for the task, on a lazy client the skill's cost over the server's,
+    so every ratio reads "how many times cheaper the winner is".  At idle the eager floors of the
+    trimmed (triage) and full surfaces are each compared with what the skill costs to advertise.
+    A task a configuration cannot run is left out of that configuration's range.
+    """
+
+    def task_range(config_name: str, mode: str) -> dict[str, Any]:
+        ratios = []
+        for task in tasks.values():
+            result = task["server"][config_name]
+            if not result["available"]:
+                continue
+            server_cost = result[mode]
+            ratios.append(server_cost / task["skill"] if mode == "eager" else task["skill"] / server_cost)
+        return {"low": min(ratios), "high": max(ratios), "over": f"{len(ratios)} tasks"}
+
+    advertised = skill["tokens"]["advertised"]
+    idle = [server[name]["tokens"]["eager_idle"] / advertised for name in ("triage", "full")]
+    return {
+        "eager_full": task_range("full", "eager"),
+        "eager_trimmed": task_range("triage", "eager"),
+        "eager_idle": {"low": min(idle), "high": max(idle), "over": "the triage and full configurations"},
+        "lazy_full": task_range("full", "lazy"),
+        "lazy_trimmed": task_range("triage", "lazy"),
+    }
+
+
+# The context window the document measures the full surface's idle cost against.
+_CONTEXT_WINDOW = 128_000
+
+
+def _derived_figures(server: dict[str, Any]) -> dict[str, float]:
+    """The other figures the document works out from the configuration table, so they are copied too.
+
+    `eager_spread` and `lazy_spread` compare the full surface with the floor configuration (a ratio on
+    an eager client, a saving in tokens on a lazy one); `triage_cut` is the full eager floor over the
+    triage one; `lazy_drop` is how much smaller the full surface is on a lazy client than an eager one;
+    `window_share` is the full eager floor as a share of a 128k context window.
+    """
+    full, triage, floor = (server[name]["tokens"] for name in ("full", "triage", "floor"))
+    return {
+        "eager_spread": full["eager_idle"] / floor["eager_idle"],
+        "lazy_spread": full["lazy_idle"] - floor["lazy_idle"],
+        "triage_cut": full["eager_idle"] / triage["eager_idle"],
+        "lazy_drop": full["eager_idle"] / full["lazy_idle"],
+        "window_share": full["eager_idle"] / _CONTEXT_WINDOW,
+    }
+
+
 def _build_report() -> dict[str, Any]:
     """Measure everything and return the full structured report."""
     import tiktoken
 
     server = _measure_server()
     skill = _measure_skill()
+    tasks = _measure_tasks(server, skill)
     return {
         "method": {
             "tokenizer": f"tiktoken {tiktoken.__version__} ({_ENCODING})",
@@ -498,7 +558,9 @@ def _build_report() -> dict[str, Any]:
         },
         "server": server,
         "skill": skill,
-        "tasks": _measure_tasks(server, skill),
+        "tasks": tasks,
+        "summary_ratios": _summary_ratios(server, skill, tasks),
+        "derived": _derived_figures(server),
     }
 
 
@@ -584,6 +646,24 @@ def _render(report: dict[str, Any]) -> str:
                     f"    {config_name:<10} lazy {result['lazy']:>7,}   eager {result['eager']:>7,}"
                     f"   (definitions fetched: {result['definitions_fetched']:,})"
                 )
+
+    ratios = report["summary_ratios"]
+    span = lambda key: f"~{_two_figures(ratios[key]['low'])}-{_two_figures(ratios[key]['high'])}x"  # noqa: E731
+    out.append("")
+    out.append('Summary ranges (the "So the honest summary is" bullets; how many times cheaper the winner is)')
+    out.append(f"  eager client, skill cheaper:  {span('eager_full')} on a real task at full surface,")
+    out.append(f"                                {span('eager_trimmed')} against a trimmed (triage) server,")
+    out.append(f"                                {span('eager_idle')} at idle (trimmed to full, over advertised)")
+    out.append(f"  lazy client, server cheaper:  {span('lazy_full')} at full surface, {span('lazy_trimmed')} trimmed")
+
+    derived = report["derived"]
+    out.append("")
+    out.append("Derived from the configuration table (quoted in the prose around it)")
+    out.append(f"  eager spread, full over floor:        {_two_figures(derived['eager_spread'])}x")
+    out.append(f"  lazy spread, full minus floor:        {derived['lazy_spread']:,.0f} tokens")
+    out.append(f"  triage cut, full over triage (eager): {_two_figures(derived['triage_cut'])}x")
+    out.append(f"  lazy drop, eager over lazy (full):    {_two_figures(derived['lazy_drop'])}x")
+    out.append(f"  full eager floor in a 128k window:    {derived['window_share']:.0%}")
     return "\n".join(out)
 
 

@@ -44,12 +44,38 @@ re-files the same rejected candidates forever. Removing an entry is a real decis
   `container_exec` covers scripted one-shot execution.
 - **`service_rollback`'s `api.inspect_service` + `api.update_service`** - stays low-level
   permanently. The high-level `Service`/`ServiceCollection` expose no `rollback`.
+- **`_FamilyFallbackSSHAdapter` in `docker_mcp/tools/system.py`** - a reach-in past the public SDK, kept
+  deliberately (the owner's decision is recorded on PR #309).  It subclasses docker-py's
+  `SSHHTTPAdapter`, overrides its private `_connect` and reads its `ssh_params`, and `_ssh_with_family_fallback` rebinds
+  `docker.api.client.SSHHTTPAdapter` while `_build_client` runs.  The public paths fail: paramiko's own
+  connect gives up on a timed-out address instead of trying the next, and docker-py builds and connects
+  its adapter inside `APIClient` with no way to pass a connected socket; splicing the answering address
+  into the URL instead made paramiko check `known_hosts` by address, not by name.  `use_ssh_client=True`
+  was the public alternative, rejected because it moves every SSH host onto the local `ssh` binary.
+  `test_docker_py_still_builds_and_connects_its_ssh_adapter_the_way_the_subclass_relies_on` builds the
+  adapter against the installed docker-py, so an upgrade that renames either internal fails it.
+  Remove it if docker-py accepts a socket, or paramiko tries every address.
 - **`system_logout`'s `api._auth_configs`** - stays low-level permanently. There is no `logout`
   anywhere in the SDK and no server-side session to end, so there is nothing to migrate to.
-- **`service_ps`'s `api.tasks()` with no service** - stays low-level permanently. docker-py has no
-  task collection at all (there is no `client.tasks`, and `docker/models/` has no `tasks.py`), so this
-  documented `APIClient` method is the only public path for every task in the swarm. Nothing to
-  migrate to; do not propose one.
+- **An `api.tasks()` call not scoped to one service** (every task in the swarm, or every task with a
+  stack's label) - stays low-level permanently. docker-py has no task collection at all (there is no
+  `client.tasks`, and `docker/models/` has no `tasks.py`), so this documented `APIClient` method is the
+  only public path to tasks across services. Nothing to migrate to; do not propose one. A call scoped
+  to one service is not covered: `Service.tasks(filters=...)` is the public path for that, sending the
+  same request with the service filter added, so such a call is a fair candidate.
+- **The redaction harvest's ID lists** - `api.containers(all=True, quiet=True)`, `api.images(quiet=True)`,
+  `api.services()` and `api.configs()` in `docker_mcp/redaction/harvest.py` stay low-level. The snapshot
+  runs on every call to a redacted host and needs only IDs (and a service's version), and the harvest
+  lists image IDs to fetch each image once, skipping one removed meanwhile; the high-level collections
+  fetch or inspect every object as they list, which is the cost these calls exist to avoid.
+- **`image_list`'s `api.images()`** - stays low-level by default. `ImageCollection.list` inspects every
+  image the list names, one call each, and returns the inspect payload; the low-level call returns
+  `GET /images/json` as the daemon sends it, which is the compact default. `verbose=True` uses the
+  high-level call. Migrating the default would add a call per image and change what it returns.
+- **`APIClient.reload_config`** - deliberately not wrapped, because it is redundant. It contacts no
+  daemon: it reloads `~/.docker/config.json` into the client's in-process credential cache, replacing
+  it wholesale, which `system_reconnect` and `system_close` already do by rebuilding the client. All
+  three drop a login `system_login` made; none keeps it across the reload.
 - **`image_import`'s `api.import_image_from_{file,data,url,image}`** - stay low-level permanently.
   `ImageCollection` has no import method at all, so there is no high-level path to migrate onto.
   Note the call-site comment explaining why the per-source methods are used rather than
@@ -97,6 +123,10 @@ re-files the same rejected candidates forever. Removing an entry is a real decis
   would stay registered under a partial `DOCKER_MCP_SERVER_DISABLE` and refuse at call time, which
   SU.8.1 forbids. Roughly 1,600 bytes for a rare need. Re-propose only with evidence of demand, not
   because the routes are uncovered - that much is known.
+- **`PUT /volumes/{name}`** - no docker-py surface (`APIClient` has no `update_volume`, `Volume` no
+  `update`, and `create_volume` takes only a name, driver, driver options and labels, so there is no
+  cluster-volume support to build on). It changes only a Swarm cluster volume's `Availability`.
+  Declined as the config and secret updates above are; re-propose only with evidence of demand.
 - **The `context_*` tools on `docker.context.ContextAPI`** - declined until docker-py fixes it, not
   on the merits: leaving the CLI here is wanted, and it would let `context_create` refuse plaintext.
   docker-py 7.2.0 writes and reads the CLI's own context store but disagrees with the CLI on three

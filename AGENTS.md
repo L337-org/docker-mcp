@@ -32,7 +32,8 @@ Read the linked file before judging a substantive change to that area.
 |---|---|---|
 | `server.py`, `docker_mcp/tools/` | [architecture/server.md](architecture/server.md) | `_slim_schema` or `_apply_host_schema` changing validation rather than display; a disabled capability registered-then-refusing instead of absent |
 | `_hosts.py`, host selection | [architecture/hosts.md](architecture/hosts.md) | `use_context=False` dropped; `system_reconnect` gaining the ability to retarget an arbitrary URL; a write path that no longer requires an explicit `host` in multi-host mode |
-| `_cli.py`, `_ssh_proxy.py`, CLI-backed tools | [architecture/cli-shell-out.md](architecture/cli-shell-out.md) | `subprocess.run` called directly; `shell=True`; a missing `timeout=`; the remote-exec fallback preferred over a usable local CLI; staging consequences absent from the docstring |
+| `docker_mcp/redaction/`, the `redact` host option | [architecture/redaction.md](architecture/redaction.md) | `Host.redact` read directly instead of `settings.redacts` / `settings.host_redacted` (misses the global switch); a malformed setting accepted rather than failing at startup; a setting's error message repeating the value it was given |
+| `_cli.py`, `_ssh_proxy.py`, CLI-backed tools | [architecture/cli-shell-out.md](architecture/cli-shell-out.md) | `subprocess.run` called directly; `shell=True`; a missing `timeout=`; a caller's value put in argv as `KEY=VALUE` where `cli_variables` / `values_by_name` should carry it in the CLI's environment; the remote-exec fallback preferred over a usable local CLI; staging consequences absent from the docstring |
 | any `@tool()` docstring | [architecture/tool-descriptions.md](architecture/tool-descriptions.md) | the checklist below |
 | code calling `docker` | [architecture/docker-sdk.md](architecture/docker-sdk.md) | an unverified method; a hand-built route that is not in the Engine API spec; a reach-in past the public SDK introduced without recorded sign-off |
 | `Dockerfile`, `manifest.json`, `server.json`, `claude-plugin/`, release workflows | [architecture/distribution.md](architecture/distribution.md) | a version-declaring file missing from the bump checklist there, `preflight`, or the version tests; a registry ownership marker no longer matching `server.json`'s `name` |
@@ -105,6 +106,14 @@ uv run pre-commit install
 # Regenerate the measured figures MCP_VS_SKILLS.md quotes (reports only; add --json for the
 # structured form). Self-contained: pins its own tiktoken, installs the working tree editable.
 uv run scripts/measure-comparison-figures.py
+
+# Regenerate the measured figures REDACTION.md quotes: what redaction catches and misses (sweep) and
+# what it costs (cost). Reports only; starts and removes a throwaway privileged dind daemon by default.
+uv run scripts/measure-redaction.py sweep --swarm --configuration all
+uv run scripts/measure-redaction.py cost
+# Everyday requests to a headless Claude Code, read-only and writable, scored for leaks and outcome
+# (costs model usage; see architecture/redaction.md).
+uv run scripts/measure-redaction.py agents
 ```
 
 ## Architecture
@@ -412,8 +421,9 @@ re-proposes these; it has no memory of last time.
   guard instead, and needs no cap remembered in advance. Flag only a change that silently narrows that
   guard. The same question - cap or guard? - applies to any new direct dependency whose import surface
   this project touches.
-- **No `cryptography` pin.** It is transitive, and a wheels-only Intel-macOS resolve landing on a
-  vulnerable version is accepted. Do not propose pinning it or asserting it in CI.
+- **No `cryptography` pin.** It is a direct dependency, declared without a bound, because redaction's
+  markers import it (it also comes in through paramiko), and a wheels-only Intel-macOS resolve landing
+  on a vulnerable version is accepted. Do not propose pinning it or asserting it in CI.
 - **`scripts/measure-comparison-figures.py` is deliberately not a CI gate.** Token figures move a few
   tokens on any docstring edit, so asserting them would fail constantly and signal nothing. A weekly
   routine watches for drift instead. Do not propose promoting it.

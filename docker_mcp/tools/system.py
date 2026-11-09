@@ -6,24 +6,25 @@ configured hosts are reachable from here.
 
 # library of mcp tools relating to the system domain: daemon info/auth and client connection control
 
+import contextlib
 import inspect
-import ipaddress
 import math
 import os
 import re
-import socket
 import sys
 import threading
 import urllib.parse
 from pathlib import Path
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from typing import Any, Literal
 
 import docker
+import docker.api.client as docker_api_client
 import requests.exceptions
 from docker.utils import parse_repository_tag
 from docker.errors import DockerException
 from docker.models.containers import Container
+from docker.transport.sshconn import SSHHTTPAdapter
 
 from docker_mcp.exceptions import RemoteFailureError, ToolInputError, ToolRefusalError
 from docker_mcp._env import scrub_unresolved_env
@@ -36,7 +37,9 @@ from docker_mcp._hosts import (
     resolve as _resolve_host,
     resolve_auto,
 )
-from docker_mcp.server import disable_switch_warnings, is_domain_disabled, tool
+from docker_mcp.redaction import settings as redaction_settings
+from docker_mcp.redaction import wire as redaction_wire
+from docker_mcp.server import READONLY, configuration_warnings, is_domain_disabled, tool, tool_usable_on
 from docker_mcp.tools._ssh_proxy import _CONNECT_TIMEOUT_CAP_SECONDS, connect_socket_with_family_fallback, parse_ssh_url
 from docker_mcp.tools._utils import classify_host_kernel, close_stream_quietly, env_flag, in_container
 
@@ -192,73 +195,54 @@ def _ensure_ssh_port(url: str) -> str:
     return urllib.parse.urlunparse(parsed._replace(netloc=f"{parsed.netloc}:{target.port}"))
 
 
-def _ensure_reachable_family(url: str) -> str:
-    """Work around paramiko's narrow IPv4/IPv6 fallback for an `ssh://` docker-py connection.
+class _FamilyFallbackSSHAdapter(SSHHTTPAdapter):
+    """docker-py's SSH adapter, connecting to whichever resolved address answers while checking the host key by name.
 
-    `paramiko.SSHClient.connect()` (used internally by docker-py's `SSHHTTPAdapter`) resolves both
-    address families but only retries the next one on `ECONNREFUSED`/`EHOSTUNREACH` - a timed-out or
-    black-holed IPv6 route (`ETIMEDOUT`, what a broken IPv6 path actually produces) is never retried,
-    so a host that's perfectly reachable over IPv4 fails outright. `tcp://` doesn't have this problem
-    (`urllib3.util.connection.create_connection` catches any `OSError` per attempt) - only `ssh://`
-    needs this. See `_ssh_proxy.connect_socket_with_family_fallback`'s docstring for the full story.
-
-    Rather than reaching into docker-py's `SSHHTTPAdapter` internals (undocumented, and it always
-    builds its own fresh `paramiko.SSHClient` with no hook to accept a pre-connected socket), this
-    probes every resolved address itself with that same broad-fallback helper, then splices whichever
-    address actually answered into the URL as a literal IP - so docker-py's own (unmodified) connect
-    resolves trivially to the one address already proven reachable, the same trick `_ensure_ssh_port`
-    above already uses to work around a different docker-py quirk. One extra short-lived probe
-    connection per client build; `_get_client`'s pool means that happens once per host, not per call.
-
-    A URL that isn't `ssh://`, has no hostname, or is already a literal address (no family ambiguity
-    to resolve) is returned unchanged, as is one whose first resolved address answers - paramiko would
-    connect there itself, and keeping the hostname keeps its known_hosts lookup by name - and one where
-    every resolved address fails to connect, where the normal (paramiko-native) connection attempt
-    still runs and produces its own error, rather than this helper raising first. Only a fallback past
-    a failed address splices in a literal, and then known_hosts needs an entry for that address.
-
-    Args:
-        url: a DOCKER_HOST/host URL; only `ssh://` URLs are affected
-
-    Returns:
-        str: `url` unchanged, or with its hostname replaced by the literal address that answered after
-            an earlier one failed
+    `paramiko.SSHClient.connect()` resolves both address families but moves to the next address only on
+    `ECONNREFUSED`/`EHOSTUNREACH`; a black-holed IPv6 route times out instead, so a host perfectly
+    reachable over IPv4 failed outright (see `_ssh_proxy.connect_socket_with_family_fallback`).  This
+    connects the socket itself through every address and hands it to paramiko with the original
+    hostname, which is what paramiko checks `known_hosts` against, exactly as `ssh` does.  The earlier
+    workaround spliced the answering address into the URL, which made paramiko check `[address]:port`
+    instead: a host listed in `known_hosts` only by name was refused, and a stale entry for its address
+    from an earlier machine was checked in place of the right one.  A `ProxyCommand` from
+    `~/.ssh/config`, which docker-py turns into the socket itself, is left as it is.
     """
-    if not is_ssh_url(url):
-        return url
-    parsed = urllib.parse.urlparse(url)
-    hostname = parsed.hostname
-    if not hostname:
-        return url
-    try:
-        ipaddress.ip_address(hostname)
-    except ValueError:
-        pass
-    else:
-        return url  # already a literal address; no family ambiguity to resolve
-    port = parsed.port or 22
-    try:
-        sock = connect_socket_with_family_fallback(hostname, port, _CONNECT_TIMEOUT_CAP_SECONDS)
-    except OSError:
-        return url
-    try:
-        peer_host = sock.getpeername()[0]
-    finally:
-        sock.close()
-    # paramiko checks the host key against whatever name the URL carries, so splicing in an address makes
-    # it look up `[address]:port` in known_hosts, where many entries are only by name. Splice only when an
-    # earlier address failed - the case this exists for - and leave the hostname when the first answered.
-    try:
-        first = socket.getaddrinfo(hostname, port, socket.AF_UNSPEC, socket.SOCK_STREAM)[0][4][0]
-    except OSError:
-        # The name resolved a moment ago for the probe; if it fails now, splice as before rather than
-        # hand paramiko a name it may not resolve either.
-        first = None
-    if peer_host == first:
-        return url
-    literal = f"[{peer_host}]" if ":" in peer_host else peer_host
-    userinfo = f"{parsed.username}@" if parsed.username else ""
-    return urllib.parse.urlunparse(parsed._replace(netloc=f"{userinfo}{literal}:{port}"))
+
+    def _connect(self) -> None:
+        if not self.ssh_client:
+            return
+        # `ssh_params` is set by docker-py's `_create_paramiko_client`; the bundled stubs omit it.
+        params = dict(self.ssh_params)  # pyright: ignore[reportAttributeAccessIssue]
+        if "sock" not in params:
+            port = int(params.get("port") or 22)
+            params["sock"] = connect_socket_with_family_fallback(params["hostname"], port, _CONNECT_TIMEOUT_CAP_SECONDS)
+        self.ssh_client.connect(**params)
+
+
+@contextlib.contextmanager
+def _ssh_with_family_fallback() -> Iterator[None]:
+    """Make the docker-py clients built inside this block use `_FamilyFallbackSSHAdapter` for `ssh://`.
+
+    docker-py's `APIClient` builds its SSH adapter itself, from the name its module imported, and connects
+    in the adapter's constructor, so there is no argument to pass one in.  The name is swapped only while
+    a client is built, under a lock; the adapter a client keeps is the subclass, so its reconnects use it
+    too.
+
+    Yields:
+        None: while the swap is in place
+    """
+    # docker-py's own import of the adapter, which the bundled type stubs do not declare.
+    with _ssh_adapter_lock:
+        original = docker_api_client.SSHHTTPAdapter  # pyright: ignore[reportAttributeAccessIssue]
+        docker_api_client.SSHHTTPAdapter = _FamilyFallbackSSHAdapter  # pyright: ignore[reportAttributeAccessIssue]
+        try:
+            yield
+        finally:
+            docker_api_client.SSHHTTPAdapter = original  # pyright: ignore[reportAttributeAccessIssue]
+
+
+_ssh_adapter_lock = threading.Lock()
 
 
 def _from_env_no_context(**kwargs: Any) -> docker.DockerClient:
@@ -301,7 +285,7 @@ def _build_default_client() -> docker.DockerClient:
     """
     docker_host = os.environ.get("DOCKER_HOST")
     if docker_host:
-        fixed = _ensure_reachable_family(_ensure_ssh_port(docker_host))
+        fixed = _ensure_ssh_port(docker_host)
         if fixed != docker_host:
             return _from_env_no_context(environment={**os.environ, "DOCKER_HOST": fixed})
         return _from_env_no_context()
@@ -363,13 +347,14 @@ def _build_client(host: Host) -> docker.DockerClient:
     Returns:
         docker.DockerClient: a client for that host
     """
-    if not _is_multi() and not (os.environ.get("DOCKER_MCP_SERVER_HOSTS") or "").strip():
-        return _build_default_client()
-    tls = _tls_config_for(host)
-    if host.url is None:
-        return docker.DockerClient(tls=tls) if tls is not None else docker.DockerClient()
-    url = _ensure_reachable_family(_ensure_ssh_port(host.url))
-    return docker.DockerClient(base_url=url, tls=tls) if tls is not None else docker.DockerClient(base_url=url)
+    with _ssh_with_family_fallback():
+        if not _is_multi() and not (os.environ.get("DOCKER_MCP_SERVER_HOSTS") or "").strip():
+            return _build_default_client()
+        tls = _tls_config_for(host)
+        if host.url is None:
+            return docker.DockerClient(tls=tls) if tls is not None else docker.DockerClient()
+        url = _ensure_ssh_port(host.url)
+        return docker.DockerClient(base_url=url, tls=tls) if tls is not None else docker.DockerClient(base_url=url)
 
 
 def _get_client(host: str | None = None) -> docker.DockerClient:  # noqa: DOC503
@@ -570,6 +555,49 @@ def system_df(verbose: bool = False, host: str | None = None) -> dict:  # noqa: 
     return _summarise_df(_get_client(host).df(), verbose)
 
 
+def _redaction_details(host: Host) -> dict:
+    """What an agent needs to know about markers on one redacted host, and the store's state there.
+
+    The server's instructions only point here, because what applies differs by host.  A host that accepts
+    writes swaps markers back in them; a read-only one (its own `ro`, or `DOCKER_MCP_SERVER_READONLY`)
+    never does.  The tools named are only those an agent could call there: a read-only host refuses the
+    file-writing tools, and global redaction withdraws `container_archive_get`, so naming them would
+    mislead.
+
+    Args:
+        host: a redacted host
+
+    Returns:
+        dict: `notes`, the rules that apply on this host, and `store`, its value counts and bytes
+    """
+    read_only = host.read_only or READONLY
+    notes = ["Credentials in this host's output show as [REDACTED:...] markers."]
+    if read_only:
+        # Nothing is written here, so markers are never swapped back: to a read tool one is literal text.
+        notes.append(
+            "Never pass a marker to a tool or write one to a file: it is not swapped back, so it would be used "
+            "as literal text."
+        )
+    else:
+        notes += [
+            "Pass a marker where a write to this host needs its credential: the real value is used. A marker "
+            "from another host or an earlier server run is refused, as is one in a name, image label, build "
+            "argument, or a CLI tool's command line (use `env` or `vars` there).",
+            "Never write a marker to a file: a call reading a file or archive that holds one is refused.",
+        ]
+    in_band = [
+        name if destination is None else f"{name} without {destination}"
+        for name, destination in redaction_wire.BYTE_TOOLS.items()
+        if tool_usable_on(name, read_only=read_only)
+    ]
+    if in_band:
+        notes.append(f"Bytes in band are refused here: {', '.join(in_band)}.")
+    writers = [name for name in redaction_wire.FILE_TOOLS if tool_usable_on(name, read_only=read_only)]
+    if writers:
+        notes.append(f"Files written to disk by {', '.join(writers)} are not redacted.")
+    return {"notes": notes, "store": redaction_wire.REDACTOR.report(host.label)}
+
+
 @tool()
 def host_list() -> list[dict]:
     """
@@ -583,7 +611,9 @@ def host_list() -> list[dict]:
 
     Returns:
         list[dict]: one per host: name; url (resolved daemon URL, null = docker-py platform default); read_only;
-            non_destructive (blocks destructive calls only); tls (whether a per-host cert dir is configured); default
+            non_destructive (blocks destructive calls only); redact (whether its output is redacted, by its own
+            option or the global switch); redaction (for a redacted host, `notes` on how markers behave there and
+            the `store` state; else null); tls (whether a per-host cert dir is configured); default
             (the omitted-host fallback)
     """
     hosts = _host_registry()
@@ -594,6 +624,8 @@ def host_list() -> list[dict]:
             "url": host.url,
             "read_only": host.read_only,
             "non_destructive": host.non_destructive,
+            "redact": redaction_settings.redacts(host),
+            "redaction": _redaction_details(host) if redaction_settings.redacts(host) else None,
             "tls": host.cert_dir is not None,
             "default": host.label == default_label,
         }
@@ -1107,22 +1139,25 @@ def _connection_help(exc: BaseException, host: Host | None) -> str:
 
 
 def _host_tag(host: Host) -> str:
-    """A host's label with brief `(ro, remote)` / `(nd, remote)` annotations.
+    """A host's label with brief `(ro, redact, remote)` / `(nd, remote)` annotations.
 
     For the boot roster of the other hosts. `nd` only shows when `ro` is absent, since `ro` already
-    implies it.
+    implies it. `redact` shows when the host's output is redacted, by its own option or the global
+    switch.
 
     Args:
         host: the configured host to label
 
     Returns:
-        str: its label, annotated with ``(ro, remote)`` or ``(nd, remote)`` where they apply
+        str: its label, annotated with ``ro`` or ``nd``, ``redact`` and ``remote`` where they apply
     """
     tags = []
     if host.read_only:
         tags.append("ro")
     elif host.non_destructive:
         tags.append("nd")
+    if redaction_settings.redacts(host):
+        tags.append("redact")
     if host.url and not host.url.startswith(("unix://", "npipe://")):
         tags.append("remote")
     return host.label + (f" ({', '.join(tags)})" if tags else "")
@@ -1172,7 +1207,7 @@ def startup_preflight() -> None:
     """
     global _self_container_id, _self_host_label
     # Before the ping, so it is shown even when the daemon cannot be reached.
-    for warning in disable_switch_warnings():
+    for warning in configuration_warnings():
         print(f"docker-mcp-server: WARNING: {warning}", file=sys.stderr, flush=True)
     scrub_unresolved_env()
     default = _default_host()

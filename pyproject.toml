@@ -1,6 +1,6 @@
 [project]
 name = "docker-mcp-server"
-version = "2.2.10"
+version = "2.3.0"
 description = "MCP server for managing Docker resources via the Docker SDK for Python"
 readme = "README.md"
 license = "MIT"
@@ -51,6 +51,16 @@ dependencies = [
     # Also transitive (through mcp), but imported directly: nodes.py configures a TypedDict with
     # `pydantic.with_config`. The floor is mcp's own, which has it.
     "pydantic>=2.12.0",
+    # Credential redaction matches every stored value's forms in one pass. Python's `re` cannot: with a
+    # few thousand literal alternatives it took seconds per 100 KB of output, where an Aho-Corasick
+    # automaton takes milliseconds. Floor is the release verified with the matcher, which relies on
+    # `Automaton.iter` reporting every match, overlapping ones included, with its payload;
+    # tests/test_pyproject_pins.py guards that it still does.
+    "pyahocorasick>=2.3.1",
+    # Also transitive (through paramiko), but redaction imports it directly to encrypt its markers with
+    # AES. Deliberately unbounded and unasserted in CI, as AGENTS.md records for this package: a floor or
+    # cap could force a wheels-only resolve onto a release with no wheel for a supported platform.
+    "cryptography",
 ]
 
 [project.scripts]

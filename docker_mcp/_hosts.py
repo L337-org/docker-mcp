@@ -67,6 +67,9 @@ class Host:
         read_only: whether the ``(ro)`` marker was set, blocking every write.
         non_destructive: whether the ``(nd)`` marker was set, blocking destructive calls only.
         cert_dir: a tcp+TLS certificate directory, or None.
+        redact: whether the ``redact`` option was set on this host.  This is the per-host flag only;
+            ``DOCKER_MCP_SERVER_REDACT`` redacts every host, and ``redaction.settings.host_redacted``
+            combines the two.
     """
 
     label: str
@@ -74,6 +77,7 @@ class Host:
     read_only: bool = False
     non_destructive: bool = False
     cert_dir: str | None = None
+    redact: bool = False
 
     @property
     def is_ssh(self) -> bool:
@@ -190,38 +194,152 @@ def _fail(message: str) -> NoReturn:
     raise HostConfigError(message)
 
 
-def _parse_markers(text: str, context: str) -> tuple[str, bool, bool, str | None]:
-    """Strip trailing (ro)/(nd)/(tls=<dir>) markers off an endpoint string.
+def _split_top_level(text: str, *, labelled: bool) -> list[str]:
+    """Split on commas outside brackets, so options inside one bracket stay with their endpoint.
 
-    Markers may appear in any order and are case-insensitive; returns (endpoint, read_only,
-    non_destructive, cert_dir). (ro) and (nd) may combine with no error - (ro) is strictly stronger
-    and wins at enforcement time (see server.py).
+    `a=ssh://x(ro,redact),b=local` is two entries, not three.  An unbalanced bracket is refused rather
+    than guessed at: a misread bracket could drop `ro` or `redact` from a host without any error.  The
+    error names the host whose entry holds the bad bracket, so that with several hosts the operator is
+    pointed at the right one.
 
     Args:
-        text: the endpoint spec, markers included
-        context: what is being parsed, for the error message
+        text: the value to split
+        labelled: whether entries are `label=endpoint`, so the error can name the label; otherwise the
+            value is one bare endpoint, reported as the default host
 
     Returns:
-        tuple: ``(endpoint, read_only, non_destructive, cert_dir)``
+        list: the pieces, unstripped, in order
     """
-    read_only = False
-    non_destructive = False
+    pieces: list[str] = []
+    depth = 0
+    start = 0
+
+    def where() -> str:
+        # Up to the entry's first comma, so an entry with no `=` quotes itself rather than its neighbours.
+        label = text[start:].split(",", 1)[0].partition("=")[0].strip() if labelled else _DEFAULT_LABEL
+        return f"host {label!r}"
+
+    for index, char in enumerate(text):
+        if char == "(":
+            if depth:
+                _fail(f"{where()}: a bracket opens inside another bracket")
+            depth = 1
+        elif char == ")":
+            if not depth:
+                _fail(f"{where()}: ')' has no matching '('")
+            depth = 0
+        elif char == "," and not depth:
+            pieces.append(text[start:index])
+            start = index + 1
+    if depth:
+        _fail(f"{where()}: '(' is never closed")
+    pieces.append(text[start:])
+    return pieces
+
+
+def _has_top_level_equals(text: str) -> bool:
+    """Whether `=` appears outside brackets, which is what makes a value a `label=endpoint` list.
+
+    The `=` in `(tls=<dir>)` does not count, so a bare single endpoint may carry a `tls=` option.
+
+    Args:
+        text: the whole DOCKER_MCP_SERVER_HOSTS value
+
+    Returns:
+        bool: True when some `=` is outside every bracket
+    """
+    depth = 0
+    for char in text:
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth = max(depth - 1, 0)
+        elif char == "=" and not depth:
+            return True
+    return False
+
+
+@dataclass
+class _Options:
+    """The options parsed off one endpoint's trailing brackets.
+
+    Attributes:
+        read_only: whether ``ro`` was given.
+        non_destructive: whether ``nd`` was given.
+        redact: whether ``redact`` was given.
+        cert_dir: the ``tls=`` directory, or None.
+    """
+
+    read_only: bool = False
+    non_destructive: bool = False
+    redact: bool = False
     cert_dir: str | None = None
-    while (match := _TRAILING_MARKER.search(text)) is not None:
-        body = match.group(1).strip()
-        low = body.lower()
-        if low == "ro":
-            read_only = True
-        elif low == "nd":
-            non_destructive = True
-        elif low.startswith("tls="):
-            cert_dir = body[len("tls=") :].strip()  # preserve the path's case
+
+
+def _apply_bracket(body: str, options: _Options, label: str) -> None:
+    """Apply the options in one bracket's body, either a single option or a comma-separated list.
+
+    `tls=` takes the rest of its bracket, so a certificate directory containing a comma still parses;
+    that is why it has to come last in a list.  An empty option, as in `(ro,)`, is refused: it is
+    more likely a typo for something that was meant to be there than nothing.
+
+    Args:
+        body: the text between the brackets
+        options: the options so far, updated in place
+        label: the host label, for the error message
+    """
+    rest = body
+    while True:
+        option, comma, remainder = rest.partition(",")
+        option = option.strip()
+        low = option.lower()
+        if low.startswith("tls="):
+            cert_dir = rest.strip()[len("tls=") :].strip()  # the rest of the bracket; preserve the path's case
             if not cert_dir:
-                _fail(f"{context!r}: (tls=) needs a directory, e.g. (tls=/etc/docker/prod)")
+                _fail(f"host {label!r}: (tls=) needs a directory, e.g. (tls=/etc/docker/prod)")
+            options.cert_dir = cert_dir
+            return
+        if low == "ro":
+            options.read_only = True
+        elif low == "nd":
+            options.non_destructive = True
+        elif low == "redact":
+            options.redact = True
+        elif not option:
+            _fail(f"host {label!r}: empty option in '({body})'; options are separated by single commas")
         else:
-            _fail(f"{context!r}: unknown marker '({body})'; only (ro), (nd), and (tls=<dir>) are allowed")
+            _fail(
+                f"host {label!r}: unknown marker {option!r} in '({body})'; only ro, nd, redact and "
+                "tls=<dir> are allowed"
+            )
+        if not comma:
+            return
+        rest = remainder
+
+
+def _parse_markers(text: str, label: str) -> tuple[str, _Options]:
+    """Strip the trailing option brackets off an endpoint string.
+
+    Each bracket holds one option or a comma-separated list, and the two forms mix freely, so
+    `(ro)(redact)`, `(ro,redact)` and `(ro)(redact,tls=<dir>)` are all accepted.  Options are
+    case-insensitive and may come in any order, except that `tls=` must be last in its bracket.
+    `ro` and `nd` may combine with no error - `ro` is strictly stronger and wins at enforcement time
+    (see server.py).
+
+    Args:
+        text: the endpoint spec, options included
+        label: the host label, for the error message
+
+    Returns:
+        tuple: ``(endpoint, options)``
+    """
+    options = _Options()
+    while (match := _TRAILING_MARKER.search(text)) is not None:
+        _apply_bracket(match.group(1), options, label)
         text = text[: match.start()].rstrip()
-    return text.strip(), read_only, non_destructive, cert_dir
+    if "(" in text or ")" in text:
+        _fail(f"host {label!r}: options must be in brackets at the end of the endpoint, not {text!r}")
+    return text.strip(), options
 
 
 def _readable(path: Path) -> bool:
@@ -272,18 +390,18 @@ def _validate_cert_dir(label: str, cert_dir: str) -> None:
             _fail(f"host {label!r}: TLS dir {cert_dir!r} has {client_file.name} but cannot read it")
 
 
-def _make_host(label: str, raw_endpoint: str, context: str) -> Host:
+def _make_host(label: str, raw_endpoint: str) -> Host:
     """Build a Host from one endpoint spec: parse markers, validate, and resolve to a concrete URL.
 
     Args:
         label: the host label
         raw_endpoint: the endpoint spec, markers included
-        context: what is being parsed, for the error message
 
     Returns:
         Host: the built host, with its URL resolved
     """
-    endpoint, read_only, non_destructive, cert_dir = _parse_markers(raw_endpoint.strip(), context)
+    endpoint, options = _parse_markers(raw_endpoint.strip(), label)
+    cert_dir = options.cert_dir
     low = endpoint.lower()
     if cert_dir is not None:
         if not low.startswith("tcp://"):
@@ -301,7 +419,14 @@ def _make_host(label: str, raw_endpoint: str, context: str) -> Host:
             f"host {label!r}: unrecognized endpoint {endpoint!r} "
             f"(use 'auto', 'local', or a unix:// / tcp:// / ssh:// / npipe:// URL)"
         )
-    return Host(label=label, url=url, read_only=read_only, non_destructive=non_destructive, cert_dir=cert_dir)
+    return Host(
+        label=label,
+        url=url,
+        read_only=options.read_only,
+        non_destructive=options.non_destructive,
+        cert_dir=cert_dir,
+        redact=options.redact,
+    )
 
 
 def _legacy_host() -> Host:
@@ -318,9 +443,10 @@ def _legacy_host() -> Host:
 def parse_registry(raw: str | None) -> dict[str, Host]:
     """Parse DOCKER_MCP_SERVER_HOSTS into an ordered {label: Host} (first entry = default).
 
-    Unset/empty -> a single synthesized host from DOCKER_HOST/auto. A value with no '=' is the bare
-    single-host shorthand (the whole value is one endpoint). Otherwise it is a comma-separated
-    `label=endpoint` list. Raises HostConfigError on any malformed value; the caller fail-fasts.
+    Unset/empty -> a single synthesized host from DOCKER_HOST/auto. A value with no '=' outside
+    brackets is the bare single-host shorthand (the whole value is one endpoint, options included).
+    Otherwise it is a comma-separated `label=endpoint` list, split only on commas outside brackets.
+    Raises HostConfigError on any malformed value; the caller fail-fasts.
 
     Args:
         raw: the DOCKER_MCP_SERVER_HOSTS value, or None when unset
@@ -331,10 +457,11 @@ def parse_registry(raw: str | None) -> dict[str, Host]:
     text = (raw or "").strip()
     if not text:
         return {_DEFAULT_LABEL: _legacy_host()}
-    if "=" not in text:
-        return {_DEFAULT_LABEL: _make_host(_DEFAULT_LABEL, text, context=text)}
+    if not _has_top_level_equals(text):
+        _split_top_level(text, labelled=False)  # bracket balance only; the bare form is one endpoint
+        return {_DEFAULT_LABEL: _make_host(_DEFAULT_LABEL, text)}
     registry: dict[str, Host] = {}
-    for entry in text.split(","):
+    for entry in _split_top_level(text, labelled=True):
         entry = entry.strip()
         if not entry:
             continue
@@ -348,7 +475,7 @@ def parse_registry(raw: str | None) -> dict[str, Host]:
             _fail(f"label {label!r} is invalid (allowed characters: letters, digits, '_', '.', '-')")
         if label in registry:
             _fail(f"duplicate host label {label!r}")
-        registry[label] = _make_host(label, endpoint, context=entry)
+        registry[label] = _make_host(label, endpoint)
     if not registry:
         _fail("DOCKER_MCP_SERVER_HOSTS is set but contains no host entries")
     return registry

@@ -2,11 +2,15 @@
 
 from docker_mcp.server import mcp, finalize_instructions
 from docker_mcp import _hosts
+from docker_mcp.redaction import settings as _redaction_settings
 
 # Parse DOCKER_MCP_SERVER_HOSTS and pin the host registry before any tool registers - the @tool()
 # decorator and resources read the registry at registration time. A malformed value fail-fasts here
 # (one stderr line + non-zero exit).
 _hosts.load()
+# The redaction settings read the host registry (a host's `redact` option), so they load after it,
+# and fail fast the same way on a malformed DOCKER_MCP_SERVER_REDACT_NAMES.
+_redaction_settings.load()
 
 # Side-effect import: registers the @mcp.tool() functions, and must follow _hosts.load().
 from docker_mcp import tools  # noqa: F401, E402
@@ -32,5 +36,10 @@ def main() -> None:
 
     from docker_mcp.tools.system import startup_preflight
 
+    if _redaction_settings.any_redacted():
+        # A crash must not write the stored credentials to disk in a core file.
+        from docker_mcp.redaction.wire import disable_core_dumps
+
+        disable_core_dumps()
     startup_preflight()
     mcp.run(transport="stdio")

@@ -349,3 +349,17 @@ def test_the_plugin_build_compares_with_the_pypi_jobs_files_only_when_that_run_u
     assert "UPLOADED: ${{ needs.pypi.outputs.uploaded }}" in step
     assert re.search(r'if \[ "\$UPLOADED" = true \]; then\s+args\+=\(--expect-dist release-dist\)', step)
     assert "--expect-dist" not in step.split("args=(", 1)[1].split(")", 1)[0], "never unconditionally"
+
+
+def test_the_installed_pyahocorasick_still_provides_what_the_matcher_relies_on():
+    """The redaction matcher needs `Automaton.iter` to report every match, overlapping ones included.
+
+    No upper cap on pyahocorasick: this fails instead the day an installed release stops doing so.
+    """
+    import ahocorasick
+
+    automaton = ahocorasick.Automaton()
+    for word in ("abc", "abcdef", "cde"):
+        automaton.add_word(word, (word, len(word)))
+    automaton.make_automaton()
+    assert sorted(automaton.iter("xabcdefx")) == [(3, ("abc", 3)), (5, ("cde", 3)), (6, ("abcdef", 6))]

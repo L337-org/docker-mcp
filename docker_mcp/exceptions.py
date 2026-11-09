@@ -88,3 +88,37 @@ class HostConfigError(DockerMcpError):
     Raised before any tool is registered, so it never reaches a client; it subclasses the base for
     one exception hierarchy rather than because it is translated.
     """
+
+
+class RedactionConfigError(DockerMcpError):
+    """A malformed redaction setting, such as `DOCKER_MCP_SERVER_REDACT_NAMES`.
+
+    `redaction.settings.load()` turns this into a stderr line and `exit(1)`, like `HostConfigError`
+    and for the same reason: it is raised before any tool is registered, so it never reaches a client.
+    """
+
+
+class RedactionBudgetError(ToolRefusalError):
+    """The credential store reached its overall budget, so every call to a redacted host is refused.
+
+    Only a restart clears it, which also makes every marker issued so far invalid; the message says so.
+    """
+
+
+class MarkerRefusedError(ToolRefusalError):
+    """A write refused before it ran because of a redaction marker in its arguments or in a file it reads.
+
+    The marker could not be swapped back (from another host, from an earlier process, altered, or for a
+    value that was not stored), or it sat where a credential is never legitimate, or it was in a file or
+    archive, where it is never swapped back.  The message names the argument or file and the reason, never
+    a value.
+    """
+
+
+class RedactionResetError(DockerMcpError):
+    """The redactor started a new generation partway through this call, so the call was refused.
+
+    Unlike a refusal, the same call may be retried as it is: the next attempt runs against the new
+    generation and reads its values again.  Raised rather than finishing the call against an emptied
+    store, where a value no shape rule recognises would come back unredacted.
+    """

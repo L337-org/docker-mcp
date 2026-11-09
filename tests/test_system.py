@@ -1,6 +1,5 @@
 import inspect
 import os
-import socket
 import threading
 import types
 from typing import Any
@@ -468,6 +467,19 @@ def test_host_tag_annotates_nd_when_not_also_ro():
     )
 
 
+def test_host_tag_annotates_a_redacted_host(monkeypatch):
+    _set_multi(monkeypatch, "local=unix:///var/run/docker.sock, prod=tcp://prod:2376(ro,redact)")
+    registry = _hosts_mod.registry()
+    assert system_module._host_tag(registry["prod"]) == "prod (ro, redact, remote)"
+    assert system_module._host_tag(registry["local"]) == "local"
+
+
+def test_host_tag_annotates_every_host_under_the_global_redact_switch(monkeypatch):
+    _set_multi(monkeypatch, "local=unix:///var/run/docker.sock, prod=tcp://prod:2376")
+    monkeypatch.setattr(system_module.redaction_settings, "_global", True)
+    assert system_module._host_tag(_hosts_mod.registry()["local"]) == "local (redact)"
+
+
 def test_close_client_quietly_swallows_close_errors():
     client = MagicMock()
     client.close.side_effect = RuntimeError("already broken")
@@ -611,18 +623,17 @@ def test_build_default_client_falls_back_to_from_env(monkeypatch):
 
 def test_build_default_client_keeps_the_context_pin_when_it_rewrites_the_url(monkeypatch):
     # The one branch where the pin travels alongside another kwarg: an ssh:// DOCKER_HOST rewritten by
-    # the port/address-family fixups is passed via `environment=`, and use_context must survive that.
+    # the port fixup is passed via `environment=`, and use_context must survive that.
     monkeypatch.setenv("DOCKER_HOST", "ssh://bob@example.com")
     sentinel = MagicMock()
     with (
-        patch("docker_mcp.tools.system._ensure_ssh_port", side_effect=lambda url: url),
-        patch("docker_mcp.tools.system._ensure_reachable_family", return_value="ssh://bob@10.0.0.9:22"),
+        patch("docker_mcp.tools.system._ensure_ssh_port", return_value="ssh://bob@example.com:22"),
         patch("docker_mcp.tools.system.docker.from_env", return_value=sentinel) as from_env,
     ):
         assert system_module._build_default_client() is sentinel
     kwargs = from_env.call_args.kwargs
     assert kwargs["use_context"] is False
-    assert kwargs["environment"]["DOCKER_HOST"] == "ssh://bob@10.0.0.9:22"
+    assert kwargs["environment"]["DOCKER_HOST"] == "ssh://bob@example.com:22"
 
 
 def test_from_env_no_context_pins_the_kwarg_and_forwards_the_rest():
@@ -801,9 +812,6 @@ def test_build_default_client_splices_ssh_config_port_into_docker_host(tmp_path,
     config.write_text("Host example.com\n    Port 1234\n", encoding="utf-8")
     monkeypatch.setattr("os.path.expanduser", lambda p: str(config) if p == "~/.ssh/config" else p)
     monkeypatch.setenv("DOCKER_HOST", "ssh://bob@example.com")
-    # This test is about the port-splice only; the family-fallback probe is exercised in its own
-    # tests below and would otherwise make a real connection attempt to "example.com" here.
-    monkeypatch.setattr(system_module, "_ensure_reachable_family", lambda url: url)
     sentinel = MagicMock()
     with patch("docker_mcp.tools.system.docker.from_env", return_value=sentinel) as from_env:
         assert system_module._build_default_client() is sentinel
@@ -815,8 +823,6 @@ def test_build_client_splices_ssh_config_port_for_multi_host_ssh_entry(tmp_path,
     config = tmp_path / "config"
     config.write_text("Host example.com\n    Port 1234\n", encoding="utf-8")
     monkeypatch.setattr("os.path.expanduser", lambda p: str(config) if p == "~/.ssh/config" else p)
-    # See the comment above: isolate the port-splice from the family-fallback probe.
-    monkeypatch.setattr(system_module, "_ensure_reachable_family", lambda url: url)
     host = Host("remote", "ssh://bob@example.com")
     sentinel = MagicMock()
     with patch("docker_mcp.tools.system.docker.DockerClient", return_value=sentinel) as ctor:
@@ -824,100 +830,111 @@ def test_build_client_splices_ssh_config_port_for_multi_host_ssh_entry(tmp_path,
     ctor.assert_called_once_with(base_url="ssh://bob@example.com:1234")
 
 
-# ---------- _ensure_reachable_family: paramiko's narrow IPv4/IPv6 fallback workaround ----------
+# ---------- the SSH adapter: every address tried, the host key checked by name ----------
 
 
-def test_ensure_reachable_family_ignores_non_ssh_url():
-    assert system_module._ensure_reachable_family("tcp://prod:2376") == "tcp://prod:2376"
+def _adapter_with(params: dict) -> tuple:
+    """A `_FamilyFallbackSSHAdapter` that has not connected, with `ssh_params` and a mock paramiko client."""
+    adapter = object.__new__(system_module._FamilyFallbackSSHAdapter)
+    adapter.ssh_client = MagicMock()
+    adapter.__dict__["ssh_params"] = params  # set by docker-py's own setup, which the stubs do not declare
+    return adapter, adapter.ssh_client
 
 
-def test_ensure_reachable_family_ignores_hostless_url():
-    assert system_module._ensure_reachable_family("ssh://") == "ssh://"
-
-
-def test_ensure_reachable_family_leaves_literal_ip_unchanged(monkeypatch):
-    # No DNS ambiguity to resolve for a literal address — must not even attempt a probe connection.
-    monkeypatch.setattr(
-        system_module,
-        "connect_socket_with_family_fallback",
-        MagicMock(side_effect=AssertionError("should not be called for a literal IP")),
-    )
-    assert system_module._ensure_reachable_family("ssh://bob@10.1.2.3:2222") == "ssh://bob@10.1.2.3:2222"
-    assert system_module._ensure_reachable_family("ssh://bob@[::1]:2222") == "ssh://bob@[::1]:2222"
-
-
-def _resolves_to(monkeypatch, *addresses):
-    """Make the hostname resolve to `addresses`, in that order, as getaddrinfo reports them."""
-    infos = [(None, None, None, "", (address, 0)) for address in addresses]
-    monkeypatch.setattr(system_module.socket, "getaddrinfo", lambda *args, **kwargs: infos)
-
-
-def test_ensure_reachable_family_keeps_the_hostname_when_the_first_address_answers(monkeypatch):
-    # paramiko checks known_hosts against the name in the URL; splicing in an address that paramiko would
-    # have reached anyway turned a known `[host]:port` entry into an unknown `[address]:port` one.
-    _resolves_to(monkeypatch, "2001:db8::1", "203.0.113.5")
-    fake_sock = MagicMock()
-    fake_sock.getpeername.return_value = ("2001:db8::1", 2222, 0, 0)
-    monkeypatch.setattr(system_module, "connect_socket_with_family_fallback", MagicMock(return_value=fake_sock))
-    assert system_module._ensure_reachable_family("ssh://bob@example.com:2222") == "ssh://bob@example.com:2222"
-    fake_sock.close.assert_called_once()
-
-
-def test_ensure_reachable_family_splices_as_before_if_the_second_lookup_fails(monkeypatch):
-    # A transient resolver failure on the second lookup must not escape: fall back to the old behaviour.
-    def no_answer(*args, **kwargs):
-        raise socket.gaierror("temporary failure in name resolution")
-
-    monkeypatch.setattr(system_module.socket, "getaddrinfo", no_answer)
-    fake_sock = MagicMock()
-    fake_sock.getpeername.return_value = ("203.0.113.5", 2222)
-    monkeypatch.setattr(system_module, "connect_socket_with_family_fallback", MagicMock(return_value=fake_sock))
-    assert system_module._ensure_reachable_family("ssh://bob@example.com:2222") == "ssh://bob@203.0.113.5:2222"
-
-
-def test_ensure_reachable_family_splices_in_the_reachable_address(monkeypatch):
-    # The first address (IPv6) failed and IPv4 answered: the case the workaround exists for.
-    _resolves_to(monkeypatch, "2001:db8::1", "203.0.113.5")
-    fake_sock = MagicMock()
-    fake_sock.getpeername.return_value = ("203.0.113.5", 2222)
-    probe = MagicMock(return_value=fake_sock)
+def test_the_ssh_adapter_connects_through_the_answering_address_and_checks_the_key_by_name(monkeypatch):
+    # The IPv6 address of a host can be black-holed while IPv4 answers.  The socket goes to whichever
+    # answers; paramiko is still given the hostname, which is what it looks up in known_hosts, so a host
+    # listed only by name (or with a stale entry for its address) is verified as ssh would verify it.
+    sock = MagicMock()
+    probe = MagicMock(return_value=sock)
     monkeypatch.setattr(system_module, "connect_socket_with_family_fallback", probe)
-    result = system_module._ensure_reachable_family("ssh://bob@example.com:2222")
-    assert result == "ssh://bob@203.0.113.5:2222"
+    adapter, client = _adapter_with({"hostname": "example.com", "port": 2222, "username": "bob"})
+    adapter._connect()
     probe.assert_called_once_with("example.com", 2222, system_module._CONNECT_TIMEOUT_CAP_SECONDS)
-    fake_sock.close.assert_called_once()
+    client.connect.assert_called_once_with(hostname="example.com", port=2222, username="bob", sock=sock)
+    assert "sock" not in adapter.ssh_params  # a reconnect probes again rather than reusing a closed socket
 
 
-def test_ensure_reachable_family_brackets_an_ipv6_literal_result(monkeypatch):
-    _resolves_to(monkeypatch, "203.0.113.5", "2001:db8::1")
-    fake_sock = MagicMock()
-    fake_sock.getpeername.return_value = ("2001:db8::1", 22)
-    monkeypatch.setattr(system_module, "connect_socket_with_family_fallback", MagicMock(return_value=fake_sock))
-    assert system_module._ensure_reachable_family("ssh://bob@example.com") == "ssh://bob@[2001:db8::1]:22"
+def test_docker_py_still_builds_and_connects_its_ssh_adapter_the_way_the_subclass_relies_on(monkeypatch):
+    # The subclass overrides docker-py's private `_connect` and reads `ssh_params`, which its constructor
+    # sets and then connects through.  Built for real here, with only the network and the user's SSH files
+    # kept out, so a docker-py release that renames either, or stops connecting in the constructor, fails
+    # this rather than quietly bypassing the fallback.
+    import paramiko
+
+    calls = []
+    monkeypatch.setattr(
+        "os.path.expanduser", lambda path: "/nonexistent/ssh-config" if path == "~/.ssh/config" else path
+    )
+    monkeypatch.setattr(paramiko.SSHClient, "load_system_host_keys", lambda self: None)
+    monkeypatch.setattr(paramiko.SSHClient, "connect", lambda self, **kwargs: calls.append(kwargs))
+    sock = MagicMock()
+    monkeypatch.setattr(system_module, "connect_socket_with_family_fallback", MagicMock(return_value=sock))
+    adapter = system_module._FamilyFallbackSSHAdapter("ssh://bob@example.invalid:2222")
+    assert calls == [{"hostname": "example.invalid", "port": 2222, "username": "bob", "sock": sock}]
+    assert vars(adapter)["ssh_params"] == {"hostname": "example.invalid", "port": 2222, "username": "bob"}
 
 
-def test_ensure_reachable_family_defaults_port_22_when_unspecified(monkeypatch):
-    probe = MagicMock(side_effect=OSError("unreachable"))
+def test_the_ssh_adapter_defaults_to_port_22(monkeypatch):
+    probe = MagicMock(return_value=MagicMock())
     monkeypatch.setattr(system_module, "connect_socket_with_family_fallback", probe)
-    system_module._ensure_reachable_family("ssh://bob@example.com")
+    adapter, _ = _adapter_with({"hostname": "example.com", "port": None, "username": "bob"})
+    adapter._connect()
     probe.assert_called_once_with("example.com", 22, system_module._CONNECT_TIMEOUT_CAP_SECONDS)
 
 
-def test_ensure_reachable_family_leaves_url_alone_when_every_address_fails(monkeypatch):
-    # Every candidate failed — leave the url untouched so the normal (paramiko-native) connection
-    # attempt runs and produces its own error, rather than this helper raising first.
+def test_the_ssh_adapter_leaves_a_proxycommand_socket_alone(monkeypatch):
+    probe = MagicMock(side_effect=AssertionError("must not probe when ~/.ssh/config gives a ProxyCommand"))
+    monkeypatch.setattr(system_module, "connect_socket_with_family_fallback", probe)
+    proxy = MagicMock()
+    adapter, client = _adapter_with({"hostname": "example.com", "port": 22, "sock": proxy})
+    adapter._connect()
+    client.connect.assert_called_once_with(hostname="example.com", port=22, sock=proxy)
+
+
+def test_the_ssh_adapter_reports_an_unreachable_host_as_the_connection_error_it_is(monkeypatch):
     monkeypatch.setattr(
         system_module, "connect_socket_with_family_fallback", MagicMock(side_effect=OSError("all failed"))
     )
-    assert system_module._ensure_reachable_family("ssh://bob@example.com:2222") == "ssh://bob@example.com:2222"
+    adapter, client = _adapter_with({"hostname": "example.com", "port": 22})
+    with pytest.raises(OSError, match="all failed"):
+        adapter._connect()
+    client.connect.assert_not_called()
 
 
-def test_ensure_reachable_family_preserves_username(monkeypatch):
-    _resolves_to(monkeypatch, "2001:db8::1", "203.0.113.5")
-    fake_sock = MagicMock()
-    fake_sock.getpeername.return_value = ("203.0.113.5", 22)
-    monkeypatch.setattr(system_module, "connect_socket_with_family_fallback", MagicMock(return_value=fake_sock))
-    assert system_module._ensure_reachable_family("ssh://deploy@example.com") == "ssh://deploy@203.0.113.5:22"
+def _installed_adapter() -> type:
+    import docker.api.client as docker_api_client
+
+    return vars(docker_api_client)["SSHHTTPAdapter"]
+
+
+def test_a_client_built_for_an_ssh_host_uses_the_adapter_and_the_url_keeps_the_hostname(monkeypatch):
+    _set_multi(monkeypatch)
+    monkeypatch.setattr(system_module, "_ensure_ssh_port", lambda url: url)
+    seen = {}
+
+    def fake_client(**kwargs):
+        seen["adapter"] = _installed_adapter()
+        seen["kwargs"] = kwargs
+        return MagicMock()
+
+    original = _installed_adapter()
+    with patch("docker_mcp.tools.system.docker.DockerClient", side_effect=fake_client):
+        system_module._build_client(Host("remote", "ssh://bob@example.com:2222"))
+    assert seen["adapter"] is system_module._FamilyFallbackSSHAdapter
+    assert seen["kwargs"] == {"base_url": "ssh://bob@example.com:2222"}
+    assert _installed_adapter() is original  # restored once the client is built
+
+
+def test_the_adapter_swap_is_undone_when_building_a_client_fails(monkeypatch):
+    _set_multi(monkeypatch)
+    original = _installed_adapter()
+    with (
+        patch("docker_mcp.tools.system.docker.DockerClient", side_effect=OSError("unreachable")),
+        pytest.raises(OSError),
+    ):
+        system_module._build_client(Host("remote", "ssh://bob@example.com:2222"))
+    assert _installed_adapter() is original
 
 
 # ---------- system_wait ----------
@@ -1131,10 +1148,10 @@ def test_system_wait_description_fits_what_claude_code_shows():
     assert len((tool.description or "").encode("utf-16-le")) // 2 <= 2048
 
 
-def test_startup_preflight_prints_each_disable_switch_warning_even_when_the_daemon_is_down(capsys):
-    warnings = ["DOCKER_MCP_SERVER_DISABLE names 'swram', ...", "DOCKER_MCP_SERVER_DISABLE names 'system', ..."]
+def test_startup_preflight_prints_each_configuration_warning_even_when_the_daemon_is_down(capsys):
+    warnings = ["DOCKER_MCP_SERVER_DISABLE names 'swram', ...", "host 'prod' is redacted without ro ..."]
     with (
-        patch.object(system_module, "disable_switch_warnings", return_value=warnings),
+        patch.object(system_module, "configuration_warnings", return_value=warnings),
         patch.object(system_module, "_get_client", side_effect=DockerException("connection refused")),
     ):
         system_module.startup_preflight()
@@ -1142,9 +1159,9 @@ def test_startup_preflight_prints_each_disable_switch_warning_even_when_the_daem
     assert lines[:2] == [f"docker-mcp-server: WARNING: {w}" for w in warnings]
 
 
-def test_startup_preflight_prints_no_warning_for_a_sound_disable_switch(capsys):
+def test_startup_preflight_prints_no_warning_for_a_sound_configuration(capsys):
     with (
-        patch.object(system_module, "disable_switch_warnings", return_value=[]),
+        patch.object(system_module, "configuration_warnings", return_value=[]),
         patch.object(system_module, "_get_client", side_effect=DockerException("connection refused")),
     ):
         system_module.startup_preflight()
@@ -1171,3 +1188,25 @@ def test_no_registered_tool_keeps_an_option_that_makes_it_wait():
         )
     }
     assert offenders == {}
+
+
+def test_only_the_client_builders_construct_a_docker_py_client():
+    # The SSH adapter is swapped in only while `_build_client` runs, so a docker-py client built anywhere
+    # else would bypass the address fallback's hostname check, and could pick up the swapped adapter.
+    import ast
+    from pathlib import Path
+
+    allowed = {
+        ("system.py", "_build_client"),
+        ("system.py", "_build_default_client"),
+        ("system.py", "_from_env_no_context"),
+    }
+    found = []
+    for path in Path(system_module.__file__).resolve().parents[1].rglob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for function in [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)]:
+            for call in [n for n in ast.walk(function) if isinstance(n, ast.Call)]:
+                name = call.func.attr if isinstance(call.func, ast.Attribute) else getattr(call.func, "id", "")
+                if name in {"DockerClient", "APIClient", "from_env"}:
+                    found.append((path.name, function.name))
+    assert found and set(found) <= allowed, sorted(set(found) - allowed)

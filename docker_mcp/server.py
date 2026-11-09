@@ -29,6 +29,8 @@ from mcp.types import ToolAnnotations
 
 import docker_mcp._hosts as _hosts
 from docker_mcp._env import env_flag, read_env
+from docker_mcp.redaction import settings as redaction_settings
+from docker_mcp.redaction import wire as redaction_wire
 from docker_mcp.exceptions import DockerMcpError, HostGuardError, RemoteFailureError, ToolInputError
 
 mcp = MCPServer("docker-mcp-server")
@@ -247,6 +249,10 @@ _CONNECTION_CONTROL = frozenset({"system_close", "system_reconnect", "system_log
 # READONLY is the stricter of the two and wins when both are set.
 READONLY = env_flag("DOCKER_MCP_SERVER_READONLY")
 NO_DESTRUCTIVE = env_flag("DOCKER_MCP_SERVER_NO_DESTRUCTIVE")
+
+# The redaction switches (DOCKER_MCP_SERVER_REDACT, DOCKER_MCP_SERVER_REDACT_NAMES) live in
+# docker_mcp/redaction/settings.py, since they are also set per host.  Redaction reduces accidental
+# exposure only; it is not access control.  See REDACTION.md.
 
 
 def _parse_domains(value: str | None) -> frozenset[str]:
@@ -529,8 +535,8 @@ def query_catalog(
             "switches", "filters"}. `domains` and `hidden_by_configuration` are keyed by real domain names only;
             `no_domain` counts the always-registered domain-less tools, whose rows carry `domain: None` and which
             no `domain=` value selects. `configuration_warnings` is a list of sentences about a
-            DOCKER_MCP_SERVER_DISABLE mistake, empty when the switch is sound. `filters` echoes the arguments, plus
-            `keyword_terms`: the words the keyword was actually searched for.
+            DOCKER_MCP_SERVER_DISABLE mistake or a redaction setting weaker than it looks, empty when sound.
+            `filters` echoes the arguments, plus `keyword_terms`: the words the keyword was actually searched for.
     """
     # Any word may match, ranked by how many do: an agent's words for a job rarely all appear in the
     # summary of the tool that does it, so requiring every word would miss more than it filters out.
@@ -591,18 +597,28 @@ def query_catalog(
         "no_domain": no_domain,
         "hidden_by_configuration": dict(sorted(hidden.items())),
         # What the disable switch asked for and did not get; empty when it is fine.
-        "configuration_warnings": disable_switch_warnings(),
-        "switches": {
-            "DOCKER_MCP_SERVER_READONLY": READONLY,
-            "DOCKER_MCP_SERVER_NO_DESTRUCTIVE": NO_DESTRUCTIVE,
-            "DOCKER_MCP_SERVER_DISABLE": sorted(DISABLED_DOMAINS),
-        },
+        "configuration_warnings": configuration_warnings(),
+        "switches": _switch_report(),
         "filters": {
             "domain": domain,
             "category": category,
             "keyword": keyword,
             "keyword_terms": [forms[0] for forms in terms] if terms is not None else None,
         },
+    }
+
+
+def _switch_report() -> dict[str, Any]:
+    """The effective value of every server-wide switch, as tool_list and the tool catalog report them.
+
+    Returns:
+        dict: each switch by its environment variable name, plus the effective redaction settings
+    """
+    return {
+        "DOCKER_MCP_SERVER_READONLY": READONLY,
+        "DOCKER_MCP_SERVER_NO_DESTRUCTIVE": NO_DESTRUCTIVE,
+        "DOCKER_MCP_SERVER_DISABLE": sorted(DISABLED_DOMAINS),
+        **redaction_settings.report(),
     }
 
 
@@ -629,11 +645,7 @@ def tool_catalog() -> dict[str, Any]:
         for d in domains
     ]
     return {
-        "switches": {
-            "DOCKER_MCP_SERVER_READONLY": READONLY,
-            "DOCKER_MCP_SERVER_NO_DESTRUCTIVE": NO_DESTRUCTIVE,
-            "DOCKER_MCP_SERVER_DISABLE": sorted(DISABLED_DOMAINS),
-        },
+        "switches": _switch_report(),
         # Disabled domains that match no known tool - usually a typo in DOCKER_MCP_SERVER_DISABLE.
         "unknown_disabled_domains": _unknown_disabled_domains(),
         # Domains DOCKER_MCP_SERVER_DISABLE named but cannot drop (see ALWAYS_ON_DOMAINS).
@@ -761,6 +773,19 @@ def disable_switch_warnings() -> list[str]:
     return warnings
 
 
+def configuration_warnings() -> list[str]:
+    """Every configuration warning, worded for the operator: the disable switch and the redaction settings.
+
+    The single source for the startup `WARNING` lines, `tool_list`'s `configuration_warnings`, and the
+    pointer at the top of the instructions, because an MCP client rarely shows a server's stderr to
+    anyone and the agent is often the only party who will see a warning this session.
+
+    Returns:
+        list: one sentence per problem; empty when the configuration is sound
+    """
+    return [*disable_switch_warnings(), *redaction_settings.startup_warnings(readonly=READONLY)]
+
+
 def build_instructions(registered_domains: set[str] | None = None) -> str:
     """Render the server `instructions` router from the domains that actually registered tools.
 
@@ -790,8 +815,8 @@ def build_instructions(registered_domains: set[str] | None = None) -> str:
     # A fixed pointer, not the warnings themselves: the operator's own names would make the length
     # unbounded, and the longest rendering, this line included, has to stay under INSTRUCTIONS_CHAR_LIMIT
     # (held by tests/test_server.py). `tool_list` carries the full text in `configuration_warnings`.
-    if disable_switch_warnings():
-        lines += ["DOCKER_MCP_SERVER_DISABLE misconfigured: see `tool_list`, tell the user.", ""]
+    if configuration_warnings():
+        lines += ["Server configuration warnings: see `tool_list`, tell the user.", ""]
     lines += [
         # First because it is the one thing an agent cannot work out for itself: what to do when its
         # client's own search misses. Name each tool by the occasion that should trigger it, not by why
@@ -812,6 +837,11 @@ def build_instructions(registered_domains: set[str] | None = None) -> str:
             f"Multiple hosts are configured ({_hosts.labels()}): read-only tools default to the first; "
             "writes need an explicit `host`; `(ro)` hosts refuse writes, `(nd)` destructive calls."
         )
+    if redaction_settings.any_redacted():
+        # A pointer, not the rules: what applies differs per host (a read-only host writes no files), and
+        # `host_list` says it for each, while every character here is paid by every session that has
+        # redaction on.
+        caveats.append("Credentials show as `[REDACTED:...]`; see `host_list`.")
     cli_present = [d for d in _CLI_DOMAINS if d in present]
     if cli_present:
         # Only worth the tokens when a domain that actually has the fallback is registered.
@@ -828,11 +858,11 @@ def build_instructions(registered_domains: set[str] | None = None) -> str:
             # to agree with a length that varies.
             no_fallback = [d for d in cli_present if d not in fallback_present]
             caveat = (
-                "CLI-backed domains (marked above) use the docker CLI. With the CLI or a required plugin "
-                "missing locally, a host reached over `ssh://` runs the call itself, with local files "
-                f"copied; a usable local CLI always wins. Applies to {', '.join(fallback_present)}"
+                "CLI-backed domains (marked above) use the docker CLI. With it or a needed plugin missing "
+                "locally, an `ssh://` host runs it itself, copying local files; a usable local CLI "
+                f"always wins. Applies to {', '.join(fallback_present)}"
             )
-            caveat += f"; no fallback for {', '.join(no_fallback)}, which raises instead." if no_fallback else "."
+            caveat += f"; no fallback for {', '.join(no_fallback)}." if no_fallback else "."
             caveats.append(caveat)
     # No swarm caveat: every domain in that family carries "manager node only" in its own blurb
     # above, so a group-level restatement is a sixth copy of a fact already on five lines. If the
@@ -994,6 +1024,24 @@ def _has_host_param(func: Callable) -> bool:
         bool: True when it takes a ``host`` parameter
     """
     return _HOST_PARAM in inspect.signature(func).parameters
+
+
+def tool_usable_on(name: str, *, read_only: bool) -> bool:
+    """Whether a tool is registered and would be allowed on a host, for describing that host to an agent.
+
+    Registration already reflects `DOCKER_MCP_SERVER_DISABLE`, `DOCKER_MCP_SERVER_READONLY` and the
+    tools withdrawn under global redaction; a read-only host additionally refuses every write.
+
+    Args:
+        name: the tool's name
+        read_only: whether the host is marked `ro`
+
+    Returns:
+        bool: True when a call to the tool on that host would not be refused for what it is
+    """
+    if mcp._tool_manager.get_tool(name) is None:
+        return False
+    return not (read_only and _is_host_write(name, TOOL_CATEGORIES.get(name, ToolCategory.READ_ONLY)))
 
 
 def _is_host_write(name: str, category: ToolCategory) -> bool:
@@ -1361,6 +1409,41 @@ def _translate_failures[F: Callable[..., Any]](func: F, error_cls: type[ToolErro
     return cast(F, wrapper)  # see the note on the async branch
 
 
+def _bytes_only_in_band_under_global_redaction(name: str) -> bool:
+    """Whether a tool returns only raw bytes and redaction is on for every host, so it is not registered.
+
+    A disabled capability is not registered rather than registered-and-refusing.  Per-host redaction
+    cannot do the same, since the tool is still needed for the other hosts; the wire refuses it there.
+
+    Args:
+        name: the tool's name
+
+    Returns:
+        bool: True for a byte tool with no file form while `DOCKER_MCP_SERVER_REDACT` is on
+    """
+    return (
+        redaction_settings.enabled_globally()
+        and name in redaction_wire.BYTE_TOOLS
+        and redaction_wire.BYTE_TOOLS[name] is None
+    )
+
+
+def _require_byte_destination_under_global_redaction(parameters: dict, name: str) -> None:
+    """Advertise a byte tool's file destination as required while every host is redacted.
+
+    Display only, like the other schema surgery: the in-band form is refused at call time by the wire.
+
+    Args:
+        parameters: the tool's advertised input schema, edited in place
+        name: the tool's name
+    """
+    destination = redaction_wire.BYTE_TOOLS.get(name)
+    if destination and redaction_settings.enabled_globally() and destination in parameters.get("properties", {}):
+        required = parameters.setdefault("required", [])
+        if destination not in required:
+            required.append(destination)
+
+
 def tool[F: Callable[..., Any]](**kwargs: Any) -> Callable[[F], F]:
     """Register an @mcp.tool with central classification - the drop-in `@tool()` every tool module uses.
 
@@ -1380,8 +1463,10 @@ def tool[F: Callable[..., Any]](**kwargs: Any) -> Callable[[F], F]:
         name = func.__name__
         domain = _domain_for(func)
         category = TOOL_CATEGORIES.get(name, ToolCategory.MUTATING)
-        registered = _should_register(category, readonly=READONLY, no_destructive=NO_DESTRUCTIVE) and (
-            domain is None or _domain_enabled(domain, DISABLED_DOMAINS)
+        registered = (
+            _should_register(category, readonly=READONLY, no_destructive=NO_DESTRUCTIVE)
+            and (domain is None or _domain_enabled(domain, DISABLED_DOMAINS))
+            and not _bytes_only_in_band_under_global_redaction(name)
         )
         _seen_tool_names.add(name)
         _tool_registry[name] = ToolRecord(
@@ -1407,7 +1492,31 @@ def tool[F: Callable[..., Any]](**kwargs: Any) -> Callable[[F], F]:
         # branch on. `mcp.tool()` returns its argument unchanged, so registering one callable and
         # returning the other is the whole of the difference. Translating outermost carries a
         # host-guard refusal across as well as one raised by the tool body.
-        mcp.tool(annotations=_annotations_for(name, category), **kwargs)(_translate_failures(target, ToolError))
+        # Redaction outermost, outside the translation, because that is where a failure becomes the text a
+        # client sees; it judges each call by the host it reaches.
+        scope = (
+            redaction_wire.Scope.NO_DAEMON
+            if name in redaction_wire.NO_DAEMON_TOOLS
+            else redaction_wire.Scope.HOST_ARGUMENT
+        )
+        mcp.tool(annotations=_annotations_for(name, category), **kwargs)(
+            redaction_wire.wrap(
+                _translate_failures(target, ToolError),
+                name,
+                scope,
+                ToolError,
+                # A connection-control tool must work on a host whose client is wedged, which a harvest
+                # first would fail on, and returns no daemon data a harvest could add to.
+                harvest=name not in _CONNECTION_CONTROL,
+                # Every tool that is not read-only has markers in its arguments swapped back, connection
+                # control included: logging in with a credential read from the daemon is legitimate.
+                writes=category is not ToolCategory.READ_ONLY,
+                guarded=_is_host_write(name, category),
+                # A CLI-backed tool puts its arguments on the docker CLI's command line, where a credential
+                # is refused unless it reaches the CLI through its environment.
+                command_line=domain in _CLI_DOMAINS,
+            )
+        )
         # Slim the advertised input schema (drop information-free titles, nullable-anyOf null branches,
         # and redundant `additionalProperties: true`), then apply the host-param surgery (enum + required
         # in multi-host, or strip it in single-host). Both reach into MCPServer internals
@@ -1421,12 +1530,13 @@ def tool[F: Callable[..., Any]](**kwargs: Any) -> Callable[[F], F]:
         if isinstance(parameters, dict):
             _slim_schema(parameters)
             _apply_host_schema(parameters, name, category)
+            _require_byte_destination_under_global_redaction(parameters, name)
         return target
 
     return decorator
 
 
-def resource[F: Callable[..., Any]](uri: str, **kwargs: Any) -> Callable[[F], F]:
+def resource[F: Callable[..., Any]](uri: str, *, scope: redaction_wire.Scope, **kwargs: Any) -> Callable[[F], F]:
     """Register an `@mcp.resource` whose anticipated failures keep their message.
 
     The `@resource()` every resource registration uses, decorator or call form.
@@ -1444,6 +1554,7 @@ def resource[F: Callable[..., Any]](uri: str, **kwargs: Any) -> Callable[[F], F]
 
     Args:
         uri: the resource URI or URI template, passed straight to `mcp.resource`
+        scope: which host its body belongs to, for redaction; required, so a new resource has to decide
         **kwargs: passed to `mcp.resource` (name, title, description, mime_type, ...)
 
     Returns:
@@ -1451,7 +1562,12 @@ def resource[F: Callable[..., Any]](uri: str, **kwargs: Any) -> Callable[[F], F]
     """
 
     def decorator(func: F) -> F:
-        mcp.resource(uri, **kwargs)(_translate_failures(func, ResourceError))
+        json_text = kwargs.get("mime_type") == "application/json"
+        mcp.resource(uri, **kwargs)(
+            redaction_wire.wrap(
+                _translate_failures(func, ResourceError), uri, scope, ResourceError, json_text=json_text
+            )
+        )
         return func
 
     return decorator
