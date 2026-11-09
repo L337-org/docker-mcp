@@ -113,7 +113,46 @@ Two things are replaced, wherever they appear in a redacted host's output, dict 
 Each replacement is a marker, `[REDACTED:<token>]`, where the token is 22 characters.  Every marker is
 different, even for the same credential in the same result, so nothing in the output shows that two
 places hold the same value; and a marker says nothing about the credential's format or how it was
-found.
+found.  Two consequences to expect: the same call returns different text each time, even when nothing
+has changed; and an agent comparing two configurations cannot tell whether their credentials match, so
+in triage it may report credentials as mismatched or misconfigured when they are not.  That is the
+design working, not a fault.
+
+## What it misses, and what it replaces by mistake
+
+Measured by planting credentials and decoys on Docker Desktop (Engine 29.9, 108 images) and on a
+throwaway Docker 26.1 daemon with Swarm, then calling the list, inspect, logs, top, exec, image,
+history, Compose, service, events and disk-usage tools on a redacted host and on an unfiltered one
+pointing at the same daemon, and `container_inspect` and `image_inspect` on everything the daemon held.
+A value counts as caught only if no raw, base64, hex or URL-encoded form of it survives anywhere.
+
+**Caught:** a credential-named environment value (raw, base64 and hex in logs), an AWS key pair, a
+GitHub token, a JWT under an innocuous name, a password in a database URL, a word-like password under a
+credential name, a Compose `.env` value, an image-level environment value, a random credential under an
+innocuous name, a build argument in image history, a PEM private key and a credential-named random
+secret in files read through `container_exec`, a random value generated at container start and printed
+to the logs, a value after `--password` on a command line (in `container_list`, `container_inspect`,
+`container_top` and `system_events`), and a Swarm service's environment.
+
+**Missed:**
+
+- a word-like secret in a file, with no credential name next to it, read through `container_exec`;
+- a Swarm secret a service prints to its logs, in one run of two.  A secret's content cannot be read
+  through the API, so only the shape rules can catch it, and a random value of 32 characters meets them
+  about two times in three.  A longer secret is caught more often;
+- anything transformed before it is printed: split, reversed, encrypted, hashed, or encoded some way
+  not listed above.  Hashes are not matched at all.
+
+**Replaced by mistake:**
+
+- decoys that look like credentials but are not: a sort key and an SSH public key under names the
+  patterns match (`SORT_KEY`, `SSH_PUBLIC_KEY`), and a subresource-integrity hash, by its shape.  The
+  other decoys tried (a build ID, a commit hash, a UUID and a cache buster) were left alone;
+- on real content, nine places on Docker Desktop and none on the throwaway daemon, all values read
+  under a credential-like name: certificate paths in `SSL_CERT_FILE` and `DOCKER_TLS_CERTDIR`, and the
+  public signing-key fingerprints official images carry in `GPG_KEY`.  A value read this way is replaced
+  wherever it appears, so a path is replaced in other output too.  `DOCKER_MCP_SERVER_REDACT_NAMES`
+  excludes such a name: `!SSL_CERT_FILE, !DOCKER_TLS_CERTDIR, !GPG_KEY*`.
 
 ## Using a credential without seeing it
 

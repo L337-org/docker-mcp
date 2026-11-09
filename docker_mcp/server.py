@@ -250,7 +250,9 @@ _CONNECTION_CONTROL = frozenset({"system_close", "system_reconnect", "system_log
 READONLY = env_flag("DOCKER_MCP_SERVER_READONLY")
 NO_DESTRUCTIVE = env_flag("DOCKER_MCP_SERVER_NO_DESTRUCTIVE")
 
-# The redaction switches live in docker_mcp/redaction/settings.py, since they are also set per host.
+# The redaction switches (DOCKER_MCP_SERVER_REDACT, DOCKER_MCP_SERVER_REDACT_NAMES) live in
+# docker_mcp/redaction/settings.py, since they are also set per host.  Redaction reduces accidental
+# exposure only; it is not access control.  See REDACTION.md.
 
 
 def _parse_domains(value: str | None) -> frozenset[str]:

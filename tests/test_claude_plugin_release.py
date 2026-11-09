@@ -246,6 +246,8 @@ def test_unset_settings_reach_the_server_as_the_mcpb_sends_them():
     assert env == {
         "DOCKER_MCP_SERVER_HOSTS": "",
         "DOCKER_MCP_SERVER_READONLY": "false",
+        "DOCKER_MCP_SERVER_REDACT": "false",
+        "DOCKER_MCP_SERVER_REDACT_NAMES": "",
         "DOCKER_MCP_SERVER_NO_DESTRUCTIVE": "false",
         "DOCKER_MCP_SERVER_DISABLE": "",
     }
