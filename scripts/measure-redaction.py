@@ -384,6 +384,8 @@ def _replaced_spans(raw: str, redacted: str) -> list[tuple[str | None, str]]:
 
 async def _sweep(daemon: Daemon, run: str, planted: dict[str, str], project: Path) -> None:
     mcp, _ = _server(daemon.url)
+    from docker_mcp.redaction import rules
+
     since = str(int(time.time()) - 600)
     calls: list[tuple[str, dict]] = [
         ("container_list", {"all": True}),
@@ -459,7 +461,14 @@ async def _sweep(daemon: Daemon, run: str, planted: dict[str, str], project: Pat
     print("Planted values (caught: no raw, base64, hex or URL-encoded form left in any redacted output)")
     for planted_name in planted:
         if exposed[planted_name]:
-            status, where = "MISSED", f"in {', '.join(sorted(exposed[planted_name]))}"
+            # The value itself is never printed; its length and randomness are enough to tell a miss the
+            # shape rules allow (a random value that happens to fall under the threshold) from a defect.
+            value = planted[planted_name]
+            where = (
+                f"in {', '.join(sorted(exposed[planted_name]))} "
+                f"[{len(value)} characters, {rules.entropy(value):.2f} bits per character]"
+            )
+            status = "MISSED"
         elif surfaced[planted_name]:
             status, where = "caught", f"(appeared in {', '.join(sorted(surfaced[planted_name]))})"
         else:

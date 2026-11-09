@@ -138,23 +138,26 @@ exec, image, history, Compose, service, events and disk-usage tools on a redacte
 unfiltered one pointing at the same daemon, and `container_inspect` and `image_inspect` on everything
 the daemon held.  A value counts as caught only if no raw, base64, hex or URL-encoded form of it
 survives anywhere.  `uv run scripts/measure-redaction.py sweep` repeats it (`--help` for the options),
-and the results below are as it last reported them, on Docker Desktop and on Docker 26.1 and 28 daemons
-with Swarm; they can move with the code, so run it again before relying on them.
+and the results below are as it last reported them, on Docker Desktop, on Docker 26.1 and 28 daemons with
+Swarm, and on a Docker 29 daemon reached over SSH; they can move with the code, so run it again before
+relying on them.
 
 **Caught:** a credential-named environment value (raw, base64 and hex in logs), an AWS key pair, a
 GitHub token, a JWT under an innocuous name, a password in a database URL, a word-like password under a
-credential name, a Compose `.env` value, an image-level environment value, a random credential under an
-innocuous name, a build argument in image history, a PEM private key and a credential-named random
-secret in files read through `container_exec`, a random value generated at container start and printed
-to the logs, a value after `--password` on a command line (in `container_list`, `container_inspect`,
-`container_top` and `system_events`), and a Swarm service's environment.
+credential name, a Compose `.env` value, an image-level environment value, a build argument in image
+history, a PEM private key and a credential-named random secret in files read through `container_exec`,
+a value after `--password` on a command line (in `container_list`, `container_inspect`, `container_top`
+and `system_events`), and a Swarm service's environment.
 
 **Missed:**
 
 - a word-like secret in a file, with no credential name next to it, read through `container_exec`;
-- sometimes, a Swarm secret a service prints to its logs.  A secret's content cannot be read through
-  the API, so only the shape rules can catch it, and a random value of 32 characters meets them about
-  two times in three; a longer one is caught more often;
+- sometimes, a random value with no credential name or known format beside it: a credential under an
+  innocuous name, a value generated at container start and printed to the logs, or a Swarm secret a
+  service prints (a secret's content cannot be read through the API).  Only the shape rules can catch
+  these, and they take a run as random only above a fixed threshold, which a random value falls under
+  by chance: about one time in fifty at 40 characters, and one in three at 32.  Each was missed at
+  least once across the runs;
 - anything transformed before it is printed: split, reversed, encrypted, hashed, or encoded some way
   not listed above.  Hashes are not matched at all.
 
