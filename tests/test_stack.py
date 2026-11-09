@@ -477,6 +477,14 @@ def _service(name):
     return service
 
 
+def _route_tasks(services, client):
+    """Give fake services docker-py's `Service.tasks`: the service filter added, then `api.tasks`."""
+    for service in services:
+        service.tasks.side_effect = lambda filters=None, s=service: client.api.tasks(
+            filters={**(filters or {}), "service": s.id}
+        )
+
+
 def _running(*specs):
     """A service's tasks with desired state running, each on the given spec."""
     return [{"Status": {"State": "running"}, "Spec": spec} for spec in specs]
@@ -528,6 +536,7 @@ def _stack_wait(until, services, summaries=None, tasks=None, service_tasks=None,
         client = get_client.return_value
         client.services.list.side_effect = services
         client.api.tasks.side_effect = api_tasks
+        _route_tasks([service for poll in services for service in poll], client)
         timeout, interval = kwargs.pop("timeout_seconds", 5), kwargs.pop("poll_interval", 0.01)
         result = _wait_stack("shop", until, timeout, interval, **kwargs)
     return result, client, sleep
@@ -674,6 +683,7 @@ def test_stack_wait_skips_a_service_removed_while_it_is_read():
         get_client.return_value.api.tasks.side_effect = lambda filters: (
             _running(_CURRENT_SPEC) if "service" in filters else []
         )
+        _route_tasks([web, db], get_client.return_value)
         result = _wait_stack("shop", "converged", 5, 0.01)
     assert result["met"] is True
     assert [r["service"] for r in result["services"]] == ["shop_web"]

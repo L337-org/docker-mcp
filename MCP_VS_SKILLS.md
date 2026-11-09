@@ -158,7 +158,9 @@ concentrated in argument correctness.
 Measured, not estimated - tool definitions serialized exactly as a client receives them in
 `tools/list`, and skill files as loaded from disk. Counted with `tiktoken` (`cl100k_base`), which
 is not Claude's tokenizer, so treat the absolute numbers as ±10-15% and the **ratios** as the
-finding.
+finding.  Every figure below, ratios included, comes from `uv run scripts/measure-comparison-figures.py`
+run on the code it describes; they move whenever a tool description does, so run it again before
+relying on one.
 
 ### Eager and lazy clients, and why it decides everything below
 
@@ -199,9 +201,9 @@ The range between the loosest and tightest usable configuration is wide:
 
 | Config | Tools | Eager idle | Lazy idle |
 |---|---|---|---|
-| Full whack: everything enabled | 154 | 47,660 | 967 |
+| Full whack: everything enabled | 154 | 47,667 | 967 |
 | Read-only, all domains | 69 | 19,253 | 683 |
-| **Triage config** (below) | **63** | **19,535** | **417** |
+| **Triage config** (below) | **63** | **19,542** | **417** |
 | Core only: `containers` + `system` | 37 | 11,270 | 305 |
 | Floor: core, read-only | 16 | 4,918 | 235 |
 
@@ -209,7 +211,7 @@ The eager column is **tools plus the router**: what every eager client pays. Pro
 resource templates are counted separately, because each is fetched by a separate call and only by a
 client that supports it - see [Idle](#idle---loaded-but-not-used).
 
-**On an eager client that spread is 4,918 to 47,660 tokens, roughly 10x**, which makes trimming
+**On an eager client that spread is 4,918 to 47,667 tokens, roughly 10x**, which makes trimming
 the single biggest lever available to you. **On a lazy client the same spread is 235 to 967: the
 whole saving is around 730 tokens**, so there is little to gain from trimming for footprint alone.
 On a lazy client, configure the surface for safety or clarity and treat any context saving as
@@ -236,7 +238,7 @@ config and restart, whereas the skill always has every recipe available at no id
 | | MCP (eager, full) | MCP (eager, triage config) | MCP (lazy, full) | Skill |
 |---|---|---|---|---|
 | Always in context | all 154 tool defs + router | 63 tool defs + router | router + tool names | name + description |
-| | 47,229 (tools) | 19,323 (tools) | 431 (router) | 136 |
+| | 47,236 (tools) | 19,330 (tools) | 431 (router) | 136 |
 | | 431 (router) | 212 (router) | 536 (names) | |
 | **Floor - every eager client** | **~47,700 tok** | **~19,500 tok** | **~1,000 tok** | **~140 tok** |
 | *plus, for a client that loads them:* | | | | |
@@ -279,9 +281,9 @@ narrows to something most people would not notice either way.
 
 | Task | MCP (lazy, full) | MCP (lazy, triage cfg) | MCP (eager, full) | MCP (eager, triage cfg) | Skill |
 |---|---|---|---|---|---|
-| List containers (one-off) | 1,383 | **833** | 47,660 | 19,535 | 7,937 |
-| Triage a crashed container | 2,593 | **2,043** | 47,660 | 19,535 | 10,223 |
-| Bring up a Compose project | 2,463 | n/a¹ | 47,660 | n/a¹ | 7,079 |
+| List containers (one-off) | 1,383 | **833** | 47,667 | 19,542 | 7,937 |
+| Triage a crashed container | 2,593 | **2,043** | 47,667 | 19,542 | 10,223 |
+| Bring up a Compose project | 2,463 | n/a¹ | 47,667 | n/a¹ | 7,079 |
 
 ¹ Compose is disabled in the triage config (`containers`, `images`, `networks`, `volumes`,
 `system` only), which is the point: a trimmed surface is trimmed for a purpose, and a task outside
@@ -293,7 +295,7 @@ top of the ~1,000 baseline (or ~400 trimmed). The skill has to load its router (
 domain reference (~1,400-4,600) plus often a workflow (~1,600-2,600), because prose cannot be
 fetched a paragraph at a time.
 
-Note the eager+trimmed column never beats the skill on these tasks - 19,535 against 7,937-10,223 -
+Note the eager+trimmed column never beats the skill on these tasks - 19,542 against 7,937-10,223 -
 but it is the difference between "too expensive to leave installed" and "fine". If you are on an
 eager client and want the server, disabling the domains you do not use is the single highest-value
 change available.

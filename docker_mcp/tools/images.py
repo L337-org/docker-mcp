@@ -272,7 +272,9 @@ def image_push(  # noqa: DOC101,DOC103
 
     The local image must already bear the target name - `image_tag` it with the
     registry-qualified `repository[:tag]` first; a bare name pushes to Docker Hub. Private
-    registries need credentials (`system_login`, or `docker login` on the host).
+    registries need credentials (`system_login`, or `docker login` on the host). A push the registry
+    refuses (bad credentials, no such repository) does not raise: check the last record for
+    `errorDetail`.
 
     Security: `auth_config` carries registry credentials, which many MCP clients log verbatim. Prefer
     `docker login` on the host so the `docker` module reuses credentials cached in
@@ -283,9 +285,8 @@ def image_push(  # noqa: DOC101,DOC103
             overrides the cached credential for this call only
 
     Returns:
-        str: The daemon's raw newline-delimited JSON progress records.  A push the registry refuses
-            (bad credentials, no such repository) still returns: its last record carries `errorDetail`
-            and `error` rather than raising, so check it
+        str: The daemon's raw newline-delimited JSON progress records; a refused push's last record
+            carries `errorDetail` and `error`
     """
     output = _get_client(host).images.push(repository, tag=tag, stream=False, auth_config=auth_config, decode=False)
     if isinstance(output, bytes):

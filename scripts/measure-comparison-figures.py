@@ -501,16 +501,38 @@ def _summary_ratios(server: dict[str, Any], skill: dict[str, Any], tasks: dict[s
                 continue
             server_cost = result[mode]
             ratios.append(server_cost / task["skill"] if mode == "eager" else task["skill"] / server_cost)
-        return {"low": min(ratios), "high": max(ratios), "tasks": len(ratios)}
+        return {"low": min(ratios), "high": max(ratios), "over": f"{len(ratios)} tasks"}
 
     advertised = skill["tokens"]["advertised"]
     idle = [server[name]["tokens"]["eager_idle"] / advertised for name in ("triage", "full")]
     return {
         "eager_full": task_range("full", "eager"),
         "eager_trimmed": task_range("triage", "eager"),
-        "eager_idle": {"low": min(idle), "high": max(idle), "tasks": 0},
+        "eager_idle": {"low": min(idle), "high": max(idle), "over": "the triage and full configurations"},
         "lazy_full": task_range("full", "lazy"),
         "lazy_trimmed": task_range("triage", "lazy"),
+    }
+
+
+# The context window the document measures the full surface's idle cost against.
+_CONTEXT_WINDOW = 128_000
+
+
+def _derived_figures(server: dict[str, Any]) -> dict[str, float]:
+    """The other figures the document works out from the configuration table, so they are copied too.
+
+    `eager_spread` and `lazy_spread` compare the full surface with the floor configuration (a ratio on
+    an eager client, a saving in tokens on a lazy one); `triage_cut` is the full eager floor over the
+    triage one; `lazy_drop` is how much smaller the full surface is on a lazy client than an eager one;
+    `window_share` is the full eager floor as a share of a 128k context window.
+    """
+    full, triage, floor = (server[name]["tokens"] for name in ("full", "triage", "floor"))
+    return {
+        "eager_spread": full["eager_idle"] / floor["eager_idle"],
+        "lazy_spread": full["lazy_idle"] - floor["lazy_idle"],
+        "triage_cut": full["eager_idle"] / triage["eager_idle"],
+        "lazy_drop": full["eager_idle"] / full["lazy_idle"],
+        "window_share": full["eager_idle"] / _CONTEXT_WINDOW,
     }
 
 
@@ -538,6 +560,7 @@ def _build_report() -> dict[str, Any]:
         "skill": skill,
         "tasks": tasks,
         "summary_ratios": _summary_ratios(server, skill, tasks),
+        "derived": _derived_figures(server),
     }
 
 
@@ -632,6 +655,15 @@ def _render(report: dict[str, Any]) -> str:
     out.append(f"                                {span('eager_trimmed')} against a trimmed (triage) server,")
     out.append(f"                                {span('eager_idle')} at idle (trimmed to full, over advertised)")
     out.append(f"  lazy client, server cheaper:  {span('lazy_full')} at full surface, {span('lazy_trimmed')} trimmed")
+
+    derived = report["derived"]
+    out.append("")
+    out.append("Derived from the configuration table (quoted in the prose around it)")
+    out.append(f"  eager spread, full over floor:        {_two_figures(derived['eager_spread'])}x")
+    out.append(f"  lazy spread, full minus floor:        {derived['lazy_spread']:,.0f} tokens")
+    out.append(f"  triage cut, full over triage (eager): {_two_figures(derived['triage_cut'])}x")
+    out.append(f"  lazy drop, eager over lazy (full):    {_two_figures(derived['lazy_drop'])}x")
+    out.append(f"  full eager floor in a 128k window:    {derived['window_share']:.0%}")
     return "\n".join(out)
 
 
