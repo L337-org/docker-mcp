@@ -97,15 +97,16 @@ def history_build_args(created_by: Iterable[str]) -> list[str]:
             values.setdefault(argument.group(1), rest[argument.end() : following.start()])
         if found:
             final = found[-1]
-            last.setdefault(final.group(1), rest[final.end() :].split(" ", 1)[0])
-    for name, first_word in last.items():
+            last.setdefault(final.group(1), rest[final.end() :])
+    for name, tail in last.items():
         if name in values:
             continue
-        # BuildKit's `ARG` entry carries the value passed, as the `RUN` entry does (checked against a real
-        # build, with and without `--build-arg`).  It is trusted only where it begins as the `RUN` entry's
-        # value does, so a builder that recorded a declaration instead falls back to the first word.
+        # BuildKit's `ARG` entry carries the value passed, as the `RUN` entry does.  It is trusted only where
+        # the `RUN` entry's text really begins with it, so a builder recording a declaration instead falls
+        # back to the first word rather than storing a value that was never passed.
         whole = _arg_entry_value(entries, name, names - {name})
-        values[name] = whole if whole and whole.split(" ", 1)[0] == first_word else first_word
+        agrees = whole is not None and (tail == whole or tail.startswith(whole + " "))
+        values[name] = whole if whole and agrees else tail.split(" ", 1)[0]
     return [f"{name}={value}" for name, value in values.items() if value]
 
 

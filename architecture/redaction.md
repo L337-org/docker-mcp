@@ -35,7 +35,10 @@ module per concern:
   image and service environments, image history build arguments and credential-named Swarm configs.  It
   keeps itself fresh by comparing a snapshot of container, image, service-version and config IDs on every
   call, rather than a background thread, and when the snapshot changes reads only the objects new to it:
-  an environment cannot change under the same ID, and a service's version is part of its entry.  Do not use the
+  an environment cannot change under the same ID, and a service's version is part of its entry.  A read
+  that fails with anything but NotFound propagates and leaves the snapshot unmarked, so the call is
+  refused and the next reads it again; an object that always fails therefore refuses every call to that
+  host until it is fixed or removed, accepted as the fail-closed choice.  Do not use the
   daemon's event history for this: the daemon keeps only a fixed number of recent events, so on a busy
   host a `create` can fall out between two calls, and `since`/`until` are judged by the daemon's clock,
   not the server's.  A result naming an ID

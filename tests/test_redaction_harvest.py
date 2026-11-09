@@ -346,3 +346,8 @@ def test_a_failed_swarm_read_is_not_marked_read_so_the_next_call_retries_it():
     client.services.get = failing
     h.ensure_fresh()
     assert ("svc", "prod") in remembered
+
+
+def test_an_arg_entry_sharing_only_the_first_word_is_not_trusted():
+    entries = ["RUN |1 TOKEN=real secret /bin/sh -c make", "ARG TOKEN=real thing"]
+    assert history_build_args(entries) == ["TOKEN=real"]
