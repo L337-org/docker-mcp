@@ -57,10 +57,19 @@ re-files the same rejected candidates forever. Removing an entry is a real decis
   Remove it if docker-py accepts a socket, or paramiko tries every address.
 - **`system_logout`'s `api._auth_configs`** - stays low-level permanently. There is no `logout`
   anywhere in the SDK and no server-side session to end, so there is nothing to migrate to.
-- **`service_ps`'s `api.tasks()` with no service** - stays low-level permanently. docker-py has no
-  task collection at all (there is no `client.tasks`, and `docker/models/` has no `tasks.py`), so this
-  documented `APIClient` method is the only public path for every task in the swarm. Nothing to
-  migrate to; do not propose one.
+- **Every `api.tasks()` call** - `service_ps` with no service, `stack_ps` and `_wait_stack` in
+  `stack.py` - stays low-level permanently. docker-py has no task collection at all (there is no
+  `client.tasks`, and `docker/models/` has no `tasks.py`), so this documented `APIClient` method is the
+  only public path to a task, with or without filters. Nothing to migrate to; do not propose one, at
+  these call sites or any later one.
+- **`image_list`'s `api.images()`** - stays low-level by default. `ImageCollection.list` inspects every
+  image the list names, one call each, and returns the inspect payload; the low-level call returns
+  `GET /images/json` as the daemon sends it, which is the compact default. `verbose=True` uses the
+  high-level call. Migrating the default would add a call per image and change what it returns.
+- **`APIClient.reload_config`** - deliberately not wrapped. It contacts no daemon: it reloads
+  `~/.docker/config.json` into the client's in-process credential cache, replacing it wholesale, so it
+  would silently discard what `system_login` cached; and `system_reconnect`/`system_close` already
+  pick up a changed config file by rebuilding the client.
 - **`image_import`'s `api.import_image_from_{file,data,url,image}`** - stay low-level permanently.
   `ImageCollection` has no import method at all, so there is no high-level path to migrate onto.
   Note the call-site comment explaining why the per-source methods are used rather than
@@ -108,6 +117,10 @@ re-files the same rejected candidates forever. Removing an entry is a real decis
   would stay registered under a partial `DOCKER_MCP_SERVER_DISABLE` and refuse at call time, which
   SU.8.1 forbids. Roughly 1,600 bytes for a rare need. Re-propose only with evidence of demand, not
   because the routes are uncovered - that much is known.
+- **`PUT /volumes/{name}`** - no docker-py surface (`APIClient` has no `update_volume`, `Volume` no
+  `update`, and `create_volume` takes only a name, driver, driver options and labels, so there is no
+  cluster-volume support to build on). It changes only a Swarm cluster volume's `Availability`.
+  Declined as the config and secret updates above are; re-propose only with evidence of demand.
 - **The `context_*` tools on `docker.context.ContextAPI`** - declined until docker-py fixes it, not
   on the merits: leaving the CLI here is wanted, and it would let `context_create` refuse plaintext.
   docker-py 7.2.0 writes and reads the CLI's own context store but disagrees with the CLI on three
