@@ -38,12 +38,13 @@ BUILTIN_NAME_PATTERNS: tuple[str, ...] = (
 
 # Variable names never harvested, though a pattern above matches them, because what they hold is public:
 # a public key, and the signing-key fingerprints official images publish in `GPG_KEY` (`*KEY*` matched
-# them).  Exact names for GPG, so `GPG_KEY_PASSPHRASE` is still harvested.  A name the names setting adds
+# them).  Anchored at the end, and exact names for GPG, so a credential word after the public-key one
+# (`GPG_KEY_PASSPHRASE`, `SIGNING_PUB_KEY_PASSWORD`) is still harvested.  A name the names setting adds
 # outright still overrides these, and its `!` entries add to them.
 BUILTIN_EXCLUDED_PATTERNS: tuple[str, ...] = (
-    "*PUBLIC_KEY*",
-    "*PUBKEY*",
-    "*_PUB_KEY*",
+    "*PUBLIC_KEY",
+    "*PUBKEY",
+    "*_PUB_KEY",
     "GPG_KEY",
     "GPG_KEYS",
 )

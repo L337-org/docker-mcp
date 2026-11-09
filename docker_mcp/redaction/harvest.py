@@ -25,7 +25,7 @@ from typing import Any
 
 import docker.errors
 
-from docker_mcp.redaction import settings
+from docker_mcp.redaction import rules, settings
 
 logger = logging.getLogger("docker_mcp.redaction")
 
@@ -39,11 +39,6 @@ _MAX_CHECKED_IDS = 10_000
 # Swarm config content larger than this is a configuration file, not a credential value, and is left to
 # the shape rules.
 _MAX_CONFIG_VALUE = 16 * 1024
-
-
-# An absolute POSIX path, or one under the home directory: path characters only, so a value with spaces or
-# shell punctuation, which a path rarely has and a password often does, is still harvested.
-_ABSOLUTE_PATH = re.compile(r"~?/[\w.@+-]+(?:/[\w.@+-]*)*")
 
 
 def credential_values(assignments: Iterable[str]) -> Iterable[str]:
@@ -64,7 +59,7 @@ def credential_values(assignments: Iterable[str]) -> Iterable[str]:
         if not isinstance(assignment, str):
             continue
         name, sep, value = assignment.partition("=")
-        if sep and value and names.matches(name) and not _ABSOLUTE_PATH.fullmatch(value):
+        if sep and value and names.matches(name) and not rules.is_absolute_path(value):
             yield value
 
 
@@ -103,8 +98,7 @@ class HostHarvest:
         self._snapshot: frozenset[tuple[str, ...]] | None = None
         self._known_ids: frozenset[str] = frozenset()
         # The known IDs by their first 12 characters, the shortest form a result abbreviates one to, so an
-        # abbreviated ID is matched without scanning every known one: a list of 2,000 containers checked
-        # 2,000 IDs against 2,000 known ones, about a second a call.
+        # abbreviated ID is matched without scanning every known one.
         self._known_by_prefix: dict[str, list[str]] = {}
         self._checked_ids: set[str] = set()
         self._histories_read: set[str] = set()

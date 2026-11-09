@@ -291,11 +291,15 @@ def test_every_redaction_setting_warns_and_links_absolutely(path):
 
 def test_no_other_shipped_document_mentions_redaction_unwarned():
     """A new mention of the mode has to be added above, with its warning and link."""
+    # Every shipped markdown file: the root documents, the architecture notes, the plugin and the skill,
+    # which ships as a release asset.
     candidates = [
         *_REPO_ROOT.glob("*.md"),
         *(_REPO_ROOT / "architecture").glob("*.md"),
-        _REPO_ROOT / "claude-plugin" / "README.md",
+        *(_REPO_ROOT / "claude-plugin").rglob("*.md"),
+        *(_REPO_ROOT / "skills").rglob("*.md"),
     ]
+    assert any("skills" in path.parts for path in candidates), "the skill's files moved; update this scan"
     # REDACTION.md is the full treatment; architecture/redaction.md and hosts.md are its contributor
     # notes, which route to it; AGENTS.md and CLAUDE.md are assistant instructions, not documentation a
     # user reads to decide whether to rely on the mode.

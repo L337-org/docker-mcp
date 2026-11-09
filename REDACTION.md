@@ -39,7 +39,7 @@ service environments and in Compose `.env` files.  The built-in patterns are cas
 Some names those patterns match are left alone by default, because what they hold is public: public
 keys, and the signing-key fingerprints official images publish under `GPG_KEY`:
 
-`*PUBLIC_KEY*`, `*PUBKEY*`, `*_PUB_KEY*`, `GPG_KEY` and `GPG_KEYS`.
+`*PUBLIC_KEY`, `*PUBKEY`, `*_PUB_KEY`, `GPG_KEY` and `GPG_KEYS`.
 
 A value that is an absolute path, such as `SSL_CERT_FILE=/etc/ssl/cert.pem` or
 `POSTGRES_PASSWORD_FILE=/run/secrets/db`, is not treated as a credential either: it says where one is.
@@ -133,11 +133,13 @@ design working, not a fault.
 
 ## What it misses, and what it replaces by mistake
 
-Measured by planting credentials and decoys on Docker Desktop (Engine 29.9, 108 images) and on a
-throwaway Docker 26.1 daemon with Swarm, then calling the list, inspect, logs, top, exec, image,
-history, Compose, service, events and disk-usage tools on a redacted host and on an unfiltered one
-pointing at the same daemon, and `container_inspect` and `image_inspect` on everything the daemon held.
-A value counts as caught only if no raw, base64, hex or URL-encoded form of it survives anywhere.
+Measured by planting credentials and decoys on a daemon, then calling the list, inspect, logs, top,
+exec, image, history, Compose, service, events and disk-usage tools on a redacted host and on an
+unfiltered one pointing at the same daemon, and `container_inspect` and `image_inspect` on everything
+the daemon held.  A value counts as caught only if no raw, base64, hex or URL-encoded form of it
+survives anywhere.  `uv run scripts/measure-redaction.py sweep` repeats it (`--help` for the options),
+and the results below are as it last reported them, on Docker Desktop and on Docker 26.1 and 28 daemons
+with Swarm; they can move with the code, so run it again before relying on them.
 
 **Caught:** a credential-named environment value (raw, base64 and hex in logs), an AWS key pair, a
 GitHub token, a JWT under an innocuous name, a password in a database URL, a word-like password under a
@@ -150,22 +152,21 @@ to the logs, a value after `--password` on a command line (in `container_list`, 
 **Missed:**
 
 - a word-like secret in a file, with no credential name next to it, read through `container_exec`;
-- a Swarm secret a service prints to its logs, in one run of two.  A secret's content cannot be read
-  through the API, so only the shape rules can catch it, and a random value of 32 characters meets them
-  about two times in three.  A longer secret is caught more often;
+- sometimes, a Swarm secret a service prints to its logs.  A secret's content cannot be read through
+  the API, so only the shape rules can catch it, and a random value of 32 characters meets them about
+  two times in three; a longer one is caught more often;
 - anything transformed before it is printed: split, reversed, encrypted, hashed, or encoded some way
   not listed above.  Hashes are not matched at all.
 
 **Replaced by mistake:**
 
-- of seven decoys that look like credentials but are not, two: a sort key under a name the patterns
-  match (`SORT_KEY`), and a subresource-integrity hash, by its shape.  A build ID, a commit hash, a
-  UUID, a cache buster and an SSH public key were left alone.  `!SORT_KEY` in
-  `DOCKER_MCP_SERVER_REDACT_NAMES` excludes a name like that;
-- on real content, nothing, on either daemon.  The first measurement on Docker Desktop found nine
-  places, all values read under a credential-like name: certificate paths in `SSL_CERT_FILE` and
-  `DOCKER_TLS_CERTDIR` and the public signing-key fingerprints official images carry in `GPG_KEY`.
-  Those are what the public-key exclusions and the absolute-path rule above were added for.
+- a value under a name the patterns match that is not a credential, such as a sort key in `SORT_KEY`.
+  `!SORT_KEY` in `DOCKER_MCP_SERVER_REDACT_NAMES` excludes a name like that;
+- a long random-looking value that is not a credential, such as a subresource-integrity hash, by its
+  shape.
+
+Of the decoys planted, a build ID, a commit hash, a UUID, a cache buster and an SSH public key were left
+alone, and nothing else on the daemons measured was replaced.
 
 ## Using a credential without seeing it
 
@@ -266,22 +267,28 @@ their values; a value the server knows is still replaced in them:
 ## What it costs
 
 Redaction costs time on every call to a redacted host, and memory for the values it holds.  It is kept
-as low as the design allows; if you do not need it, leave it off.  Measured on a Mac, against Docker
-Desktop (108 images, a handful of containers) and against a Docker 28 daemon filled with 2,000
-containers, each with a credential in its environment, and 501 images:
+as low as the design allows; if you do not need it, leave it off.  How the cost grows:
+
+- **The first call to a host** reads every credential the daemon reports, so it takes longest, growing
+  with the daemon's containers, images and services.
+- **Every call** first checks that nothing has changed since, by listing the daemon's containers,
+  images, services and configs, so it grows with them too.
+- **Redacting a result** costs in proportion to its size, so a call returning a lot of data costs most.
+- **A write to a redacted host that accepts writes** also searches the files it reads, in proportion to
+  their size.
+- **Memory** grows with the number of distinct credentials, not with the number of calls.
+
+`uv run scripts/measure-redaction.py cost` measures it on a throwaway daemon of 2,000 containers, each
+with a credential, and 500 images.  As it last reported, on a Mac, and with the same calls on Docker
+Desktop for comparison; the figures move with the code and the machine, so run it again before relying
+on them:
 
 | | Docker Desktop | 2,000 containers, 501 images |
 | --- | --- | --- |
-| First call to the host, which reads every credential | about 2 s | about 12.5 s |
-| Added to every call, to check nothing has changed since | about 40 ms | about 140 ms |
+| First call to the host | about 2 s | about 12.5 s |
+| Added to every call | about 40 ms | about 140 ms |
 | Added to `container_list` of every container (1.4 MB of output) | | about 1.7 s |
-| Values held | 1, 245 bytes | 2,000, 586 KB |
-
-The time added to every call is the check that keeps the harvest fresh: it lists the daemon's
-containers, images, services and configs, so it grows with them.  Redacting a result costs about 1.3 ms
-for each KB of output, so a call returning a lot of data costs most.  A write to a redacted host that
-accepts writes also searches the files it reads, about 3 s for 100 MB on first reading.  The server's
-process grew from about 90 MB to 180 MB on the larger daemon.
+| Values held | 1 value, 245 bytes | 2,000 values, 586 KB |
 
 ## Limits
 

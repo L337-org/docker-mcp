@@ -130,6 +130,15 @@ holds the same text unredacted), and asks the harvest about IDs in the result.
 A JSON resource body is parsed, redacted as data and dumped again, so an escaped value is still found.
 Anything else that fails inside redaction propagates: the call fails rather than returning output.
 
+## Measuring it
+
+`scripts/measure-redaction.py` regenerates the figures `REDACTION.md` quotes: `sweep` plants
+credentials and decoys and compares a redacted host's output with an unfiltered one on the same daemon,
+and `cost` times calls on a daemon filled with containers and images.  Both run against a throwaway
+dind daemon unless given `--docker-host`.  Run it after a change to the rules, the harvest or the wire,
+and correct `REDACTION.md` from its output; it reports only and is not a CI gate.  It never prints a
+replaced value, since on a real daemon one may be a real credential.
+
 ## Where the settings surface
 
 - `server._switch_report()` merges `settings.report()` into the `switches` that `tool_list` and the

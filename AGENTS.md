@@ -106,6 +106,11 @@ uv run pre-commit install
 # Regenerate the measured figures MCP_VS_SKILLS.md quotes (reports only; add --json for the
 # structured form). Self-contained: pins its own tiktoken, installs the working tree editable.
 uv run scripts/measure-comparison-figures.py
+
+# Regenerate the measured figures REDACTION.md quotes: what redaction catches and misses (sweep) and
+# what it costs (cost). Reports only; starts and removes a throwaway privileged dind daemon by default.
+uv run scripts/measure-redaction.py sweep --swarm
+uv run scripts/measure-redaction.py cost
 ```
 
 ## Architecture

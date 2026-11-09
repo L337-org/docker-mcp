@@ -196,6 +196,7 @@ class Redactor:
                     and rules.is_credential_flag(previous)
                     and item
                     and not item.startswith("-")
+                    and not rules.is_absolute_path(item)
                 ):
                     walked.append(self._replace_whole(state, item, index))
                 else:

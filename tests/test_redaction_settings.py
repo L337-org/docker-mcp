@@ -92,7 +92,19 @@ def test_public_keys_are_left_alone_by_default(name):
     assert not NameRules().matches(name)
 
 
-@pytest.mark.parametrize("name", ["GPG_KEY_PASSPHRASE", "GPG_PRIVATE_KEY", "SSH_PRIVATE_KEY", "PUBLISH_KEY"])
+@pytest.mark.parametrize(
+    "name",
+    [
+        "GPG_KEY_PASSPHRASE",
+        "GPG_PRIVATE_KEY",
+        "SSH_PRIVATE_KEY",
+        "PUBLISH_KEY",
+        # A credential word after the public-key one: the exclusions are anchored at the end.
+        "SIGNING_PUB_KEY_PASSWORD",
+        "X_PUBLIC_KEY_SECRET",
+        "DEPLOY_PUBKEY_TOKEN",
+    ],
+)
 def test_the_public_key_exclusions_leave_private_material_harvested(name):
     assert NameRules().matches(name)
 

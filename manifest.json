@@ -29,10 +29,10 @@
       "env": {
         "DOCKER_MCP_SERVER_HOSTS": "${user_config.docker_hosts}",
         "DOCKER_MCP_SERVER_READONLY": "${user_config.read_only}",
-        "DOCKER_MCP_SERVER_REDACT": "${user_config.redact}",
-        "DOCKER_MCP_SERVER_REDACT_NAMES": "${user_config.redact_names}",
         "DOCKER_MCP_SERVER_NO_DESTRUCTIVE": "${user_config.no_destructive}",
-        "DOCKER_MCP_SERVER_DISABLE": "${user_config.disable_domains}"
+        "DOCKER_MCP_SERVER_DISABLE": "${user_config.disable_domains}",
+        "DOCKER_MCP_SERVER_REDACT": "${user_config.redact}",
+        "DOCKER_MCP_SERVER_REDACT_NAMES": "${user_config.redact_names}"
       }
     }
   },
@@ -49,6 +49,18 @@
       "description": "Register only read-only tools - no create, modify, or delete.",
       "default": false
     },
+    "no_destructive": {
+      "type": "boolean",
+      "title": "Disable destructive tools",
+      "description": "Register everything except destructive tools (remove / prune / kill).",
+      "default": false
+    },
+    "disable_domains": {
+      "type": "string",
+      "title": "Disabled domains",
+      "description": "Comma-separated tool domains to drop, e.g. swarm,plugins,scout.",
+      "required": false
+    },
     "redact": {
       "type": "boolean",
       "title": "Redact credentials",
@@ -61,18 +73,6 @@
       "description": "Extra variable names whose values redaction treats as credentials: comma-separated, case-insensitive, * and ? globs, and ! to exclude a built-in name (UPSTREAM_*, !SORT_KEY). Names only, never values. Has no effect unless redaction is on. See https://github.com/L337-org/docker-mcp/blob/main/REDACTION.md.",
       "required": false,
       "default": ""
-    },
-    "no_destructive": {
-      "type": "boolean",
-      "title": "Disable destructive tools",
-      "description": "Register everything except destructive tools (remove / prune / kill).",
-      "default": false
-    },
-    "disable_domains": {
-      "type": "string",
-      "title": "Disabled domains",
-      "description": "Comma-separated tool domains to drop, e.g. swarm,plugins,scout.",
-      "required": false
     }
   },
   "compatibility": {

@@ -39,6 +39,8 @@ Set these in the plugin's settings in Claude Code (`/plugin`).  All are optional
   comma-separated `label=endpoint` list manages several, with `(ro)` or `(nd)` after an endpoint
   to make that host read-only or non-destructive.
 - **Read-only mode**: register only read-only tools.
+- **Disable destructive tools**: register everything except removals, prunes and kills.
+- **Disabled domains**: a comma-separated list of tool domains to drop, such as `swarm,scout`.
 - **Redact credentials**: replace credentials in everything the server returns with
   `[REDACTED:...]` markers, on every host; `(redact)` after an endpoint does it for that host alone.
   **This reduces accidental exposure only.  It is not access control**, and an agent that can run
@@ -46,8 +48,6 @@ Set these in the plugin's settings in Claude Code (`/plugin`).  All are optional
   [REDACTION.md](https://github.com/L337-org/docker-mcp/blob/main/REDACTION.md) first.
 - **Redacted variable names**: extra variable names whose values redaction treats as credentials,
   with `*` and `?` globs and `!` to exclude a built-in name.  Names only, never values.
-- **Disable destructive tools**: register everything except removals, prunes and kills.
-- **Disabled domains**: a comma-separated list of tool domains to drop, such as `swarm,scout`.
 
 Full documentation, including remote daemons and the security model, is in the
 [project README](https://github.com/L337-org/docker-mcp#readme).  Licensed MIT.
