@@ -7,13 +7,13 @@ test_claude_plugin_release.py.
 """
 
 import json
-import os
 import re
 import tomllib
 from pathlib import Path
 from urllib.parse import urlparse
 
 from docker_mcp.tools.resources import DOCKER_DOCS_BASE_URL, EXTERNAL_SECTIONS
+from tests.conftest import tracked_plugin_files
 
 _ROOT = Path(__file__).resolve().parent.parent
 _PLUGIN_DIR = _ROOT / "claude-plugin"
@@ -72,7 +72,7 @@ def test_plugin_launch_project_pins_the_same_release_and_constraints():
 def test_no_plugin_lockfile_is_committed_on_main():
     """The lock can only be generated once the release is on PyPI, so it lives only on the release
     branch; one committed here would be stale by the next release and would not be what ships."""
-    assert not (_PLUGIN_DIR / "uv.lock").exists()
+    assert "claude-plugin/uv.lock" not in tracked_plugin_files()
 
 
 # The `user_config` option keys this test knows how to carry into `userConfig`.  Every one has the
@@ -140,10 +140,10 @@ def test_plugin_icon_is_a_real_copy_of_the_project_icon():
 
 def test_plugin_folder_holds_nothing_the_directory_rejects():
     """Symlinks anywhere in the plugin folder block submission; a root CLAUDE.md is never loaded."""
-    for dirpath, dirnames, filenames in os.walk(_PLUGIN_DIR):
-        for name in dirnames + filenames:
-            assert not (Path(dirpath) / name).is_symlink(), f"symlink in plugin folder: {Path(dirpath) / name}"
-    assert not (_PLUGIN_DIR / "CLAUDE.md").exists()
+    tracked = tracked_plugin_files()
+    for path in tracked:
+        assert not (_ROOT / path).is_symlink(), f"symlink in plugin folder: {path}"
+    assert "claude-plugin/CLAUDE.md" not in tracked
 
 
 def test_plugin_readme_meets_the_directory_minimum_and_names_no_image():
