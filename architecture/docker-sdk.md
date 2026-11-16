@@ -147,6 +147,21 @@ re-files the same rejected candidates forever. Removing an entry is a real decis
   as covered: `buildx_imagetools_inspect` handles attestations, with `scout_sbom` and
   `registry_manifest` nearby. The residue is a local-only image, since imagetools resolves against a
   registry. Narrow, and unasked for.
+- **`image_build` on the Engine's classic builder** - deprecated surface we depend on, deferred
+  rather than declined.  The classic builder is `/build`'s `version=1`, which the Engine spec marks
+  deprecated and uses as the default; its status and any removal version are in moby's deprecation
+  list under "Legacy builder for Linux images", and it is what a daemon building native Windows
+  images uses.  docker-py 7.2.0's `BuildApiMixin.build()` has no `version` parameter, so the public
+  SDK cannot ask for BuildKit (upstream: docker/docker-py#2230, and docker/docker-py#3344, which adds
+  one).  The Engine itself does not need the SDK's help: `POST /build?version=2` with the context as
+  the request-body tarball builds with BuildKit, with no session and no CLI, and reports the image as
+  a `moby.image.id` aux message.  So moving `image_build` onto BuildKit is possible through
+  docker-py's private request helpers (the second rung of the ladder above).  What it costs: BuildKit
+  streams progress as encoded `moby.buildkit.trace` messages rather than text lines, so the readable
+  build log is lost unless they are decoded, and a daemon that advertises builder version 1 still
+  needs the classic path.  `buildx_build` is the BuildKit route, through the CLI, and `image_build`'s
+  docstring points there.  Revisit when docker-py adds a builder `version`, when the move is
+  scheduled, or when an Engine release removes the classic builder - whichever comes first.
 - **Engine plugin authoring: `POST /plugins/create`, `POST /plugins/{name}/push`** - deliberately
   not wrapped, on the merits; do not re-add `plugin_create` or `plugin_push` (removed in #262).
   Building and publishing an Engine plugin is a build-pipeline job for the `docker plugin` CLI, not
