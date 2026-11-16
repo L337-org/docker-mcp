@@ -17,6 +17,7 @@ import pytest
 
 import docker_mcp.tools  # noqa: F401  - importing registers every tool on the server singleton
 from docker_mcp.server import _CLI_DOMAINS, _REMOTE_EXEC_DOMAINS, ALWAYS_ON_DOMAINS, _tool_registry, mcp
+from tests.conftest import repository_files
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _ARCHITECTURE_DIR = _REPO_ROOT / "architecture"
@@ -296,7 +297,7 @@ def test_no_other_shipped_document_mentions_redaction_unwarned():
     candidates = [
         *_REPO_ROOT.glob("*.md"),
         *(_REPO_ROOT / "architecture").glob("*.md"),
-        *(_REPO_ROOT / "claude-plugin").rglob("*.md"),
+        *(_REPO_ROOT / path for path in repository_files("claude-plugin") if path.endswith(".md")),
         *(_REPO_ROOT / "skills").rglob("*.md"),
     ]
     assert any("skills" in path.parts for path in candidates), "the skill's files moved; update this scan"
