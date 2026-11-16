@@ -237,8 +237,8 @@ discovery layers. Four cleanup rounds have chased the same failure.
   that one call `# pyright: ignore[reportArgumentType]` with a reason, rather than being softened to
   a legal one.
 - Line length limit: 120 characters, enforced by
-  `tests/test_docstrings.py::test_no_tracked_line_exceeds_the_documented_limit` over every tracked
-  file. Do not rely on ruff for it; the test's docstring says why.
+  `tests/test_docstrings.py::test_no_python_line_exceeds_the_documented_limit` over every `.py`
+  file git would commit. Do not rely on ruff for it; the test's docstring says why.
 - **Prose that ships is British English in plain ASCII punctuation.** A tool docstring ships: the server
   advertises it verbatim as the tool's `description`, which is what a model reads when choosing between
   this server's tools. So do the README, the agent skill, prompts and resources, comments, commit

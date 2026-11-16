@@ -8,7 +8,7 @@ names gets fixed, or the function it sits on changes shape, and nothing fails.
 So both directions are asserted here. A tool that needs the exemption and lacks it fails, and
 a marker on a definition that no longer needs it fails too.
 
-The dialect guards below run over every tracked `.py`, not just the package. pydoclint's CI job
+The dialect guards below run over every `.py` git would commit, not just the package. pydoclint's CI job
 is scoped to `docker_mcp`, so six docstrings under `tests/` kept the old lowercase `args:` form
 with no gate ever seeing them.
 """
@@ -17,39 +17,33 @@ import ast
 import io
 import pathlib
 import re
-import shutil
-import subprocess
 import tokenize
 
 from docker_mcp.server import _CLI_DOMAINS
+from tests.conftest import repository_files
 
 PACKAGE = pathlib.Path(__file__).resolve().parent.parent / "docker_mcp"
 NOQA = re.compile(r"#\s*noqa:\s*([\w,]+)")
 ROOT = PACKAGE.parent
 
 
-def _tracked_python_files():
-    """Every tracked `.py` file, package and tests alike.
+def _python_files():
+    """Every `.py` file git would commit, package and tests alike, as `repository_files` lists them.
 
     Returns:
         list: paths, sorted
     """
-    git = shutil.which("git")
-    assert git, "git is needed to enumerate tracked files"
-    listing = subprocess.run(  # noqa: S603 - fixed argv, resolved binary, no shell
-        [git, "ls-files", "*.py"], cwd=ROOT, capture_output=True, text=True, check=True, timeout=30
-    )
-    return sorted(ROOT / name for name in listing.stdout.split())
+    return [ROOT / name for name in repository_files("*.py")]
 
 
-def _tracked_docstrings():
-    """Every docstring in every tracked `.py`, package and tests alike.
+def _python_docstrings():
+    """Every docstring in every `.py` git would commit, package and tests alike.
 
     Returns:
         list: `(path, lineno, name, docstring)` tuples
     """
     out = []
-    for path in _tracked_python_files():
+    for path in _python_files():
         for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
             if not isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
@@ -176,7 +170,7 @@ def test_no_docstring_uses_a_lowercase_section_header():
     header = re.compile(r"^(args|returns|raises|yields|attributes|examples|note):[^\S\n]*$", re.MULTILINE)
     wrong = [
         f"{path.relative_to(ROOT)}:{lineno} {name}: {m.group(1)!r}"
-        for path, lineno, name, doc in _tracked_docstrings()
+        for path, lineno, name, doc in _python_docstrings()
         for m in header.finditer(doc)
     ]
     assert not wrong, "these section headers are not capitalised:\n  " + "\n  ".join(wrong)
@@ -194,7 +188,7 @@ def test_no_docstring_collapses_a_section_onto_one_line():
     )
     wrong = [
         f"{path.relative_to(ROOT)}:{lineno} {name}: {m.group(0).strip()[:70]!r}"
-        for path, lineno, name, doc in _tracked_docstrings()
+        for path, lineno, name, doc in _python_docstrings()
         for m in collapsed.finditer(doc)
     ]
     assert not wrong, "these sections are collapsed onto the header line:\n  " + "\n  ".join(wrong)
@@ -382,8 +376,8 @@ def test_every_cli_backed_tool_states_its_error_convention():
     )
 
 
-def test_no_tracked_line_exceeds_the_documented_limit():
-    """No tracked `.py` line is over 120 characters.
+def test_no_python_line_exceeds_the_documented_limit():
+    """No `.py` line git would commit is over 120 characters.
 
     AGENTS.md states the limit and names ruff as what enforces it, but ruff's E501 did not report
     any of the six lines that were over it when this was written - four were long only because of
@@ -392,7 +386,7 @@ def test_no_tracked_line_exceeds_the_documented_limit():
     """
     over = [
         f"{path.relative_to(ROOT)}:{n} ({len(line)})"
-        for path in _tracked_python_files()
+        for path in _python_files()
         for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1)
         if len(line) > 120
     ]
@@ -409,7 +403,7 @@ def test_every_doc_marker_sits_on_the_line_pydoclint_reads():
     """
     marker = re.compile(r"#\s*noqa:[^\n]*\bDOC\d+")
     stray = []
-    for path in _tracked_python_files():
+    for path in _python_files():
         source = path.read_text(encoding="utf-8")
         lines = source.splitlines()
         # Comment tokens only: the same text quoted inside a docstring is prose, not a marker.
@@ -437,7 +431,7 @@ def test_no_args_entry_carries_its_type_in_the_dash_form():
         re.MULTILINE,
     )
     wrong = []
-    for path, lineno, name, doc in _tracked_docstrings():
+    for path, lineno, name, doc in _python_docstrings():
         section = re.search(r"^Args:\n((?:    .*\n?)+)", doc, re.MULTILINE)
         if section:
             wrong += [

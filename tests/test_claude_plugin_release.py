@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.conftest import copy_tracked_plugin
+from tests.conftest import copy_plugin
 
 _ROOT = Path(__file__).resolve().parent.parent
 _spec = importlib.util.spec_from_file_location("claude_plugin_release", _ROOT / "scripts" / "claude_plugin_release.py")
@@ -113,7 +113,7 @@ def test_tree_id_matches_git_for_the_plugin_folder(tmp_path):
     """Mutation-proof by construction: any byte change in any file changes git's id and ours."""
     if shutil.which("git") is None:
         pytest.skip("git is not installed, so the tree id cannot be compared with git's")
-    copy_tracked_plugin(tmp_path / "claude-plugin")
+    copy_plugin(tmp_path / "claude-plugin")
     (tmp_path / "claude-plugin" / "uv.lock").write_text("lock\n")
     # Git sorts a subtree as if its name ended in "/", which only shows when a directory's name is a
     # prefix of a file's: "x.txt" sorts before "x/" but after "x".
@@ -143,7 +143,7 @@ def test_a_symlink_in_the_plugin_folder_is_refused(tmp_path):
 
 
 def _plugin_copy(tmp_path) -> Path:
-    return copy_tracked_plugin(tmp_path / "claude-plugin")
+    return copy_plugin(tmp_path / "claude-plugin")
 
 
 def test_the_repository_plugin_folder_passes_its_release_checks(tmp_path):
@@ -373,7 +373,7 @@ class _FakeGitHub:
 
 def _built(tmp_path) -> tuple[Path, str]:
     build_dir = tmp_path / "build"
-    copy_tracked_plugin(build_dir / "claude-plugin")
+    copy_plugin(build_dir / "claude-plugin")
     tree = release.git_tree_sha(release.read_folder(build_dir / "claude-plugin"))
     release.write_build_record(build_dir, _VERSION, "pypi", tree)
     return build_dir, tree
@@ -787,10 +787,10 @@ def test_build_waits_for_pypi_before_reading_it(tmp_path, monkeypatch):
     _record_waits(monkeypatch, events)
     monkeypatch.setattr(release, "pypi_release_files", lambda *a: events.append("read PyPI"))
     monkeypatch.setattr(release, "run", lambda argv, **kw: events.append(" ".join(argv[:2])))
-    # build() copies the source's plugin folder whole, so hand it a clean checkout's worth rather than
-    # the working tree, which may hold a developer's git-ignored files.
+    # build() copies the source's plugin folder whole, so hand it the files git would commit rather
+    # than the working tree, which may hold a developer's git-ignored files.
     source_root = tmp_path / "source"
-    copy_tracked_plugin(source_root / "claude-plugin")
+    copy_plugin(source_root / "claude-plugin")
     shutil.copy2(_ROOT / "pyproject.toml", source_root / "pyproject.toml")
     args = argparse.Namespace(
         version=_VERSION, out=str(tmp_path / "out"), source_root=str(source_root), source="pypi", expect_dist=None
@@ -802,7 +802,7 @@ def test_build_waits_for_pypi_before_reading_it(tmp_path, monkeypatch):
 
 def _build_dir(tmp_path: Path, source: str) -> Path:
     build = tmp_path / "build"
-    copy_tracked_plugin(build / "claude-plugin")
+    copy_plugin(build / "claude-plugin")
     release.write_build_record(build, _VERSION, source, "tree")
     return build
 
