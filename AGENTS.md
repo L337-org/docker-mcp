@@ -424,6 +424,8 @@ re-proposes these; it has no memory of last time.
 - **No scheduled smoke of the published images or `.mcpb`.** Neither changes once released, and both
   are checked when they are: the release's `verify` job reads the image digests and starts the
   `.mcpb`, which installs from its own `uv.lock`. A weekly run would re-test an unchanging artefact.
+  That release check starts the bundle on Linux only, an accepted limitation: a locked version with
+  no wheel for macOS or Windows is not caught for the `.mcpb`.
   The canary's scheduled install covers the PyPI package, the one channel that resolves afresh.
 - **`scripts/measure-comparison-figures.py` is deliberately not a CI gate.** Token figures move a few
   tokens on any docstring edit, so asserting them would fail constantly and signal nothing. A weekly
