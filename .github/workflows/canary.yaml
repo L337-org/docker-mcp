@@ -9,7 +9,11 @@ name: Weekly canary
 #      (did an upstream dep pull its wheels out from under an already-shipped version?). This is
 #      exactly the check that would have caught cryptography 49 dropping its x86_64-macOS wheel.
 #   2. install-smoke (real runners): install the published package with uv and import/run it on
-#      macos-latest (arm64), macos-15-intel (x86_64), and windows-latest.
+#      macos-latest (arm64), macos-15-intel (x86_64), and windows-latest, then install and start
+#      the newest release's .mcpb the way Claude Desktop launches it. A uv-type bundle resolves its
+#      dependencies on the user's machine, so it drifts exactly as the PyPI package does.
+#   3. image-smoke: pull and start both published images, :latest and :no-scout. The release's
+#      verify job only reads their digests; this is the only thing that runs them after release.
 #
 # On failure the notify job files (or comments on) a deduplicated issue labeled
 # ci-failure + wf:canary — one open issue per stream, so four red Mondays make one thread.
@@ -133,12 +137,70 @@ jobs:
         # Requires the published package to have the --version flag (shipped in v1.9.3).
         run: uvx --python 3.14 docker-mcp-server --version
 
+      - name: Download and verify the newest release's .mcpb
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # No tag: gh downloads from the newest release, the one Claude Desktop users install.
+        run: |
+          set -euo pipefail
+          gh release download --repo "$GITHUB_REPOSITORY" --pattern 'docker-mcp-server-*.mcpb*' --dir mcpb
+          cd mcpb
+          # sha256sum on Windows' Git Bash; shasum on macOS, which ships no sha256sum.
+          if command -v sha256sum >/dev/null; then sha256sum -c ./*.sha256; else shasum -a 256 -c ./*.sha256; fi
+
+      - name: Bundle smoke (.mcpb started as Claude Desktop starts it)
+        shell: bash
+        # manifest.json's mcp_config runs `uv run --directory <bundle> mcpb_run.py`; this is that
+        # command, plus --version so it exits before any daemon contact. The version printed must
+        # be the bundle's own, or the resolve picked up something other than the bundle's source.
+        run: |
+          set -euo pipefail
+          bundle="$(ls mcpb/*.mcpb)"
+          expected="$(basename "$bundle" .mcpb)"; expected="${expected#docker-mcp-server-}"
+          uv run --no-project --python 3.14 python -m zipfile -e "$bundle" bundle
+          actual="$(uv run --directory bundle mcpb_run.py --version)"
+          echo "bundle $expected reports $actual"
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::the $expected .mcpb started but reported version $actual"
+            exit 1
+          fi
+
+  image-smoke:
+    # Pulls and starts the published images, so it never exercises PR content.
+    if: github.event_name != 'pull_request'
+    name: Image smoke (${{ matrix.tag }})
+    runs-on: ubuntu-latest
+    # Two pulls of an image of a few hundred MB, and a start that exits at once.
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        tag: [latest, no-scout]
+    steps:
+      - name: Pull and start the image
+        env:
+          TAG: ${{ matrix.tag }}
+        # Both moving tags must start and report the newest PyPI release: a tag left on an older
+        # build, or an image that no longer starts, is what this catches.
+        run: |
+          set -euo pipefail
+          latest="$(curl -fsSL --max-time 30 --retry 3 https://pypi.org/pypi/docker-mcp-server/json | jq -r .info.version)"
+          image="ghcr.io/l337-org/docker-mcp-server:$TAG"
+          docker pull --quiet "$image"
+          actual="$(docker run --rm "$image" --version)"
+          echo "$image reports $actual; newest PyPI release is $latest"
+          if [ "$actual" != "$latest" ]; then
+            echo "::error::$image reports version $actual, not the newest release $latest"
+            exit 1
+          fi
+
   notify:
     name: File failure issue
     runs-on: ubuntu-latest
     # Files or updates a single issue.
     timeout-minutes: 10
-    needs: [resolve-crossplatform, install-smoke]
+    needs: [resolve-crossplatform, install-smoke, image-smoke]
     # PR failures are visible on the PR itself; the issue stream is for unattended runs.
     if: failure() && github.event_name != 'pull_request'
     permissions:

@@ -88,7 +88,12 @@ macOS / ARM macOS / Windows against both the repo `pyproject.toml` and the lates
 release (the check that would have caught cryptography 49 dropping its x86_64-macOS wheel), plus
 real install smokes of the published package on `macos-latest`, `macos-15-intel` (Intel runner
 label retires Aug 2027), and `windows-latest` - `import docker_mcp` and `uvx docker-mcp-server
---version`. **PRs into main also run the repo-pyproject resolution leg** (the only part that
+--version` - followed on the same runners by the newest release's `.mcpb`, checked against its
+`.sha256` and started with the command `manifest.json` gives Claude Desktop (`uv run --directory
+<bundle> mcpb_run.py`, plus `--version`), since a `uv`-type bundle resolves its dependencies on the
+user's machine and drifts as the PyPI package does. An image smoke pulls `:latest` and `:no-scout`
+from GHCR and runs each with `--version`, which must report the newest PyPI release: the release's
+`verify` job only compares their digests, so nothing else starts them after release. **PRs into main also run the repo-pyproject resolution leg** (the only part that
 exercises PR content), so a dependency change that breaks a platform is caught before merge; the
 published-package legs and issue filing stay schedule/dispatch-only. Failures on unattended runs
 file a deduplicated `ci-failure` + `wf:canary` issue via `.github/actions/file-failure-issue`,
