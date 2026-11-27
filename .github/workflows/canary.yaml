@@ -1,7 +1,7 @@
 name: Weekly canary
 
 # Proactive platform/ecosystem drift detection — the class of breakage premerge CI (ubuntu +
-# CPython 3.14 only) can't see. Two angles:
+# CPython 3.14 only) can't see:
 #
 #   1. resolve-crossplatform (ubuntu, no mac/windows hardware needed): wheels-only dependency
 #      resolution for Intel macOS, Apple-silicon macOS, and Windows — against BOTH the repo's
@@ -10,17 +10,19 @@ name: Weekly canary
 #      exactly the check that would have caught cryptography 49 dropping its x86_64-macOS wheel.
 #   2. install-smoke (real runners): install the published package with uv and import/run it on
 #      macos-latest (arm64), macos-15-intel (x86_64), and windows-latest, then install and start
-#      the newest release's .mcpb the way Claude Desktop launches it. A uv-type bundle resolves its
-#      dependencies on the user's machine, so it drifts exactly as the PyPI package does.
-#   3. image-smoke: pull and start both published images, :latest and :no-scout. The release's
-#      verify job only reads their digests; this is the only thing that runs them after release.
+#      the newest release's .mcpb the way Claude Desktop launches it. The bundle installs from its
+#      own uv.lock on the user's machine, so it breaks differently from a fresh uvx resolve: a
+#      locked file pulled from PyPI, a locked version with no wheel for that platform or for a newer
+#      CPython, or a change in the host's uv.
+#   3. image-smoke: pull and start both published images, :latest and :no-scout, and check each
+#      reports the newest release.
 #
 # On failure the notify job files (or comments on) a deduplicated issue labeled
 # ci-failure + wf:canary — one open issue per stream, so four red Mondays make one thread.
 #
 # PRs into main also run the repo-pyproject resolution leg — the only part that exercises the
 # PR's own changes — so a dependency edit that breaks a platform is caught before merge, not the
-# following Monday. The published-package legs (PyPI-release resolution, install smokes) and the
+# following Monday. The published-package legs (PyPI-release resolution, install and image smokes) and the
 # issue filing stay schedule/dispatch-only: on a PR they would re-test the already-shipped
 # release and could block a merge on breakage the PR didn't cause.
 
@@ -100,8 +102,9 @@ jobs:
     if: github.event_name != 'pull_request'
     name: Install smoke (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    # 20, not 15: macos-15-intel now source-builds cryptography (brew install + Rust compile).
-    timeout-minutes: 20
+    # 30: macos-15-intel source-builds cryptography (brew install + Rust compile), and may do so twice
+    # when the .mcpb's locked version differs from the one uvx resolves.
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -138,6 +141,8 @@ jobs:
         run: uvx --python 3.14 docker-mcp-server --version
 
       - name: Download and verify the newest release's .mcpb
+        # Runs even when the uvx smoke failed, so a failure report says whether the bundle broke too.
+        if: ${{ !cancelled() }}
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -146,10 +151,11 @@ jobs:
           set -euo pipefail
           gh release download --repo "$GITHUB_REPOSITORY" --pattern 'docker-mcp-server-*.mcpb*' --dir mcpb
           cd mcpb
-          # sha256sum on Windows' Git Bash; shasum on macOS, which ships no sha256sum.
+          # Whichever of sha256sum and shasum the runner has.
           if command -v sha256sum >/dev/null; then sha256sum -c ./*.sha256; else shasum -a 256 -c ./*.sha256; fi
 
       - name: Bundle smoke (.mcpb started as Claude Desktop starts it)
+        if: ${{ !cancelled() }}
         shell: bash
         # manifest.json's mcp_config runs `uv run --directory <bundle> mcpb_run.py`; this is that
         # command, plus --version so it exits before any daemon contact. The version printed must
@@ -160,6 +166,8 @@ jobs:
           expected="$(basename "$bundle" .mcpb)"; expected="${expected#docker-mcp-server-}"
           uv run --no-project --python 3.14 python -m zipfile -e "$bundle" bundle
           actual="$(uv run --directory bundle mcpb_run.py --version)"
+          # Windows' Python may end the line with a carriage return that $(...) keeps.
+          actual="${actual%$'\r'}"
           echo "bundle $expected reports $actual"
           if [ "$actual" != "$expected" ]; then
             echo "::error::the $expected .mcpb started but reported version $actual"
@@ -171,7 +179,7 @@ jobs:
     if: github.event_name != 'pull_request'
     name: Image smoke (${{ matrix.tag }})
     runs-on: ubuntu-latest
-    # Two pulls of an image of a few hundred MB, and a start that exits at once.
+    # One image pull and a start that exits at once.
     timeout-minutes: 10
     strategy:
       fail-fast: false

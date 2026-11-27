@@ -90,10 +90,11 @@ real install smokes of the published package on `macos-latest`, `macos-15-intel`
 label retires Aug 2027), and `windows-latest` - `import docker_mcp` and `uvx docker-mcp-server
 --version` - followed on the same runners by the newest release's `.mcpb`, checked against its
 `.sha256` and started with the command `manifest.json` gives Claude Desktop (`uv run --directory
-<bundle> mcpb_run.py`, plus `--version`), since a `uv`-type bundle resolves its dependencies on the
-user's machine and drifts as the PyPI package does. An image smoke pulls `:latest` and `:no-scout`
-from GHCR and runs each with `--version`, which must report the newest PyPI release: the release's
-`verify` job only compares their digests, so nothing else starts them after release. **PRs into main also run the repo-pyproject resolution leg** (the only part that
+<bundle> mcpb_run.py`, plus `--version`). The bundle installs from its own `uv.lock`, so it breaks
+differently from a fresh `uvx` resolve: a locked file pulled from PyPI, a locked version with no
+wheel for that platform or a newer CPython, or a change in the host's `uv`. An image smoke pulls
+`:latest` and `:no-scout` from GHCR and runs each with `--version`, which must report the newest
+PyPI release. **PRs into main also run the repo-pyproject resolution leg** (the only part that
 exercises PR content), so a dependency change that breaks a platform is caught before merge; the
 published-package legs and issue filing stay schedule/dispatch-only. Failures on unattended runs
 file a deduplicated `ci-failure` + `wf:canary` issue via `.github/actions/file-failure-issue`,
