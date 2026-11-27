@@ -58,8 +58,8 @@ dependencies = [
     # tests/test_pyproject_pins.py guards that it still does.
     "pyahocorasick>=2.3.1",
     # Also transitive (through paramiko), but redaction imports it directly to encrypt its markers with
-    # AES. Deliberately unbounded and unasserted in CI, as AGENTS.md records for this package: a floor or
-    # cap could force a wheels-only resolve onto a release with no wheel for a supported platform.
+    # AES. Unbounded, because a floor or cap could force a wheels-only resolve onto a release with no
+    # wheel for a supported platform.
     "cryptography",
 ]
 
