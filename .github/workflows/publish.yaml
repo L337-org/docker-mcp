@@ -821,6 +821,21 @@ jobs:
           (cd _verify && sha256sum -c ./*.sha256)
           echo "Release asset OK: $(basename "${mcpb[0]}")"
 
+      - name: Start the .mcpb the way Claude Desktop does
+        # The checksum proves this is the bundle that was built; this proves it runs. A file the
+        # bundle needs but .mcpbignore drops, or a broken launcher, otherwise ships unnoticed.
+        # manifest.json's mcp_config launches `uv run --directory <bundle> mcpb_run.py`; --version
+        # exits before any daemon contact and must print this release's version.
+        run: |
+          set -euo pipefail
+          python -m zipfile -e _verify/*.mcpb _bundle
+          actual="$(timeout 300 uv run --directory _bundle mcpb_run.py --version)"
+          if [ "$actual" != "$VERSION" ]; then
+            echo "::error::the $TAG .mcpb started but reported version '$actual', not $VERSION"
+            exit 1
+          fi
+          echo "Bundle starts and reports $actual"
+
       - name: Verify the skill archive, its checksum and its layout
         env:
           GH_TOKEN: ${{ github.token }}
